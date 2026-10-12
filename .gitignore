@@ -71,6 +71,7 @@ __pycache__/
 *$py.class
 
 # Launcher-local dependency generations, prepared wheels and session state.
+/libs/
 /vendor/
 /wheels/
 /wheelhouse/

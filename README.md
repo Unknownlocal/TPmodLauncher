@@ -10,6 +10,8 @@ These checks verify **Python 3.13.16, Windows x64 embeddable package**. They do
 not authenticate our launcher source or Frida. Use trusted verification tools,
 not the bundled interpreter you are checking.
 
+The bundled runtime is in `libs/python-3.13.16-embed-amd64/`.
+
 The signature commands below follow [Python.org's Sigstore instructions](https://www.python.org/downloads/metadata/sigstore/)
 and its linked [OpenPGP instructions](https://www.python.org/downloads/metadata/pgp/),
 with the artifact, signing identity and Windows command syntax substituted for
@@ -102,7 +104,7 @@ extra files without using our manifest or running bundled Python.
 ```powershell
 $reference = Join-Path $verifyDir 'official-python'
 Expand-Archive -LiteralPath $archive -DestinationPath $reference
-$bundled = Join-Path $bundleRoot 'python-3.13.16-embed-amd64'
+$bundled = Join-Path $bundleRoot 'libs/python-3.13.16-embed-amd64'
 
 function Get-RuntimeHashes([string]$Directory) {
     $root = Get-Item -LiteralPath $Directory -Force

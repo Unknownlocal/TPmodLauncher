@@ -3,7 +3,7 @@ for code mods for Team Principal: A Racing Manager
 
 Original project source, tests and supporting documentation: MPL-2.0.
 Copyright remains with the authors of their respective contributions.
-LICENCE.txt Part A clarifies scope and game rights; Part B reproduces MPL-2.0.
+LICENCE Part A clarifies scope and game rights; Part B reproduces MPL-2.0.
 
 Game: Copyright (c) 2026 PH Interactive, LLC; EULA version 0.99.5,
 effective October 11, 2026. Consult the EULA supplied with the relevant
@@ -17,6 +17,7 @@ the upstream contributors identified in notices/LICENSE.Python.txt.
 Official origin: https://www.python.org/downloads/release/python-31316/
 The complete runtime's original LICENSE.txt is retained with the runtime;
 the notices directory contains a byte-identical copy for source review.
+Runtime directory: libs/python-3.13.16-embed-amd64/.
 The runtime is separately licensed and is not this project's original code.
 
 Frida 17.23.3, planned dependency: Frida Developers, https://frida.re/
