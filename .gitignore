@@ -69,3 +69,12 @@ Desktop.ini
 __pycache__/
 *.py[codz]
 *$py.class
+
+# Launcher-local dependency generations, prepared wheels and session state.
+/vendor/
+/wheels/
+/wheelhouse/
+/logs/
+/.state/
+/.cache/
+/release/

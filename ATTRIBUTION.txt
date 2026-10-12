@@ -1,0 +1,29 @@
+TPM_CodeModManager - unofficial launcher and mod hook manager
+for code mods for Team Principal: A Racing Manager
+
+Original project source, tests and supporting documentation: MPL-2.0.
+Copyright remains with the authors of their respective contributions.
+LICENCE.txt Part A clarifies scope and game rights; Part B reproduces MPL-2.0.
+
+Game: Copyright (c) 2026 PH Interactive, LLC; EULA version 0.99.5,
+effective October 11, 2026. Consult the EULA supplied with the relevant
+game version. The project licence neither reproduces that agreement nor
+grants rights over game-owned material.
+This project is intended for free, noncommercial modding with a lawfully
+acquired game. It is not affiliated with or endorsed by the publisher.
+
+Python 3.13.16 x64 embeddable distribution: Python Software Foundation and
+the upstream contributors identified in notices/LICENSE.Python.txt.
+Official origin: https://www.python.org/downloads/release/python-31316/
+The complete runtime's original LICENSE.txt is retained with the runtime;
+the notices directory contains a byte-identical copy for source review.
+The runtime is separately licensed and is not this project's original code.
+
+Frida 17.23.3, planned dependency: Frida Developers, https://frida.re/
+notices/LICENSE.Frida.txt preserves the COPYING supplied by the existing
+official Python package. No Frida wheel has been prepared for this launcher.
+Audit the exact release wheel and its incorporated-component notices before
+packaging; this copied licence alone is not a completed distribution audit.
+
+The source repository excludes the game executable, extracted game bytecode,
+any data-pack content, runtime binaries and dependency wheels.
