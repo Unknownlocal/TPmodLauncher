@@ -1,0 +1,71 @@
+# Keep copied data-pack files and media out of this patch-only repository.
+*.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.ico
+*.svg
+*.dds
+*.tga
+*.wav
+*.ogg
+*.mp3
+*.flac
+*.mp4
+*.ttf
+*.otf
+/assets/
+/tracks/
+/constants.py
+
+# No game executables, extracted modules, injection libraries or packages.
+*.exe
+*.dll
+*.pyd
+*.pyc
+*.pyo
+*.pyz
+*.marshal
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.whl
+
+# Keep Python runtime folders out of version control at any depth.
+python*/
+
+# Local review documents are intentionally never staged by normal git add - for development and review only.
+/docs/local/
+
+# Generated state, logs, temporary files and build output.
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+# Optional local base interpreter; never distribute development runtimes.
+/.python/
+/build/
+/dist/
+*.log
+*.save
+*.sav
+*.db
+*.sqlite
+*.sqlite3
+*.tmp
+*.bak
+Thumbs.db
+Desktop.ini
+
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
