@@ -3,7 +3,10 @@
 
 from textwrap import dedent
 import hashlib
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import zipfile
 
 import pytest
@@ -71,6 +74,13 @@ def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(
     manifest = (root / "bundled_packages.toml").read_bytes()
     assert str(root).encode() not in manifest
     before = release.dependencies.file_inventory(directory)
+    vendor = directory.parent
+    # Setup should remove both earlier folder layouts, but keep unrelated and live build folders.
+    obsolete = [vendor / ("0" * 64), vendor / ("1" * 64 + "-" + "2" * 32)]
+    retained = [vendor / "notes", vendor / ".package-build-other"]
+    for folder in obsolete + retained:
+        (folder / "nested").mkdir(parents=True)
+        (folder / "nested/marker").write_bytes(b"fixture contents")
     # Provenance-only changes do not select a new runtime directory or manifest.
     lock_path = root / "pylock.toml"
     lock_path.write_text(
@@ -82,8 +92,121 @@ def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(
     assert release.prepare_packages(root) == directory
     assert (root / "bundled_packages.toml").read_bytes() == manifest
     assert release.dependencies.file_inventory(directory) == before
-    assert not list((root / "libs/vendor").glob(".package-build-*"))
+    assert all(not folder.exists() for folder in obsolete)
+    assert all(
+        (folder / "nested/marker").read_bytes() == b"fixture contents"
+        for folder in retained
+    )
+    assert set(vendor.iterdir()) == {directory, *retained}
     assert not (root / ".state").exists()
+    # Explicit refresh still runs real pip and reproduces the reviewed files.
+    assert release.prepare_packages(root, refresh_manifest=True) == directory
+    assert (root / "bundled_packages.toml").read_bytes() == manifest
+    assert release.dependencies.file_inventory(directory) == before
+
+
+def test_verified_matching_bundle_is_reused_without_cached_wheels(project_factory):
+    root, wheel = project_factory()
+    directory = release.prepare_packages(root, refresh_manifest=True)
+    before = release.dependencies.file_inventory(directory)
+    wheel.unlink()
+    # Installing would fail without the wheel; a verified existing bundle needs no pip run.
+    assert release.prepare_packages(root) == directory
+    assert release.dependencies.file_inventory(directory) == before
+
+
+def test_missing_selected_bundle_is_installed_from_cached_wheels(project_factory):
+    root, _ = project_factory()
+    directory = release.prepare_packages(root, refresh_manifest=True)
+    before = release.dependencies.file_inventory(directory)
+    manifest = (root / "bundled_packages.toml").read_bytes()
+    # Delete only this fixture's published folder to simulate a missing installation.
+    assert directory.resolve().parent == (root / "libs/vendor").resolve()
+    shutil.rmtree(directory)
+    assert release.prepare_packages(root) == directory
+    assert release.dependencies.file_inventory(directory) == before
+    assert (root / "bundled_packages.toml").read_bytes() == manifest
+
+
+@pytest.mark.parametrize("change", ["package", "runtime"])
+def test_existing_bundle_is_not_reused_for_different_requirements(
+    project_factory, change
+):
+    root, wheel = project_factory()
+    directory = release.prepare_packages(root, refresh_manifest=True)
+    before = release.dependencies.file_inventory(directory)
+    if change == "package":
+        path = root / "pylock.toml"
+        path.write_text(
+            path.read_text()
+            .replace('version = "1.0"', 'version = "1.1"')
+            .replace("demo-1.0-py3-none-any.whl", "demo-1.1-py3-none-any.whl")
+        )
+        wheel = wheel.with_name("demo-1.1-py3-none-any.whl")
+    else:
+        path = root / "pyproject.toml"
+        path.write_text(
+            path.read_text().replace('version = "3.13.16"', 'version = "3.13.17"')
+        )
+    # A needed installation must check its inputs instead of returning the old bundle.
+    wheel.write_bytes(b"corrupt wheel")
+    with pytest.raises(
+        release.dependencies.DependencyError, match="Build wheel SHA-256 mismatch"
+    ):
+        release.prepare_packages(root)
+    assert release.dependencies.file_inventory(directory) == before
+
+
+def test_vendor_cleanup_requires_a_valid_selected_bundle(bundled_project):
+    root, directory = bundled_project
+    obsolete = directory.parent / ("0" * 64)
+    obsolete.mkdir()
+    (obsolete / "marker").write_bytes(b"old bundle")
+    (directory / "demo/__init__.py").write_bytes(b"changed")
+    with pytest.raises(release.dependencies.DependencyError, match="Cannot verify"):
+        release.prune_vendor(root)
+    assert (obsolete / "marker").read_bytes() == b"old bundle"
+    assert (directory / "demo/__init__.py").read_bytes() == b"changed"
+
+
+@pytest.mark.parametrize("location", ["folder", "inside"])
+def test_vendor_cleanup_checks_all_links_before_deleting_any_folder(
+    bundled_project, tmp_path, location
+):
+    root, directory = bundled_project
+    obsolete = directory.parent / ("0" * 64)
+    obsolete.mkdir()
+    (obsolete / "marker").write_bytes(b"old bundle")
+    candidate = directory.parent / ("1" * 64)
+    outside = tmp_path / "outside-vendor"
+    outside.mkdir()
+    (outside / "marker").write_bytes(b"outside vendor")
+    if location == "folder":
+        link = candidate
+    else:
+        candidate.mkdir()
+        link = candidate / "redirect"
+    if os.name == "nt":
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+    else:
+        link.symlink_to(outside, target_is_directory=True)
+    try:
+        with pytest.raises(release.dependencies.DependencyError, match="Linked"):
+            release.prune_vendor(root)
+        assert (obsolete / "marker").read_bytes() == b"old bundle"
+        assert (outside / "marker").read_bytes() == b"outside vendor"
+        assert release.dependencies.verify_bundle(root) == directory
+    finally:
+        # Remove this fixture's link itself; never delete the redirected directory.
+        if os.name == "nt":
+            link.rmdir()
+        else:
+            link.unlink()
 
 
 def test_default_build_requires_reviewed_manifest(project_factory):
@@ -101,7 +224,7 @@ def test_existing_altered_package_bundle_is_not_overwritten(project_factory):
     directory = release.prepare_packages(root, refresh_manifest=True)
     payload = directory / "demo/__init__.py"
     payload.write_bytes(b"changed")
-    with pytest.raises(release.dependencies.DependencyError, match="not overwritten"):
+    with pytest.raises(release.dependencies.DependencyError, match="Cannot verify"):
         release.prepare_packages(root)
     assert payload.read_bytes() == b"changed"
 
@@ -109,17 +232,30 @@ def test_existing_altered_package_bundle_is_not_overwritten(project_factory):
 def test_build_hash_failure_does_not_change_published_bundle(project_factory):
     root, wheel = project_factory()
     directory = release.prepare_packages(root, refresh_manifest=True)
+    obsolete = directory.parent / ("0" * 64)
+    obsolete.mkdir()
+    (obsolete / "marker").write_bytes(b"old bundle")
     wheel.write_bytes(b"corrupt wheel")
     before = release.dependencies.file_inventory(directory)
     with pytest.raises(
         release.dependencies.DependencyError, match="Build wheel SHA-256 mismatch"
     ):
-        release.prepare_packages(root)
+        release.prepare_packages(root, refresh_manifest=True)
     assert release.dependencies.file_inventory(directory) == before
+    assert not obsolete.exists()
 
 
-def test_pip_failure_cannot_publish_partial_packages(project_factory):
+@pytest.mark.parametrize("existing", [False, True])
+def test_pip_failure_cannot_publish_partial_packages(project_factory, existing):
     root, wheel = project_factory()
+    directory = None
+    if existing:
+        directory = release.prepare_packages(root, refresh_manifest=True)
+        before = release.dependencies.file_inventory(directory)
+        manifest = (root / "bundled_packages.toml").read_bytes()
+        obsolete = directory.parent / ("0" * 64)
+        obsolete.mkdir()
+        (obsolete / "marker").write_bytes(b"old bundle")
     # A hash-approved but invalid archive gets as far as real pip, which must fail.
     import subprocess
 
@@ -137,8 +273,15 @@ def test_pip_failure_cannot_publish_partial_packages(project_factory):
     )
     with pytest.raises(subprocess.CalledProcessError):
         release.prepare_packages(root, refresh_manifest=True)
-    assert not list((root / "libs/vendor").iterdir())
-    assert not (root / "bundled_packages.toml").exists()
+    if existing:
+        # Pruning happened before real pip failed; the selected working copy is intact.
+        assert not obsolete.exists()
+        assert list((root / "libs/vendor").iterdir()) == [directory]
+        assert release.dependencies.file_inventory(directory) == before
+        assert (root / "bundled_packages.toml").read_bytes() == manifest
+    else:
+        assert not list((root / "libs/vendor").iterdir())
+        assert not (root / "bundled_packages.toml").exists()
 
 
 def test_target_python_markers_are_checked_independently_of_developer_python(

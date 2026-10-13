@@ -370,17 +370,79 @@ def manifest_bytes(
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def prune_vendor(root: Path) -> Path | None:
+    """Remove obsolete generated folders and return the manifest-selected path, if any."""
+    # root is the launcher folder; retain and verify the selected bundle when it exists.
+    selected = None
+    if dependencies.local_path(root, "bundled_packages.toml").exists():
+        manifest = dependencies.read_manifest(root)
+        selected = dependencies.local_path(root, manifest["directory"])
+        if selected.exists():
+            dependencies.verify_bundle(root)
+    vendor = dependencies.local_path(root, "libs/vendor")
+    # A first installation may have neither a manifest nor a vendor folder yet.
+    if not vendor.exists():
+        return selected
+    obsolete = []
+    for item in sorted(vendor.iterdir()):
+        # Older builds also used a content hash followed by a random 32-character suffix.
+        # Other names, including another build's temporary folder, are not ours to remove.
+        if item == selected or not re.fullmatch(
+            r"[0-9a-f]{64}(?:-[0-9a-f]{32})?", item.name
+        ):
+            continue
+        candidate = dependencies.local_path(root, "libs/vendor/" + item.name)
+        # Require an ordinary folder directly inside vendor, never a redirected path.
+        if not candidate.is_dir() or candidate.resolve().parent != vendor.resolve():
+            raise dependencies.DependencyError(
+                f"Cannot clean obsolete package folder: {item.name}"
+            )
+        for _ in dependencies.tree_paths(candidate):
+            pass  # Check every path for links before deleting any obsolete folder.
+        obsolete.append(candidate)
+    for candidate in obsolete:
+        # Check the absolute target again immediately before recursive deletion.
+        dependencies.local_path(root, "libs/vendor/" + candidate.name)
+        if candidate.resolve().parent != vendor.resolve():
+            raise dependencies.DependencyError("Vendor cleanup escaped libs/vendor.")
+        try:
+            shutil.rmtree(candidate)
+        except OSError as error:
+            # A running launcher may hold its old Frida DLL open on Windows.
+            raise dependencies.DependencyError(
+                f"Cannot remove obsolete package folder {candidate.name}; "
+                "close any running launcher and retry release preparation."
+            ) from error
+    return selected
+
+
 def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
     """Install cached wheels and return the verified package folder under libs/vendor.
 
     Prepare files in a temporary folder and check them before creating the final folder.
     With refresh_manifest=True, update bundled_packages.toml; otherwise require the
-    prepared files to match it. Check existing package folders without overwriting them.
+    prepared files to match it. Prune obsolete folders first and reuse a matching verified
+    bundle without pip. An explicit manifest refresh rebuilds it from cached wheels.
+    Run preparation while the launcher is closed.
     """
     # root is the build folder; refresh_manifest allows updating the saved file list.
     settings = read_settings(root)
     runtime = settings["runtime"]
     packages = read_lock(root, runtime)
+    # Free obsolete copies before creating installation staging; retain the current bundle.
+    selected = prune_vendor(root)
+    if not refresh_manifest and selected is not None and selected.exists():
+        manifest = dependencies.read_manifest(root)
+        expected_packages = {
+            package.name: str(package.version) for package, _ in packages
+        }
+        expected_runtime = {key: runtime[key] for key in ("version", "directory")}
+        # The files already passed verification; reuse only the requested versions and runtime.
+        if (
+            manifest["packages"] == expected_packages
+            and manifest["runtime"] == expected_runtime
+        ):
+            return selected
     # Use the specified pip version so the extra files it creates stay consistent.
     if importlib.metadata.version("pip") != settings["build"]["pip_version"]:
         raise dependencies.DependencyError(
@@ -398,7 +460,7 @@ def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
     vendor.mkdir(parents=True, exist_ok=True)
     manifest = dependencies.local_path(root, "bundled_packages.toml")
     # Use a new temporary folder for this build only.
-    # Leave all existing package folders alone.
+    # Keep the selected bundle until the replacement has passed all checks.
     with build_directory(vendor, ".package-build-") as build:
         # Make sure the temporary build folder is inside libs/vendor.
         if not build.is_relative_to(vendor.resolve()):
@@ -524,8 +586,12 @@ def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
                 os.replace(temporary_manifest, manifest)
             finally:
                 Path(temporary_manifest).unlink(missing_ok=True)
-    # Check the finished packages using the same checks as startup.
-    return dependencies.verify_bundle(root)
+    # After an update succeeds, the previously selected bundle can also be removed.
+    # Startup itself stays read-only.
+    directory = dependencies.verify_bundle(root)
+    if selected is not None and selected != directory:
+        prune_vendor(root)
+    return directory
 
 
 def main(argv=None) -> int:
