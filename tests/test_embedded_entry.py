@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 """Test bundled Python startup, Frida imports, package damage and import isolation."""
 
-from textwrap import dedent
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
 import pytest
+
+FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
@@ -104,25 +106,7 @@ def test_embedded_startup_cannot_use_pip_network_or_subprocesses(
 ):
     root = embedded_project
     probe = root / "launcher/readonly_probe.py"
-    probe.write_text(
-        dedent(
-            """\
-            import importlib.util
-            from pathlib import Path
-            import runpy
-            import sys
-            assert importlib.util.find_spec("pip") is None
-            def unexpected(*args, **kwargs):
-                raise AssertionError("startup attempted network or subprocess setup")
-            def audit(event, args):
-                if event in ("socket.connect", "subprocess.Popen"):
-                    unexpected()
-            sys.addaudithook(audit)
-            sys.argv = ["entry.py", "--check-only"]
-            runpy.run_path(str(Path(__file__).with_name("entry.py")), run_name="__main__")
-            """
-        ),
-    )
+    shutil.copyfile(FIXTURES / "readonly_startup_probe.py", probe)
     try:
         command = [
             str(root / "libs/python-3.13.16-embed-amd64/python.exe"),

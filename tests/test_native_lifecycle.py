@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Run the real Frida controller against an owned Python helper process tree."""
 
-from textwrap import dedent
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,8 @@ import shutil
 import subprocess
 
 import pytest
+
+FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
@@ -24,49 +25,9 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
     output = tmp_path / "results"
     output.mkdir()
     helper = tmp_path / "game_helper.py"
-    helper.write_text(
-        dedent(
-            """\
-            import json, os, subprocess, sys, time
-            from pathlib import Path
-            mode, output = sys.argv[1], Path(sys.argv[2])
-            if mode == "parent":
-                subprocess.run([sys.argv[3], "-B", __file__, "helper", str(output)], check=True, timeout=20)
-                subprocess.Popen([sys.executable, "-B", __file__, "replacement", str(output), *sys.argv[4:]])
-            else:
-                if mode == "replacement":
-                    time.sleep(0.4)
-                (output / (mode + ".json")).write_text(json.dumps({
-                    "argv": sys.argv[3:], "cwd": os.getcwd(), "sentinel": os.environ.get("TPM_TEST_SENTINEL")
-                }), encoding="utf-8")
-            """
-        ),
-        encoding="utf-8",
-    )
+    shutil.copyfile(FIXTURES / "native_lifecycle_helper.py", helper)
     probe = root / "launcher/lifecycle_probe.py"
-    probe.write_text(
-        dedent(
-            """\
-            import importlib.util, sys
-            from pathlib import Path
-            root = Path(__file__).resolve().parent.parent
-            def load(name, filename):
-                spec = importlib.util.spec_from_file_location(name, root / "launcher" / filename)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                return module
-            deps = load("deps", "bundled_dependencies.py")
-            frida = deps.import_frida(root)
-            lifecycle = load("lifecycle", "process_lifecycle.py")
-            bridge = load("bridge", "game_bridge.py")
-            command = lifecycle.validate_command(sys.argv[1:], Path(sys.argv[1]))
-            raise SystemExit(lifecycle.run_launcher(frida, command, root/".state/controller.lock",
-                                                  root/"logs/native-test.log", restart_grace=0.4,
-                                                  bridge_factory=bridge.factory(root, frida)))
-            """
-        ),
-        encoding="utf-8",
-    )
+    shutil.copyfile(FIXTURES / "native_lifecycle_probe.py", probe)
     arguments = ['space and "quotes"', "", "Unicode \u00e9", "--game-option", "x&y"]
     environment = os.environ.copy()
     environment["TPM_TEST_SENTINEL"] = "inherited from launcher"

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 """Test game-command validation, event ordering, restart gaps and controller cleanup."""
 
-from textwrap import dedent
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from launcher import process_lifecycle as lifecycle
+
+FIXTURES = Path(__file__).with_name("fixtures")
 
 
 class Session:
@@ -309,17 +311,7 @@ def test_existing_game_is_rejected_before_spawn(rig):
 def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tmp_path):
     lock = tmp_path / "controller.lock"
     probe = tmp_path / "lock_probe.py"
-    probe.write_text(
-        dedent("""\
-            from launcher.process_lifecycle import controller_lock, LaunchError
-            from pathlib import Path
-            import sys
-            try:
-                with controller_lock(Path(sys.argv[1])): pass
-            except LaunchError:
-                raise SystemExit(7)
-            """),
-    )
+    shutil.copyfile(FIXTURES / "controller_lock_probe.py", probe)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     command = [sys.executable, str(probe), str(lock)]

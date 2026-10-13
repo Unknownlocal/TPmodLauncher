@@ -140,16 +140,30 @@ def test_methods_descriptors_and_inherited_restore(host):
 
 @pytest.mark.parametrize("phase", ["before", "after"])
 def test_explicit_replacement_permission(host, phase):
-    module, manager = host(
-        lambda record: {"action": "replace", "value": record["arguments"]["value"] * 4}
-    )
-    calls = []
-    module.method = lambda value: calls.append(value) or value
+    records, calls = [], []
+
+    def dispatch(record):
+        records.append(record)
+        return {"action": "replace", "value": record["arguments"]["value"] * 4}
+
+    module, manager = host(dispatch)
+    module.method = lambda value: calls.append(value) or value + 1
     binding = approve(manager, module, "method", replace=True)
     binding["phase"] = phase
     manager.install("owned", [binding])
     assert module.method(3) == 12
     assert calls == ([3] if phase == "after" else [])
+    # Check what the callback receives, including the original result for an after-hook.
+    assert records == [
+        {
+            "group": "owned",
+            "target": "method",
+            "callback": "owned.callback",
+            "phase": phase,
+            "arguments": {"value": 3},
+            "result": 4 if phase == "after" else None,
+        }
+    ]
 
 
 def test_conflicts_and_external_replacements_are_not_overwritten(host):
@@ -220,17 +234,26 @@ def test_deferred_import_installs_without_forcing_import(tmp_path, monkeypatch, 
     assert name not in sys.modules
     try:
         if worker:
-            thread = threading.Thread(target=importlib.import_module, args=(name,))
+            thread = threading.Thread(
+                target=importlib.import_module, args=(name,), daemon=True
+            )
             thread.start()
-            thread.join()
+            thread.join(timeout=5)
+            assert not thread.is_alive(), "Worker import did not finish"
             assert manager.status()["groups"]["owned"] == "pending"
+            assert sys.modules[name].method(2) == 3 and records == []
             manager.poll()
         else:
             importlib.import_module(name).method(1)
             assert (
                 len(records) == 1
             )  # Installed before the import's consumer called the method.
+        assert manager.status()["groups"]["owned"] == "active"
         assert sys.modules[name].method(3) == 4
+        # A normal return value alone cannot prove that the hook actually ran.
+        assert [record["arguments"]["value"] for record in records] == (
+            [3] if worker else [1, 3]
+        )
         manager.stop()
         assert manager.finder not in sys.meta_path
         assert not hasattr(sys.modules[name].method, "_tpm_hook_group")
