@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Check the included Python and Frida from the command line.
+"""Check bundled dependencies or launch Steam's supplied game command.
 
-Load the dependency helper from this script's folder because the included Python
-is configured not to search script folders automatically."""
+Load helpers from this script's folder because the included Python is configured
+not to search script folders automatically."""
 
 import argparse
 import importlib.util
+import math
 from pathlib import Path
 import sys
 
@@ -19,22 +20,48 @@ _spec.loader.exec_module(_dependencies)
 
 
 def main(argv=None) -> int:
-    # argv can supply command-line arguments; None reads them normally; return 0 on success.
-    # Require --check-only while this script only checks packages and cannot start the game.
-    parser = argparse.ArgumentParser(description="Verify bundled launcher dependencies offline.")
-    parser.add_argument("--check-only", action="store_true", required=True,
-                        help="verify bundled packages and check Frida imports; do not start the game")
-    parser.parse_args(argv)
-    # Find the launcher folder beside this script, regardless of Steam's working folder.
+    # Arguments before -- configure the launcher; arguments after it belong to the game.
+    parser = argparse.ArgumentParser(description="Check dependencies or launch and track the game.")
+    parser.add_argument("--check-only", action="store_true", help="check bundled Frida without starting anything")
+    parser.add_argument("--restart-grace", type=float, default=2.0,
+                        help="seconds to wait for a game replacement after the last process exits (default: 2)")
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="Steam's original command, supplied after --")
+    arguments = parser.parse_args(argv)
+    if not math.isfinite(arguments.restart_grace) or arguments.restart_grace <= 0:
+        parser.error("--restart-grace must be a finite number greater than zero")
+    command = arguments.command
+    if command and command[0] == "--":
+        command = command[1:]
+    # Do not accidentally treat a verification request as permission to start the game.
+    if arguments.check_only and command:
+        parser.error("--check-only cannot be combined with a game command")
+    if not arguments.check_only and not command:
+        parser.error("supply Steam's original game command after --, or use --check-only")
     root = Path(__file__).resolve().parent.parent
     try:
         frida = _dependencies.import_frida(root)
-    # Report problems with Python or the included packages and stop.
     except _dependencies.DependencyError as error:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
         return 1
-    print(f"Bundled dependencies ready: Frida {frida.__version__}")
-    return 0
+    if arguments.check_only:
+        print(f"Bundled dependencies ready: Frida {frida.__version__}")
+        return 0
+    try:
+        # This installed launcher lives at data/modLauncher beneath the game installation.
+        expected = root.parent.parent / "TeamPrincipal.exe"
+        source = _dependencies.local_path(root, "launcher/process_lifecycle.py")
+        spec = importlib.util.spec_from_file_location("_tpm_process_lifecycle", source)
+        lifecycle = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lifecycle)
+        command = lifecycle.validate_command(command, expected)
+        return lifecycle.run_launcher(frida, command,
+                                      _dependencies.local_path(root, ".state/controller.lock"),
+                                      _dependencies.local_path(root, "logs/launcher.log"),
+                                      restart_grace=arguments.restart_grace)
+    # Frida setup errors must produce a failed launch, even before the controller loop starts.
+    except Exception as error:
+        print(f"Launcher failed: {error}", file=sys.stderr)
+        return 1
 
 
 # Run only when this file is started directly; return its success or error code.

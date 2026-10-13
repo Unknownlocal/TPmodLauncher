@@ -90,3 +90,20 @@ def test_entry_reports_package_damage_without_repair(embedded_project):
         assert not (root / ".state").exists() and not (root / ".cache").exists()
     finally:
         payload.write_bytes(original)
+
+
+@pytest.mark.embedded
+def test_entry_rejects_invalid_launch_requests_before_starting_processes(embedded_project):
+    root = embedded_project
+    executable = root / "libs/python-3.13.16-embed-amd64/python.exe"
+    entry = root / "launcher/entry.py"
+    for arguments, code, message in (
+        ([], 2, "supply Steam's original"),
+        (["--check-only", "--", str(executable)], 2, "cannot be combined"),
+        (["--restart-grace", "nan", "--", str(executable)], 2, "finite number"),
+        (["--", str(executable)], 1, "installed game"),
+    ):
+        result = subprocess.run([str(executable), "-B", str(entry), *arguments],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == code and message in result.stderr, result.stderr
+    assert not (root / ".state").exists() and not (root / "logs").exists()
