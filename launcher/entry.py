@@ -63,8 +63,8 @@ def main(argv=None) -> int:
         print(f"Bundled dependencies ready: Frida {frida.__version__}")
         return 0
     try:
-        # This installed launcher lives at data/modLauncher beneath the game installation.
-        expected = root.parent.parent / "TeamPrincipal.exe"
+        # The launcher folder and game executable share the same installation folder.
+        expected = root.parent / "TeamPrincipal.exe"
         source = _dependencies.local_path(root, "launcher/process_lifecycle.py")
         spec = importlib.util.spec_from_file_location("_tpm_process_lifecycle", source)
         lifecycle = importlib.util.module_from_spec(spec)

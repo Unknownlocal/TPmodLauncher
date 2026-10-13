@@ -162,7 +162,12 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
         ([], 2, "supply Steam's original"),
         (["--check-only", "--", str(executable)], 2, "cannot be combined"),
         (["--restart-grace", "nan", "--", str(executable)], 2, "finite number"),
-        (["--", str(executable)], 1, "installed game"),
+        # Report the sibling game path, even when launched from another working directory.
+        (
+            ["--", str(executable)],
+            1,
+            f"installed game: {root.parent / 'TeamPrincipal.exe'}",
+        ),
     ):
         result = subprocess.run(
             [str(executable), "-B", str(entry), *arguments],
