@@ -20,11 +20,16 @@ the notices directory contains a byte-identical copy for source review.
 Runtime directory: libs/python-3.13.16-embed-amd64/.
 The runtime is separately licensed and is not this project's original code.
 
-Frida 17.23.3, planned dependency: Frida Developers, https://frida.re/
-notices/LICENSE.Frida.txt preserves the COPYING supplied by the existing
-official Python package. No Frida wheel has been prepared for this launcher.
-Audit the exact release wheel and its incorporated-component notices before
-packaging; this copied licence alone is not a completed distribution audit.
+Frida 17.23.3: Frida Developers, https://frida.re/
+Official wheel: frida-17.23.3-cp37-abi3-win_amd64.whl, from PyPI.
+notices/LICENSE.Frida.txt is byte-identical to licenses/COPYING in that wheel.
+Preparation retains the original licence and package payload. Developer pip adds
+INSTALLER/REQUESTED and rewrites installed RECORD; the manifest records the output.
+Packages under the selected libs/vendor directory are distributed alongside Python;
+wheels and developer pip are build tools/inputs, not end-user dependencies.
+Upstream source: https://github.com/frida/frida/tree/17.23.3
+Review incorporated-component notices and source obligations before a release;
+the wheel's COPYING alone is not a completed native-component distribution audit.
 
 The source repository excludes the game executable, extracted game bytecode,
 any data-pack content, runtime binaries and dependency wheels.

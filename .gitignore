@@ -41,6 +41,7 @@ python*/
 
 # Local review documents are intentionally never staged by normal git add - for development and review only.
 /docs/local/
+DEVELOPMENT.md
 
 # Generated state, logs, temporary files and build output.
 __pycache__/

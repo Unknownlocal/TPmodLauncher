@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MPL-2.0
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+pythonpath = ["."]
+markers = ["embedded: requires the prepared bundled Windows runtime and package directory"]
+
+# Launcher build settings; package pins live in the standard pylock.toml.
+[tool.modlauncher.runtime]
+version = "3.13.16"
+directory = "libs/python-3.13.16-embed-amd64"
+filename = "python-3.13.16-embed-amd64.zip"
+url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip"
+sha256 = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+identity = "thomas@python.org"
+issuer = "https://accounts.google.com"
+
+[tool.modlauncher.build]
+# Developer/CI pip only; it is not included in the release.
+pip_version = "26.2.1"

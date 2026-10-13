@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Dependency preparation and pytest
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Pin reviewed upstream action commits rather than mutable release tags.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Create the developer test environment
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Authenticate inputs and reproduce the bundled packages with pip
+        run: |
+          & .venv/Scripts/python.exe -I launcher/prepare_release.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check bundled Frida imports without installing packages
+        run: |
+          & libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run behavioral and embedded-runtime tests
+        env:
+          TPM_REQUIRE_EMBEDDED_TESTS: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          & .venv/Scripts/python.exe -m pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -51,17 +51,42 @@ if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expectedHas
 'Archive SHA-256 matches.'
 ```
 
+### Disposable verification tools
+
+Use a full, independently trusted Python 3.13 or newer installation for this step.
+The environment is created inside the temporary verification directory; no tools
+are installed into your existing Python installation or the bundled interpreter.
+Keep using this PowerShell session for the remaining checks.
+
+```powershell
+$verifyTools = Join-Path $verifyDir 'tools'
+python -I -m venv "$verifyTools"
+if ($LASTEXITCODE -ne 0) { throw 'Verification environment creation failed.' }
+$verifyPython = Join-Path $verifyTools 'Scripts/python.exe'
+
+function Invoke-VerificationPython {
+    # Disable pip configuration only for this call and restore the caller's value,
+    # including on an installation or verification failure.
+    $previousPipConfig = $env:PIP_CONFIG_FILE
+    try {
+        $env:PIP_CONFIG_FILE = 'nul'
+        & $verifyPython -I @args
+        if ($LASTEXITCODE -ne 0) { throw 'Verification tool command failed.' }
+    }
+    finally {
+        $env:PIP_CONFIG_FILE = $previousPipConfig
+    }
+}
+```
+
 ### Sigstore
 
-Use an independently trusted Python installation for the `python` commands below.
 Python.org recommends installing the verifier from its pinned requirements file:
 
 ```powershell
-python -m pip install -r https://raw.githubusercontent.com/sigstore/sigstore-python/main/install/requirements.txt
-if ($LASTEXITCODE -ne 0) { throw 'Sigstore verifier installation failed.' }
+Invoke-VerificationPython -m pip --isolated install -r https://raw.githubusercontent.com/sigstore/sigstore-python/main/install/requirements.txt
 Invoke-WebRequest -UseBasicParsing -Uri "$upstream.sigstore" -OutFile "$archive.sigstore"
-python -m sigstore verify identity --bundle "$archive.sigstore" --cert-identity thomas@python.org --cert-oidc-issuer https://accounts.google.com "$archive"
-if ($LASTEXITCODE -ne 0) { throw 'Sigstore verification failed.' }
+Invoke-VerificationPython -m sigstore verify identity --bundle "$archive.sigstore" --cert-identity thomas@python.org --cert-oidc-issuer https://accounts.google.com "$archive"
 ```
 
 Check the Python 3.13 identity and issuer independently in Python.org's table.
@@ -144,3 +169,81 @@ if ($differences.Count -gt 0) {
 }
 "PASS: all $($officialFiles.Count) runtime files match; no extra files."
 ```
+
+## Verify the bundled Frida packages
+
+The release contains prepared packages under libs/vendor/, rather than requiring
+a wheel or pip at startup. Obtain the original wheel independently for comparison.
+The expected SHA-256 is published on [the exact PyPI file entry](https://pypi.org/project/frida/17.23.3/#frida-17.23.3-cp37-abi3-win_amd64.whl).
+
+Run these blocks in the same verification session as the Python checks above:
+
+```powershell
+$fridaFile = 'frida-17.23.3-cp37-abi3-win_amd64.whl'
+$fridaWheel = Join-Path $verifyDir $fridaFile
+$fridaUrl = 'https://files.pythonhosted.org/packages/5e/8f/8fe0179ec76deb88f786be19158322d0f867479d80a229a40d51fe334cbe/frida-17.23.3-cp37-abi3-win_amd64.whl'
+$fridaHash = '88b1f07514c38650faf6e803ed13dfaec1ba94efa4c8ed34c1525f8c151689d4'
+Invoke-WebRequest -UseBasicParsing -Uri $fridaUrl -OutFile $fridaWheel
+if ((Get-FileHash -LiteralPath $fridaWheel -Algorithm SHA256).Hash -ne $fridaHash) {
+    throw 'Official Frida wheel SHA-256 mismatch.'
+}
+'Official Frida wheel SHA-256 matches.'
+```
+
+Verify the publishing attestation against the expected upstream repository,
+using an independently trusted Python environment and the
+[PyPI attestation verifier](https://docs.pypi.org/attestations/consuming-attestations/):
+
+```powershell
+Invoke-VerificationPython -m pip --isolated install pypi-attestations==0.0.30
+Invoke-VerificationPython -m pypi_attestations verify pypi --repository https://github.com/frida/frida "$fridaWheel"
+```
+
+### Compare the prepared package directory
+
+Pip preserves Frida's code, native extension and licence, but adds installation
+metadata and rewrites RECORD. To check the complete directory, reproduce that
+installation using the disposable verification environment and pinned pip version.
+That environment is independent of the launcher and uses your trusted Python.
+
+```powershell
+Invoke-VerificationPython -m pip --isolated install pip==26.2.1
+
+$fridaReference = Join-Path $verifyDir 'reference-frida'
+$fridaRequirements = Join-Path $verifyDir 'frida-requirements.txt'
+[IO.File]::WriteAllText($fridaRequirements, ("frida==17.23.3 --hash=sha256:$fridaHash" + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+Invoke-VerificationPython -m pip --isolated --disable-pip-version-check install --no-index --find-links "$verifyDir" --require-hashes --only-binary=:all: --ignore-installed --no-compile --no-cache-dir --platform win_amd64 --python-version 3.13 --implementation cp --abi cp313 --abi abi3 --abi none --target "$fridaReference" -r "$fridaRequirements"
+
+$manifestPath = Join-Path $bundleRoot 'bundled_packages.toml'
+$directoryLines = @(Select-String -LiteralPath $manifestPath -Pattern '^directory = "(libs/vendor/[a-f0-9]{64})"$')
+if ($directoryLines.Count -ne 1) { throw 'Expected one canonical package directory in the manifest.' }
+$vendorRelative = $directoryLines[0].Matches[0].Groups[1].Value
+$vendor = Join-Path $bundleRoot $vendorRelative
+
+# Reuse the trusted PowerShell file-inventory function defined above.
+$referenceFiles = Get-RuntimeHashes $fridaReference
+$packageFiles = Get-RuntimeHashes $vendor
+$packageDifferences = @(
+    foreach ($name in $referenceFiles.Keys) {
+        if (-not $packageFiles.ContainsKey($name)) { "Missing: $name" }
+        elseif ($referenceFiles[$name] -ne $packageFiles[$name]) { "Changed: $name" }
+    }
+    foreach ($name in $packageFiles.Keys) {
+        if (-not $referenceFiles.ContainsKey($name)) { "Extra: $name" }
+    }
+)
+if ($packageDifferences.Count -gt 0) {
+    $packageDifferences
+    throw 'Bundled packages differ from the independently prepared official wheel.'
+}
+"PASS: all $($referenceFiles.Count) prepared package files match; no extra files."
+```
+
+The manifest supplies only the directory location for this comparison; its
+claimed hashes are not the reference. The reference comes from the independently
+authenticated upstream wheel and trusted pip. These checks verify third-party
+material, not our launcher source or the final release archive's source identity.
+
+The temporary verification directory can be removed after these checks; it
+contains the disposable tools and comparison files. Your existing Python
+installation and its pip configuration remain unchanged.

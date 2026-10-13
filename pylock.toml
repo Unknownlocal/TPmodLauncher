@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MPL-2.0
+# PEP 751 package lock for the included Windows x64 Python.
+lock-version = "1.0"
+# Maintained by hand; release preparation validates this lock.
+created-by = "manual"
+requires-python = "==3.13.*"
+environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
+extras = []
+dependency-groups = []
+
+[[packages]]
+name = "frida"
+version = "17.23.3"
+requires-python = ">=3.7"
+
+[[packages.wheels]]
+name = "frida-17.23.3-cp37-abi3-win_amd64.whl"
+# Use the downloaded local copy for installation; url records its upstream source.
+path = ".cache/wheels/frida-17.23.3-cp37-abi3-win_amd64.whl"
+url = "https://files.pythonhosted.org/packages/5e/8f/8fe0179ec76deb88f786be19158322d0f867479d80a229a40d51fe334cbe/frida-17.23.3-cp37-abi3-win_amd64.whl"
+hashes = {sha256 = "88b1f07514c38650faf6e803ed13dfaec1ba94efa4c8ed34c1525f8c151689d4"}
+
+[[packages.attestation-identities]]
+kind = "GitHub"
+repository = "frida/frida"
