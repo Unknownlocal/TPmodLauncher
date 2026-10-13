@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Test archive extraction, checksum checks and package installation using temporary files."""
 
+from textwrap import dedent
 import hashlib
 from pathlib import Path
 import zipfile
@@ -16,7 +17,9 @@ def test_bad_download_hash_never_replaces_existing_file(tmp_path):
     source = tmp_path / "download-source"
     source.write_bytes(b"incorrect")
     with pytest.raises(release.dependencies.DependencyError, match="SHA-256 mismatch"):
-        release.download(source.as_uri(), target, hashlib.sha256(b"correct").hexdigest())
+        release.download(
+            source.as_uri(), target, hashlib.sha256(b"correct").hexdigest()
+        )
     assert target.read_bytes() == b"existing"
     assert not list(tmp_path.glob("download-*.tmp"))
 
@@ -25,7 +28,11 @@ def test_verified_download_is_reused_without_network(tmp_path):
     target = tmp_path / "artifact.whl"
     target.write_bytes(b"verified")
     # This source does not exist: successful reuse cannot involve a download.
-    release.download((tmp_path / "absent-source").as_uri(), target, hashlib.sha256(b"verified").hexdigest())
+    release.download(
+        (tmp_path / "absent-source").as_uri(),
+        target,
+        hashlib.sha256(b"verified").hexdigest(),
+    )
 
 
 def test_runtime_is_extracted_and_existing_copy_checked_without_overwrite(tmp_path):
@@ -52,7 +59,9 @@ def test_unsafe_runtime_archive_does_not_escape_libs(tmp_path):
     assert not (tmp_path / "libs/escape.py").exists()
 
 
-def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(project_factory):
+def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(
+    project_factory,
+):
     root, _ = project_factory()
     directory = release.prepare_packages(root, refresh_manifest=True)
     assert (directory / "demo/__init__.py").read_text() == "VALUE = 42\n"
@@ -64,7 +73,12 @@ def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(projec
     before = release.dependencies.file_inventory(directory)
     # Provenance-only changes do not select a new runtime directory or manifest.
     lock_path = root / "pylock.toml"
-    lock_path.write_text(lock_path.read_text().replace("hashes =", 'url = "https://example.invalid/demo-1.0-py3-none-any.whl"\nhashes ='))
+    lock_path.write_text(
+        lock_path.read_text().replace(
+            "hashes =",
+            'url = "https://example.invalid/demo-1.0-py3-none-any.whl"\nhashes =',
+        )
+    )
     assert release.prepare_packages(root) == directory
     assert (root / "bundled_packages.toml").read_bytes() == manifest
     assert release.dependencies.file_inventory(directory) == before
@@ -74,7 +88,9 @@ def test_pip_prepares_reproducible_bundle_with_licence_and_no_local_paths(projec
 
 def test_default_build_requires_reviewed_manifest(project_factory):
     root, _ = project_factory()
-    with pytest.raises(release.dependencies.DependencyError, match="--refresh-manifest"):
+    with pytest.raises(
+        release.dependencies.DependencyError, match="--refresh-manifest"
+    ):
         release.prepare_packages(root)
     assert not list((root / "libs/vendor").iterdir())
     assert not (root / "bundled_packages.toml").exists()
@@ -95,7 +111,9 @@ def test_build_hash_failure_does_not_change_published_bundle(project_factory):
     directory = release.prepare_packages(root, refresh_manifest=True)
     wheel.write_bytes(b"corrupt wheel")
     before = release.dependencies.file_inventory(directory)
-    with pytest.raises(release.dependencies.DependencyError, match="Build wheel SHA-256 mismatch"):
+    with pytest.raises(
+        release.dependencies.DependencyError, match="Build wheel SHA-256 mismatch"
+    ):
         release.prepare_packages(root)
     assert release.dependencies.file_inventory(directory) == before
 
@@ -104,22 +122,37 @@ def test_pip_failure_cannot_publish_partial_packages(project_factory):
     root, wheel = project_factory()
     # A hash-approved but invalid archive gets as far as real pip, which must fail.
     import subprocess
+
     bad = b"not a wheel archive"
     wheel.write_bytes(bad)
     lock = root / "pylock.toml"
     import re
-    lock.write_text(re.sub(r'sha256 = "[a-f0-9]+"', f'sha256 = "{hashlib.sha256(bad).hexdigest()}"', lock.read_text()))
+
+    lock.write_text(
+        re.sub(
+            r'sha256 = "[a-f0-9]+"',
+            f'sha256 = "{hashlib.sha256(bad).hexdigest()}"',
+            lock.read_text(),
+        )
+    )
     with pytest.raises(subprocess.CalledProcessError):
         release.prepare_packages(root, refresh_manifest=True)
     assert not list((root / "libs/vendor").iterdir())
     assert not (root / "bundled_packages.toml").exists()
 
 
-def test_target_python_markers_are_checked_independently_of_developer_python(project_factory):
+def test_target_python_markers_are_checked_independently_of_developer_python(
+    project_factory,
+):
     # This dependency applies to embedded Python 3.13 even when the build Python is newer.
-    root, _ = project_factory(metadata='Name: demo\nVersion: 1.0\nRequires-Python: >=3.13\n'
-                                        'Requires-Dist: missing-package; python_version < "3.14"\n')
-    with pytest.raises(release.dependencies.DependencyError, match="Unfulfilled embedded-runtime requirement"):
+    root, _ = project_factory(
+        metadata="Name: demo\nVersion: 1.0\nRequires-Python: >=3.13\n"
+        'Requires-Dist: missing-package; python_version < "3.14"\n'
+    )
+    with pytest.raises(
+        release.dependencies.DependencyError,
+        match="Unfulfilled embedded-runtime requirement",
+    ):
         release.prepare_packages(root, refresh_manifest=True)
     assert not list((root / "libs/vendor").iterdir())
     assert not (root / "bundled_packages.toml").exists()
@@ -129,17 +162,24 @@ def test_normalized_package_metadata_matches_standard_lock(project_factory, tmp_
     # Names and versions can use equivalent spellings in the lock and installed metadata.
     root, _ = project_factory()
     lock = root / "pylock.toml"
-    lock.write_text(lock.read_text().replace('name = "demo"', 'name = "example-package"')
-                    .replace('demo-1.0-py3-none-any.whl', 'example_package-1.0-py3-none-any.whl')
-                    .replace('version = "1.0"', 'version = "1.0.0"'))
+    lock.write_text(
+        lock.read_text()
+        .replace('name = "demo"', 'name = "example-package"')
+        .replace("demo-1.0-py3-none-any.whl", "example_package-1.0-py3-none-any.whl")
+        .replace('version = "1.0"', 'version = "1.0.0"')
+    )
     info = tmp_path / "example_package-1.0.dist-info"
     info.mkdir()
-    (info / "METADATA").write_text("Name: example_package\nVersion: 1.0\nRequires-Python: >=3.13\n")
+    (info / "METADATA").write_text(
+        "Name: example_package\nVersion: 1.0\nRequires-Python: >=3.13\n"
+    )
     runtime = release.read_settings(root)["runtime"]
     release.validate_packages(tmp_path, release.read_lock(root, runtime), runtime)
 
 
-@pytest.mark.parametrize("damage", ["syntax", "version", "hash", "format", "wheel-path", "platform"])
+@pytest.mark.parametrize(
+    "damage", ["syntax", "version", "hash", "format", "wheel-path", "platform"]
+)
 def test_invalid_build_lock_stops_preparation(project_factory, damage):
     root, _ = project_factory()
     path = root / "pylock.toml"
@@ -166,16 +206,21 @@ def test_lock_markers_select_only_embedded_runtime_dependencies(project_factory)
     root, _ = project_factory()
     lock = root / "pylock.toml"
     # A package conditional on older Python need not have a Windows wheel for this release.
-    lock.write_text(lock.read_text() + '''
-[[packages]]
-name = "old-python-helper"
-version = "1.0"
-marker = "python_version < '3.11'"
-[[packages.wheels]]
-name = "old_python_helper-1.0-py3-none-any.whl"
-path = ".cache/wheels/old_python_helper-1.0-py3-none-any.whl"
-hashes = {sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
-''')
+    lock.write_text(
+        lock.read_text() + dedent("""\
+
+            [[packages]]
+            name = "old-python-helper"
+            version = "1.0"
+            marker = "python_version < '3.11'"
+            [[packages.wheels]]
+            name = "old_python_helper-1.0-py3-none-any.whl"
+            path = ".cache/wheels/old_python_helper-1.0-py3-none-any.whl"
+            hashes = {sha256 = "0000000000000000000000000000000000000000000000000000000000000000"}
+            """),
+    )
     runtime = release.read_settings(root)["runtime"]
     assert [package.name for package, _ in release.read_lock(root, runtime)] == ["demo"]
-    assert (release.prepare_packages(root, refresh_manifest=True) / "demo/__init__.py").exists()
+    assert (
+        release.prepare_packages(root, refresh_manifest=True) / "demo/__init__.py"
+    ).exists()

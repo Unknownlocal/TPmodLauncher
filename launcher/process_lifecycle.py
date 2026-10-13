@@ -26,8 +26,14 @@ def validate_command(command, expected):
         raise LaunchError("Supply Steam's original executable and arguments after --.")
     executable = Path(command[0])
     # Do not search PATH or interpret Steam URLs, shell commands or another program.
-    if not executable.is_absolute() or not executable.is_file() or canonical(executable) != canonical(expected):
-        raise LaunchError(f"The Steam command must start the installed game: {expected}")
+    if (
+        not executable.is_absolute()
+        or not executable.is_file()
+        or canonical(executable) != canonical(expected)
+    ):
+        raise LaunchError(
+            f"The Steam command must start the installed game: {expected}"
+        )
     return [str(executable.resolve()), *command[1:]]
 
 
@@ -45,12 +51,16 @@ def controller_lock(path):
         try:
             if os.name == "nt":
                 import msvcrt
+
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
-            raise LaunchError("Another controller is running, or the controller lock is unavailable.") from error
+            raise LaunchError(
+                "Another controller is running, or the controller lock is unavailable."
+            ) from error
         # Closing the file releases the OS lock; process termination also releases it.
         # Keep the lock file itself, so another opener cannot lock a different replacement file.
         yield
@@ -62,10 +72,15 @@ def reporter(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.Logger("modLauncher", logging.INFO)
     # The controller already holds its lock, so clearing this file cannot erase another run's log.
-    handlers = [logging.StreamHandler(), logging.FileHandler(path, mode="w", encoding="utf-8")]
+    handlers = [
+        logging.StreamHandler(),
+        logging.FileHandler(path, mode="w", encoding="utf-8"),
+    ]
     try:
         for handler in handlers:
-            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+            )
             logger.addHandler(handler)
         yield logger
     finally:
@@ -76,11 +91,23 @@ def reporter(path):
 class Controller:
     """Serialize Frida callbacks and keep tracking across the game's process replacements."""
 
-    def __init__(self, device, command, report, *, restart_grace=2.0, clock=time.monotonic):
+    def __init__(
+        self,
+        device,
+        command,
+        report,
+        *,
+        restart_grace=2.0,
+        clock=time.monotonic,
+        bridge_factory=None,
+    ):
         # device is Frida's local device; command is validated argv; report receives one log line.
+        # bridge_factory optionally supplies our trusted script for each verified session.
         # clock and restart_grace make the restart-gap policy testable without sleeps.
         if not math.isfinite(restart_grace) or restart_grace <= 0:
-            raise LaunchError("Restart grace must be a finite number greater than zero.")
+            raise LaunchError(
+                "Restart grace must be a finite number greater than zero."
+            )
         self.device = device
         self.command = list(command)
         self.game = canonical(command[0])
@@ -89,6 +116,8 @@ class Controller:
         self.clock = clock
         self.events = queue.Queue()
         self.sessions = {}
+        self.bridges = {}
+        self.bridge_factory = bridge_factory
         self.parents = set()
         self.held = set()
         self.resumed = set()
@@ -113,8 +142,12 @@ class Controller:
     def _matches(self, pid):
         # Fail closed if metadata is missing or the executable cannot be identified.
         processes = self._processes([pid])
-        return any(process.pid == pid and process.parameters.get("path")
-                   and canonical(process.parameters["path"]) == self.game for process in processes)
+        return any(
+            process.pid == pid
+            and process.parameters.get("path")
+            and canonical(process.parameters["path"]) == self.game
+            for process in processes
+        )
 
     def _attach(self, pid):
         # Attach only to verified game executables from our spawned/gated process chain.
@@ -125,14 +158,29 @@ class Controller:
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
             del self.sessions[pid]
+            self.bridges.pop(pid, None)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
         session = self.device.attach(pid)
         self.parents.add(pid)
         # Store the session before enabling gating so partial setup is still cleaned up.
         self.sessions[pid] = session
-        session.on("detached", lambda reason, crash=None: self.events.put(("detached", (pid, session, reason))))
+        session.on(
+            "detached",
+            lambda reason, crash=None: self.events.put(
+                ("detached", (pid, session, reason))
+            ),
+        )
         session.enable_child_gating()
+        if self.bridge_factory is not None:
+            # Script messages are queued just like process events; this thread owns session state.
+            bridge = self.bridge_factory(
+                session,
+                pid,
+                lambda message: self.events.put(("bridge", (pid, session, message))),
+            )
+            self.bridges[pid] = bridge
+            bridge.start()
         self.idle_since = None
         self.report(f"ATTACHED pid={pid}; child tracking active; no mod code loaded")
 
@@ -152,14 +200,23 @@ class Controller:
     def start(self):
         """Spawn, attach and enable child tracking before allowing the game to run."""
         # Refuse a second game instance even if the existing one was launched normally.
-        if any(process.parameters.get("path") and canonical(process.parameters["path"]) == self.game
-               for process in self._processes()):
-            raise LaunchError("The game is already running; close it before starting through this launcher.")
+        if any(
+            process.parameters.get("path")
+            and canonical(process.parameters["path"]) == self.game
+            for process in self._processes()
+        ):
+            raise LaunchError(
+                "The game is already running; close it before starting through this launcher."
+            )
         # Native callbacks only queue events; the controller thread owns all session changes.
         self._subscribe("child-added", lambda child: self.events.put(("child", child)))
         self._subscribe("lost", lambda: self.events.put(("lost", None)))
-        pid = self.device.spawn(self.command, envp=os.environ.copy(),
-                                cwd=str(Path(self.command[0]).parent), stdio="inherit")
+        pid = self.device.spawn(
+            self.command,
+            envp=os.environ.copy(),
+            cwd=str(Path(self.command[0]).parent),
+            stdio="inherit",
+        )
         self.held.add(pid)
         self.report(f"SPAWNED pid={pid}")
         try:
@@ -186,6 +243,7 @@ class Controller:
                     # Unix exec can replace the process image while retaining its PID.
                     if getattr(child, "origin", None) == "exec":
                         previous = self.sessions.pop(child.pid, None)
+                        self.bridges.pop(child.pid, None)
                         self.resumed.discard(child.pid)
                         if previous is not None and not previous.is_detached:
                             previous.detach()
@@ -204,10 +262,37 @@ class Controller:
             pid, session, reason = value
             if self.sessions.get(pid) is session:
                 self.report(f"DETACHED pid={pid}: {reason}")
-                if not self.stopping and reason not in ("process-terminated", "process-replaced"):
+                if not self.stopping and reason not in (
+                    "process-terminated",
+                    "process-replaced",
+                ):
                     # Retain the handle for cleanup when tracking fails while the process is alive.
-                    raise LaunchError(f"Game tracking ended unexpectedly for pid={pid}: {reason}")
+                    raise LaunchError(
+                        f"Game tracking ended unexpectedly for pid={pid}: {reason}"
+                    )
                 del self.sessions[pid]
+                self.bridges.pop(pid, None)
+        elif kind == "bridge" and not self.stopping:
+            pid, session, message = value
+            if self.sessions.get(pid) is not session:
+                return  # A delayed message cannot describe a replacement's manager.
+            if message.get("type") == "error":
+                raise LaunchError(
+                    f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}"
+                )
+            payload = message.get("payload", {})
+            event = payload.get("event")
+            if event == "error":
+                raise LaunchError(
+                    f"Hook manager failed for pid={pid}: {payload.get('detail', 'unknown error')}"
+                )
+            if event == "manager":
+                status = payload.get("status", {})
+                if status.get("state") != "ready":
+                    raise LaunchError(f"Hook manager is not ready for pid={pid}")
+                self.report(f"HOOK MANAGER READY pid={pid}; no mod code loaded")
+            elif event in ("waiting", "transport"):
+                self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:
             raise LaunchError("The local Frida device was lost.")
 
@@ -226,14 +311,20 @@ class Controller:
             for pid, session in list(self.sessions.items()):
                 if pid not in live:
                     del self.sessions[pid]
+                    self.bridges.pop(pid, None)
                     # Drop the local handle without relying on a pending callback for shutdown.
                     try:
                         session.detach()
                     except Exception:
                         pass  # The process is gone; the handle may already be detached.
                     self.report(f"EXITED pid={pid}")
-                elif not live[pid].parameters.get("path") or canonical(live[pid].parameters["path"]) != self.game:
-                    raise LaunchError(f"Tracked process identity changed for pid={pid}.")
+                elif (
+                    not live[pid].parameters.get("path")
+                    or canonical(live[pid].parameters["path"]) != self.game
+                ):
+                    raise LaunchError(
+                        f"Tracked process identity changed for pid={pid}."
+                    )
             self.next_check = now + 0.5
         if self.sessions or self.held:
             self.idle_since = None
@@ -241,13 +332,16 @@ class Controller:
         # Wait for queued/gated replacements instead of treating the first parent exit as game exit.
         if self.idle_since is None:
             self.idle_since = now
-            self.report(f"WAITING FOR RESTART; no game processes remain; grace={self.restart_grace:g}s")
+            self.report(
+                f"WAITING FOR RESTART; no game processes remain; grace={self.restart_grace:g}s"
+            )
         return now - self.idle_since >= self.restart_grace
 
     def close(self):
         """Release owned children, disable child gating and detach every remaining session."""
         self.stopping = True
         self.resumed.clear()
+
         # Keep event subscriptions until gating is disabled and late children have been released.
         def attempt(action, session=None):
             try:
@@ -270,7 +364,11 @@ class Controller:
                 attempt(lambda: self._event(*self.events.get_nowait()))
 
         attempt(release_pending)
-        for session in list(self.sessions.values()):
+        for pid, session in list(self.sessions.items()):
+            bridge = self.bridges.pop(pid, None)
+            if bridge is not None:
+                # Restore Python wrappers before detaching the script/session from a live process.
+                attempt(bridge.close, session)
             if not session.is_detached:
                 attempt(session.disable_child_gating, session)
             if not session.is_detached:
@@ -280,23 +378,35 @@ class Controller:
         for pid in list(self.held):
             attempt(lambda pid=pid: self._resume(pid))
         for signal, callback in self.subscriptions:
-            attempt(lambda signal=signal, callback=callback: self.device.off(signal, callback))
+            attempt(
+                lambda signal=signal, callback=callback: self.device.off(
+                    signal, callback
+                )
+            )
         self.subscriptions.clear()
         self.sessions.clear()
+        self.bridges.clear()
         if self.cleanup_failed:
             self.report("CONTROLLER STOPPED; cleanup incomplete; see errors above")
         else:
             self.report("CONTROLLER STOPPED; cleanup complete")
 
 
-def run_launcher(frida, command, lock_path, log_path, *, restart_grace=2.0):
+def run_launcher(
+    frida, command, lock_path, log_path, *, restart_grace=2.0, bridge_factory=None
+):
     """Run one controller and return 0 on normal exit, 1 on failure or 130 on interruption."""
     # Acquire ownership before opening the log: a rejected duplicate must leave it untouched.
     with controller_lock(lock_path):
         with reporter(log_path) as logger:
             try:
-                controller = Controller(frida.get_local_device(), command, logger.info,
-                                        restart_grace=restart_grace)
+                controller = Controller(
+                    frida.get_local_device(),
+                    command,
+                    logger.info,
+                    restart_grace=restart_grace,
+                    bridge_factory=bridge_factory,
+                )
                 code = 0
                 try:
                     controller.start()

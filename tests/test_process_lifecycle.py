@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Test game-command validation, event ordering, restart gaps and controller cleanup."""
 
+from textwrap import dedent
 import os
 from pathlib import Path
 import subprocess
@@ -66,8 +67,11 @@ class Device:
     def enumerate_processes(self, **options):
         assert options["scope"] == "metadata"
         pids = options.get("pids", self.processes)
-        return [SimpleNamespace(pid=pid, parameters={"path": self.processes[pid]})
-                for pid in pids if pid in self.processes]
+        return [
+            SimpleNamespace(pid=pid, parameters={"path": self.processes[pid]})
+            for pid in pids
+            if pid in self.processes
+        ]
 
     def enumerate_pending_children(self):
         return list(self.pending.values())
@@ -106,20 +110,31 @@ def rig(tmp_path):
     device = Device(game)
     messages = []
     now = [0.0]
-    controller = lifecycle.Controller(device, [str(game), "argument with spaces", "--game-option"],
-                                      messages.append, restart_grace=5, clock=lambda: now[0])
+    controller = lifecycle.Controller(
+        device,
+        [str(game), "argument with spaces", "--game-option"],
+        messages.append,
+        restart_grace=5,
+        clock=lambda: now[0],
+    )
     return device, controller, messages, now
 
 
 def test_command_preserves_arguments_and_rejects_another_executable(tmp_path):
     game = tmp_path / "game with spaces.exe"
     game.write_bytes(b"fixture")
-    command = [str(game), "", "space and \"quote\"", "--flag", "x&y"]
+    command = [str(game), "", 'space and "quote"', "--flag", "x&y"]
     assert lifecycle.validate_command(command, game) == command
     other = tmp_path / "other" / game.name
     other.parent.mkdir()
     other.write_bytes(b"same filename")
-    for invalid in ([], [str(other)], [game.name], ["steam://run/123"], [str(game), "bad\0arg"]):
+    for invalid in (
+        [],
+        [str(other)],
+        [game.name],
+        ["steam://run/123"],
+        [str(game), "bad\0arg"],
+    ):
         with pytest.raises(lifecycle.LaunchError):
             lifecycle.validate_command(invalid, game)
 
@@ -128,7 +143,12 @@ def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):
     device, controller, _, _ = rig
     try:
         controller.start()
-        assert [call[0] for call in device.calls] == ["spawn", "attach", "gate", "resume"]
+        assert [call[0] for call in device.calls] == [
+            "spawn",
+            "attach",
+            "gate",
+            "resume",
+        ]
         _, arguments, options = device.calls[0]
         assert arguments == controller.command
         assert options["cwd"] == str(Path(controller.command[0]).parent)
@@ -153,7 +173,9 @@ def test_initial_setup_failure_resumes_game_and_removes_tracking(rig, failure):
     assert all(not session.gating for session in device.sessions.values())
 
 
-def test_children_are_verified_and_helpers_and_late_children_are_released(rig, tmp_path):
+def test_children_are_verified_and_helpers_and_late_children_are_released(
+    rig, tmp_path
+):
     device, controller, _, _ = rig
     controller.start()
     game_child = device.child(20, controller.game)
@@ -287,17 +309,28 @@ def test_existing_game_is_rejected_before_spawn(rig):
 def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tmp_path):
     lock = tmp_path / "controller.lock"
     probe = tmp_path / "lock_probe.py"
-    probe.write_text("from launcher.process_lifecycle import controller_lock, LaunchError\n"
-                     "from pathlib import Path\nimport sys\n"
-                     "try:\n    with controller_lock(Path(sys.argv[1])): pass\n"
-                     "except LaunchError:\n    raise SystemExit(7)\n")
+    probe.write_text(
+        dedent("""\
+            from launcher.process_lifecycle import controller_lock, LaunchError
+            from pathlib import Path
+            import sys
+            try:
+                with controller_lock(Path(sys.argv[1])): pass
+            except LaunchError:
+                raise SystemExit(7)
+            """),
+    )
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     command = [sys.executable, str(probe), str(lock)]
     with lifecycle.controller_lock(lock):
-        result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=20)
+        result = subprocess.run(
+            command, env=environment, capture_output=True, text=True, timeout=20
+        )
         assert result.returncode == 7, result.stderr
-    result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=20)
+    result = subprocess.run(
+        command, env=environment, capture_output=True, text=True, timeout=20
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -306,7 +339,9 @@ def test_failed_resume_is_reported_and_cleanup_still_detaches_sessions(rig, tmp_
     device.failure = "resume"
     frida = SimpleNamespace(get_local_device=lambda: device)
     log = tmp_path / "launcher.log"
-    result = lifecycle.run_launcher(frida, controller.command, tmp_path / "controller.lock", log)
+    result = lifecycle.run_launcher(
+        frida, controller.command, tmp_path / "controller.lock", log
+    )
     assert result == 1
     assert "Could not resume" in log.read_text() and "CLEANUP ERROR" in log.read_text()
     assert "CONTROLLER STOPPED; cleanup incomplete" in log.read_text()
@@ -328,3 +363,80 @@ def test_duplicate_launcher_preserves_existing_log(rig, tmp_path):
             lifecycle.run_launcher(frida, controller.command, lock, log)
     assert log.read_bytes() == b"active-session-log\n"
     assert not device.calls
+
+
+@pytest.mark.parametrize("failure", [None, "start", "close"])
+def test_bridge_ordering_and_failure_cleanup(rig, failure):
+    device, controller, messages, _ = rig
+    callbacks = {}
+
+    class OwnedBridge:
+        def __init__(self, session, pid, message):
+            callbacks[pid] = message
+            self.pid = pid
+
+        def start(self):
+            device.calls.append(("bridge-start", self.pid))
+            if failure == "start":
+                raise RuntimeError("bridge startup failed")
+
+        def close(self):
+            device.calls.append(("bridge-close", self.pid))
+            if failure == "close":
+                raise RuntimeError("bridge cleanup failed")
+
+    controller.bridge_factory = OwnedBridge
+    try:
+        if failure == "start":
+            with pytest.raises(RuntimeError, match="startup"):
+                controller.start()
+        else:
+            controller.start()
+            callbacks[10](
+                {
+                    "type": "send",
+                    "payload": {"event": "manager", "status": {"state": "ready"}},
+                }
+            )
+            controller.poll()
+            assert any("HOOK MANAGER READY pid=10" in message for message in messages)
+            old = callbacks[10]
+            first = controller.sessions[10]
+            first.is_detached = True
+            controller._attach(10)
+            old(
+                {"type": "send", "payload": {"event": "error", "detail": "stale error"}}
+            )
+            controller.poll()  # A detached bridge must not fail the replacement's session.
+    finally:
+        controller.close()
+    events = [call[0] for call in device.calls]
+    assert events.index("bridge-start") < events.index("resume")
+    assert events.index("bridge-close") < events.index("detach")
+    assert not controller.sessions and not controller.bridges and not device.pending
+    assert controller.cleanup_failed == (failure == "close")
+
+
+def test_bridge_bootstrap_error_is_not_reported_as_ready(rig):
+    _, controller, messages, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    controller.events.put(
+        (
+            "bridge",
+            (
+                10,
+                session,
+                {
+                    "type": "send",
+                    "payload": {"event": "error", "detail": "unsupported target"},
+                },
+            ),
+        )
+    )
+    try:
+        with pytest.raises(lifecycle.LaunchError, match="unsupported target"):
+            controller.poll()
+        assert not any("HOOK MANAGER READY" in message for message in messages)
+    finally:
+        controller.close()

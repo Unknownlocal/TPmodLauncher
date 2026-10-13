@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Test bundled Python startup, Frida imports, package damage and import isolation."""
 
+from textwrap import dedent
 import hashlib
 import os
 from pathlib import Path
@@ -11,17 +12,36 @@ import pytest
 
 
 @pytest.mark.embedded
-def test_relocated_release_imports_frida_without_installation(embedded_project, tmp_path):
+def test_relocated_release_imports_frida_without_installation(
+    embedded_project, tmp_path
+):
     root = embedded_project
     runtime = root / "libs/python-3.13.16-embed-amd64"
-    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in runtime.iterdir() if p.is_file()}
-    command = [str(runtime / "python.exe"), "-B", str(root / "launcher/entry.py"), "--check-only"]
+    before = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in runtime.iterdir()
+        if p.is_file()
+    }
+    command = [
+        str(runtime / "python.exe"),
+        "-B",
+        str(root / "launcher/entry.py"),
+        "--check-only",
+    ]
     # An unrelated working directory is deliberate; paths must follow entry.py.
-    first = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=60)
-    second = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    first = subprocess.run(
+        command, cwd=tmp_path, capture_output=True, text=True, timeout=60
+    )
+    second = subprocess.run(
+        command, cwd=tmp_path, capture_output=True, text=True, timeout=60
+    )
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert first.stdout == second.stdout and "Frida 17.23.3" in first.stdout
-    assert before == {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in runtime.iterdir() if p.is_file()}
+    assert before == {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in runtime.iterdir()
+        if p.is_file()
+    }
     assert not list((root / "libs/vendor").rglob("__pycache__"))
     assert not (root / ".state").exists() and not (root / ".cache").exists()
     assert not (root / "libs/wheels").exists()
@@ -32,43 +52,89 @@ def test_pythonpath_and_user_packages_cannot_supply_frida(embedded_project, tmp_
     root = embedded_project
     hostile = tmp_path / "hostile"
     (hostile / "frida").mkdir(parents=True)
-    (hostile / "frida/__init__.py").write_text("raise RuntimeError('foreign Frida imported')\n")
-    (hostile / "sitecustomize.py").write_text("raise RuntimeError('foreign site imported')\n")
+    (hostile / "frida/__init__.py").write_text(
+        "raise RuntimeError('foreign Frida imported')\n"
+    )
+    (hostile / "sitecustomize.py").write_text(
+        "raise RuntimeError('foreign site imported')\n"
+    )
     environment = os.environ.copy()
-    environment.update(PYTHONPATH=str(hostile), PYTHONUSERBASE=str(hostile), PYTHONHOME=str(hostile))
-    command = [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(root / "launcher/entry.py"), "--check-only"]
-    result = subprocess.run(command, cwd=hostile, env=environment, capture_output=True, text=True, timeout=60)
-    assert result.returncode == 0 and "Bundled dependencies ready: Frida 17.23.3" in result.stdout, result.stderr
+    environment.update(
+        PYTHONPATH=str(hostile), PYTHONUSERBASE=str(hostile), PYTHONHOME=str(hostile)
+    )
+    command = [
+        str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+        "-B",
+        str(root / "launcher/entry.py"),
+        "--check-only",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=hostile,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert (
+        result.returncode == 0
+        and "Bundled dependencies ready: Frida 17.23.3" in result.stdout
+    ), result.stderr
 
 
 @pytest.mark.embedded
 def test_entry_rejects_developer_python_instead_of_using_its_packages(embedded_project):
-    result = subprocess.run([sys.executable, "-I", str(embedded_project / "launcher/entry.py"), "--check-only"], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(embedded_project / "launcher/entry.py"),
+            "--check-only",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
     assert result.returncode == 1 and "Use this project's" in result.stderr
 
 
 @pytest.mark.embedded
-def test_embedded_startup_cannot_use_pip_network_or_subprocesses(embedded_project, tmp_path):
+def test_embedded_startup_cannot_use_pip_network_or_subprocesses(
+    embedded_project, tmp_path
+):
     root = embedded_project
     probe = root / "launcher/readonly_probe.py"
-    probe.write_text('''import importlib.util
-from pathlib import Path
-import runpy
-import sys
-assert importlib.util.find_spec("pip") is None
-def unexpected(*args, **kwargs):
-    raise AssertionError("startup attempted network or subprocess setup")
-def audit(event, args):
-    if event in ("socket.connect", "subprocess.Popen"):
-        unexpected()
-sys.addaudithook(audit)
-sys.argv = ["entry.py", "--check-only"]
-runpy.run_path(str(Path(__file__).with_name("entry.py")), run_name="__main__")
-''')
+    probe.write_text(
+        dedent(
+            """\
+            import importlib.util
+            from pathlib import Path
+            import runpy
+            import sys
+            assert importlib.util.find_spec("pip") is None
+            def unexpected(*args, **kwargs):
+                raise AssertionError("startup attempted network or subprocess setup")
+            def audit(event, args):
+                if event in ("socket.connect", "subprocess.Popen"):
+                    unexpected()
+            sys.addaudithook(audit)
+            sys.argv = ["entry.py", "--check-only"]
+            runpy.run_path(str(Path(__file__).with_name("entry.py")), run_name="__main__")
+            """
+        ),
+    )
     try:
-        command = [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(probe)]
-        result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=60)
-        assert result.returncode == 0 and "Frida 17.23.3" in result.stdout, result.stderr
+        command = [
+            str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+            "-B",
+            str(probe),
+        ]
+        result = subprocess.run(
+            command, cwd=tmp_path, capture_output=True, text=True, timeout=60
+        )
+        assert (
+            result.returncode == 0 and "Frida 17.23.3" in result.stdout
+        ), result.stderr
     finally:
         probe.unlink()
 
@@ -76,15 +142,24 @@ runpy.run_path(str(Path(__file__).with_name("entry.py")), run_name="__main__")
 @pytest.mark.embedded
 def test_entry_reports_package_damage_without_repair(embedded_project):
     from launcher import bundled_dependencies as dependencies
+
     root = embedded_project
     directory = dependencies.verify_bundle(root)
     payload = directory / "frida/__init__.py"
     original = payload.read_bytes()
     try:
         payload.write_bytes(b"damaged package")
-        command = [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(root / "launcher/entry.py"), "--check-only"]
+        command = [
+            str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+            "-B",
+            str(root / "launcher/entry.py"),
+            "--check-only",
+        ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-        assert result.returncode == 1 and "Restore the complete launcher release" in result.stderr
+        assert (
+            result.returncode == 1
+            and "Restore the complete launcher release" in result.stderr
+        )
         assert "Traceback" not in result.stderr
         assert payload.read_bytes() == b"damaged package"
         assert not (root / ".state").exists() and not (root / ".cache").exists()
@@ -93,7 +168,9 @@ def test_entry_reports_package_damage_without_repair(embedded_project):
 
 
 @pytest.mark.embedded
-def test_entry_rejects_invalid_launch_requests_before_starting_processes(embedded_project):
+def test_entry_rejects_invalid_launch_requests_before_starting_processes(
+    embedded_project,
+):
     root = embedded_project
     executable = root / "libs/python-3.13.16-embed-amd64/python.exe"
     entry = root / "launcher/entry.py"
@@ -103,7 +180,11 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(embedde
         (["--restart-grace", "nan", "--", str(executable)], 2, "finite number"),
         (["--", str(executable)], 1, "installed game"),
     ):
-        result = subprocess.run([str(executable), "-B", str(entry), *arguments],
-                                capture_output=True, text=True, timeout=20)
+        result = subprocess.run(
+            [str(executable), "-B", str(entry), *arguments],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
         assert result.returncode == code and message in result.stderr, result.stderr
     assert not (root / ".state").exists() and not (root / "logs").exists()

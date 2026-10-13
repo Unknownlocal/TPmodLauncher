@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MPL-2.0
+// Trusted transport: run our fixed manager source at a Python main-thread GIL boundary.
+const config = __HOOK_CONFIG__;
+let observer = null;
+let listener = null;
+let busy = false;
+let ready = false;
+let stopped = false;
+let failed = null;
+let pending = null;
+let lastAttempt = 0;
+
+function detachTransport() {
+    // No callback pointers are queued in Python, so these hooks can be detached on unload.
+    if (listener) { listener.detach(); listener = null; }
+    if (observer) { observer.detach(); observer = null; }
+}
+
+function fail(error) {
+    failed = String(error).slice(0, 4096);
+    send({ event: 'error', detail: failed });
+    if (pending) { pending.reject(new Error(failed)); pending = null; }
+    setImmediate(detachTransport);
+}
+
+function enqueue(operation, id) {
+    // The RPC thread only queues data; it must never call Python's API itself.
+    if (operation !== 'status' && operation !== 'shutdown') throw new Error('Unknown bridge operation');
+    if (failed) throw new Error(failed);
+    if (stopped) throw new Error('Bridge is stopped');
+    if (pending) throw new Error('A bridge request is already pending');
+    if (!ready && operation === 'shutdown') {
+        stopped = true;
+        detachTransport();
+        return { state: 'not-started' };
+    }
+    return new Promise((resolve, reject) => { pending = { operation, id, resolve, reject }; });
+}
+
+send({ event: 'waiting', detail: 'Waiting for python313.dll' });
+observer = Process.attachModuleObserver({
+    onAdded(module) {
+        // This native adapter supports the game's shipped Windows x64 CPython 3.13 only.
+        const name = module.name.toLowerCase();
+        if (!/^python3\d+[td]?\.dll$/.test(name) || listener || failed || stopped) return;
+        try {
+            if (name !== 'python313.dll') throw new Error('Unsupported Python DLL: ' + name);
+            if (Process.arch !== 'x64') throw new Error('Bridge requires x64 CPython 3.13');
+            const options = { scheduling: 'exclusive' };
+            function api(name, result, args) {
+                return new NativeFunction(module.getExportByName(name), result, args, options);
+            }
+            const version = api('Py_GetVersion', 'pointer', []);
+            if (!version().readUtf8String().startsWith('3.13.')) throw new Error('Unsupported Python version');
+            const initialized = api('Py_IsInitialized', 'int', []);
+            const finalizing = api('Py_IsFinalizing', 'int', []);
+            const threadState = api('PyThreadState_GetUnchecked', 'pointer', []);
+            const interpreter = api('PyThreadState_GetInterpreter', 'pointer', ['pointer']);
+            const mainInterpreter = api('PyInterpreterState_Main', 'pointer', []);
+            const error = api('PyErr_Occurred', 'pointer', []);
+            const clearError = api('PyErr_Clear', 'void', []);
+            const addModule = api('PyImport_AddModule', 'pointer', ['pointer']);
+            const moduleDict = api('PyModule_GetDict', 'pointer', ['pointer']);
+            const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer']);
+            const utf8 = api('PyUnicode_AsUTF8', 'pointer', ['pointer']);
+            const decref = api('Py_DecRef', 'void', ['pointer']);
+            const mainName = Memory.allocUtf8String('__main__');
+            listener = Interceptor.attach(module.getExportByName('PyEval_SaveThread'), {
+                onEnter() {
+                    // Before SaveThread executes, this thread still holds the GIL and its thread state.
+                    // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
+                    if (busy || stopped || failed || (ready && !pending)) return;
+                    if (!initialized() || finalizing()) return;
+                    const state = threadState();
+                    if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
+                    if (!pending && Date.now() - lastAttempt < 100) return;
+                    lastAttempt = Date.now();
+                    busy = true;
+                    let result = ptr(0);
+                    try {
+                        const request = pending || { operation: 'status' };
+                        const expression = config.prefix + JSON.stringify(JSON.stringify({ operation: request.operation })) + config.suffix;
+                        const source = Memory.allocUtf8String(expression);
+                        const main = addModule(mainName); // Borrowed: never decrement this reference.
+                        if (main.isNull()) throw new Error('No Python main module');
+                        const globals = moduleDict(main); // Borrowed dictionary, unchanged by our transient namespace.
+                        if (globals.isNull()) throw new Error('No Python main dictionary');
+                        result = evaluate(source, 258, globals, globals, ptr(0)); // 258 means a Python expression.
+                        if (result.isNull()) throw new Error('Manager bootstrap evaluation failed');
+                        const text = utf8(result);
+                        if (text.isNull()) throw new Error('Manager returned a non-string response');
+                        const value = text.readUtf8String();
+                        if (value.startsWith('WAIT:')) {
+                            // A busy worker must not prevent a nearby main-thread attempt.
+                            lastAttempt = 0;
+                            return;
+                        }
+                        const response = JSON.parse(value);
+                        if (response.event !== 'manager') throw new Error(response.detail || 'Invalid manager response');
+                        if (!ready) {
+                            ready = true;
+                            send(response);
+                        }
+                        if (pending) {
+                            const completed = pending;
+                            pending = null;
+                            if (completed.operation === 'shutdown') {
+                                stopped = true;
+                                setImmediate(detachTransport);
+                            }
+                            completed.resolve(response.status);
+                        }
+                    } catch (failure) {
+                        // We entered with no Python error; clear only errors raised by our own evaluation.
+                        clearError();
+                        fail(failure);
+                    } finally {
+                        // The expression result is a new reference, owned by this callback.
+                        if (!result.isNull()) decref(result);
+                        busy = false;
+                    }
+                }
+            });
+            send({ event: 'transport', detail: 'Waiting for Python main-thread readiness' });
+        } catch (failure) { fail(failure); }
+    }
+});
+function receiveRequests() {
+    recv('manager-request', message => {
+        // Replies are data records; the client owns the timeout and matches replies by request ID.
+        try {
+            Promise.resolve(enqueue(message.operation, message.id)).then(
+                status => send({ event: 'reply', id: message.id, status }),
+                error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
+            );
+        } catch (error) {
+            send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) });
+        }
+        receiveRequests();
+    });
+}
+function receiveCancellation() {
+    recv('manager-cancel', message => {
+        // A timed-out caller must not leave a request blocking later status/shutdown calls.
+        if (pending && pending.id === message.id) {
+            const cancelled = pending;
+            pending = null;
+            cancelled.reject(new Error('Bridge request cancelled'));
+        }
+        receiveCancellation();
+    });
+}
+receiveRequests();
+receiveCancellation();

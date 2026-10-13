@@ -12,8 +12,11 @@ from launcher import bundled_dependencies as dependencies
 
 def snapshot(root):
     """Return file bytes and modification times indexed by paths relative to root."""
-    return {p.relative_to(root).as_posix(): (p.read_bytes(), p.stat().st_mtime_ns)
-            for p in root.rglob("*") if p.is_file()}
+    return {
+        p.relative_to(root).as_posix(): (p.read_bytes(), p.stat().st_mtime_ns)
+        for p in root.rglob("*")
+        if p.is_file()
+    }
 
 
 def test_bundle_verification_needs_only_the_release(bundled_project):
@@ -43,13 +46,30 @@ def test_damaged_bundle_fails_without_repair_or_fallback(bundled_project, damage
         assert other.resolve().is_relative_to(root.resolve())
         directory.rename(other)
     before = snapshot(root)
-    with pytest.raises(dependencies.DependencyError, match="Restore the complete launcher release"):
+    with pytest.raises(
+        dependencies.DependencyError, match="Restore the complete launcher release"
+    ):
         dependencies.verify_bundle(root)
     assert snapshot(root) == before
     assert not (root / ".state").exists()
 
 
-@pytest.mark.parametrize("damage", ["missing", "syntax", "directory", "format", "digest", "size", "duplicate", "empty", "escape", "runtime", "packages"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "syntax",
+        "directory",
+        "format",
+        "digest",
+        "size",
+        "duplicate",
+        "empty",
+        "escape",
+        "runtime",
+        "packages",
+    ],
+)
 def test_invalid_manifest_reports_actionable_failure(bundled_project, damage):
     root, _ = bundled_project
     path = root / "bundled_packages.toml"
@@ -67,9 +87,12 @@ def test_invalid_manifest_reports_actionable_failure(bundled_project, damage):
             text = text.replace('sha256 = "', 'sha256 = "invalid-')
         elif damage == "size":
             import re
+
             text = re.sub(r"size = \d+", "size = true", text)
         elif damage == "duplicate":
-            text += "\n[[files]]" + text.split("[[files]]", 1)[1].split("[[files]]", 1)[0]
+            text += (
+                "\n[[files]]" + text.split("[[files]]", 1)[1].split("[[files]]", 1)[0]
+            )
         elif damage == "empty":
             text = text.split("[[files]]", 1)[0]
         elif damage == "runtime":
@@ -79,7 +102,9 @@ def test_invalid_manifest_reports_actionable_failure(bundled_project, damage):
         else:
             text = text.replace('path = "COPYING"', 'path = "../outside.py"')
         path.write_text(text)
-    with pytest.raises(dependencies.DependencyError, match="Cannot (read|verify) bundled"):
+    with pytest.raises(
+        dependencies.DependencyError, match="Cannot (read|verify) bundled"
+    ):
         dependencies.verify_bundle(root)
     assert not (root.parent / "outside.py").exists()
 
@@ -88,18 +113,35 @@ def test_git_line_endings_and_comments_do_not_change_bundle_selection(bundled_pr
     root, directory = bundled_project
     path = root / "bundled_packages.toml"
     text = path.read_text()
-    path.write_bytes(("# Local formatting comment\n" + text).replace("\n", "\r\n").encode())
+    path.write_bytes(
+        ("# Local formatting comment\n" + text).replace("\n", "\r\n").encode()
+    )
     assert dependencies.verify_bundle(root) == directory
 
 
-@pytest.mark.parametrize("relative", ["../outside", "/absolute", "C:/absolute", "libs/../outside", "libs/NUL.py", "libs/file.py.", "libs//file", "libs\\file", "libs/a:stream"])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "../outside",
+        "/absolute",
+        "C:/absolute",
+        "libs/../outside",
+        "libs/NUL.py",
+        "libs/file.py.",
+        "libs//file",
+        "libs\\file",
+        "libs/a:stream",
+    ],
+)
 def test_local_paths_cannot_escape_or_alias_project(tmp_path, relative):
     with pytest.raises(dependencies.DependencyError):
         dependencies.local_path(tmp_path, relative)
 
 
 @pytest.mark.parametrize("location", ["ancestor", "inside"])
-def test_real_directory_links_cannot_supply_packages(bundled_project, tmp_path, location):
+def test_real_directory_links_cannot_supply_packages(
+    bundled_project, tmp_path, location
+):
     root, directory = bundled_project
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -114,8 +156,11 @@ def test_real_directory_links_cannot_supply_packages(bundled_project, tmp_path, 
         destination = outside
     if os.name == "nt":
         # Junctions need no symlink privilege on Windows; both paths are pytest-owned.
-        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(destination)],
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(destination)],
+            capture_output=True,
+            text=True,
+        )
         assert result.returncode == 0, result.stderr
     else:
         link.symlink_to(destination, target_is_directory=True)

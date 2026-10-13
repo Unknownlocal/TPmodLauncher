@@ -36,11 +36,18 @@ def safe_name(name: str) -> PurePosixPath:
     if not isinstance(name, str) or not name or "\\" in name or ":" in name:
         raise DependencyError(f"Unsupported path: {name!r}")
     path = PurePosixPath(name)
-    reserved = {"con", "prn", "aux", "nul", *(f"com{x}" for x in range(1, 10)),
-                *(f"lpt{x}" for x in range(1, 10))}
+    reserved = {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{x}" for x in range(1, 10)),
+        *(f"lpt{x}" for x in range(1, 10)),
+    }
     # Reject paths outside the folder, reserved Windows names and unsafe characters.
     if path.is_absolute() or any(
-        part in ("", ".", "..") or part.endswith((" ", "."))
+        part in ("", ".", "..")
+        or part.endswith((" ", "."))
         or part.split(".", 1)[0].lower() in reserved
         or any(ord(char) < 32 or char in '<>"|?*' for char in part)
         for part in name.rstrip("/").split("/")
@@ -58,7 +65,9 @@ def local_path(root: Path, relative: str) -> Path:
         path /= part
         # Check each folder for links that could point somewhere else.
         if path.is_symlink() or path.is_junction():
-            raise DependencyError(f"Linked bundle path requires separate inspection: {path}")
+            raise DependencyError(
+                f"Linked bundle path requires separate inspection: {path}"
+            )
     # Keep this checked path; resolving it again could hide a link.
 
     if not path.is_relative_to(root):
@@ -77,7 +86,11 @@ def validate_runtime(runtime: dict) -> None:
         raise ValueError("Python 3.13 or newer is required")
     path = safe_name(runtime["directory"])
     # The Python folder must be directly inside libs, with a consistently written path.
-    if path.as_posix() != runtime["directory"] or len(path.parts) != 2 or path.parts[0] != "libs":
+    if (
+        path.as_posix() != runtime["directory"]
+        or len(path.parts) != 2
+        or path.parts[0] != "libs"
+    ):
         raise ValueError("runtime must be directly under libs")
 
 
@@ -85,15 +98,20 @@ def read_manifest(root: Path) -> dict:
     """Read bundled_packages.toml and check its format, folders and package versions."""
     # root is launcher folder containing bundled_packages.toml.
     try:
-        manifest = tomllib.loads(local_path(root, "bundled_packages.toml").read_text(encoding="utf-8"))
+        manifest = tomllib.loads(
+            local_path(root, "bundled_packages.toml").read_text(encoding="utf-8")
+        )
         # Require file format 2 as a number; true and false are not valid format numbers.
         if type(manifest["format"]) is not int or manifest["format"] != 2:
             raise ValueError("unsupported package manifest")
         validate_runtime(manifest["runtime"])
         directory = safe_name(manifest["directory"])
         # The package folder must be directly inside libs/vendor.
-        if (directory.as_posix() != manifest["directory"] or len(directory.parts) != 3
-                or directory.parts[:2] != ("libs", "vendor")):
+        if (
+            directory.as_posix() != manifest["directory"]
+            or len(directory.parts) != 3
+            or directory.parts[:2] != ("libs", "vendor")
+        ):
             raise ValueError("packages must be directly under libs/vendor")
         # Require at least one package, with a valid name and a specific version.
         if not manifest["packages"] or any(
@@ -105,12 +123,15 @@ def read_manifest(root: Path) -> dict:
         return manifest
     # Report missing, unreadable or invalid settings as a startup error.
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        raise DependencyError(f"Cannot read bundled package manifest: {error} "
-                              "Restore the complete launcher release.") from error
+        raise DependencyError(
+            f"Cannot read bundled package manifest: {error} "
+            "Restore the complete launcher release."
+        ) from error
 
 
 def tree_paths(directory: Path):
     """Yield files and folders, stopping if a path is linked or cannot be read."""
+
     # directory is the folder to check; return its files and folders without following links.
     def unreadable(error):
         # error explains why a folder could not be read; stop rather than skip it.
@@ -130,7 +151,9 @@ def file_inventory(directory: Path) -> dict[str, tuple[str, int]]:
     # directory is the folder to check; record each file path, checksum and size in bytes.
     # The package folder must exist and must not be a link to another folder.
     if not directory.is_dir() or directory.is_symlink() or directory.is_junction():
-        raise DependencyError(f"Missing or linked bundled package directory: {directory}")
+        raise DependencyError(
+            f"Missing or linked bundled package directory: {directory}"
+        )
     files = {}
     folded = set()
     for item in tree_paths(directory):
@@ -159,8 +182,11 @@ def _verify_files(root: Path, manifest: dict) -> Path:
                 raise ValueError("duplicate/noncanonical manifest path")
             folded.add(name.casefold())
             # Require a SHA-256 checksum and a file size of zero or more; true/false are not sizes.
-            if (not re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
-                    or type(record["size"]) is not int or record["size"] < 0):
+            if (
+                not re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
+                or type(record["size"]) is not int
+                or record["size"] < 0
+            ):
                 raise ValueError("invalid manifest digest/size")
             expected[name] = (record["sha256"], record["size"])
         # An empty file list cannot show that the packages are complete.
@@ -172,8 +198,10 @@ def _verify_files(root: Path, manifest: dict) -> Path:
             raise DependencyError("Bundled packages differ from bundled_packages.toml.")
         return directory
     except (OSError, ValueError, KeyError, TypeError, DependencyError) as error:
-        raise DependencyError(f"Cannot verify bundled dependencies: {error} "
-                              "Restore the complete launcher release; startup does not install or repair packages.") from error
+        raise DependencyError(
+            f"Cannot verify bundled dependencies: {error} "
+            "Restore the complete launcher release; startup does not install or repair packages."
+        ) from error
 
 
 def verify_bundle(root: Path) -> Path:
@@ -191,12 +219,20 @@ def require_embedded_runtime(root: Path, manifest: dict) -> None:
     expected = local_path(root, manifest["runtime"]["directory"] + "/python.exe")
     # Require 64-bit Windows, the specified Python version and our included python.exe.
     # Python must ignore user settings and packages installed elsewhere.
-    if (sys.platform != "win32" or struct.calcsize("P") != 8
-            or sys.version_info[:3] != tuple(map(int, manifest["runtime"]["version"].split(".")))
-            or Path(sys.executable).resolve() != expected
-            or not (sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_site)):
-        raise DependencyError(f"Use this project's {expected.relative_to(root).as_posix()}; "
-                              f"startup requires its isolated Windows x64 Python {manifest['runtime']['version']} runtime.")
+    if (
+        sys.platform != "win32"
+        or struct.calcsize("P") != 8
+        or sys.version_info[:3]
+        != tuple(map(int, manifest["runtime"]["version"].split(".")))
+        or Path(sys.executable).resolve() != expected
+        or not (
+            sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_site
+        )
+    ):
+        raise DependencyError(
+            f"Use this project's {expected.relative_to(root).as_posix()}; "
+            f"startup requires its isolated Windows x64 Python {manifest['runtime']['version']} runtime."
+        )
 
 
 def import_frida(root: Path):
@@ -208,20 +244,32 @@ def import_frida(root: Path):
     runtime = local_path(root, manifest["runtime"]["directory"])
     # Stop if Frida was already loaded, since it may have come from another folder.
     if any(name == "frida" or name.startswith("frida.") for name in sys.modules):
-        raise DependencyError("Frida was imported before controlled bundle verification.")
-    sys.dont_write_bytecode = True  # Loading packages must not create compiled Python files.
+        raise DependencyError(
+            "Frida was imported before controlled bundle verification."
+        )
+    sys.dont_write_bytecode = (
+        True  # Loading packages must not create compiled Python files.
+    )
     # Keep only the included Python folders; remove paths to other installed packages.
-    stdlib = [path for path in sys.path if path and Path(path).resolve().is_relative_to(runtime)]
+    stdlib = [
+        path
+        for path in sys.path
+        if path and Path(path).resolve().is_relative_to(runtime)
+    ]
     sys.path[:] = [str(directory), *stdlib]
     try:
         module = importlib.import_module("frida")
         native = importlib.import_module("frida._frida")
         expected = manifest["packages"]["frida"]
         # Check the Frida version and confirm both its Python code and DLL came from our folder.
-        if (module.__version__ != expected
-                or not Path(module.__file__).resolve().is_relative_to(directory)
-                or not Path(native.__file__).resolve().is_relative_to(directory)):
-            raise DependencyError("Frida did not load from the verified bundled directory.")
+        if (
+            module.__version__ != expected
+            or not Path(module.__file__).resolve().is_relative_to(directory)
+            or not Path(native.__file__).resolve().is_relative_to(directory)
+        ):
+            raise DependencyError(
+                "Frida did not load from the verified bundled directory."
+            )
         return module
     except (ImportError, OSError, KeyError) as error:
         raise DependencyError(f"Cannot import bundled Frida: {error}") from error
