@@ -85,19 +85,59 @@ def test_pythonpath_and_user_packages_cannot_supply_frida(embedded_project, tmp_
 
 
 @pytest.mark.embedded
-def test_entry_rejects_developer_python_instead_of_using_its_packages(embedded_project):
+@pytest.mark.parametrize("backend", ["python", "native"])
+def test_entry_rejects_developer_python_instead_of_using_its_packages(
+    embedded_project, backend
+):
     result = subprocess.run(
         [
             sys.executable,
             "-I",
             str(embedded_project / "launcher/entry.py"),
             "--check-only",
+            "--backend",
+            backend,
         ],
         capture_output=True,
         text=True,
         timeout=20,
     )
     assert result.returncode == 1 and "Use this project's" in result.stderr
+
+
+@pytest.mark.embedded
+def test_native_entry_works_without_a_frida_python_package(embedded_project, tmp_path):
+    from launcher import bundled_dependencies as dependencies
+
+    root = embedded_project
+    if not (root / "libs/core_worker").exists():
+        if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+            pytest.fail("Build the native worker before running required native tests")
+        pytest.skip("Build the native worker to test this backend")
+    vendor = dependencies.verify_bundle(root)
+    hidden = root / "unused-vendor"
+    assert vendor.resolve().is_relative_to(root.resolve())
+    assert hidden.resolve().is_relative_to(root.resolve())
+    vendor.rename(hidden)
+    try:
+        result = subprocess.run(
+            [
+                str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+                "-B",
+                str(root / "launcher/entry.py"),
+                "--backend",
+                "native",
+                "--check-only",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Frida 17.23.3" in result.stdout
+    finally:
+        hidden.rename(vendor)
 
 
 @pytest.mark.embedded

@@ -147,4 +147,8 @@ def embedded_project(tmp_path_factory):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
+    shutil.copy2(source / "pyproject.toml", root / "pyproject.toml")
+    worker = source / "libs/core_worker"
+    if worker.exists():
+        shutil.copytree(worker, root / "libs/core_worker")
     return root

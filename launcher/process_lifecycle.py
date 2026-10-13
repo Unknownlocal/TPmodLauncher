@@ -399,6 +399,7 @@ def run_launcher(
     # Acquire ownership before opening the log: a rejected duplicate must leave it untouched.
     with controller_lock(lock_path):
         with reporter(log_path) as logger:
+            logger.info("BACKEND %s", getattr(frida, "backend_name", "Frida Python binding"))
             try:
                 controller = Controller(
                     frida.get_local_device(),

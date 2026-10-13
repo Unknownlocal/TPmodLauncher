@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MPL-2.0
+# Official release archives, with SHA256 digests reported by GitHub's release API.
+version = "17.23.3"
+
+[targets.windows-x86_64]
+sha256 = "38c8f04ac2c3c7ce06c5511bae3ca2b7c9b7ccc1205108ee9b3bf2740d70e06b"
+
+[targets.linux-x86_64]
+sha256 = "a58582b52854f36687abdc8d41d42124d375007b63326ce0258f57caa6de5c7f"
+
+[targets.macos-x86_64]
+sha256 = "53a6f2cccf57bbf353a16c321d130ed7abb5fff4a7029864ed275388454d44d0"
+
+[targets.macos-arm64]
+sha256 = "3b7bac8934b123feab31c540e86d9e40124e042043674465f102439d447bfd19"

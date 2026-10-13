@@ -2,6 +2,7 @@
 """Inject our bridge into an owned Python process, exercising real GIL entry and restoration."""
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,10 +13,15 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
+@pytest.mark.parametrize("backend", ["python", "native"])
 def test_real_bridge_initialises_hooks_and_restores_before_detach(
-    embedded_project, tmp_path
+    embedded_project, tmp_path, backend
 ):
     root = embedded_project
+    if backend == "native" and not (root / "libs/core_worker").exists():
+        if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+            pytest.fail("Build the native worker before running required native tests")
+        pytest.skip("Build the native worker to test this backend")
     client = root / "libs/python-3.13.16-embed-amd64/python.exe"
     runtime = tmp_path / "owned Python target"
     shutil.copytree(client.parent, runtime)
@@ -34,6 +40,7 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
                 str(client),
                 "-B",
                 str(probe),
+                *(["--native"] if backend == "native" else []),
                 str(runtime / "python.exe"),
                 str(helper),
                 str(output),

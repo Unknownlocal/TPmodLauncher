@@ -9,6 +9,7 @@ import importlib.util
 import math
 from pathlib import Path
 import sys
+import tomllib
 
 # Do not create compiled Python files when loading our code or packages.
 sys.dont_write_bytecode = True
@@ -23,6 +24,12 @@ def main(argv=None) -> int:
     # Arguments before -- configure the launcher; arguments after it belong to the game.
     parser = argparse.ArgumentParser(
         description="Check dependencies or launch and track the game."
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("python", "native"),
+        default="python",
+        help="Frida provider to use (default: the existing Python binding)",
     )
     parser.add_argument(
         "--check-only",
@@ -54,14 +61,39 @@ def main(argv=None) -> int:
             "supply Steam's original game command after --, or use --check-only"
         )
     root = Path(__file__).resolve().parent.parent
+    native = None
     try:
-        frida = _dependencies.import_frida(root)
-    except _dependencies.DependencyError as error:
+        if arguments.backend == "native":
+            # Both launch paths require the isolated bundled interpreter, even without a wheel.
+            settings = tomllib.loads(
+                _dependencies.local_path(root, "pyproject.toml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            _dependencies.require_embedded_runtime(
+                root, {"runtime": settings["tool"]["modlauncher"]["runtime"]}
+            )
+            source = _dependencies.local_path(root, "launcher/native_worker.py")
+            spec = importlib.util.spec_from_file_location("_tpm_native_worker", source)
+            native = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(native)
+            # Verify and start the worker without importing the large Frida Python package.
+            frida = native.Backend(native.verify_worker(root))
+        else:
+            frida = _dependencies.import_frida(root)
+    except Exception as error:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
         return 1
     if arguments.check_only:
+        try:
+            if native is not None:
+                frida.close()
+        except Exception as error:
+            print(f"Worker shutdown failed: {error}", file=sys.stderr)
+            return 1
         print(f"Bundled dependencies ready: Frida {frida.__version__}")
         return 0
+    result = 1
     try:
         # The launcher folder and game executable share the same installation folder.
         expected = root.parent / "TeamPrincipal.exe"
@@ -75,7 +107,7 @@ def main(argv=None) -> int:
         bridge = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bridge)
         bridge_factory = bridge.factory(root, frida)
-        return lifecycle.run_launcher(
+        result = lifecycle.run_launcher(
             frida,
             command,
             _dependencies.local_path(root, ".state/controller.lock"),
@@ -86,7 +118,15 @@ def main(argv=None) -> int:
     # Frida setup errors must produce a failed launch, even before the controller loop starts.
     except Exception as error:
         print(f"Launcher failed: {error}", file=sys.stderr)
-        return 1
+    finally:
+        # Controller cleanup restores the manager first; then release the worker itself.
+        if native is not None:
+            try:
+                frida.close()
+            except Exception as error:
+                print(f"Worker shutdown failed: {error}", file=sys.stderr)
+                result = 1
+    return result
 
 
 # Run only when this file is started directly; return its success or error code.

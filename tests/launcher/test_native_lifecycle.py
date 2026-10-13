@@ -13,10 +13,15 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
+@pytest.mark.parametrize("backend", ["python", "native"])
 def test_real_frida_follows_game_children_and_releases_unrelated_helper(
-    embedded_project, tmp_path
+    embedded_project, tmp_path, backend
 ):
     root = embedded_project
+    if backend == "native" and not (root / "libs/core_worker").exists():
+        if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+            pytest.fail("Build the native worker before running required native tests")
+        pytest.skip("Build the native worker to test this backend")
     client = root / "libs/python-3.13.16-embed-amd64/python.exe"
     # A separate executable path distinguishes our simulated game from its controller.
     runtime = tmp_path / "synthetic game with spaces"
@@ -35,6 +40,7 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
         str(client),
         "-B",
         str(probe),
+        *(["--native"] if backend == "native" else []),
         str(target),
         "-B",
         str(helper),

@@ -15,7 +15,13 @@ def load(name, filename):
 
 
 deps = load("deps", "bundled_dependencies.py")
-frida = deps.import_frida(root)
+native = sys.argv[1] == "--native"
+if native:
+    del sys.argv[1]
+    worker = load("worker", "native_worker.py")
+    frida = worker.Backend(worker.verify_worker(root))
+else:
+    frida = deps.import_frida(root)
 lifecycle = load("lifecycle", "process_lifecycle.py")
 bridge = load("bridge", "game_bridge.py")
 output = Path(sys.argv[3])
@@ -63,6 +69,8 @@ finally:
     # Also release on assertion failure so cleanup can reach the helper's main thread.
     (output / "release-request").touch()
     controller.close()
+    if native:
+        frida.close()
 assert not controller.cleanup_failed, messages
 deadline = time.monotonic() + 5
 while not (output / "closed.json").exists() and time.monotonic() < deadline:

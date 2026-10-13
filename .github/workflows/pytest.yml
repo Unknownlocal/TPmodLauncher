@@ -37,9 +37,14 @@ jobs:
         run: |
           & libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the native backend for shared lifecycle and bridge tests
+        run: |
+          & .venv/Scripts/python.exe -B native/core_worker/build.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run behavioral and embedded-runtime tests with coverage
         env:
           TPM_REQUIRE_EMBEDDED_TESTS: '1'
+          TPM_REQUIRE_NATIVE_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           # Load only pytest-cov while automatic plugin loading remains disabled.
