@@ -47,6 +47,11 @@ DEVELOPMENT.md
 # Generated state, logs, temporary files and build output.
 __pycache__/
 .pytest_cache/
+# Local pytest coverage data and reports.
+.coverage
+.coverage.*
+/coverage.xml
+/htmlcov/
 .mypy_cache/
 .ruff_cache/
 .venv/

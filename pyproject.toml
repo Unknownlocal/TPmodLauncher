@@ -5,6 +5,12 @@ addopts = "-ra --strict-markers"
 pythonpath = ["."]
 markers = ["embedded: requires the prepared bundled Windows runtime and package directory"]
 
+# Measure Python source in the test process; embedded test processes stay isolated.
+[tool.coverage.run]
+branch = true
+source = ["launcher", "hook_manager"]
+relative_files = true
+
 # Launcher build settings; package pins live in the standard pylock.toml.
 [tool.modlauncher.runtime]
 version = "3.13.16"
