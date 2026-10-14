@@ -5,6 +5,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_validation:
+        description: Sign provenance and verify the Windows candidate (requires GitHub attestation support)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,6 +57,9 @@ jobs:
           python -m venv .venv
           "${{ matrix.python }}" -m pip install -r requirements-dev.txt
       - name: Build the pinned reduced wheel
+        env:
+          # Use ad-hoc signing for macOS CI builds; this is not a distribution identity.
+          MACOS_CERTID: ${{ runner.os == 'macOS' && '-' || '' }}
         run: |
           # A short fresh directory avoids Windows compiler and Ninja path limits.
           "${{ matrix.python }}" -B launcher/build_frida.py --target "${{ matrix.target }}" --work-dir "$RUNNER_TEMP/fb"
@@ -76,8 +84,8 @@ jobs:
         run: |
           "${{ matrix.python }}" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
       - name: Sign build provenance for the wheel and its build details
-        # Fork PRs test inputs but cannot mint a publishing attestation for this repository.
-        if: github.event_name != 'pull_request'
+        # Ordinary CI also works where GitHub does not support artifact attestations.
+        if: github.event_name == 'workflow_dispatch' && inputs.release_validation
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: |
@@ -87,7 +95,7 @@ jobs:
             .cache/reduced-frida/${{ matrix.target }}-sources/source-details.json
       - name: Prepare and test the authenticated Windows candidate
         # The current launcher runtime is Windows-only; other jobs test their native binding.
-        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.release_validation
         env:
           GH_TOKEN: ${{ github.token }}
           TPM_TEST_RELEASE_ROOT: .cache/releases/reduced
@@ -100,7 +108,8 @@ jobs:
           .cache/releases/reduced/libs/python-3.13.16-embed-amd64/python.exe -B .cache/releases/reduced/launcher/entry.py --check-only
           "${{ matrix.python }}" -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
       - name: Upload build details and test evidence
-        if: ${{ !cancelled() }}
+        # Preserve evidence after failures, but skip when the build produced none.
+        if: ${{ !cancelled() && hashFiles(format('.cache/reduced-frida/{0}/build-details.json', matrix.target), 'coverage.xml') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reduced-frida-${{ matrix.target }}

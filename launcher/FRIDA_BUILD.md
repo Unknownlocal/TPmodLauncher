@@ -95,8 +95,17 @@ transport now also run against owned Linux CPython 3.13 helpers; see the
 The `reduced-frida.yml` workflow builds/tests Windows x64, Linux x64, macOS Intel
 and macOS ARM on GitHub-hosted runners. Linux can also be built and tested
 locally in WSL; macOS acceptance relies on those hosted jobs, not self-hosted
-machines. On push/manual runs, GitHub's official attestation action signs
-build provenance for both the wheel and its details. PR outputs remain unsigned.
+machines. Pushes, PRs and ordinary manual runs build, test and export sources
+without release signing. To generate attestations and test authenticated Windows
+candidate preparation, manually dispatch the workflow with `release_validation`
+enabled. This requires GitHub artifact-attestation support for the repository;
+user-owned private repositories do not support it. Ordinary CI does not bypass
+the release verifier or produce an authenticated release candidate.
+
+macOS CI supplies `MACOS_CERTID=-` to upstream's signing command for ad-hoc
+build signing. This needs no private certificate and is only a hosted-build
+trial; the required native tests still decide whether those outputs work.
+It does not establish a distribution identity, notarization or game acceptance.
 Only build details and coverage are uploaded in this phase; wheels stay in the
 build job until the incorporated-component release audit is complete. GitHub
 attestation availability depends on repository visibility/plan; remote
@@ -183,8 +192,8 @@ tools; they are not added to launcher runtime dependencies. See the
 [package notice](../notices/frida-npm/README.md).
 
 The source receipt hashes the archive and binds it to the exact binary build
-record. The workflow exports and signs both source files before candidate
-preparation. Source archives remain separate build outputs; candidates retain
+record. Ordinary CI exports the source files; release-validation runs also sign
+them before candidate preparation. Source archives remain separate build outputs; candidates retain
 them under `source/` for review. A future binary download can provide source as
 a separate accompanying download; users do not need SDK sources to run Frida.
 See [rebuilding and relinking](FRIDA_RELINK.md) for restoration and library changes.
