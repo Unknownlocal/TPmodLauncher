@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MPL-2.0
+# Developer build recipe; this file is never read by the running launcher.
+# Required repositories only; their commits come from the pinned parent Git trees.
+submodules = [
+  "releng",
+  "releng/meson",
+  "releng/tomlkit",
+  "subprojects/frida-core",
+  "subprojects/frida-gum",
+  "subprojects/frida-python",
+  "subprojects/frida-python/frida-bindgen",
+]
+
+[frida]
+repository = "https://github.com/frida/frida.git"
+version = "17.23.3"
+revision = "3c7ea1530edb0c3bb9b1de84444510163052b18a"
+# Mark our wheel separately; the linked Core still reports version 17.23.3.
+package_version = "17.23.3+modlauncher.1"
+deps_version = "20261004"
+setuptools_version = "80.9.0"
+options = [
+  "-Dfrida_python=enabled", "-Dfrida_tools=disabled", "-Dfrida_node=disabled",
+  "-Dfrida_clr=disabled", "-Dfrida_swift=disabled", "-Dfrida_qml=disabled",
+  "-Dgraft_tool=disabled", "-Dgadget=disabled", "-Dserver=disabled",
+  "-Dportal=disabled", "-Dinject=disabled",
+  "-Dfrida-core:local_backend=enabled", "-Dfrida-core:connectivity=disabled",
+  "-Dfrida-core:fruity_backend=disabled", "-Dfrida-core:droidy_backend=disabled",
+  "-Dfrida-core:socket_backend=disabled", "-Dfrida-core:barebone_backend=disabled",
+  "-Dfrida-core:compiler_backend=disabled", "-Dfrida-core:assets=embedded",
+  # Fail rather than silently omit architecture compatibility when tools are missing.
+  "-Dfrida-core:compat=native,emulated",
+  "-Dfrida-core:tests=disabled", "-Dfrida-gum:tests=disabled",
+  "-Dfrida-gum:quickjs=enabled", "-Dfrida-gum:v8=disabled",
+  # Core requires the inspector even with V8 disabled.
+  "-Dfrida-gum:database=disabled", "-Dfrida-gum:inspector=enabled",
+]
+
+[targets]
+windows-x86_64 = ["toolchain-windows-x86", "sdk-windows-x86_64-mt", "sdk-windows-x86-mt"]
+linux-x86_64 = ["toolchain-linux-x86_64", "sdk-linux-x86_64", "sdk-linux-x86"]
+macos-x86_64 = ["toolchain-macos-x86_64", "sdk-macos-x86_64"]
+macos-arm64 = ["toolchain-macos-arm64", "sdk-macos-arm64", "sdk-macos-arm64e"]
+
+# Reviewed hashes of the official 20261004 archives, fetched over HTTPS.
+# These are integrity pins, not upstream signatures or our build attestations.
+[archives]
+toolchain-windows-x86 = "d80fe8718eca3c00742a9701365158908c2fb6f6c73351e58c10ee4cc9e0d81f"
+sdk-windows-x86_64-mt = "a5ff6026b6b144ec76e7d7f77b70864a6d396f62237e0e6ae20540c5a13b6f2d"
+sdk-windows-x86-mt = "60e28a96221c61b766cfe74ccef81de0bf7507b6814f10bd4fac40a54502b603"
+toolchain-linux-x86_64 = "9cbaaa0a8f7b32839f8502468648c48aeb620c3d6d5b186c3cc68569ff5ac107"
+sdk-linux-x86_64 = "4b6c22c989b6e0640e8ac61fd3edd341988f47f2555b39cf11a86603fa287c97"
+sdk-linux-x86 = "289abdb6286b2dfd42cec4fdde9786a596bfc0bceb79e862a7c332cb72e29e4a"
+toolchain-macos-x86_64 = "974dabb53cfef798acb15392331ba35ba286caec00c4efa09a644661ae959541"
+toolchain-macos-arm64 = "2a85341f62a54e227c270072c547636dd80e9ae8ef45e9c4ae970047522aeb0f"
+sdk-macos-x86_64 = "a3c86c6f5e0a73c701e8d299375a44ede8469305238c1060ceef6efebc542986"
+sdk-macos-arm64 = "e8f149963b4e409bf761f6260a777593b78e9c6fc89af6adf533283df1e75656"
+sdk-macos-arm64e = "12a12dda8ab0905c98a3e1cefa3b7380e76e084a6905af72814a33e11d5525b4"

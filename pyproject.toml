@@ -3,7 +3,10 @@
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 pythonpath = ["."]
-markers = ["embedded: requires the prepared bundled Windows runtime and package directory"]
+markers = [
+  "embedded: requires the prepared bundled Windows runtime and package directory",
+  "frida_build: requires a built reduced Frida wheel for native acceptance",
+]
 
 # Measure Python source in the test process; embedded test processes stay isolated.
 [tool.coverage.run]
