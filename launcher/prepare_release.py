@@ -622,7 +622,12 @@ def authenticate_runtime(root: Path, runtime: dict) -> Path:
 
 
 def prepare_reduced_release(
-    root: Path, build_output: Path, output: str, repository: str, source_digest: str
+    root: Path,
+    build_output: Path,
+    output: str,
+    repository: str,
+    source_digest: str,
+    source_output: Path | None = None,
 ) -> Path:
     """Prepare an isolated reduced candidate from a workflow-authenticated Windows build."""
     # These expected identities come from the caller, never from downloaded build details.
@@ -658,9 +663,28 @@ def prepare_reduced_release(
         raise dependencies.DependencyError(str(error)) from error
     details = (build_output / "build-details.json").read_bytes()
     digest = json.loads(details)["wheel"]["sha256"]
+    if source_output is None:
+        raise dependencies.DependencyError(
+            "Reduced preparation requires --frida-sources matching this build"
+        )
+    spec = importlib.util.spec_from_file_location(
+        "_release_sources", Path(__file__).with_name("frida_sources.py")
+    )
+    sources = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sources)
+    try:
+        source_archive = sources.verify(source_output, build_output)
+    except RuntimeError as error:
+        raise dependencies.DependencyError(str(error)) from error
+    source_details = (source_output / "source-details.json").read_bytes()
     # Verify both the binary and its source/configuration record with GitHub's standard verifier.
     # Pin the workflow, launcher source commit and hosted-runner policy, not just a repository name.
-    for artifact in (wheel, build_output / "build-details.json"):
+    for artifact in (
+        wheel,
+        build_output / "build-details.json",
+        source_archive,
+        source_output / "source-details.json",
+    ):
         try:
             subprocess.run(
                 [
@@ -685,11 +709,14 @@ def prepare_reduced_release(
                 "Reduced preparation needs GitHub CLI (gh) installed and able to access the expected repository."
             ) from error
     if (
-        build_output / "build-details.json"
-    ).read_bytes() != details or build.file_record(wheel)["sha256"] != digest:
+        (build_output / "build-details.json").read_bytes() != details
+        or build.file_record(wheel)["sha256"] != digest
+        or (source_output / "source-details.json").read_bytes() != source_details
+    ):
         raise dependencies.DependencyError(
             "Reduced build changed during authentication"
         )
+    sources.verify(source_output, build_output)
     settings = read_settings(root)
     archive = authenticate_runtime(root, settings["runtime"])
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -738,6 +765,11 @@ def prepare_reduced_release(
         for name in ("LICENCE", "README.md"):
             shutil.copyfile(root / name, stage / name)
         (stage / "build-details.json").write_bytes(details)
+        source_destination = stage / "source"
+        source_destination.mkdir()
+        shutil.copyfile(source_archive, source_destination / source_archive.name)
+        (source_destination / "source-details.json").write_bytes(source_details)
+        sources.verify(source_destination, stage)
         # Recheck the copied bytes against the authenticated build before publishing any candidate.
         if build.file_record(cached)["sha256"] != digest:
             raise dependencies.DependencyError(
@@ -764,6 +796,11 @@ def main(argv=None) -> int:
         help="authenticate a reduced build into a separate candidate",
     )
     parser.add_argument(
+        "--frida-sources",
+        type=Path,
+        help="checked source archive/details directory matching the reduced build",
+    )
+    parser.add_argument(
         "--repository", help="expected GitHub repository that built the reduced wheel"
     )
     parser.add_argument(
@@ -785,12 +822,18 @@ def main(argv=None) -> int:
                 arguments.output or ".cache/releases/reduced",
                 arguments.repository,
                 arguments.source_digest,
+                arguments.frida_sources.absolute() if arguments.frida_sources else None,
             )
             print(
                 f"Authenticated reduced candidate ready in {candidate.relative_to(root).as_posix()}; distribution and live acceptance remain separate gates."
             )
             return 0
-        if arguments.repository or arguments.source_digest or arguments.output:
+        if (
+            arguments.repository
+            or arguments.source_digest
+            or arguments.output
+            or arguments.frida_sources
+        ):
             raise dependencies.DependencyError(
                 "Reduced provenance options require --frida-build"
             )
@@ -855,7 +898,7 @@ def main(argv=None) -> int:
         ValueError,
         KeyError,
         TypeError,
-        dependencies.DependencyError,
+        RuntimeError,
         subprocess.CalledProcessError,
         zipfile.BadZipFile,
     ) as error:

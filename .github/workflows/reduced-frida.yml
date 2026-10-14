@@ -61,7 +61,10 @@ jobs:
           TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          "${{ matrix.python }}" -B -m pytest tests/launcher/test_frida_build.py -p pytest_cov --cov=launcher.build_frida --cov-report=term-missing --cov-report=xml
+          "${{ matrix.python }}" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
+      - name: Export matching Frida and SDK sources
+        run: |
+          "${{ matrix.python }}" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
       - name: Sign build provenance for the wheel and its build details
         # Fork PRs test inputs but cannot mint a publishing attestation for this repository.
         if: github.event_name != 'pull_request'
@@ -70,6 +73,8 @@ jobs:
           subject-path: |
             .cache/reduced-frida/${{ matrix.target }}/*.whl
             .cache/reduced-frida/${{ matrix.target }}/build-details.json
+            .cache/reduced-frida/${{ matrix.target }}-sources/frida-sources.tar.xz
+            .cache/reduced-frida/${{ matrix.target }}-sources/source-details.json
       - name: Prepare and test the authenticated Windows candidate
         # The current launcher runtime is Windows-only; other jobs test their native binding.
         if: runner.os == 'Windows' && github.event_name != 'pull_request'
@@ -81,7 +86,7 @@ jobs:
           TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          "${{ matrix.python }}" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
+          "${{ matrix.python }}" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --frida-sources ".cache/reduced-frida/${{ matrix.target }}-sources" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
           .cache/releases/reduced/libs/python-3.13.16-embed-amd64/python.exe -B .cache/releases/reduced/launcher/entry.py --check-only
           "${{ matrix.python }}" -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
       - name: Upload build details and test evidence
@@ -94,5 +99,6 @@ jobs:
           # Keep binaries private to the job until the incorporated-component release audit.
           path: |
             .cache/reduced-frida/${{ matrix.target }}/build-details.json
+            .cache/reduced-frida/${{ matrix.target }}-sources/source-details.json
             coverage.xml
           if-no-files-found: error

@@ -15,26 +15,6 @@ from launcher import build_frida as build
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
-def source_repository(directory, children=()):
-    """Commit a small real repository; children are (path, commit) submodule pairs."""
-    directory.mkdir(parents=True, exist_ok=True)
-    build.git(directory, "init")
-    build.git(directory, "config", "user.name", "Build fixture")
-    build.git(directory, "config", "user.email", "fixture@example.invalid")
-    (directory / "code.py").write_text("VALUE = 1\n")
-    build.git(directory, "add", "code.py")
-    for name, revision in children:
-        build.git(
-            directory,
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            f"160000,{revision},{name}",
-        )
-    build.git(directory, "commit", "-m", "Synthetic source fixture")
-    return build.git(directory, "rev-parse", "HEAD")
-
-
 @pytest.fixture
 def recipe():
     return build.read_recipe()
@@ -83,7 +63,7 @@ def wheel_output(tmp_path, recipe):
 
 
 @pytest.fixture
-def source_checkout(tmp_path):
+def source_checkout(tmp_path, source_repository):
     """Use a real local Git repository to exercise commit and dirty-checkout guards."""
     source = tmp_path / "source"
     recipe = {
@@ -91,6 +71,27 @@ def source_checkout(tmp_path):
         "submodules": [],
     }
     return source, recipe
+
+
+@pytest.fixture
+def source_output(wheel_output, tmp_path):
+    """Make a receipt-bound source placeholder; source restoration is tested separately."""
+    binary, _ = wheel_output
+    output = tmp_path / "source-output"
+    output.mkdir()
+    archive = output / "frida-sources.tar.xz"
+    archive.write_bytes(b"synthetic source fixture, never executed")
+    (output / "source-details.json").write_text(
+        json.dumps(
+            {
+                "archive": build.file_record(archive),
+                "build_details_sha256": build.file_record(
+                    binary / "build-details.json"
+                )["sha256"],
+            }
+        )
+    )
+    return output
 
 
 def test_recipe_hash_survives_git_line_ending_changes(tmp_path):
@@ -110,7 +111,9 @@ def test_source_revision_mismatch_is_rejected(source_checkout):
         build.verify_sources(source, recipe)
 
 
-def test_submodule_commits_are_derived_from_parent_git_links(source_checkout):
+def test_submodule_commits_are_derived_from_parent_git_links(
+    source_checkout, source_repository
+):
     source, recipe = source_checkout
     child = source / "child"
     revision = source_repository(child)
@@ -129,7 +132,9 @@ def test_submodule_commits_are_derived_from_parent_git_links(source_checkout):
         build.verify_sources(source, recipe)
 
 
-def test_nested_submodule_uses_its_verified_parent_commit(source_checkout):
+def test_nested_submodule_uses_its_verified_parent_commit(
+    source_checkout, source_repository
+):
     source, recipe = source_checkout
     child = source / "child"
     nested = child / "nested"
@@ -339,14 +344,36 @@ def test_reduced_preparation_requires_expected_identity_and_isolated_destination
     assert not (root / "libs").exists()
 
 
-@pytest.mark.parametrize("failed_artifact", ["wheel", "details"])
+def test_reduced_preparation_requires_corresponding_source(
+    wheel_output, project_factory
+):
+    root, _ = project_factory()
+    output, _ = wheel_output
+    with pytest.raises(
+        build.release.dependencies.DependencyError, match="requires --frida-sources"
+    ):
+        build.release.prepare_reduced_release(
+            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+        )
+    assert not (root / ".cache/releases").exists()
+
+
+@pytest.mark.parametrize(
+    "failed_artifact", ["wheel", "details", "source", "source_details"]
+)
 def test_reduced_preparation_stops_before_writes_on_signature_failure(
-    wheel_output, project_factory, monkeypatch, failed_artifact
+    wheel_output, source_output, project_factory, monkeypatch, failed_artifact
 ):
     root, _ = project_factory()
     output, wheel = wheel_output
     calls = []
-    failed = wheel if failed_artifact == "wheel" else output / "build-details.json"
+    artifacts = {
+        "wheel": wheel,
+        "details": output / "build-details.json",
+        "source": source_output / "frida-sources.tar.xz",
+        "source_details": source_output / "source-details.json",
+    }
+    failed = artifacts[failed_artifact]
 
     def reject(command, **kwargs):
         calls.append(command)
@@ -358,11 +385,16 @@ def test_reduced_preparation_stops_before_writes_on_signature_failure(
     before = (root / "pylock.toml").read_bytes()
     with pytest.raises(subprocess.CalledProcessError):
         build.release.prepare_reduced_release(
-            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+            root,
+            output,
+            ".cache/releases/reduced",
+            "example/launcher",
+            "1" * 40,
+            source_output,
         )
     assert not (root / ".cache/releases").exists()
     assert (root / "pylock.toml").read_bytes() == before
-    assert len(calls) == (1 if failed_artifact == "wheel" else 2)
+    assert len(calls) == list(artifacts).index(failed_artifact) + 1
     for command in calls:
         assert command[4:] == [
             "--repo",
@@ -378,7 +410,7 @@ def test_reduced_preparation_stops_before_writes_on_signature_failure(
 
 
 def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
-    wheel_output, project_factory, monkeypatch, tmp_path
+    wheel_output, source_output, project_factory, monkeypatch, tmp_path
 ):
     root, _ = project_factory()
     output, wheel = wheel_output
@@ -406,14 +438,27 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
     )
     before = (root / "pylock.toml").read_bytes()
     candidate = build.release.prepare_reduced_release(
-        root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+        root,
+        output,
+        ".cache/releases/reduced",
+        "example/launcher",
+        "1" * 40,
+        source_output,
     )
     runtime = build.release.read_settings(candidate)["runtime"]
     packages = build.release.read_lock(candidate, runtime)
     assert [(package.name, str(package.version)) for package, _ in packages] == [
         ("frida", "17.23.3+modlauncher.1")
     ]
-    assert verified == [wheel.name, "build-details.json"]
+    assert verified == [
+        wheel.name,
+        "build-details.json",
+        "frida-sources.tar.xz",
+        "source-details.json",
+    ]
+    assert (candidate / "source/frida-sources.tar.xz").read_bytes() == (
+        source_output / "frida-sources.tar.xz"
+    ).read_bytes()
     installed = build.release.dependencies.verify_bundle(candidate)
     assert (installed / "frida/_frida.pyd").read_bytes() == b"synthetic, never executed"
     assert build.release.prepare_packages(candidate) == installed
@@ -422,7 +467,7 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
 
 
 def test_changed_wheel_during_authentication_cannot_be_published(
-    wheel_output, project_factory, monkeypatch
+    wheel_output, source_output, project_factory, monkeypatch
 ):
     root, _ = project_factory()
     output, wheel = wheel_output
@@ -438,7 +483,12 @@ def test_changed_wheel_during_authentication_cannot_be_published(
         match="changed during authentication",
     ):
         build.release.prepare_reduced_release(
-            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+            root,
+            output,
+            ".cache/releases/reduced",
+            "example/launcher",
+            "1" * 40,
+            source_output,
         )
     assert not (root / ".cache/releases").exists()
 
@@ -476,6 +526,7 @@ def test_real_reduced_binding_has_required_features_and_child_gating(tmp_path, r
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {
         "quickjs": True,
+        "native_hook": True,
         "sqlite_absent": True,
         "v8_disabled": True,
         "child_gating": True,

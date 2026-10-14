@@ -3,6 +3,7 @@
 
 import importlib
 import json
+import os
 from pathlib import Path
 import queue
 import sys
@@ -39,6 +40,7 @@ sessions = []
 owned = set()
 capabilities = []
 rpc_results = []
+origins = []
 
 
 def attach(pid):
@@ -54,7 +56,15 @@ def attach(pid):
         ready.set()
 
     script = session.create_script(
-        "send({runtime: Script.runtime, database: typeof SqliteDatabase, "
+        # Replace an owned C function and restore it; checking the API's name alone cannot prove hooking works.
+        "const module = new CModule('int answer(void) { return 7; }'); "
+        "const answer = new NativeFunction(module.answer, 'int', []); "
+        "const replacement = new NativeCallback(() => 42, 'int', []); "
+        "Interceptor.replace(module.answer, replacement); Interceptor.flush(); "
+        "const replaced = answer() === 42; "
+        "Interceptor.revert(module.answer); Interceptor.flush(); "
+        "send({native_hook: replaced && answer() === 7, "
+        "runtime: Script.runtime, database: typeof SqliteDatabase, "
         "native: typeof NativeFunction, interceptor: typeof Interceptor}); "
         "rpc.exports = {add(a, b) { return a + b; }};",
         runtime="qjs",
@@ -99,22 +109,23 @@ try:
         # Only attach to children emitted for this owned, gated process tree.
         assert child.parent_pid in owned, child
         owned.add(child.pid)
+        origins.append(child.origin)
         attach(child.pid)
         device.resume(child.pid)
-    assert len(sessions) == 2, "The helper child was not gated and attached"
-    assert (
-        capabilities
-        == [
-            {
-                "runtime": "QJS",
-                "database": "undefined",
-                "native": "function",
-                "interceptor": "object",
-            }
-        ]
-        * 2
-    )
-    assert rpc_results == [15, 15]
+    # POSIX emits separate fork and exec events, including a new session for the same PID.
+    expected_origins = ["fork", "exec"] if os.name == "posix" else ["spawn"]
+    assert origins == expected_origins, origins
+    assert len(sessions) == len(expected_origins) + 1
+    assert capabilities == [
+        {
+            "native_hook": True,
+            "runtime": "QJS",
+            "database": "undefined",
+            "native": "function",
+            "interceptor": "object",
+        }
+    ] * len(sessions)
+    assert rpc_results == [15] * len(sessions)
     # Output notifications can arrive just after the detach notification.
     while (
         not all(
@@ -132,6 +143,7 @@ try:
         json.dumps(
             {
                 "quickjs": True,
+                "native_hook": True,
                 "sqlite_absent": True,
                 "v8_disabled": True,
                 "child_gating": True,
@@ -144,9 +156,13 @@ finally:
     # Release gated children through their sessions; helpers finish naturally after detach.
     # Avoid PID-based kills, which could target a recycled PID after a helper has exited.
     for session in sessions:
-        if not session.is_detached:
-            session.disable_child_gating()
-            session.detach()
+        try:
+            if not session.is_detached:
+                session.disable_child_gating()
+                session.detach()
+        except (frida.InvalidOperationError, frida.TransportError):
+            # A fork/exec or process exit can close the session after the status check.
+            pass
     if not resumed:
         try:
             device.resume(root_pid)
