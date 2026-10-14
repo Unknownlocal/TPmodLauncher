@@ -3,8 +3,13 @@ name: Portable pytest and Windows runtime acceptance
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -51,6 +56,8 @@ jobs:
         with:
           python-version: '3.13'
           architecture: ${{ matrix.architecture }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       - name: Create the developer test environment
         run: |
           python -m venv .venv

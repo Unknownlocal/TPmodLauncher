@@ -2,14 +2,26 @@
 name: Reduced Frida build and acceptance
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
     inputs:
+      target:
+        description: Native build target (release validation always builds all targets)
+        type: choice
+        default: linux-x86_64
+        options:
+          - linux-x86_64
+          - windows-x86_64
+          - macos-x86_64
+          - macos-arm64
+          - all
       release_validation:
         description: Sign provenance and verify the Windows candidate (requires GitHub attestation support)
         type: boolean
         default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_validation && 'release' || inputs.target }}
+  cancel-in-progress: ${{ !inputs.release_validation }}
 
 permissions:
   contents: read
@@ -19,20 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-latest
-            target: windows-x86_64
-            python: .venv/Scripts/python.exe
-          - runner: ubuntu-24.04
-            target: linux-x86_64
-            python: .venv/bin/python
-          - runner: macos-15-intel
-            target: macos-x86_64
-            python: .venv/bin/python
-          - runner: macos-15
-            target: macos-arm64
-            python: .venv/bin/python
-    runs-on: ${{ matrix.runner }}
+        # Rebuild only the platform under investigation; release checks retain the full matrix.
+        target: ${{ fromJSON((inputs.release_validation || inputs.target == 'all') && '["windows-x86_64","linux-x86_64","macos-x86_64","macos-arm64"]' || format('["{0}"]', inputs.target)) }}
+    runs-on: ${{ fromJSON('{"windows-x86_64":"windows-latest","linux-x86_64":"ubuntu-24.04","macos-x86_64":"macos-15-intel","macos-arm64":"macos-15"}')[matrix.target] }}
+    env:
+      BUILD_PYTHON: ${{ matrix.target == 'windows-x86_64' && '.venv/Scripts/python.exe' || '.venv/bin/python' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -47,6 +50,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       - name: Install Linux compatibility compilers
         if: runner.os == 'Linux'
         run: |
@@ -55,21 +60,21 @@ jobs:
       - name: Prepare developer tools
         run: |
           python -m venv .venv
-          "${{ matrix.python }}" -m pip install -r requirements-dev.txt
+          "$BUILD_PYTHON" -m pip install -r requirements-dev.txt
       - name: Build the pinned reduced wheel
         env:
           # Use ad-hoc signing for macOS CI builds; this is not a distribution identity.
           MACOS_CERTID: ${{ runner.os == 'macOS' && '-' || '' }}
         run: |
           # A short fresh directory avoids Windows compiler and Ninja path limits.
-          "${{ matrix.python }}" -B launcher/build_frida.py --target "${{ matrix.target }}" --work-dir "$RUNNER_TEMP/fb"
+          "$BUILD_PYTHON" -B launcher/build_frida.py --target "${{ matrix.target }}" --work-dir "$RUNNER_TEMP/fb"
       - name: Run verification tests and real owned-process acceptance
         env:
           TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
           TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          "${{ matrix.python }}" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
       - name: Run the Linux launcher and manager suite with native acceptance
         if: runner.os == 'Linux'
         env:
@@ -79,10 +84,10 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           # The release entry-point tests require Windows; controller/bridge tests use real Linux helpers.
-          "${{ matrix.python }}" -B -m pytest -m "not embedded" -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest -m "not embedded" -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
       - name: Export matching Frida and SDK sources
         run: |
-          "${{ matrix.python }}" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
+          "$BUILD_PYTHON" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
       - name: Sign build provenance for the wheel and its build details
         # Ordinary CI also works where GitHub does not support artifact attestations.
         if: github.event_name == 'workflow_dispatch' && inputs.release_validation
@@ -104,9 +109,9 @@ jobs:
           TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          "${{ matrix.python }}" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --frida-sources ".cache/reduced-frida/${{ matrix.target }}-sources" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
+          "$BUILD_PYTHON" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --frida-sources ".cache/reduced-frida/${{ matrix.target }}-sources" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
           .cache/releases/reduced/libs/python-3.13.16-embed-amd64/python.exe -B .cache/releases/reduced/launcher/entry.py --check-only
-          "${{ matrix.python }}" -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
       - name: Upload build details and test evidence
         # Preserve evidence after failures, but skip when the build produced none.
         if: ${{ !cancelled() && hashFiles(format('.cache/reduced-frida/{0}/build-details.json', matrix.target), 'coverage.xml') != '' }}

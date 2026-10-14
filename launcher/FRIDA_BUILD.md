@@ -92,13 +92,22 @@ point and prepared runtime remain Windows-only. The controller and manager
 transport now also run against owned Linux CPython 3.13 helpers; see the
 [full WSL suite instructions](../tests/README.md).
 
-The `reduced-frida.yml` workflow builds/tests Windows x64, Linux x64, macOS Intel
-and macOS ARM on GitHub-hosted runners. Linux can also be built and tested
-locally in WSL; macOS acceptance relies on those hosted jobs, not self-hosted
-machines. Pushes, PRs and ordinary manual runs build, test and export sources
-without release signing. To generate attestations and test authenticated Windows
-candidate preparation, manually dispatch the workflow with `release_validation`
-enabled. This requires GitHub artifact-attestation support for the repository;
+The ordinary pytest workflow keeps all four platforms on pull requests and
+pushes to `main`. Feature-branch pushes do not duplicate the PR runs. Superseded
+runs are cancelled, and setup-python caches pip downloads by the developer
+requirements. The tests and required runtime checks remain the same.
+
+Native compilation is manual to limit hosted-runner minutes. Dispatch
+`reduced-frida.yml` with `target` set to Windows x64, Linux x64, macOS Intel,
+macOS ARM or `all`; it defaults to Linux x64. Each selected job still builds,
+runs its required tests and exports matching source. A newer trial replaces an
+older one for the same branch and target. Linux can also be built and tested
+locally in WSL; macOS acceptance relies on the hosted jobs.
+
+To generate attestations and test authenticated Windows candidate preparation,
+enable `release_validation` on the manual run. This always selects all four
+targets and is not cancelled by a newer trial. It requires GitHub
+artifact-attestation support for the repository;
 user-owned private repositories do not support it. Ordinary CI does not bypass
 the release verifier or produce an authenticated release candidate.
 
@@ -193,7 +202,8 @@ tools; they are not added to launcher runtime dependencies. See the
 
 The source receipt hashes the archive and binds it to the exact binary build
 record. Ordinary CI exports the source files; release-validation runs also sign
-them before candidate preparation. Source archives remain separate build outputs; candidates retain
+them before candidate preparation. Source archives remain separate build outputs;
+candidates retain
 them under `source/` for review. A future binary download can provide source as
 a separate accompanying download; users do not need SDK sources to run Frida.
 See [rebuilding and relinking](FRIDA_RELINK.md) for restoration and library changes.
