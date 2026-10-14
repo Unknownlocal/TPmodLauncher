@@ -131,11 +131,11 @@ def factory(root, frida):
         return path.read_text(encoding="utf-8-sig")
 
     manager = read("hook_manager/manager.py")
-    bootstrap = read("hook_manager/bootstrap.py")
+    bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")
     digest = hashlib.sha256(manager.encode("utf-8")).hexdigest()
 
-    def create(session, pid, on_message):
+    def create(session, pid, on_message, *, bootstrap=True):
         # Each process gets a distinct owner token; only the trusted controller constructs this source.
         arguments = ",".join(
             json.dumps(value) for value in (manager, digest, uuid.uuid4().hex)
@@ -143,13 +143,16 @@ def factory(root, frida):
         # Build one fixed expression; the transport can append only a quoted JSON request.
         prefix = (
             "(lambda ns: (exec(compile("
-            + json.dumps(bootstrap)
+            + json.dumps(bootstrap_source)
             + ', "modLauncher/hook_manager/bootstrap.py", "exec"), ns), ns["pulse"]('
             + arguments
             + ","
         )
         suffix = '))[1])({"__builtins__": __builtins__})'
-        config = json.dumps({"prefix": prefix, "suffix": suffix})
+        # A fork transition loads the script engine for exec gating, but must not enter inherited Python.
+        config = json.dumps(
+            {"prefix": prefix, "suffix": suffix, "bootstrap": bootstrap}
+        )
         return Bridge(
             frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message
         )

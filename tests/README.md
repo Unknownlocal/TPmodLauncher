@@ -14,3 +14,62 @@ Each test should catch a failure that matters to the launcher or hook manager.
 
 Coverage measures which code ran; it does not prove that a test checks the right
 result. There is no fixed minimum coverage percentage.
+
+## Platform coverage
+
+The portable Python tests cover both launcher and hook_manager. Native tests
+also run the real Frida controller and manager bridge against owned CPython 3.13
+helpers on Windows and Linux. They check process replacement, inherited launch
+settings, timeouts, hook activation/restoration, shutdown and log replacement.
+Linux uses shared-library CPython 3.13 and a verified reduced Frida wheel in a
+temporary test bundle. This harness does not relax the production entry point's
+requirement to use the bundled Windows interpreter.
+
+Seven `embedded` tests cover Windows's packaged interpreter and entry point;
+they skip on Linux. The two `native` controller/bridge tests must not skip when
+native acceptance is requested. `frida_build` identifies the reduced binding's
+native feature probe. CI requires these checks in the relevant jobs rather
+than counting missing runtime prerequisites as successful acceptance.
+
+## Run the full suite in WSL
+
+Use Ubuntu with the compiler prerequisites in
+[FRIDA_BUILD.md](../launcher/FRIDA_BUILD.md), and shared CPython 3.13 with its
+development headers. Create a separate Linux venv; a Windows venv is not usable
+in WSL. Keep compiler workspaces and pytest temporary files on Linux's filesystem.
+When a source build is needed, Python's `--enable-shared` configure option
+provides the library used by the native bridge.
+
+From a Linux checkout of this project:
+
+```bash
+python3.13 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -B launcher/build_frida.py
+TPM_FRIDA_BUILD_OUTPUT=.cache/reduced-frida/linux-x86_64 \
+TPM_REQUIRE_FRIDA_BUILD_TESTS=1 TPM_REQUIRE_NATIVE_TESTS=1 \
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+.venv/bin/python -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
+```
+
+This collects the full suite, including both native tests. Only the seven
+Windows entry-point checks should skip. Missing Python/Frida prerequisites for
+the native tests fail when `TPM_REQUIRE_NATIVE_TESTS=1`. Linux helpers exercise
+explicit fork/exec with the normal exec-completion handoff before their parent
+returns from spawning. Attaching during Python's subprocess fork implementation
+stalls with stock and reduced Frida on WSL; that path remains a documented
+limitation, not a supported case inferred from these passing tests.
+
+## GitHub Actions
+
+`pytest.yml` runs portable tests on Windows, Linux and GitHub-hosted macOS Intel
+and ARM. Its Windows job also prepares and tests the packaged runtime. The
+Windows coverage artifact retains its existing `python-coverage` name; other
+platforms have separate names.
+
+`reduced-frida.yml` builds the binding on all four targets. Its Linux job runs
+the launcher/manager suite with native tests required after compilation. Its
+Windows trusted-run job tests the authenticated reduced candidate. macOS
+currently runs portable Python and binding checks; the manager's native
+transport is not yet adapted or accepted there. No self-hosted macOS runners
+are needed, and local WSL runs provide independent Linux evidence.

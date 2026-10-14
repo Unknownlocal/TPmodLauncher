@@ -37,14 +37,21 @@ function enqueue(operation, id) {
     return new Promise((resolve, reject) => { pending = { operation, id, resolve, reject }; });
 }
 
-send({ event: 'waiting', detail: 'Waiting for python313.dll' });
+send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
 observer = Process.attachModuleObserver({
     onAdded(module) {
-        // This native adapter supports the game's shipped Windows x64 CPython 3.13 only.
+        if (!config.bootstrap) return; // The forked process still contains its parent's Python state.
+        // Windows uses its shipped DLL; Linux native tests use a shared CPython library.
         const name = module.name.toLowerCase();
-        if (!/^python3\d+[td]?\.dll$/.test(name) || listener || failed || stopped) return;
+        const python = Process.platform === 'windows'
+            ? /^python3\d+[td]?\.dll$/.test(name)
+            : Process.platform === 'linux' && /^libpython3\.\d+[td]?\.so(?:\.\d+)*$/.test(name);
+        if (!python || listener || failed || stopped) return;
         try {
-            if (name !== 'python313.dll') throw new Error('Unsupported Python DLL: ' + name);
+            const supported = Process.platform === 'windows'
+                ? name === 'python313.dll'
+                : /^libpython3\.13\.so(?:\.\d+)*$/.test(name);
+            if (!supported) throw new Error('Unsupported Python library: ' + name);
             if (Process.arch !== 'x64') throw new Error('Bridge requires x64 CPython 3.13');
             const options = { scheduling: 'exclusive' };
             function api(name, result, args) {

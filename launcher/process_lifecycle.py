@@ -149,8 +149,9 @@ class Controller:
             for process in processes
         )
 
-    def _attach(self, pid):
+    def _attach(self, pid, *, bootstrap=True):
         # Attach only to verified game executables from our spawned/gated process chain.
+        # Fork transitions need child gating, but inherit Python state until exec replaces it.
         existing = self.sessions.get(pid)
         if existing is not None:
             if not existing.is_detached:
@@ -178,6 +179,7 @@ class Controller:
                 session,
                 pid,
                 lambda message: self.events.put(("bridge", (pid, session, message))),
+                **({"bootstrap": False} if not bootstrap else {}),
             )
             self.bridges[pid] = bridge
             bridge.start()
@@ -247,7 +249,9 @@ class Controller:
                         self.resumed.discard(child.pid)
                         if previous is not None and not previous.is_detached:
                             previous.detach()
-                    self._attach(child.pid)
+                    self._attach(
+                        child.pid, bootstrap=getattr(child, "origin", None) != "fork"
+                    )
                 else:
                     self.report(f"HELPER pid={child.pid}; resumed without attachment")
         finally:

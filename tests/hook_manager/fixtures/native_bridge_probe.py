@@ -14,8 +14,7 @@ def load(name, filename):
     return module
 
 
-deps = load("deps", "bundled_dependencies.py")
-frida = deps.import_frida(root)
+frida = load("test_binding", "native_test_binding.py").load(root)
 lifecycle = load("lifecycle", "process_lifecycle.py")
 bridge = load("bridge", "game_bridge.py")
 output = Path(sys.argv[3])

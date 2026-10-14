@@ -12,27 +12,36 @@ import pytest
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
-@pytest.mark.embedded
+@pytest.mark.native
 def test_real_frida_follows_game_children_and_releases_unrelated_helper(
-    embedded_project, tmp_path
+    native_project, tmp_path
 ):
-    root = embedded_project
-    client = root / "libs/python-3.13.16-embed-amd64/python.exe"
+    root, client = native_project.root, native_project.client
     # A separate executable path distinguishes our simulated game from its controller.
     runtime = tmp_path / "synthetic game with spaces"
-    shutil.copytree(client.parent, runtime)
-    target = runtime / "python.exe"
+    if os.name == "nt":
+        shutil.copytree(client.parent, runtime)
+    else:
+        runtime.mkdir()
+        shutil.copy2(native_project.target, runtime / native_project.target.name)
+    target = runtime / native_project.target.name
     output = tmp_path / "results"
     output.mkdir()
     helper = tmp_path / "game_helper.py"
     shutil.copyfile(FIXTURES / "native_lifecycle_helper.py", helper)
     probe = root / "launcher/lifecycle_probe.py"
     shutil.copyfile(FIXTURES / "native_lifecycle_probe.py", probe)
+    shutil.copyfile(
+        FIXTURES.parents[1] / "fixtures/native_test_binding.py",
+        root / "launcher/native_test_binding.py",
+    )
     arguments = ['space and "quotes"', "", "Unicode \u00e9", "--game-option", "x&y"]
     environment = os.environ.copy()
     environment["TPM_TEST_SENTINEL"] = "inherited from launcher"
     command = [
         str(client),
+        "-I",
+        "-S",
         "-B",
         str(probe),
         str(target),
@@ -78,7 +87,8 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
             assert (output / "helper.json").exists()
             log = log_path.read_text()
             assert "previous-launch-content" not in log
-            assert log.count("ATTACHED pid=") == 2
+            # Linux gates the two fork transitions as well as attaching to both game images.
+            assert log.count("ATTACHED pid=") == (4 if os.name == "posix" else 2)
             assert log.count("HOOK MANAGER READY pid=") == 2
             assert "HELPER pid=" in log and "resumed without attachment" in log
             assert log.count("GAME SESSION ENDED") == 1 and "CLEANUP ERROR" not in log

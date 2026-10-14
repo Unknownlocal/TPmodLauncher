@@ -8,7 +8,11 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import platform
 import shutil
+import sys
+import sysconfig
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -149,3 +153,69 @@ def embedded_project(tmp_path_factory):
     )
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
     return root
+
+
+@pytest.fixture(scope="module")
+def native_project(request, tmp_path_factory):
+    """Provide a real Frida test bundle and CPython 3.13 for Windows or Linux helpers."""
+    if os.name == "nt":
+        root = request.getfixturevalue("embedded_project")
+        client = root / "libs/python-3.13.16-embed-amd64/python.exe"
+        return SimpleNamespace(root=root, client=client, target=client)
+    output = os.environ.get("TPM_FRIDA_BUILD_OUTPUT")
+    if (
+        sys.platform != "linux"
+        or sys.version_info[:2] != (3, 13)
+        or not sysconfig.get_config_var("Py_ENABLE_SHARED")
+        or not output
+    ):
+        if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+            pytest.fail(
+                "Native tests require Windows's bundle or Linux shared CPython 3.13 and TPM_FRIDA_BUILD_OUTPUT"
+            )
+        pytest.skip(
+            "Native bridge tests need Windows's bundle or Linux shared CPython 3.13 and a reduced build"
+        )
+    from packaging.pylock import Package
+    from packaging.version import Version
+    from launcher import build_frida
+
+    recipe = build_frida.read_recipe()
+    wheel = build_frida.verify_output(
+        Path(output), recipe, build_frida.host_target(recipe)
+    )
+    root = tmp_path_factory.mktemp("native-manager-with-spaces") / "manager with spaces"
+    package = root / "libs/vendor/stage"
+    package.mkdir(parents=True)
+    with zipfile.ZipFile(wheel) as archive:
+        # The build verifier has checked the wheel paths, bytes and native platform.
+        archive.extractall(package)
+    inventory = dependencies.file_inventory(package)
+    runtime = {
+        "version": platform.python_version(),
+        "directory": "libs/python-native-test",
+    }
+    (root / "bundled_packages.toml").write_bytes(
+        release.manifest_bytes(
+            runtime,
+            [
+                (
+                    Package(
+                        name="frida",
+                        version=Version(recipe["frida"]["package_version"]),
+                    ),
+                    None,
+                )
+            ],
+            inventory,
+        )
+    )
+    package.rename(root / release.package_directory(inventory))
+    source = Path(__file__).resolve().parents[1]
+    for name in ("launcher", "hook_manager"):
+        shutil.copytree(
+            source / name, root / name, ignore=shutil.ignore_patterns("__pycache__")
+        )
+    return SimpleNamespace(
+        root=root, client=Path(sys.executable), target=Path(sys._base_executable)
+    )
