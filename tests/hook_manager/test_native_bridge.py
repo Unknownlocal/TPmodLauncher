@@ -2,6 +2,7 @@
 """Inject our bridge into an owned Python process, exercising real GIL entry and restoration."""
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,14 +12,18 @@ import pytest
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
-@pytest.mark.embedded
+@pytest.mark.native
 def test_real_bridge_initialises_hooks_and_restores_before_detach(
-    embedded_project, tmp_path
+    native_project, tmp_path
 ):
-    root = embedded_project
-    client = root / "libs/python-3.13.16-embed-amd64/python.exe"
+    root, client = native_project.root, native_project.client
     runtime = tmp_path / "owned Python target"
-    shutil.copytree(client.parent, runtime)
+    if os.name == "nt":
+        shutil.copytree(client.parent, runtime)
+    else:
+        runtime.mkdir()
+        shutil.copy2(native_project.target, runtime / native_project.target.name)
+    target = runtime / native_project.target.name
     helper = tmp_path / "owned_helper.py"
     (tmp_path / "owned_native_fixture.py").write_text(
         "def method(value):\n    return value + 1\n"
@@ -28,13 +33,19 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
     output.mkdir()
     probe = root / "launcher/bridge_probe.py"
     shutil.copyfile(FIXTURES / "native_bridge_probe.py", probe)
+    shutil.copyfile(
+        FIXTURES.parents[1] / "fixtures/native_test_binding.py",
+        root / "launcher/native_test_binding.py",
+    )
     try:
         result = subprocess.run(
             [
                 str(client),
+                "-I",
+                "-S",
                 "-B",
                 str(probe),
-                str(runtime / "python.exe"),
+                str(target),
                 str(helper),
                 str(output),
             ],

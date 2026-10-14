@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Reduced Frida build and acceptance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-x86_64
+            python: .venv/Scripts/python.exe
+          - runner: ubuntu-24.04
+            target: linux-x86_64
+            python: .venv/bin/python
+          - runner: macos-15-intel
+            target: macos-x86_64
+            python: .venv/bin/python
+          - runner: macos-15
+            target: macos-arm64
+            python: .venv/bin/python
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install Linux compatibility compilers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+      - name: Prepare developer tools
+        run: |
+          python -m venv .venv
+          "${{ matrix.python }}" -m pip install -r requirements-dev.txt
+      - name: Build the pinned reduced wheel
+        run: |
+          # A short fresh directory avoids Windows compiler and Ninja path limits.
+          "${{ matrix.python }}" -B launcher/build_frida.py --target "${{ matrix.target }}" --work-dir "$RUNNER_TEMP/fb"
+      - name: Run verification tests and real owned-process acceptance
+        env:
+          TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
+          TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          "${{ matrix.python }}" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
+      - name: Run the Linux launcher and manager suite with native acceptance
+        if: runner.os == 'Linux'
+        env:
+          TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
+          TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
+          TPM_REQUIRE_NATIVE_TESTS: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          # The release entry-point tests require Windows; controller/bridge tests use real Linux helpers.
+          "${{ matrix.python }}" -B -m pytest -m "not embedded" -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
+      - name: Export matching Frida and SDK sources
+        run: |
+          "${{ matrix.python }}" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
+      - name: Sign build provenance for the wheel and its build details
+        # Fork PRs test inputs but cannot mint a publishing attestation for this repository.
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            .cache/reduced-frida/${{ matrix.target }}/*.whl
+            .cache/reduced-frida/${{ matrix.target }}/build-details.json
+            .cache/reduced-frida/${{ matrix.target }}-sources/frida-sources.tar.xz
+            .cache/reduced-frida/${{ matrix.target }}-sources/source-details.json
+      - name: Prepare and test the authenticated Windows candidate
+        # The current launcher runtime is Windows-only; other jobs test their native binding.
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TPM_TEST_RELEASE_ROOT: .cache/releases/reduced
+          TPM_REQUIRE_EMBEDDED_TESTS: '1'
+          TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
+          TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          "${{ matrix.python }}" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --frida-sources ".cache/reduced-frida/${{ matrix.target }}-sources" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
+          .cache/releases/reduced/libs/python-3.13.16-embed-amd64/python.exe -B .cache/releases/reduced/launcher/entry.py --check-only
+          "${{ matrix.python }}" -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
+      - name: Upload build details and test evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reduced-frida-${{ matrix.target }}
+          # Only the selected details file is included, not the rest of .cache.
+          include-hidden-files: true
+          # Keep binaries private to the job until the incorporated-component release audit.
+          path: |
+            .cache/reduced-frida/${{ matrix.target }}/build-details.json
+            .cache/reduced-frida/${{ matrix.target }}-sources/source-details.json
+            coverage.xml
+          if-no-files-found: error

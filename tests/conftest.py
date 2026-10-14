@@ -8,7 +8,11 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import platform
 import shutil
+import sys
+import sysconfig
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -68,8 +72,7 @@ def project_factory(tmp_path):
             ]
         )
         (root / "pyproject.toml").write_text(settings, encoding="utf-8")
-        lock = dedent(
-            f"""\
+        lock = dedent(f"""\
             lock-version = "1.0"
             created-by = "pytest"
             requires-python = "==3.13.*"
@@ -81,8 +84,7 @@ def project_factory(tmp_path):
             name = "{filename}"
             path = ".cache/wheels/{filename}"
             hashes = {{sha256 = "{hashlib.sha256(wheel.read_bytes()).hexdigest()}"}}
-            """
-        )
+            """)
         (root / "pylock.toml").write_text(lock, encoding="utf-8")
         return root, wheel
 
@@ -117,7 +119,10 @@ def bundled_project(project_factory):
 @pytest.fixture(scope="module")
 def embedded_project(tmp_path_factory):
     """Return the folder of a temporary copy of bundled Python, Frida and launcher files."""
-    source = Path(__file__).resolve().parents[1]
+    # An isolated prepared candidate lets the same acceptance tests exercise either binding.
+    source = Path(
+        os.environ.get("TPM_TEST_RELEASE_ROOT", Path(__file__).resolve().parents[1])
+    ).resolve()
     runtime = source / "libs/python-3.13.16-embed-amd64"
     try:
         directory = dependencies.verify_bundle(source)
@@ -148,3 +153,69 @@ def embedded_project(tmp_path_factory):
     )
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
     return root
+
+
+@pytest.fixture(scope="module")
+def native_project(request, tmp_path_factory):
+    """Provide a real Frida test bundle and CPython 3.13 for Windows or Linux helpers."""
+    if os.name == "nt":
+        root = request.getfixturevalue("embedded_project")
+        client = root / "libs/python-3.13.16-embed-amd64/python.exe"
+        return SimpleNamespace(root=root, client=client, target=client)
+    output = os.environ.get("TPM_FRIDA_BUILD_OUTPUT")
+    if (
+        sys.platform != "linux"
+        or sys.version_info[:2] != (3, 13)
+        or not sysconfig.get_config_var("Py_ENABLE_SHARED")
+        or not output
+    ):
+        if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+            pytest.fail(
+                "Native tests require Windows's bundle or Linux shared CPython 3.13 and TPM_FRIDA_BUILD_OUTPUT"
+            )
+        pytest.skip(
+            "Native bridge tests need Windows's bundle or Linux shared CPython 3.13 and a reduced build"
+        )
+    from packaging.pylock import Package
+    from packaging.version import Version
+    from launcher import build_frida
+
+    recipe = build_frida.read_recipe()
+    wheel = build_frida.verify_output(
+        Path(output), recipe, build_frida.host_target(recipe)
+    )
+    root = tmp_path_factory.mktemp("native-manager-with-spaces") / "manager with spaces"
+    package = root / "libs/vendor/stage"
+    package.mkdir(parents=True)
+    with zipfile.ZipFile(wheel) as archive:
+        # The build verifier has checked the wheel paths, bytes and native platform.
+        archive.extractall(package)
+    inventory = dependencies.file_inventory(package)
+    runtime = {
+        "version": platform.python_version(),
+        "directory": "libs/python-native-test",
+    }
+    (root / "bundled_packages.toml").write_bytes(
+        release.manifest_bytes(
+            runtime,
+            [
+                (
+                    Package(
+                        name="frida",
+                        version=Version(recipe["frida"]["package_version"]),
+                    ),
+                    None,
+                )
+            ],
+            inventory,
+        )
+    )
+    package.rename(root / release.package_directory(inventory))
+    source = Path(__file__).resolve().parents[1]
+    for name in ("launcher", "hook_manager"):
+        shutil.copytree(
+            source / name, root / name, ignore=shutil.ignore_patterns("__pycache__")
+        )
+    return SimpleNamespace(
+        root=root, client=Path(sys.executable), target=Path(sys._base_executable)
+    )

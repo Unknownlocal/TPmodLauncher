@@ -432,3 +432,39 @@ def test_bridge_bootstrap_error_is_not_reported_as_ready(rig):
         assert not any("HOOK MANAGER READY" in message for message in messages)
     finally:
         controller.close()
+
+
+def test_fork_gates_child_without_bootstrapping_inherited_manager(rig):
+    device, controller, _, _ = rig
+    started = []
+    options = []
+
+    class Bridge:
+        def start(self):
+            started.append("start")
+
+        def close(self):
+            started.append("close")
+
+    def create(session, pid, message, **settings):
+        options.append(settings)
+        return Bridge()
+
+    controller.bridge_factory = create
+    controller.start()
+    try:
+        child = device.child(20, controller.game)
+        child.origin = "fork"
+        controller.poll()
+        fork_session = controller.sessions[20]
+        assert fork_session.gating and 20 in controller.resumed
+        assert options == [{}, {"bootstrap": False}]
+        child.origin = "exec"
+        controller.events.put(("child", child))
+        controller.poll()
+        assert fork_session.is_detached
+        assert controller.sessions[20] is not fork_session
+        assert 20 in controller.bridges and options == [{}, {"bootstrap": False}, {}]
+    finally:
+        controller.close()
+    assert started == ["start", "start", "start", "close", "close"]

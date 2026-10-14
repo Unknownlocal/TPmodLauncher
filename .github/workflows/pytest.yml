@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Dependency preparation and pytest
+name: Portable pytest and Windows runtime acceptance
 
 on:
   push:
@@ -11,46 +11,72 @@ permissions:
 
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            python: .venv/Scripts/python.exe
+            architecture: x64
+            markers: not frida_build
+            embedded: '1'
+            coverage: python-coverage
+          - runner: ubuntu-24.04
+            python: .venv/bin/python
+            architecture: x64
+            markers: not embedded and not native and not frida_build
+            embedded: '0'
+            coverage: python-coverage-linux
+          - runner: macos-15-intel
+            python: .venv/bin/python
+            architecture: x64
+            markers: not embedded and not native and not frida_build
+            embedded: '0'
+            coverage: python-coverage-macos-x86_64
+          - runner: macos-15
+            python: .venv/bin/python
+            architecture: arm64
+            markers: not embedded and not native and not frida_build
+            embedded: '0'
+            coverage: python-coverage-macos-arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
       run:
-        shell: pwsh
+        shell: bash
     steps:
       # Pin reviewed upstream action commits rather than mutable release tags.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          architecture: x64
+          architecture: ${{ matrix.architecture }}
       - name: Create the developer test environment
         run: |
           python -m venv .venv
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "${{ matrix.python }}" -m pip install -r requirements-dev.txt
       - name: Authenticate inputs and reproduce the bundled packages with pip
+        if: runner.os == 'Windows'
         run: |
-          & .venv/Scripts/python.exe -I launcher/prepare_release.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "${{ matrix.python }}" -I launcher/prepare_release.py
       - name: Check bundled Frida imports without installing packages
+        if: runner.os == 'Windows'
         run: |
-          & libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Run behavioral and embedded-runtime tests with coverage
+          libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
+      - name: Run the platform's behavioral tests with coverage
         env:
-          TPM_REQUIRE_EMBEDDED_TESTS: '1'
+          TPM_REQUIRE_EMBEDDED_TESTS: ${{ matrix.embedded }}
+          TPM_REQUIRE_NATIVE_TESTS: ${{ matrix.embedded }}
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          # Load only pytest-cov while automatic plugin loading remains disabled.
-          & .venv/Scripts/python.exe -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml --cov-report=html
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Linux native acceptance also runs after compilation in reduced-frida.yml.
+          "${{ matrix.python }}" -B -m pytest -m "${{ matrix.markers }}" -p pytest_cov --cov --cov-report=term-missing --cov-report=xml --cov-report=html
       - name: Upload coverage reports
         # Preserve reports from failing tests, but skip if pytest produced none.
         if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: python-coverage
+          name: ${{ matrix.coverage }}
           path: |
             coverage.xml
             htmlcov/

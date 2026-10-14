@@ -198,15 +198,17 @@ def archive_files(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     return files
 
 
-def download(url: str, destination: Path, digest: str | None = None) -> None:
-    """Download to destination, checking the SHA-256 checksum when digest is provided."""
-    # url is the download address; destination is the saved file; digest is its expected checksum.
+def download(
+    url: str, destination: Path, digest: str | None = None, *, hash_name="sha256"
+) -> None:
+    """Download to destination, checking its hash; SHA-256 is the default."""
+    # digest is the expected hex checksum; npm source locks use SHA-512 instead of the default SHA-256.
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Reuse a saved download only when an expected checksum was given.
     if digest and destination.exists():
         with destination.open("rb") as source:
             # The saved file matches, so there is no need to download it again.
-            if dependencies.digest_stream(source) == digest:
+            if hashlib.file_digest(source, hash_name).hexdigest() == digest:
                 return
     # Download to a temporary file beside destination, then rename it when complete.
     descriptor, temporary = tempfile.mkstemp(
@@ -220,9 +222,9 @@ def download(url: str, destination: Path, digest: str | None = None) -> None:
             shutil.copyfileobj(response, output, 1024 * 1024)
         with Path(temporary).open("rb") as source:
             # Check the downloaded file before replacing a previously saved copy.
-            if digest and dependencies.digest_stream(source) != digest:
+            if digest and hashlib.file_digest(source, hash_name).hexdigest() != digest:
                 raise dependencies.DependencyError(
-                    f"Downloaded artifact SHA-256 mismatch: {destination.name}"
+                    f"Downloaded artifact {hash_name.upper().replace('SHA', 'SHA-')} mismatch: {destination.name}"
                 )
         Path(temporary).replace(destination)
     finally:
@@ -594,6 +596,191 @@ def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
     return directory
 
 
+def authenticate_runtime(root: Path, runtime: dict) -> Path:
+    """Download the pinned Python ZIP, verify its signing identity and return its path."""
+    cache = dependencies.local_path(root, ".cache/downloads")
+    archive = cache / runtime["filename"]
+    download(runtime["url"], archive, runtime["sha256"])
+    bundle = cache / (runtime["filename"] + ".sigstore")
+    download(runtime["url"] + ".sigstore", bundle)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sigstore",
+            "verify",
+            "identity",
+            "--bundle",
+            str(bundle),
+            "--cert-identity",
+            runtime["identity"],
+            "--cert-oidc-issuer",
+            runtime["issuer"],
+            str(archive),
+        ],
+        check=True,
+    )
+    return archive
+
+
+def prepare_reduced_release(
+    root: Path,
+    build_output: Path,
+    output: str,
+    repository: str,
+    source_digest: str,
+    source_output: Path | None = None,
+) -> Path:
+    """Prepare an isolated reduced candidate from a workflow-authenticated Windows build."""
+    # These expected identities come from the caller, never from downloaded build details.
+    if not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository or ""
+    ) or not re.fullmatch(r"[0-9a-f]{40}", source_digest or ""):
+        raise dependencies.DependencyError(
+            "Supply --repository owner/repo and --source-digest full-commit-ID"
+        )
+    destination = dependencies.local_path(root, output)
+    # Keep candidates in local release staging; never replace the active source/runtime tree.
+    if (
+        not destination.is_relative_to(root.resolve() / ".cache/releases")
+        or destination == root.resolve() / ".cache/releases"
+    ):
+        raise dependencies.DependencyError(
+            "Reduced output must be a folder below .cache/releases"
+        )
+    if destination.exists():
+        raise dependencies.DependencyError(
+            "Use a fresh reduced output folder; existing candidates are preserved"
+        )
+    # Load the sibling build verifier for script and package execution alike.
+    spec = importlib.util.spec_from_file_location(
+        "_reduced_build", Path(__file__).with_name("build_frida.py")
+    )
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    recipe = build.read_recipe()
+    try:
+        wheel = build.verify_output(build_output, recipe, "windows-x86_64")
+    except RuntimeError as error:
+        raise dependencies.DependencyError(str(error)) from error
+    details = (build_output / "build-details.json").read_bytes()
+    digest = json.loads(details)["wheel"]["sha256"]
+    if source_output is None:
+        raise dependencies.DependencyError(
+            "Reduced preparation requires --frida-sources matching this build"
+        )
+    spec = importlib.util.spec_from_file_location(
+        "_release_sources", Path(__file__).with_name("frida_sources.py")
+    )
+    sources = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sources)
+    try:
+        source_archive = sources.verify(source_output, build_output)
+    except RuntimeError as error:
+        raise dependencies.DependencyError(str(error)) from error
+    source_details = (source_output / "source-details.json").read_bytes()
+    # Verify both the binary and its source/configuration record with GitHub's standard verifier.
+    # Pin the workflow, launcher source commit and hosted-runner policy, not just a repository name.
+    for artifact in (
+        wheel,
+        build_output / "build-details.json",
+        source_archive,
+        source_output / "source-details.json",
+    ):
+        try:
+            subprocess.run(
+                [
+                    "gh",
+                    "attestation",
+                    "verify",
+                    str(artifact),
+                    "--repo",
+                    repository,
+                    "--signer-workflow",
+                    repository + "/.github/workflows/reduced-frida.yml",
+                    "--source-digest",
+                    source_digest,
+                    "--signer-digest",
+                    source_digest,
+                    "--deny-self-hosted-runners",
+                ],
+                check=True,
+            )
+        except FileNotFoundError as error:
+            raise dependencies.DependencyError(
+                "Reduced preparation needs GitHub CLI (gh) installed and able to access the expected repository."
+            ) from error
+    if (
+        (build_output / "build-details.json").read_bytes() != details
+        or build.file_record(wheel)["sha256"] != digest
+        or (source_output / "source-details.json").read_bytes() != source_details
+    ):
+        raise dependencies.DependencyError(
+            "Reduced build changed during authentication"
+        )
+    sources.verify(source_output, build_output)
+    settings = read_settings(root)
+    archive = authenticate_runtime(root, settings["runtime"])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with build_directory(destination.parent, ".reduced-stage-") as stage:
+        # Reuse existing preparation; this candidate has its own standard lock and manifest.
+        shutil.copyfile(root / "pyproject.toml", stage / "pyproject.toml")
+        cached = dependencies.local_path(stage, ".cache/wheels/" + wheel.name)
+        cached.parent.mkdir(parents=True)
+        shutil.copyfile(wheel, cached)
+        lock = "\n".join(
+            [
+                'lock-version = "1.0"',
+                'created-by = "modLauncher reduced build"',
+                'requires-python = "==3.13.*"',
+                """environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]""",
+                "extras = []",
+                "dependency-groups = []",
+                "",
+                "[[packages]]",
+                'name = "frida"',
+                "version = " + json.dumps(recipe["frida"]["package_version"]),
+                'requires-python = ">=3.7"',
+                "",
+                "[[packages.wheels]]",
+                "name = " + json.dumps(wheel.name),
+                "path = " + json.dumps(".cache/wheels/" + wheel.name),
+                "hashes = {sha256 = " + json.dumps(digest) + "}",
+                "",
+                "[[packages.attestation-identities]]",
+                'kind = "GitHub"',
+                "repository = " + json.dumps(repository),
+                "",
+            ]
+        )
+        (stage / "pylock.toml").write_text(lock, encoding="utf-8")
+        prepare_runtime(stage, settings["runtime"], archive)
+        prepare_packages(stage, refresh_manifest=True)
+        # Retain the signed build record alongside existing licences and the usable launcher source.
+        for directory in ("launcher", "hook_manager", "notices"):
+            shutil.copytree(
+                root / directory,
+                stage / directory,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                copy_function=shutil.copyfile,
+            )
+        for name in ("LICENCE", "README.md"):
+            shutil.copyfile(root / name, stage / name)
+        (stage / "build-details.json").write_bytes(details)
+        source_destination = stage / "source"
+        source_destination.mkdir()
+        shutil.copyfile(source_archive, source_destination / source_archive.name)
+        (source_destination / "source-details.json").write_bytes(source_details)
+        sources.verify(source_destination, stage)
+        # Recheck the copied bytes against the authenticated build before publishing any candidate.
+        if build.file_record(cached)["sha256"] != digest:
+            raise dependencies.DependencyError(
+                "Reduced wheel changed during preparation"
+            )
+        stage.rename(destination)
+    return destination
+
+
 def main(argv=None) -> int:
     """Prepare release dependencies and return 0 on success or 1 on failure."""
     # argv can supply command-line arguments; None reads them normally; return 0 on success.
@@ -605,36 +792,58 @@ def main(argv=None) -> int:
         action="store_true",
         help="write the package hash manifest for an intentional, reviewed dependency change",
     )
+    parser.add_argument(
+        "--frida-build",
+        type=Path,
+        help="authenticate a reduced build into a separate candidate",
+    )
+    parser.add_argument(
+        "--frida-sources",
+        type=Path,
+        help="checked source archive/details directory matching the reduced build",
+    )
+    parser.add_argument(
+        "--repository", help="expected GitHub repository that built the reduced wheel"
+    )
+    parser.add_argument(
+        "--source-digest",
+        help="expected launcher commit that produced the reduced build",
+    )
+    parser.add_argument(
+        "--output",
+        help="fresh reduced candidate folder below .cache/releases; defaults to reduced",
+    )
     arguments = parser.parse_args(argv)
     # Find the build folder beside this script, regardless of the current working folder.
     root = Path(__file__).resolve().parent.parent
     try:
+        if arguments.frida_build:
+            candidate = prepare_reduced_release(
+                root,
+                arguments.frida_build.absolute(),
+                arguments.output or ".cache/releases/reduced",
+                arguments.repository,
+                arguments.source_digest,
+                arguments.frida_sources.absolute() if arguments.frida_sources else None,
+            )
+            print(
+                f"Authenticated reduced candidate ready in {candidate.relative_to(root).as_posix()}; distribution and live acceptance remain separate gates."
+            )
+            return 0
+        if (
+            arguments.repository
+            or arguments.source_digest
+            or arguments.output
+            or arguments.frida_sources
+        ):
+            raise dependencies.DependencyError(
+                "Reduced provenance options require --frida-build"
+            )
         settings = read_settings(root)
         runtime = settings["runtime"]
         packages = read_lock(root, runtime)
         cache = dependencies.local_path(root, ".cache/downloads")
-        archive = cache / runtime["filename"]
-        download(runtime["url"], archive, runtime["sha256"])
-        bundle = cache / (runtime["filename"] + ".sigstore")
-        download(runtime["url"] + ".sigstore", bundle)
-        # Check who signed the Python ZIP and who confirmed their identity.
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "sigstore",
-                "verify",
-                "identity",
-                "--bundle",
-                str(bundle),
-                "--cert-identity",
-                runtime["identity"],
-                "--cert-oidc-issuer",
-                runtime["issuer"],
-                str(archive),
-            ],
-            check=True,
-        )
+        archive = authenticate_runtime(root, runtime)
         prepare_runtime(root, runtime, archive)
         for package, wheel in packages:
             # A publishing identity is required before accepting a downloaded package for release.
@@ -691,7 +900,7 @@ def main(argv=None) -> int:
         ValueError,
         KeyError,
         TypeError,
-        dependencies.DependencyError,
+        RuntimeError,
         subprocess.CalledProcessError,
         zipfile.BadZipFile,
     ) as error:

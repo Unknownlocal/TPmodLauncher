@@ -50,6 +50,37 @@ def test_relocated_release_imports_frida_without_installation(
 
 
 @pytest.mark.embedded
+def test_entry_checks_full_distribution_version_even_when_core_version_matches(
+    embedded_project,
+):
+    manifest = embedded_project / "bundled_packages.toml"
+    original = manifest.read_bytes()
+    import tomllib
+
+    expected = tomllib.loads(original.decode())["packages"]["frida"]
+    try:
+        manifest.write_text(
+            original.decode().replace(
+                '"frida" = "' + expected + '"', '"frida" = "17.23.3+different-build"'
+            )
+        )
+        result = subprocess.run(
+            [
+                str(embedded_project / "libs/python-3.13.16-embed-amd64/python.exe"),
+                "-B",
+                str(embedded_project / "launcher/entry.py"),
+                "--check-only",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 1 and "Frida did not load" in result.stderr
+    finally:
+        manifest.write_bytes(original)
+
+
+@pytest.mark.embedded
 def test_pythonpath_and_user_packages_cannot_supply_frida(embedded_project, tmp_path):
     root = embedded_project
     hostile = tmp_path / "hostile"
