@@ -45,6 +45,44 @@ def test_verified_download_is_reused_without_network(tmp_path, hash_name):
     )
 
 
+def test_named_lock_prepares_fallback_without_changing_default_lock(project_factory):
+    root, _ = project_factory()
+    default = root / "pylock.toml"
+    (root / "pylock.stock.toml").write_bytes(default.read_bytes())
+    default.write_text("An unrelated default profile must not be read or replaced.")
+    before = default.read_bytes()
+    installed = release.prepare_packages(
+        root, lockfile="pylock.stock.toml", refresh_manifest=True
+    )
+    assert (installed / "demo/__init__.py").read_text() == "VALUE = 42\n"
+    assert default.read_bytes() == before
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_cli_local_wheel_checks_hash_without_claiming_publisher_authentication(
+    project_factory, monkeypatch, capsys, corrupt
+):
+    root, wheel = project_factory()
+    archive = root / "runtime.zip"
+    with zipfile.ZipFile(archive, "w") as runtime:
+        runtime.writestr("python.exe", b"synthetic runtime, never executed")
+    # Only the remote runtime identity check and CLI's project location are replaced.
+    monkeypatch.setattr(release, "__file__", str(root / "launcher/prepare_release.py"))
+    monkeypatch.setattr(release, "authenticate_runtime", lambda root, runtime: archive)
+    if corrupt:
+        with wheel.open("ab") as output:
+            output.write(b"changed wheel")
+    result = release.main(["--refresh-manifest"])
+    messages = capsys.readouterr()
+    if corrupt:
+        assert result == 1 and "SHA-256 mismatch" in messages.err
+        assert not (root / "bundled_packages.toml").exists()
+    else:
+        assert result == 0 and "Local package hashes checked" in messages.out
+        assert "inputs authenticated" not in messages.out
+        assert release.dependencies.verify_bundle(root).is_dir()
+
+
 def test_runtime_is_extracted_and_existing_copy_checked_without_overwrite(tmp_path):
     archive = tmp_path / "runtime.zip"
     with zipfile.ZipFile(archive, "w") as output:

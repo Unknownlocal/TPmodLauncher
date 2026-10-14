@@ -1,9 +1,35 @@
 # Building reduced Frida
 
-This developer tool builds an experimental reduced `frida-python` wheel using
-unmodified upstream sources. The running launcher continues to use its existing
-prepared stock package. Release integration follows after build/platform/game
-acceptance.
+This developer tool builds a reduced `frida-python` wheel using unmodified
+upstream sources. The Windows development installation now selects the reviewed
+local reduced binding for Steam acceptance. macOS work and authenticated candidate
+preparation are deferred; local selection is not publisher-authenticated release
+approval.
+
+## Select the local Windows binding or official fallback
+
+`pylock.toml` pins the reviewed local reduced wheel, including its SHA-256. Put
+that exact wheel in its `.cache/wheels/` path before preparing it:
+
+```powershell
+.venv/Scripts/python.exe -B launcher/prepare_release.py --refresh-manifest
+```
+
+Local wheels are checked against their locked hashes without claiming a PyPI
+publishing record. A fresh build may have different bytes; review its build
+details and update the pin intentionally before selecting it. The existing
+authenticated `--frida-build` candidate path retains its separate strict checks.
+
+The official package remains available through `pylock.stock.toml`:
+
+```powershell
+.venv/Scripts/python.exe -B launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
+```
+
+This authenticates the official downloads and updates the active manifest to
+stock Frida. Routine Windows CI uses that profile to avoid compiling Frida on
+every push. Startup always loads the manifest-selected bundle, with no backend
+flag or user-installed dependencies.
 
 ## Requirements
 

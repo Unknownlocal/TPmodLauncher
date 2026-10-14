@@ -6,6 +6,7 @@ not to search script folders automatically."""
 
 import argparse
 import importlib.util
+from importlib.metadata import version
 import math
 from pathlib import Path
 import sys
@@ -60,7 +61,7 @@ def main(argv=None) -> int:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
         return 1
     if arguments.check_only:
-        print(f"Bundled dependencies ready: Frida {frida.__version__}")
+        print(f"Bundled dependencies ready: Frida {version('frida')}")
         return 0
     try:
         # The launcher folder and game executable share the same installation folder.

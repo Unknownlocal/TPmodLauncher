@@ -76,10 +76,12 @@ def target_environment(runtime: dict) -> dict:
     return environment
 
 
-def read_lock(root: Path, runtime: dict) -> list[tuple[Package, PackageWheel]]:
-    # Read the standard package lock and select wheels for the included Python, not the build Python.
+def read_lock(
+    root: Path, runtime: dict, lockfile: str = "pylock.toml"
+) -> list[tuple[Package, PackageWheel]]:
+    # lockfile selects a standard lock inside root; evaluate it for the included Python.
     try:
-        data = dependencies.local_path(root, "pylock.toml").read_bytes()
+        data = dependencies.local_path(root, lockfile).read_bytes()
         lock = Pylock.from_dict(tomllib.loads(data.decode("utf-8")))
         version = tuple(int(part) for part in runtime["version"].split(".")[:2])
         interpreter = "cp" + "".join(str(part) for part in version)
@@ -418,7 +420,9 @@ def prune_vendor(root: Path) -> Path | None:
     return selected
 
 
-def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
+def prepare_packages(
+    root: Path, *, refresh_manifest: bool = False, lockfile: str = "pylock.toml"
+) -> Path:
     """Install cached wheels and return the verified package folder under libs/vendor.
 
     Prepare files in a temporary folder and check them before creating the final folder.
@@ -427,10 +431,10 @@ def prepare_packages(root: Path, *, refresh_manifest: bool = False) -> Path:
     bundle without pip. An explicit manifest refresh rebuilds it from cached wheels.
     Run preparation while the launcher is closed.
     """
-    # root is the build folder; refresh_manifest allows updating the saved file list.
+    # lockfile selects the package profile; refresh_manifest updates the active file list.
     settings = read_settings(root)
     runtime = settings["runtime"]
-    packages = read_lock(root, runtime)
+    packages = read_lock(root, runtime, lockfile)
     # Free obsolete copies before creating installation staging; retain the current bundle.
     selected = prune_vendor(root)
     if not refresh_manifest and selected is not None and selected.exists():
@@ -782,10 +786,15 @@ def prepare_reduced_release(
 
 
 def main(argv=None) -> int:
-    """Prepare release dependencies and return 0 on success or 1 on failure."""
+    """Prepare dependencies and return 0 on success or 1 on failure."""
     # argv can supply command-line arguments; None reads them normally; return 0 on success.
     parser = argparse.ArgumentParser(
-        description="Authenticate inputs and prepare bundled runtime packages."
+        description="Prepare bundled packages; authenticate downloads and hash-check local wheels."
+    )
+    parser.add_argument(
+        "--lockfile",
+        default="pylock.toml",
+        help="package lock inside the project; use pylock.stock.toml for the official fallback",
     )
     parser.add_argument(
         "--refresh-manifest",
@@ -818,6 +827,10 @@ def main(argv=None) -> int:
     root = Path(__file__).resolve().parent.parent
     try:
         if arguments.frida_build:
+            if arguments.lockfile != "pylock.toml":
+                raise dependencies.DependencyError(
+                    "Authenticated candidates use their own build-derived lock."
+                )
             candidate = prepare_reduced_release(
                 root,
                 arguments.frida_build.absolute(),
@@ -841,11 +854,16 @@ def main(argv=None) -> int:
             )
         settings = read_settings(root)
         runtime = settings["runtime"]
-        packages = read_lock(root, runtime)
+        packages = read_lock(root, runtime, arguments.lockfile)
         cache = dependencies.local_path(root, ".cache/downloads")
         archive = authenticate_runtime(root, runtime)
         prepare_runtime(root, runtime, archive)
+        local_packages = False
         for package, wheel in packages:
+            if wheel.url is None:
+                # Local builds have no PyPI publishing record; installation still checks their locked hashes.
+                local_packages = True
+                continue
             # A publishing identity is required before accepting a downloaded package for release.
             repositories = {
                 identity.get("repository")
@@ -889,10 +907,17 @@ def main(argv=None) -> int:
                 ],
                 check=True,
             )
-        directory = prepare_packages(root, refresh_manifest=arguments.refresh_manifest)
-        print(
-            f"Release inputs authenticated; distributable packages ready in {directory.relative_to(root).as_posix()}."
+        directory = prepare_packages(
+            root,
+            refresh_manifest=arguments.refresh_manifest,
+            lockfile=arguments.lockfile,
         )
+        status = (
+            "Local package hashes checked"
+            if local_packages
+            else "Release inputs authenticated"
+        )
+        print(f"{status}; packages ready in {directory.relative_to(root).as_posix()}.")
         return 0
     # Return an error if a download check, build step or package install fails.
     except (

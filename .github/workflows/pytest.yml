@@ -62,10 +62,11 @@ jobs:
         run: |
           python -m venv .venv
           "${{ matrix.python }}" -m pip install -r requirements-dev.txt
-      - name: Authenticate inputs and reproduce the bundled packages with pip
+      - name: Authenticate and prepare the official Windows fallback for routine CI
         if: runner.os == 'Windows'
         run: |
-          "${{ matrix.python }}" -I launcher/prepare_release.py
+          # The locally built reduced wheel is tested separately; do not compile it on every push.
+          "${{ matrix.python }}" -I launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
       - name: Check bundled Frida imports without installing packages
         if: runner.os == 'Windows'
         run: |
