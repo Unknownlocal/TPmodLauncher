@@ -7,7 +7,7 @@ acceptance.
 
 ## Requirements
 
-- A developer Python 3.13 or newer and the project's local venv, populated from
+- A developer Python 3.12 or newer and the project's local venv, populated from
   `requirements-dev.txt`. The bundled embeddable runtime lacks development headers.
 - Git, Node.js 18 or newer and npm available on PATH.
 - Windows: Visual Studio C/C++ tools and Windows SDK, including x86 tools.
@@ -80,11 +80,22 @@ $env:TPM_REQUIRE_FRIDA_BUILD_TESTS = '1'
 ```
 
 The native probe uses owned Python parent/child processes. It checks actual
-QuickJS messages, script RPC, child gating, process stdout and rejection of the
+function replacement/restoration, QuickJS messages, script RPC, child gating,
+process stdout and rejection of the
 disabled V8/SQLite features. It does not start or modify the game.
 
+On POSIX it explicitly exercises fork and exec, validating both lifecycle
+events and their separate sessions. On WSL, attaching during Python 3.12's
+subprocess fork implementation stalls with both official and reduced Frida;
+that path is not validated by the passing fork/exec probe. The release entry
+point and prepared runtime remain Windows-only. The controller and manager
+transport now also run against owned Linux CPython 3.13 helpers; see the
+[full WSL suite instructions](../tests/README.md).
+
 The `reduced-frida.yml` workflow builds/tests Windows x64, Linux x64, macOS Intel
-and macOS ARM. On push/manual runs, GitHub's official attestation action signs
+and macOS ARM on GitHub-hosted runners. Linux can also be built and tested
+locally in WSL; macOS acceptance relies on those hosted jobs, not self-hosted
+machines. On push/manual runs, GitHub's official attestation action signs
 build provenance for both the wheel and its details. PR outputs remain unsigned.
 Only build details and coverage are uploaded in this phase; wheels stay in the
 build job until the incorporated-component release audit is complete. GitHub
@@ -116,10 +127,10 @@ Frida commit. The expected repository and commit come from your command; build
 details cannot choose their own trusted publisher.
 
 ```powershell
-.venv/Scripts/python.exe -B launcher/prepare_release.py --frida-build .cache/reduced-frida/windows-x86_64 --repository <owner/repository> --source-digest <launcher-commit>
+.venv/Scripts/python.exe -B launcher/prepare_release.py --frida-build .cache/reduced-frida/windows-x86_64 --frida-sources .cache/reduced-frida/windows-x86_64-sources --repository <owner/repository> --source-digest <launcher-commit>
 ```
 
-This checks both wheel and build-details attestations against the expected
+This checks wheel, build-details, source archive and source-details attestations against the expected
 repository, exact workflow and source/workflow commit, rejecting self-hosted
 runners. Python's official archive still passes its existing hash and Sigstore
 checks. Unsigned local builds fail; there is no verification bypass option.
@@ -141,7 +152,31 @@ $env:TPM_REQUIRE_EMBEDDED_TESTS = '1'
 
 Trusted Windows workflow runs also prepare and test this candidate after signing.
 PRs continue unsigned native-binding tests. Candidate preparation authenticates
-inputs; it does not complete the [component source/relinking requirements](../notices/frida-sdk/README.md)
-or manual Steam acceptance. Binary uploads remain disabled until those release
+inputs and retains matching source material. It does not complete every remaining
+[component/platform review](../notices/frida-sdk/README.md) or manual Steam
+acceptance. Binary uploads remain disabled until those release
 requirements are complete. Native macOS/Linux binding builds do not yet provide
 a complete launcher/runtime release for those platforms.
+
+## Matching source package
+
+After a build, use its retained workspace to export the exact Frida repositories
+and the SDK sources referenced by its native and compatibility dependencies:
+
+```powershell
+.venv/Scripts/python.exe -B launcher/frida_sources.py create --work-dir <retained-short-workspace> --build-output .cache/reduced-frida/windows-x86_64 --output .cache/reduced-frida/windows-x86_64-sources
+```
+
+The exporter derives SDK commits from the pinned upstream dependency definitions.
+It includes their nested submodules and excludes local Git config and hooks.
+Cached SDK checkouts must be pristine and match their pins. Original source
+notices and our exact build tools are retained. Git bundles preserve source
+objects; separate shallow boundaries let the restore command produce valid,
+editable checkouts without network access.
+
+The source receipt hashes the archive and binds it to the exact binary build
+record. The workflow exports and signs both source files before candidate
+preparation. Source archives remain separate build outputs; candidates retain
+them under `source/` for review. A future binary download can provide source as
+a separate accompanying download; users do not need SDK sources to run Frida.
+See [rebuilding and relinking](FRIDA_RELINK.md) for restoration and library changes.
