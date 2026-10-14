@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.metadata
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -261,9 +262,11 @@ def import_frida(root: Path):
         module = importlib.import_module("frida")
         native = importlib.import_module("frida._frida")
         expected = manifest["packages"]["frida"]
-        # Check the Frida version and confirm both its Python code and DLL came from our folder.
+        # A rebuilt wheel has a local suffix; Core still reports the upstream version.
+        # Check the full installed package version as well as the native Core version.
         if (
-            module.__version__ != expected
+            importlib.metadata.version("frida") != expected
+            or module.__version__ != expected.partition("+")[0]
             or not Path(module.__file__).resolve().is_relative_to(directory)
             or not Path(native.__file__).resolve().is_relative_to(directory)
         ):

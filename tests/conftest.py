@@ -68,8 +68,7 @@ def project_factory(tmp_path):
             ]
         )
         (root / "pyproject.toml").write_text(settings, encoding="utf-8")
-        lock = dedent(
-            f"""\
+        lock = dedent(f"""\
             lock-version = "1.0"
             created-by = "pytest"
             requires-python = "==3.13.*"
@@ -81,8 +80,7 @@ def project_factory(tmp_path):
             name = "{filename}"
             path = ".cache/wheels/{filename}"
             hashes = {{sha256 = "{hashlib.sha256(wheel.read_bytes()).hexdigest()}"}}
-            """
-        )
+            """)
         (root / "pylock.toml").write_text(lock, encoding="utf-8")
         return root, wheel
 
@@ -117,7 +115,10 @@ def bundled_project(project_factory):
 @pytest.fixture(scope="module")
 def embedded_project(tmp_path_factory):
     """Return the folder of a temporary copy of bundled Python, Frida and launcher files."""
-    source = Path(__file__).resolve().parents[1]
+    # An isolated prepared candidate lets the same acceptance tests exercise either binding.
+    source = Path(
+        os.environ.get("TPM_TEST_RELEASE_ROOT", Path(__file__).resolve().parents[1])
+    ).resolve()
     runtime = source / "libs/python-3.13.16-embed-amd64"
     try:
         directory = dependencies.verify_bundle(source)

@@ -107,3 +107,41 @@ code is harmless.
 Upstream references: [building](https://frida.re/docs/building/),
 [Python packaging](https://github.com/frida/frida-python/blob/17.23.3/setup.py),
 [GitHub attestations](https://github.com/actions/attest).
+
+## Preparing an authenticated Windows candidate
+
+Release preparation also needs GitHub CLI with access to the build repository.
+Supply the reviewed launcher commit that produced the build, not the upstream
+Frida commit. The expected repository and commit come from your command; build
+details cannot choose their own trusted publisher.
+
+```powershell
+.venv/Scripts/python.exe -B launcher/prepare_release.py --frida-build .cache/reduced-frida/windows-x86_64 --repository <owner/repository> --source-digest <launcher-commit>
+```
+
+This checks both wheel and build-details attestations against the expected
+repository, exact workflow and source/workflow commit, rejecting self-hosted
+runners. Python's official archive still passes its existing hash and Sigstore
+checks. Unsigned local builds fail; there is no verification bypass option.
+See [GitHub's verification options](https://cli.github.com/manual/gh_attestation_verify).
+
+The candidate is prepared below `.cache/releases/reduced/` with its own standard
+`pylock.toml`, bundled manifest, runtime, source and notices. The selected stock
+package, root lock and root manifest remain intact. Use `--output` with another
+fresh folder below `.cache/releases/` to preserve earlier candidates. Package
+installation and file verification reuse the existing preparation functions.
+
+To run the existing acceptance suite against this candidate:
+
+```powershell
+$env:TPM_TEST_RELEASE_ROOT = '.cache/releases/reduced'
+$env:TPM_REQUIRE_EMBEDDED_TESTS = '1'
+.venv/Scripts/python.exe -B -m pytest
+```
+
+Trusted Windows workflow runs also prepare and test this candidate after signing.
+PRs continue unsigned native-binding tests. Candidate preparation authenticates
+inputs; it does not complete the [component source/relinking requirements](../notices/frida-sdk/README.md)
+or manual Steam acceptance. Binary uploads remain disabled until those release
+requirements are complete. Native macOS/Linux binding builds do not yet provide
+a complete launcher/runtime release for those platforms.

@@ -55,8 +55,14 @@ def wheel_output(tmp_path, recipe):
         "frida/py.typed": b"",
         "frida/_frida.pyd": b"synthetic, never executed",
         metadata + "/METADATA": f"Name: frida\nVersion: {version}\n".encode(),
+        metadata
+        + "/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: cp37-abi3-win_amd64\n",
         metadata + "/licenses/COPYING": b"synthetic fixture licence",
     }
+    # Standard wheel records allow real pip installation; the synthetic binary is never loaded.
+    files[metadata + "/RECORD"] = "".join(
+        f"{name},,\n" for name in [*files, metadata + "/RECORD"]
+    ).encode()
     with zipfile.ZipFile(wheel, "w") as archive:
         for name, data in files.items():
             archive.writestr(name, data)
@@ -310,6 +316,131 @@ def test_occupied_workspace_is_never_overwritten(tmp_path, recipe):
             recipe, "windows-x86_64", work, tmp_path / "output", tmp_path / "cache"
         )
     assert marker.read_text() == "keep"
+
+
+@pytest.mark.parametrize(
+    "repository,commit,output",
+    [
+        ("", "1" * 40, ".cache/releases/reduced"),
+        ("example/launcher", "release-tag", ".cache/releases/reduced"),
+        ("example/launcher", "1" * 40, "libs/vendor/reduced"),
+    ],
+)
+def test_reduced_preparation_requires_expected_identity_and_isolated_destination(
+    project_factory, repository, commit, output
+):
+    root, _ = project_factory()
+    before = (root / "pylock.toml").read_bytes()
+    with pytest.raises(build.release.dependencies.DependencyError):
+        build.release.prepare_reduced_release(
+            root, root / "absent-build", output, repository, commit
+        )
+    assert (root / "pylock.toml").read_bytes() == before
+    assert not (root / "libs").exists()
+
+
+@pytest.mark.parametrize("failed_artifact", ["wheel", "details"])
+def test_reduced_preparation_stops_before_writes_on_signature_failure(
+    wheel_output, project_factory, monkeypatch, failed_artifact
+):
+    root, _ = project_factory()
+    output, wheel = wheel_output
+    calls = []
+    failed = wheel if failed_artifact == "wheel" else output / "build-details.json"
+
+    def reject(command, **kwargs):
+        calls.append(command)
+        artifact = Path(command[3])
+        if artifact == failed:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(build.release.subprocess, "run", reject)
+    before = (root / "pylock.toml").read_bytes()
+    with pytest.raises(subprocess.CalledProcessError):
+        build.release.prepare_reduced_release(
+            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+        )
+    assert not (root / ".cache/releases").exists()
+    assert (root / "pylock.toml").read_bytes() == before
+    assert len(calls) == (1 if failed_artifact == "wheel" else 2)
+    for command in calls:
+        assert command[4:] == [
+            "--repo",
+            "example/launcher",
+            "--signer-workflow",
+            "example/launcher/.github/workflows/reduced-frida.yml",
+            "--source-digest",
+            "1" * 40,
+            "--signer-digest",
+            "1" * 40,
+            "--deny-self-hosted-runners",
+        ]
+
+
+def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
+    wheel_output, project_factory, monkeypatch, tmp_path
+):
+    root, _ = project_factory()
+    output, wheel = wheel_output
+    for name in ("launcher", "hook_manager", "notices"):
+        (root / name).mkdir()
+        (root / name / "fixture.txt").write_text("synthetic source")
+    for name in ("LICENCE", "README.md"):
+        (root / name).write_text("synthetic fixture")
+    archive = tmp_path / "runtime.zip"
+    with zipfile.ZipFile(archive, "w") as runtime:
+        runtime.writestr("python.exe", b"synthetic runtime, never executed")
+    # Only external identity services are replaced; wheel installation and file checks are real.
+    original_run = subprocess.run
+    verified = []
+
+    def verify_or_run(command, **kwargs):
+        if command[:3] == ["gh", "attestation", "verify"]:
+            verified.append(Path(command[3]).name)
+            return subprocess.CompletedProcess(command, 0)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(build.release.subprocess, "run", verify_or_run)
+    monkeypatch.setattr(
+        build.release, "authenticate_runtime", lambda root, runtime: archive
+    )
+    before = (root / "pylock.toml").read_bytes()
+    candidate = build.release.prepare_reduced_release(
+        root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+    )
+    runtime = build.release.read_settings(candidate)["runtime"]
+    packages = build.release.read_lock(candidate, runtime)
+    assert [(package.name, str(package.version)) for package, _ in packages] == [
+        ("frida", "17.23.3+modlauncher.1")
+    ]
+    assert verified == [wheel.name, "build-details.json"]
+    installed = build.release.dependencies.verify_bundle(candidate)
+    assert (installed / "frida/_frida.pyd").read_bytes() == b"synthetic, never executed"
+    assert build.release.prepare_packages(candidate) == installed
+    assert (root / "pylock.toml").read_bytes() == before
+    assert not (root / "bundled_packages.toml").exists()
+
+
+def test_changed_wheel_during_authentication_cannot_be_published(
+    wheel_output, project_factory, monkeypatch
+):
+    root, _ = project_factory()
+    output, wheel = wheel_output
+
+    def alter(command, **kwargs):
+        if Path(command[3]).name == "build-details.json":
+            with wheel.open("ab") as stream:
+                stream.write(b"changed during identity check")
+
+    monkeypatch.setattr(build.release.subprocess, "run", alter)
+    with pytest.raises(
+        build.release.dependencies.DependencyError,
+        match="changed during authentication",
+    ):
+        build.release.prepare_reduced_release(
+            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
+        )
+    assert not (root / ".cache/releases").exists()
 
 
 @pytest.mark.frida_build
