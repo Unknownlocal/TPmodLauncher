@@ -19,6 +19,9 @@ lifecycle = load("lifecycle", "process_lifecycle.py")
 bridge = load("bridge", "game_bridge.py")
 output = Path(sys.argv[3])
 messages = []
+# The bridge receives the installation folder beside this isolated launcher copy.
+pack = root.parent / "data/owned pack"
+pack.mkdir(parents=True)
 controller = lifecycle.Controller(
     frida.get_local_device(),
     [sys.argv[1], "-B", sys.argv[2], str(output)],
@@ -53,6 +56,14 @@ try:
     # A cancelled wait must not leave a queued request blocking this one or shutdown.
     status = current.request("status")
     assert status["groups"] == {"owned": "active"}, status
+    assert status["pack"] == {
+        "state": "ready",
+        "series": "formula",
+        "id": "owned pack",
+        "root": str(pack.resolve()),
+    }, status
+    controller.poll()
+    assert sum("PACK DISCOVERY" in message for message in messages) == 1, messages
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")

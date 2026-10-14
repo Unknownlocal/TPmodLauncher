@@ -65,5 +65,6 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
             and closed["observer_removed"]
         )
         assert not closed["status"]["errors"]
+        assert closed["pack"] == {"state": "stopped"}
     finally:
         probe.unlink(missing_ok=True)

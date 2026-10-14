@@ -8,6 +8,7 @@ time.sleep(0.1)
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
 from pathlib import Path
+from types import ModuleType
 
 output = Path(sys.argv[1])
 deadline = time.monotonic() + 15
@@ -15,6 +16,24 @@ while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadlin
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
+
+
+# Finish an owned Formula-like startup after the bridge has already become ready.
+# The helper raises if discovery calls it instead of reading the populated cache.
+def active_data_pack(default="owned-default"):
+    raise AssertionError("Discovery called the selection helper")
+
+
+utils = ModuleType("utils")
+utils.active_data_pack = active_data_pack
+utils._ACTIVE_PACK_CACHE = {"owned-default": "owned pack"}
+sys.modules["utils"] = utils
+_CONSTANTS_LOADED = True
+while host.discovery.snapshot is None and time.monotonic() < deadline:
+    time.sleep(0.02)
+assert host.discovery.snapshot is not None, "Bridge did not discover the startup pack"
+# Simulate a menu selection while this process still owns the original loaded pack.
+utils._ACTIVE_PACK_CACHE.clear()
 manager.dispatch = lambda record: {"action": "replace", "value": 9}
 manager.approve(
     host.Target(
@@ -62,6 +81,7 @@ while not manager.closed and time.monotonic() < deadline:
             "value": fixture.method(3),
             "status": manager.status(),
             "observer_removed": manager.finder not in sys.meta_path,
+            "pack": host.discovery.poll(),
         }
     )
 )

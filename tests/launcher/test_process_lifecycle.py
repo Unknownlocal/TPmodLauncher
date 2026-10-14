@@ -362,6 +362,10 @@ def test_bridge_ordering_and_failure_cleanup(rig, failure):
     device, controller, messages, _ = rig
     callbacks = {}
 
+    def pack_message(name):
+        pack = {"id": name, "state": "ready"}
+        return {"type": "send", "payload": {"event": "pack", "pack": pack}}
+
     class OwnedBridge:
         def __init__(self, session, pid, message):
             callbacks[pid] = message
@@ -392,6 +396,9 @@ def test_bridge_ordering_and_failure_cleanup(rig, failure):
             )
             controller.poll()
             assert any("HOOK MANAGER READY pid=10" in message for message in messages)
+            callbacks[10](pack_message("first"))
+            controller.poll()
+            assert sum("PACK DISCOVERY pid=10" in message for message in messages) == 1
             old = callbacks[10]
             first = controller.sessions[10]
             first.is_detached = True
@@ -399,7 +406,12 @@ def test_bridge_ordering_and_failure_cleanup(rig, failure):
             old(
                 {"type": "send", "payload": {"event": "error", "detail": "stale error"}}
             )
+            old(pack_message("stale"))
+            callbacks[10](pack_message("replacement"))
             controller.poll()  # A detached bridge must not fail the replacement's session.
+            discovery = [line for line in messages if "PACK DISCOVERY" in line]
+            assert len(discovery) == 2 and '"replacement"' in discovery[-1]
+            assert not any('"stale"' in line for line in discovery)
     finally:
         controller.close()
     events = [call[0] for call in device.calls]

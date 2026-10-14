@@ -2,8 +2,9 @@
 """Initialise the trusted manager only after Python's main thread is identifiable."""
 
 
-def pulse(source, digest, instance, request_json):
-    # source is our manager snapshot; digest/instance identify it; request_json contains data only.
+def pulse(sources, digest, instance, game_root, request_json):
+    # sources contains our trusted Python files; digest/instance identify their owner.
+    # game_root is the installation folder; request_json contains data only.
     import sys
 
     threads = sys.modules.get("threading")
@@ -34,15 +35,17 @@ def pulse(source, digest, instance, request_json):
                 raise RuntimeError("Another bridge owns the active manager")
         if module is None or module.instance != instance:
             module = ModuleType(name)
-            exec(
-                compile(source, "modLauncher/hook_manager/manager.py", "exec"),
-                module.__dict__,
-            )
+            for filename, source in sources.items():
+                exec(compile(source, filename, "exec"), module.__dict__)
             module.source_digest, module.instance = digest, instance
             # No dispatcher or game targets exist until a later sandbox integration phase.
             module.manager = module.Manager()
+            module.discovery = module.PackDiscovery(game_root)
             sys.modules[name] = module
         response = module.manager.request(json.loads(request_json))
+        if module.manager.closed:
+            module.discovery.stop()
+        response["pack"] = module.discovery.poll()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         return json.dumps({"event": "error", "detail": str(error)[:4096]})

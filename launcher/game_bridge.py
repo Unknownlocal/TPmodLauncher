@@ -120,7 +120,7 @@ class Bridge:
 
 
 def factory(root, frida):
-    """Read our three source files once and return a factory for per-process bridges."""
+    """Read our trusted source files once and return a factory for per-process bridges."""
     root = Path(root).resolve()
 
     def read(relative):
@@ -130,15 +130,20 @@ def factory(root, frida):
             raise BridgeError("Bridge source path escapes the launcher folder")
         return path.read_text(encoding="utf-8-sig")
 
-    manager = read("hook_manager/manager.py")
+    # This fixed list supplies both Python sources; packs cannot add entries.
+    sources = {
+        f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
+        for name in ("manager", "pack_discovery")
+    }
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")
-    digest = hashlib.sha256(manager.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(json.dumps(sources).encode("utf-8")).hexdigest()
 
     def create(session, pid, on_message, *, bootstrap=True):
         # Each process gets a distinct owner token; only the trusted controller constructs this source.
         arguments = ",".join(
-            json.dumps(value) for value in (manager, digest, uuid.uuid4().hex)
+            json.dumps(value)
+            for value in (sources, digest, uuid.uuid4().hex, str(root.parent))
         )
         # Build one fixed expression; the transport can append only a quoted JSON request.
         prefix = (

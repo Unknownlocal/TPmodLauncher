@@ -2,6 +2,7 @@
 """Start the supplied game command and track its Frida sessions until the game exits."""
 
 from contextlib import contextmanager
+import json
 import logging
 import math
 import os
@@ -295,6 +296,13 @@ class Controller:
                 if status.get("state") != "ready":
                     raise LaunchError(f"Hook manager is not ready for pid={pid}")
                 self.report(f"HOOK MANAGER READY pid={pid}; no mod code loaded")
+            elif event == "pack":
+                # Quote paths and IDs as JSON so a diagnostic remains a single log record.
+                # The session check above also rejects delayed records from replaced processes.
+                pack = payload.get("pack", {})
+                self.report(
+                    f"PACK DISCOVERY pid={pid}: {json.dumps(pack, allow_nan=False)}"
+                )
             elif event in ("waiting", "transport"):
                 self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:

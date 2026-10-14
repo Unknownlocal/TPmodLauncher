@@ -25,6 +25,10 @@ Linux uses shared-library CPython 3.13 and a verified reduced Frida wheel in a
 temporary test bundle. This harness does not relax the production entry point's
 requirement to use the bundled Windows interpreter.
 
+Pack-discovery tests check startup snapshots and folder boundaries using owned
+modules and folders. The native bridge test also checks discovery after manager
+readiness and clears its snapshot at shutdown. It never starts the actual game.
+
 Seven `embedded` tests cover Windows's packaged interpreter and entry point;
 they skip on Linux. The two `native` controller/bridge tests must not skip when
 native acceptance is requested. `frida_build` identifies the reduced binding's

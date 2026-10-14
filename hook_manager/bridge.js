@@ -5,6 +5,7 @@ let observer = null;
 let listener = null;
 let busy = false;
 let ready = false;
+let packReported = false;
 let stopped = false;
 let failed = null;
 let pending = null;
@@ -76,11 +77,11 @@ observer = Process.attachModuleObserver({
                 onEnter() {
                     // Before SaveThread executes, this thread still holds the GIL and its thread state.
                     // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && !pending)) return;
+                    if (busy || stopped || failed || (ready && packReported && !pending)) return;
                     if (!initialized() || finalizing()) return;
                     const state = threadState();
                     if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
-                    if (!pending && Date.now() - lastAttempt < 100) return;
+                    if (!pending && Date.now() - lastAttempt < 250) return;
                     lastAttempt = Date.now();
                     busy = true;
                     let result = ptr(0);
@@ -107,6 +108,12 @@ observer = Process.attachModuleObserver({
                         if (!ready) {
                             ready = true;
                             send(response);
+                        }
+                        // Startup can finish after manager readiness; report its pack once per process.
+                        const pack = response.status.pack;
+                        if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
+                            packReported = true;
+                            send({ event: 'pack', pack });
                         }
                         if (pending) {
                             const completed = pending;
