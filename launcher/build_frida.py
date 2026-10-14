@@ -314,6 +314,31 @@ def verify_output(output, recipe, target):
     return wheel
 
 
+def wheel_platform_args(extension, target):
+    """Choose a macOS wheel tag from the native extension rather than universal Python."""
+    if not target.startswith("macos-"):
+        return []  # Keep the existing Windows/Linux packaging defaults.
+    architecture = target.removeprefix("macos-")
+    actual = subprocess.run(
+        ["lipo", "-archs", str(extension)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    # Each build job packages one CPU, so lipo must report exactly that CPU.
+    if actual != [architecture]:
+        raise Error(f"Compiled extension architectures {actual} differ from {target}")
+
+    from setuptools.command.bdist_wheel import get_platform
+
+    # Setuptools reads the compiled Mach-O's minimum OS, keeping a higher Python floor too.
+    platform_tag = get_platform(str(extension.parent))
+    prefix = re.match(r"macosx_[0-9]+_[0-9]+_", platform_tag)
+    if prefix is None:
+        raise Error(f"Expected a macOS packaging platform, got {platform_tag}")
+    return ["--plat-name", prefix[0] + architecture]
+
+
 def build(recipe, target, work, output, cache):
     """Compile in a fresh short workspace and publish checked outputs without installing them."""
     if output.exists():
@@ -413,6 +438,7 @@ def build(recipe, target, work, output, cache):
             "--build-base",
             str(work / "wheel-build"),
             "bdist_wheel",
+            *wheel_platform_args(extensions[0], target),
             "--dist-dir",
             str(work / "wheels"),
         ],

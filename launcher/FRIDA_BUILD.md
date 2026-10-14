@@ -59,6 +59,12 @@ still reports `17.23.3`. Its filename/metadata, stable ABI, platform, required
 generated files, licence and compiled-extension hash are checked before publishing
 the experimental output. Setuptools, SDKs and compiler tools remain build inputs.
 
+On macOS, `lipo -archs` checks the compiled extension against the requested CPU.
+The wheel command receives an explicit `--plat-name`, using setuptools' binary
+inspection for the minimum macOS version and the checked CPU for its architecture.
+This avoids inheriting a `universal2` label from the Python interpreter while
+keeping both the binary/Python minimum OS floor and the native-target checks.
+
 `build-details.json` records the main pin, resolved submodule commits, input
 hashes, compiler/tool versions and output hashes. It contains no developer
 absolute filesystem paths.

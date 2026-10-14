@@ -74,7 +74,7 @@ jobs:
           TPM_REQUIRE_FRIDA_BUILD_TESTS: '1'
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
-          "$BUILD_PYTHON" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest tests/launcher/test_frida_build.py tests/launcher/test_frida_sources.py tests/launcher/test_frida_macos_packaging.py -p pytest_cov --cov=launcher.build_frida --cov=launcher.frida_sources --cov-report=term-missing --cov-report=xml
       - name: Run the Linux launcher and manager suite with native acceptance
         if: runner.os == 'Linux'
         env:
