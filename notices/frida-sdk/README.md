@@ -78,7 +78,9 @@ Status of the distribution requirements:
 
 The current review findings and the exact proposed download arrangement are in
 [DISTRIBUTION_REVIEW.md](DISTRIBUTION_REVIEW.md). The Microsoft debugging DLLs
-and macOS JavaScript material remain open release requirements. Source bundles
+and per-platform compiler/runtime review remain open release requirements. The
+[Darwin bridge package](../frida-npm/README.md) now has matching source export and
+notices; full macOS build/export acceptance is still required. Source bundles
 retain upstream-tracked binaries too; naming them source archives does not
 remove those files' separate redistribution conditions.
 

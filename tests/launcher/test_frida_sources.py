@@ -2,8 +2,9 @@
 """Exercise source export/restoration with real Git objects and package receipts."""
 
 import io
+import base64
+import hashlib
 import json
-from pathlib import Path
 import tarfile
 
 import pytest
@@ -20,8 +21,8 @@ def source_archive(content, output):
     return output
 
 
-def test_shallow_tag_and_nested_sources_restore_without_network(
-    tmp_path, source_repository
+def test_shallow_tag_nested_and_npm_sources_restore_without_network(
+    tmp_path, source_repository, darwin_npm_build
 ):
     child = tmp_path / "child"
     child_commit = source_repository(child)
@@ -45,6 +46,9 @@ def test_shallow_tag_and_nested_sources_restore_without_network(
         str(shallow),
     )
     content = tmp_path / "content"
+    work, npm_archive = darwin_npm_build
+    sources.export_npm(work, "macos-arm64", content)
+    assert len(list((content / "deps/npm").iterdir())) == 1
     sources.export_repository(shallow, content / "repos/frida.bundle")
     sources.export_repository(child, content / "repos/frida/child.bundle")
     (content / "source-index.json").write_text(
@@ -61,6 +65,7 @@ def test_shallow_tag_and_nested_sources_restore_without_network(
         == child_commit
     )
     assert (restored / "frida/child/code.py").read_text() == "VALUE = 1\n"
+    assert (restored / "deps/npm/demo-1.0.0.tgz").read_bytes() == npm_archive
     assert sources.repositories(restored / "frida") == {
         ".": commit,
         "child": child_commit,
@@ -158,3 +163,83 @@ def test_invalid_repository_index_cannot_publish_checkouts(tmp_path, index):
             source_archive(content, tmp_path / "sources.tar.xz"), destination
         )
     assert not destination.exists() and not (tmp_path / "outside").exists()
+
+
+@pytest.fixture
+def darwin_npm_build(tmp_path, monkeypatch):
+    """Create real target records, locks, installed files and one integrity-pinned cache archive."""
+    monkeypatch.setattr(sources.build, "ROOT", tmp_path)
+    files = {
+        "package.json": b'{"name":"demo","version":"1.0.0"}',
+        "index.js": b"export const value = 42;\n",
+    }
+    saved = tmp_path / "package.tgz"
+    with tarfile.open(saved, "w:gz") as archive:
+        for name, data in files.items():
+            member = tarfile.TarInfo("package/" + name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    data = saved.read_bytes()
+    digest = hashlib.sha512(data).digest()
+    cache = tmp_path / ".cache/reduced-frida/npm" / (digest.hex()[:32] + ".tgz")
+    cache.parent.mkdir(parents=True)
+    saved.rename(cache)
+    locked = {
+        "version": "1.0.0",
+        "resolved": "https://registry.npmjs.org/nonexistent-fixture/-/demo-1.0.0.tgz",
+        "integrity": "sha512-" + base64.b64encode(digest).decode(),
+    }
+    records = []
+    work = tmp_path / "work"
+    for name in ("reportcrash", "osanalytics"):
+        output = work / "build" / name / (name + ".js")
+        output.parent.mkdir(parents=True)
+        output.write_text("synthetic bundled agent")
+        records.append({"name": name + ".js", "filename": [str(output)]})
+        original = work / "source/subprojects/frida-core/src/darwin/agent" / name
+        private = output.parent / (name + ".js.p")
+        original.mkdir(parents=True)
+        package = private / "node_modules/demo"
+        package.mkdir(parents=True)
+        # A dev-only compiler must neither be downloaded nor included as runtime source.
+        lock = {
+            "packages": {
+                "": {},
+                "node_modules/demo": locked,
+                "node_modules/esbuild": {"dev": True},
+            }
+        }
+        for path in (original, private):
+            (path / "package-lock.json").write_text(json.dumps(lock))
+        for filename, content in files.items():
+            (package / filename).write_bytes(content)
+    info = work / "build/meson-info"
+    info.mkdir()
+    (info / "intro-targets.json").write_text(json.dumps(records))
+    return work, data
+
+
+@pytest.mark.parametrize(
+    "damage", ["installed-source", "installed-lock", "missing-agent"]
+)
+def test_changed_or_incomplete_npm_build_cannot_export(
+    darwin_npm_build, tmp_path, damage
+):
+    work, _ = darwin_npm_build
+    private = work / "build/reportcrash/reportcrash.js.p"
+    if damage == "installed-source":
+        (private / "node_modules/demo/index.js").write_text("changed compiled input")
+    elif damage == "installed-lock":
+        path = private / "package-lock.json"
+        lock = json.loads(path.read_text())
+        lock["packages"]["node_modules/demo"]["version"] = "2.0.0"
+        path.write_text(json.dumps(lock))
+    else:
+        (work / "build/reportcrash/reportcrash.js").unlink()
+    with pytest.raises(sources.paths.DependencyError):
+        sources.export_npm(work, "macos-x86_64", tmp_path / "content")
+
+
+def test_non_darwin_export_does_not_request_npm_material(tmp_path):
+    sources.export_npm(tmp_path / "absent-work", "linux-x86_64", tmp_path / "content")
+    assert not (tmp_path / "content").exists()

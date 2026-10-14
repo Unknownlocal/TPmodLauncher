@@ -14,27 +14,34 @@ import pytest
 from launcher import prepare_release as release
 
 
-def test_bad_download_hash_never_replaces_existing_file(tmp_path):
+@pytest.mark.parametrize("hash_name", ["sha256", "sha512"])
+def test_bad_download_hash_never_replaces_existing_file(tmp_path, hash_name):
     target = tmp_path / "artifact.whl"
     target.write_bytes(b"existing")
     source = tmp_path / "download-source"
     source.write_bytes(b"incorrect")
-    with pytest.raises(release.dependencies.DependencyError, match="SHA-256 mismatch"):
+    label = {"sha256": "SHA-256", "sha512": "SHA-512"}[hash_name]
+    with pytest.raises(release.dependencies.DependencyError, match=label + " mismatch"):
         release.download(
-            source.as_uri(), target, hashlib.sha256(b"correct").hexdigest()
+            source.as_uri(),
+            target,
+            hashlib.new(hash_name, b"correct").hexdigest(),
+            hash_name=hash_name,
         )
     assert target.read_bytes() == b"existing"
     assert not list(tmp_path.glob("download-*.tmp"))
 
 
-def test_verified_download_is_reused_without_network(tmp_path):
+@pytest.mark.parametrize("hash_name", ["sha256", "sha512"])
+def test_verified_download_is_reused_without_network(tmp_path, hash_name):
     target = tmp_path / "artifact.whl"
     target.write_bytes(b"verified")
     # This source does not exist: successful reuse cannot involve a download.
     release.download(
         (tmp_path / "absent-source").as_uri(),
         target,
-        hashlib.sha256(b"verified").hexdigest(),
+        hashlib.new(hash_name, b"verified").hexdigest(),
+        hash_name=hash_name,
     )
 
 

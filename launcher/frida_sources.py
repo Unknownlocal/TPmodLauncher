@@ -2,6 +2,7 @@
 """Export and restore pinned Frida/SDK sources for rebuilding and relinking."""
 
 import argparse
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import tomllib
+from urllib.parse import urlsplit
 
 if __package__:
     from . import build_frida as build
@@ -111,6 +113,115 @@ def export_repository(repository, destination):
         destination.with_suffix(".shallow").write_bytes(shallow.read_bytes())
 
 
+def verify_npm_archive(saved, installed):
+    """Check the saved package's files against its installed build inputs."""
+    # saved is the registry archive; installed is the package folder in node_modules.
+    seen, total = set(), 0
+    with tarfile.open(saved) as archive:
+        for member in archive:
+            relative = paths.safe_name(member.name)
+            if relative.parts[0] != "package":
+                raise paths.DependencyError("Expected npm package/ archive layout")
+            if member.isdir():
+                continue
+            relative = relative.relative_to("package").as_posix()
+            total += member.size
+            # Reject links, repeated filenames and oversized contents before reading them.
+            if (
+                not member.isfile()
+                or relative.casefold() in seen
+                or total > 32 * 1024 * 1024
+            ):
+                raise paths.DependencyError("Unsupported npm source archive entry")
+            seen.add(relative.casefold())
+            actual = paths.local_path(installed, relative)
+            # Compare every published file, including metadata, with the actual build input.
+            with archive.extractfile(member) as source:
+                if source.read() != actual.read_bytes():
+                    raise paths.DependencyError(
+                        f"Built npm source differs from its published archive: {relative}"
+                    )
+    if "package.json" not in seen:
+        raise paths.DependencyError(
+            "npm source archive is missing its package metadata"
+        )
+
+
+def export_npm(work, target, content):
+    """Preserve incorporated Darwin npm packages, matching their locks and installed source files."""
+    if not target.startswith("macos-"):
+        return  # Windows/Linux do not compile these Darwin agents.
+    expected = {"reportcrash.js", "osanalytics.js"}
+    found = set()
+    archives = {}
+    for record in (work / "build").rglob("intro-targets.json"):
+        for entry in json.loads(record.read_text()):
+            agent = entry["name"]
+            if agent not in expected:
+                continue
+            (filename,) = entry["filename"]
+            output = paths.local_path(work, Path(filename).relative_to(work).as_posix())
+            if not output.is_file():
+                raise paths.DependencyError(f"Built Darwin agent is missing: {agent}")
+            private = output.parent / (agent + ".p")
+            original = (
+                work / "source/subprojects/frida-core/src/darwin/agent" / agent[:-3]
+            )
+            locked = json.loads((original / "package-lock.json").read_text())[
+                "packages"
+            ]
+            installed = json.loads((private / "package-lock.json").read_text())[
+                "packages"
+            ]
+            for name, package in locked.items():
+                if not name or package.get("dev", False):
+                    continue  # Build tools such as esbuild are not incorporated into the agent.
+                if not name.startswith("node_modules/"):
+                    raise paths.DependencyError("Unsupported npm package location")
+                current = installed.get(name, {})
+                if any(
+                    current.get(key) != package[key]
+                    for key in ("version", "resolved", "integrity")
+                ):
+                    raise paths.DependencyError(
+                        f"Built npm lock differs from the upstream pin: {name}"
+                    )
+                integrity = package["integrity"]
+                algorithm, _, encoded = integrity.partition("-")
+                digest = base64.b64decode(encoded, validate=True)
+                if (
+                    algorithm != "sha512"
+                    or len(digest) != 64
+                    or not package["resolved"].startswith("https://registry.npmjs.org/")
+                ):
+                    raise paths.DependencyError(
+                        "Expected npm registry source with a SHA-512 integrity pin"
+                    )
+                # Keep the registry's filename rather than inventing a package-name encoding.
+                filename = Path(urlsplit(package["resolved"]).path).name
+                saved = paths.local_path(
+                    build.ROOT, ".cache/reduced-frida/npm/" + digest.hex()[:32] + ".tgz"
+                )
+                build.release.download(
+                    package["resolved"], saved, digest.hex(), hash_name="sha512"
+                )
+                verify_npm_archive(saved, paths.local_path(private, name))
+                destination = paths.local_path(content, "deps/npm/" + filename)
+                if filename in archives and archives[filename] != integrity:
+                    raise paths.DependencyError(
+                        "Darwin agents used different npm archives for the same package"
+                    )
+                if filename not in archives:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(saved, destination)
+                    archives[filename] = integrity
+            found.add(agent)
+    if found != expected or not archives:
+        raise paths.DependencyError(
+            "Missing Darwin agent build records or incorporated npm sources"
+        )
+
+
 def create(work, build_output, output):
     """Export sources matching one checked build into a new archive/details directory."""
     recipe = build.read_recipe()
@@ -169,6 +280,7 @@ def create(work, build_output, output):
     output.parent.mkdir(parents=True, exist_ok=True)
     with build.release.build_directory(output.parent, ".sources-stage-") as stage:
         content = stage / "content"
+        export_npm(work, details["target"], content)
         for name in source_records:
             if name.startswith("frida"):
                 repository = work / "source" / (name[6:] if name != "frida" else ".")

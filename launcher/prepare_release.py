@@ -198,15 +198,17 @@ def archive_files(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     return files
 
 
-def download(url: str, destination: Path, digest: str | None = None) -> None:
-    """Download to destination, checking the SHA-256 checksum when digest is provided."""
-    # url is the download address; destination is the saved file; digest is its expected checksum.
+def download(
+    url: str, destination: Path, digest: str | None = None, *, hash_name="sha256"
+) -> None:
+    """Download to destination, checking its hash; SHA-256 is the default."""
+    # digest is the expected hex checksum; npm source locks use SHA-512 instead of the default SHA-256.
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Reuse a saved download only when an expected checksum was given.
     if digest and destination.exists():
         with destination.open("rb") as source:
             # The saved file matches, so there is no need to download it again.
-            if dependencies.digest_stream(source) == digest:
+            if hashlib.file_digest(source, hash_name).hexdigest() == digest:
                 return
     # Download to a temporary file beside destination, then rename it when complete.
     descriptor, temporary = tempfile.mkstemp(
@@ -220,9 +222,9 @@ def download(url: str, destination: Path, digest: str | None = None) -> None:
             shutil.copyfileobj(response, output, 1024 * 1024)
         with Path(temporary).open("rb") as source:
             # Check the downloaded file before replacing a previously saved copy.
-            if digest and dependencies.digest_stream(source) != digest:
+            if digest and hashlib.file_digest(source, hash_name).hexdigest() != digest:
                 raise dependencies.DependencyError(
-                    f"Downloaded artifact SHA-256 mismatch: {destination.name}"
+                    f"Downloaded artifact {hash_name.upper().replace('SHA', 'SHA-')} mismatch: {destination.name}"
                 )
         Path(temporary).replace(destination)
     finally:

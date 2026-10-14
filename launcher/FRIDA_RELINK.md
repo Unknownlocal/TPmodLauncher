@@ -31,6 +31,19 @@ required submodules. `deps/src/` contains SDK package source checkouts, includin
 their nested submodules. Original licences and in-file copyright notices remain
 in those checkouts. Git verifies the restored objects before publication.
 
+macOS archives also retain the incorporated bridge package under `deps/npm/`.
+This is the original npm archive, with editable JavaScript and type declarations,
+not the minified agent output. Its version/integrity remain recorded in the
+restored upstream locks. See the [package notice](../notices/frida-npm/README.md).
+
+To modify that bridge, unpack it into a separate working directory and edit its
+source. Run `npm pack` there to produce your modified package. In each restored
+Darwin agent source folder (`reportcrash` and `osanalytics`), run
+`npm install --save-exact <absolute-path-to-your-modified-package.tgz>` to update
+its dependency and lock. The upstream agent build script then copies those
+updated files and builds your package. npm and esbuild are needed for compilation;
+the supplied bridge archive does not make the whole build offline.
+
 ## Modify a library and rebuild its SDK files
 
 Set `FRIDA_DEPS` to the restored `deps/` directory. Apply your changes to a

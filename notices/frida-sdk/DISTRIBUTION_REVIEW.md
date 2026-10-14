@@ -104,16 +104,26 @@ The pinned Darwin backend builds reportcrash and osanalytics JavaScript through
 npm. Both lock files resolve frida-objc-bridge 8.0.5 and esbuild 0.25.5.
 Esbuild is a build tool; the bridge is incorporated into the generated agents.
 Those agents are selected even when the separate fruity backend is disabled.
-The present Git/SDK exporter does not collect downloaded npm package contents.
-The actual incorporated bridge code, copyright/licence notices, any required
-rebuilding material and native compiler-runtime inventory need reviewing and
-preserving from the macOS builds before their distribution is enabled.
+The exporter now collects the original bridge archive from its locked registry
+URL and verifies its SHA-512 integrity, the actual installed lock, and all
+published files against both built agents. It includes the editable source under
+deps/npm/; offline restoration retains that archive unchanged. The published
+JavaScript and declarations match the package's published Git commit. The
+package declares LGPL-2.0 WITH WxWindows-exception-3.1 but ships no separate
+licence file; the full Library GPLv2 and wxWindows texts are retained here. See
+the [package notice](../frida-npm/README.md) and
+[rebuild instructions](../../launcher/FRIDA_RELINK.md).
+
+Both actual upstream agent targets compiled and exported successfully in a
+focused Linux/WSL Meson study. This checks the agent build layout and incorporated
+source, not a full macOS native build. Confirm source export on both hosted macOS
+builds and review their native compiler-runtime inventory before distribution.
 
 ## Release conclusion
 
 The source/relinking mechanism works on Windows and locally in WSL, and the
 Windows/Linux notice inventory is expanded. Distribution is not cleared yet.
-Close the Microsoft binary/compiler-runtime and macOS incorporated-material
-findings, confirm signed preparation in GitHub Actions, and verify the actual
+Close the Microsoft binary/compiler-runtime findings, confirm the macOS build
+inventory and source export, confirm signed preparation in GitHub Actions, and verify the actual
 four-file download arrangement before enabling artifact publication. Manual
 Windows Steam acceptance remains a separate functionality check.

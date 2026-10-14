@@ -174,6 +174,14 @@ notices and our exact build tools are retained. Git bundles preserve source
 objects; separate shallow boundaries let the restore command produce valid,
 editable checkouts without network access.
 
+For macOS, the exporter also preserves the npm bridge package incorporated into
+the Darwin agents under `deps/npm/`. It checks the upstream SHA-512 integrity
+pin, the installed lock, and every published file against the actual agent build
+inputs. Both agent outputs must exist, including in compatibility builds when
+present. The same package is saved once. npm/esbuild remain developer build
+tools; they are not added to launcher runtime dependencies. See the
+[package notice](../notices/frida-npm/README.md).
+
 The source receipt hashes the archive and binds it to the exact binary build
 record. The workflow exports and signs both source files before candidate
 preparation. Source archives remain separate build outputs; candidates retain
