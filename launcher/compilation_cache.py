@@ -83,8 +83,8 @@ def _private_directory(path):
 def _macos_private_acl(path):
     """Refuse extended macOS access rules that Unix mode bits alone cannot describe."""
     libc = ctypes.CDLL(None, use_errno=True)
-    libc.acl_get_file.argtypes = (ctypes.c_char_p, ctypes.c_int)
-    libc.acl_get_file.restype = ctypes.c_void_p
+    libc.acl_get_fd_np.argtypes = (ctypes.c_int, ctypes.c_int)
+    libc.acl_get_fd_np.restype = ctypes.c_void_p
     libc.acl_get_entry.argtypes = (
         ctypes.c_void_p,
         ctypes.c_int,
@@ -93,9 +93,20 @@ def _macos_private_acl(path):
     libc.acl_get_entry.restype = ctypes.c_int
     libc.acl_free.argtypes = (ctypes.c_void_p,)
     libc.acl_free.restype = ctypes.c_int
-    acl = libc.acl_get_file(os.fsencode(path), 0x100)  # ACL_TYPE_EXTENDED
+    # Pin an existing directory without following a substituted symlink. On Darwin,
+    # acl_get_fd_np returns NULL/ENOENT when its FILESEC_ACL property is absent.
+    # Using a descriptor keeps that distinct from a missing pathname at open().
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        ctypes.set_errno(0)
+        acl = libc.acl_get_fd_np(descriptor, 0x100)  # ACL_TYPE_EXTENDED
+        error = ctypes.get_errno()
+    finally:
+        os.close(descriptor)
     if not acl:
-        raise OSError(ctypes.get_errno(), "Cannot read cache access rules")
+        if error == errno.ENOENT:
+            return
+        raise OSError(error, "Cannot read cache access rules")
     try:
         entry = ctypes.c_void_p()
         # Darwin returns 0 for an entry, and -1/EINVAL for the end of a valid ACL.

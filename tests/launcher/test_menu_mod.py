@@ -3,6 +3,7 @@
 
 from contextlib import closing
 from concurrent.futures import wait
+import faulthandler
 import json
 import shutil
 import sys
@@ -13,6 +14,11 @@ from hook_manager.menu import MenuAdapter
 from launcher.mod_contract import Manifest, ManifestError, Mod
 from launcher.pack_mods import PackMods
 from launcher.sandbox import SandboxError
+
+
+# These components include a Python runtime; cold native compilation on CI can
+# take longer than the small WAT fixtures. This is a behavior test, not a benchmark.
+PYTHON_COMPILE_TIMEOUT = 30
 
 
 @pytest.fixture
@@ -49,7 +55,13 @@ def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
         scope.load(record)
         while scope.loading is not None:
             if scope.pending is not None:
-                assert wait([scope.pending], timeout=10).done
+                pending = scope.pending
+                if not wait([pending], timeout=PYTHON_COMPILE_TIMEOUT).done:
+                    faulthandler.dump_traceback()
+                    pytest.fail(
+                        f"Python component preparation exceeded {PYTHON_COMPILE_TIMEOUT}s; "
+                        f"future={pending!r}; messages={messages!r}"
+                    )
             scope.poll()
         assert list(scope.mods) == ["example.diagnostics", "example.menu"]
         assert adapter._notice() == "Mods loaded: 2"

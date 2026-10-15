@@ -239,30 +239,135 @@ def test_cache_configuration_cannot_redirect_to_a_mod_supplied_path(
         )
 
 
+@pytest.fixture
+def darwin_acl_api(tmp_path, monkeypatch):
+    from launcher import compilation_cache
+
+    opened, closed, freed = [], [], []
+
+    def open_directory(path, flags):
+        assert path == tmp_path
+        assert flags == 0x100100
+        opened.append(path)
+        return 42
+
+    def get_acl(descriptor, kind):
+        assert descriptor == 42 and kind == 0x100
+        return 123
+
+    api = SimpleNamespace(
+        acl_get_fd_np=get_acl,
+        acl_get_entry=lambda *_: 0,
+        acl_free=lambda acl: freed.append(acl),
+    )
+    monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: api)
+    # Windows cannot open directories this way. Replace only the OS boundary;
+    # native result/errno handling and cleanup still run in the real adapter.
+    monkeypatch.setattr(
+        compilation_cache,
+        "os",
+        SimpleNamespace(
+            open=open_directory,
+            close=closed.append,
+            O_RDONLY=0,
+            O_DIRECTORY=0x100000,
+            O_NOFOLLOW=0x100,
+        ),
+    )
+    return api, opened, closed, freed
+
+
 @pytest.mark.parametrize(
     "entry_result,error", [(-1, errno.EINVAL), (0, 0), (-1, errno.EACCES)]
 )
 def test_darwin_acl_adapter_distinguishes_empty_acl_from_entries_and_errors(
-    tmp_path, monkeypatch, entry_result, error
+    tmp_path, darwin_acl_api, entry_result, error
 ):
     from launcher import compilation_cache
 
-    freed = []
+    api, opened, closed, freed = darwin_acl_api
 
     def get_entry(*_):
         ctypes.set_errno(error)
         return entry_result
 
-    api = SimpleNamespace(
-        acl_get_file=lambda *_: 123,
-        acl_get_entry=get_entry,
-        acl_free=lambda acl: freed.append(acl),
-    )
-    # Only the unavailable OS call is replaced; the adapter's native return handling runs normally.
-    monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: api)
+    api.acl_get_entry = get_entry
     if entry_result == -1 and error == errno.EINVAL:
         compilation_cache._macos_private_acl(tmp_path)
     else:
         with pytest.raises((ValueError, OSError)):
             compilation_cache._macos_private_acl(tmp_path)
+    assert opened == [tmp_path] and closed == [42]
     assert freed == [123]
+
+
+@pytest.mark.parametrize(
+    "error", [errno.ENOENT, errno.EACCES, errno.EBADF, errno.ENOTSUP, errno.ENOMEM, 0]
+)
+def test_darwin_acl_adapter_distinguishes_absent_acl_from_read_errors(
+    tmp_path, darwin_acl_api, error
+):
+    from launcher import compilation_cache
+
+    api, opened, closed, freed = darwin_acl_api
+
+    def get_acl(*_):
+        # No errno must not accidentally reuse an ENOENT from an earlier call.
+        assert ctypes.get_errno() == 0
+        ctypes.set_errno(error)
+        return None
+
+    def unexpected_entry(*_):
+        pytest.fail("A null ACL must not be inspected")
+
+    api.acl_get_fd_np = get_acl
+    api.acl_get_entry = unexpected_entry
+    ctypes.set_errno(errno.ENOENT)
+    if error == errno.ENOENT:
+        compilation_cache._macos_private_acl(tmp_path)
+    else:
+        with pytest.raises(OSError, match="Cannot read cache access rules") as caught:
+            compilation_cache._macos_private_acl(tmp_path)
+        assert caught.value.errno == error
+    assert opened == [tmp_path] and closed == [42]
+    assert freed == []
+
+
+def test_darwin_acl_adapter_rejects_a_missing_directory(
+    tmp_path, darwin_acl_api, monkeypatch
+):
+    from launcher import compilation_cache
+
+    api, opened, closed, freed = darwin_acl_api
+
+    def missing_directory(*_):
+        raise FileNotFoundError(errno.ENOENT, "Directory disappeared")
+
+    def unexpected_acl(*_):
+        pytest.fail("A missing directory must not reach the ACL probe")
+
+    monkeypatch.setattr(compilation_cache.os, "open", missing_directory)
+    api.acl_get_fd_np = unexpected_acl
+    with pytest.raises(FileNotFoundError, match="Directory disappeared"):
+        compilation_cache._macos_private_acl(tmp_path)
+    assert opened == closed == freed == []
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires real macOS ACLs")
+def test_darwin_acl_probe_accepts_no_acl_and_rejects_extended_entries(tmp_path):
+    import pwd
+
+    from launcher import compilation_cache
+
+    folder = tmp_path / "private cache"
+    folder.mkdir(mode=0o700)
+    compilation_cache._private_directory(folder)
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    subprocess.run(
+        ["/bin/chmod", "+a", f"user:{user} allow list,search", str(folder)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with pytest.raises(ValueError, match="Extended cache access rules"):
+        compilation_cache._private_directory(folder)
