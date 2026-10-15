@@ -39,6 +39,15 @@ also avoids overlapping Wasmtime Python's process-wide callback exception state.
 The host converts callback failures to native Wasmtime errors before returning
 through the binding's C callback trampoline.
 
+Wasmtime's compiler uses native worker threads to compile functions in parallel.
+This does not enable guest threads or concurrent guest calls. Each instance
+still owns its Engine, Store and grants; no compilation cache is enabled.
+
+Trusted callers may pass a `timings` dictionary to collect compilation and
+initialization durations in seconds. Failed phases retain their elapsed time.
+Measurements finish outside guest execution and do not change fuel/deadline
+limits or expose the dictionary to the component.
+
 ## Limits and failure
 
 Default limits supplied by trusted infrastructure:

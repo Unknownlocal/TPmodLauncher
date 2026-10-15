@@ -92,6 +92,31 @@ as JSON, and each record is labelled with its game process ID. These are the
 confirmation of mod loading. `CODE MOD MENU` reports native UI readiness separately;
 activation can finish while the adapter waits for the game's normal menu import.
 
+`CODE MOD TIMING` records each attempted mod's `phase_seconds`, labelled with
+its pack and mod ID. The phases are:
+
+| Phase | Work measured |
+| --- | --- |
+| `manifest` | Read and validate the manifest and its parent folder. |
+| `component_read` | Read the bounded portable Wasm file. |
+| `compile` | Validate and compile the component using Wasmtime's parallel compiler. |
+| `initialize` | Instantiate the component and run its start functions. |
+| `activate` | Run the mod's activation export. |
+| `registration` | Send staged menu registrations, for mods requesting menu access. |
+
+Only reached phases are recorded; a failed phase retains its duration. Invalid
+manifests and duplicate IDs include their manifest timing in the rejection
+record. `CODE MOD READY` includes discovery timing and `total_seconds` for the
+whole pack-loading attempt; discovery failures include these in their rejection
+record instead. Totals also include validation, setup, logging and failure
+cleanup, so they need not equal the sum of the listed phases.
+
+Registration timing covers the request, not a later deferred UI installation;
+`CODE MOD MENU` remains the native readiness confirmation. These timings are
+elapsed seconds, separate from guest fuel and execution deadlines. Guest calls
+remain serialized, and components are compiled afresh each launch without a
+compilation cache.
+
 ## Calls
 
 - `report(message: string)` requires `diagnostics`.

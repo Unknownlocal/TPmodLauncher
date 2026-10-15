@@ -25,6 +25,8 @@ from wasmtime.component import (
     U64,
 )
 
+from launcher.load_timing import measure
+
 
 class SandboxError(RuntimeError):
     """A component, call or host operation could not run within the allowed boundary."""
@@ -181,6 +183,7 @@ class Sandbox:
         limits=Limits(),
         cleanup=None,
         required_exports=None,
+        timings=None,
     ):
         # Only trusted infrastructure supplies grants, limits and cleanup; the guest supplies bytes.
         self._thread = threading.get_ident()
@@ -224,12 +227,16 @@ class Sandbox:
                 config.wasm_gc = False
                 config.wasm_function_references = False
                 config.max_wasm_stack = 512 * 1024
-                config.parallel_compilation = False
-                # Python components contain a runtime; fast compilation keeps admission responsive.
+                # Compile functions on Wasmtime's worker threads; guest execution stays serialized.
+                config.parallel_compilation = True
+                # Prefer faster compilation for components that include a Python runtime.
                 config.cranelift_opt_level = "none"
                 self._engine = self._resources.enter_context(Engine(config))
             # Compile portable bytes through Wasmtime's validator, not unsafe native deserialization.
-            compiled = self._resources.enter_context(Component(self._engine, component))
+            with measure(timings, "compile"):
+                compiled = self._resources.enter_context(
+                    Component(self._engine, component)
+                )
             with compiled.type as interface:
                 imports = interface.imports(self._engine)
                 exports = interface.exports(self._engine)
@@ -272,9 +279,10 @@ class Sandbox:
                 for name, operation in self._capabilities.items():
                     root.add_func(name, self._host_function(operation))
             # Start functions execute here, using the startup fuel budget and other execution limits.
-            self._instance = self._run(
-                lambda: linker.instantiate(self._store, compiled), initialize=True
-            )
+            with measure(timings, "initialize"):
+                self._instance = self._run(
+                    lambda: linker.instantiate(self._store, compiled), initialize=True
+                )
         except BaseException as error:
             self.close()
             if not isinstance(error, Exception):

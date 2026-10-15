@@ -9,6 +9,7 @@ import tomllib
 
 from hook_manager.manager import data_copy, identifier
 from launcher.bundled_dependencies import local_path
+from launcher.load_timing import measure
 from launcher.mod_api import CAPABILITIES, EXPORTS
 from launcher.sandbox import Limits, Operation, Sandbox, SandboxError
 
@@ -130,7 +131,9 @@ class Manifest:
 class Mod:
     """Own one admitted contract instance; trusted code decides which events it receives."""
 
-    def __init__(self, manifest: Manifest, *, report=None, menu=None, cleanup=None):
+    def __init__(
+        self, manifest: Manifest, *, report=None, menu=None, cleanup=None, timings=None
+    ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
             operations = {}
@@ -158,7 +161,9 @@ class Mod:
                         manifest.id, item_id, label, message
                     ),
                 )
-            component = manifest.read_component()
+            # The loader owns this timing dictionary; it is never passed into guest code.
+            with measure(timings, "component_read"):
+                component = manifest.read_component()
         except BaseException:
             # Own admission cleanup until Sandbox adopts it, including missing component/provider errors.
             if cleanup is not None:
@@ -172,6 +177,7 @@ class Mod:
             limits=PYTHON_LIMITS if manifest.runtime == "python" else Limits(),
             cleanup=cleanup,
             required_exports=EXPORTS,
+            timings=timings,
         )
         # Admission and activation are distinct; construction cannot silently invoke a lifecycle export.
         self._active = False

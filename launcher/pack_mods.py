@@ -5,8 +5,10 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
+from time import perf_counter
 
 from launcher.bundled_dependencies import local_path, safe_name
+from launcher.load_timing import measure
 from launcher.mod_contract import Manifest, ManifestError, Mod
 from hook_manager.menu import MenuRequests
 
@@ -99,26 +101,43 @@ class PackMods:
             return
         # Repeated or changed bridge records cannot reassign an existing process's mods.
         self.started = True
+        started = perf_counter()
+        load_timings = {}
         try:
-            folder = self._folder(pack)
-            candidates = self._candidates(folder)
+            with measure(load_timings, "discovery"):
+                folder = self._folder(pack)
+                candidates = self._candidates(folder)
         except (OSError, ValueError, RuntimeError) as error:
-            self._log("DISCOVERY REJECTED", detail=str(error)[:512])
+            self._log(
+                "DISCOVERY REJECTED",
+                detail=str(error)[:512],
+                phase_seconds=load_timings,
+                total_seconds=round(perf_counter() - started, 6),
+            )
             return
-        manifests = []
+        # Each immutable manifest owns its timings, including copies with duplicate IDs.
+        manifests = {}
         for path in candidates:
+            timings = {}
             try:
-                manifest = Manifest.read(path)
-                # Recheck after resolution in case a parent changed during discovery.
-                if manifest.root.parent != folder:
-                    raise ManifestError(
-                        "Code mod is not a direct child of the selected pack"
-                    )
-                manifests.append(manifest)
+                with measure(timings, "manifest"):
+                    manifest = Manifest.read(path)
+                    # Recheck after resolution in case a parent changed during discovery.
+                    if manifest.root.parent != folder:
+                        raise ManifestError(
+                            "Code mod is not a direct child of the selected pack"
+                        )
+                manifests[manifest] = timings
             except ManifestError as error:
-                self._log("REJECTED", folder=path.name, detail=str(error)[:512])
+                self._log(
+                    "REJECTED",
+                    folder=path.name,
+                    detail=str(error)[:512],
+                    phase_seconds=timings,
+                )
         counts = Counter(manifest.id for manifest in manifests)
         for manifest in sorted(manifests, key=lambda item: (item.id, item.root.name)):
+            timings = manifests[manifest]
             # Decide duplicate identity before initializing either copy; never pick a winner.
             if counts[manifest.id] > 1:
                 self._log(
@@ -126,6 +145,7 @@ class PackMods:
                     id=manifest.id,
                     folder=manifest.root.name,
                     detail="Duplicate mod ID",
+                    phase_seconds=timings,
                 )
                 continue
             try:
@@ -134,12 +154,15 @@ class PackMods:
                     report=self._diagnostic,
                     menu=self.menu.add if self.set_menu is not None else None,
                     cleanup=lambda owner=manifest.id: self._remove_menu(owner),
+                    timings=timings,
                 )
                 # Retain ownership before activation so interruption can still close this instance.
                 self.mods[manifest.id] = mod
-                mod.activate()
+                with measure(timings, "activate"):
+                    mod.activate()
                 if "main-menu" in manifest.capabilities:
-                    self._flush_menu()
+                    with measure(timings, "registration"):
+                        self._flush_menu()
             except Exception as error:
                 failed = self.mods.pop(manifest.id, None)
                 if failed is not None:
@@ -161,7 +184,18 @@ class PackMods:
                 )
             else:
                 self._log("ACTIVE", id=manifest.id, version=manifest.version)
-        self._log("READY", pack=pack["id"], active=len(self.mods))
+            finally:
+                # Emit once per attempted mod, after guest execution and cleanup have returned.
+                self._log(
+                    "TIMING", pack=folder.name, id=manifest.id, phase_seconds=timings
+                )
+        self._log(
+            "READY",
+            pack=pack["id"],
+            active=len(self.mods),
+            phase_seconds=load_timings,
+            total_seconds=round(perf_counter() - started, 6),
+        )
 
     def _diagnostic(self, mod_id, message):
         """Route the approved report operation to the launcher log with host-owned identity."""

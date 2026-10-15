@@ -3,11 +3,14 @@
 
 from contextlib import closing
 import json
+import math
 import os
+from pathlib import Path
 import shutil
 import subprocess
 
 import pytest
+from wasmtime import wat2wasm
 
 from launcher.pack_mods import MAX_MODS, MAX_PACK_ENTRIES, PackMods
 from launcher.mod_contract import Manifest, Mod
@@ -107,7 +110,52 @@ def test_plain_pack_is_valid_and_does_not_import_python(pack):
     with closing(PackMods(game, messages.append)) as scope:
         scope.load(record)
         assert not scope.mods
-        assert json.loads(messages[-1].split(": ", 1)[1])["active"] == 0
+        ready = json.loads(messages[-1].split(": ", 1)[1])
+        assert ready["active"] == 0
+        assert 0 <= ready["phase_seconds"]["discovery"] <= ready["total_seconds"]
+
+
+@pytest.mark.parametrize(
+    "failure", ["component_read", "compile", "initialize", "activate"]
+)
+def test_loading_timings_survive_failed_phases_and_keep_mod_identity(
+    pack, code_mod, failure
+):
+    game, folder, record = pack
+    failed = code_mod(folder, "owned.failed", trap=failure == "activate")
+    code_mod(folder, "owned.healthy")
+    component = failed / "mod.wasm"
+    if failure == "component_read":
+        component.unlink()
+    elif failure == "compile":
+        # Pass the Component header check but fail Wasmtime's binary validator.
+        component.write_bytes(b"\0asm\x0d\0\x01\0\xff")
+    elif failure == "initialize":
+        # A valid core start function traps only when the component is instantiated.
+        source = (Path(__file__).with_name("fixtures") / "contract.wat").read_text()
+        source = source.replace("@RESULT@", "{}").replace("@LENGTH@", "2")
+        source = source.replace(
+            "(global $heap", "(func $start unreachable) (start $start)\n    (global $heap"
+        )
+        component.write_bytes(wat2wasm(source))
+    messages = []
+    with closing(PackMods(game, messages.append)) as scope:
+        scope.load(record)
+        assert list(scope.mods) == ["owned.healthy"]
+        assert scope.mods["owned.healthy"].event("echo", None) == {}
+    timings = {}
+    for line in messages:
+        if line.startswith("CODE MOD TIMING:"):
+            row = json.loads(line.split(": ", 1)[1])
+            assert row["pack"] == folder.name
+            timings[row["id"]] = row["phase_seconds"]
+    phases = ["manifest", "component_read", "compile", "initialize", "activate"]
+    assert set(timings["owned.failed"]) == set(phases[: phases.index(failure) + 1])
+    assert set(timings["owned.healthy"]) == set(phases)
+    for durations in timings.values():
+        assert all(math.isfinite(value) and value >= 0 for value in durations.values())
+    ready = next(line for line in messages if line.startswith("CODE MOD READY:"))
+    assert json.loads(ready.split(": ", 1)[1])["total_seconds"] >= 0
 
 
 @pytest.mark.parametrize("limit", ["mods", "entries"])

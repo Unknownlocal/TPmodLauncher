@@ -2,6 +2,7 @@
 """Run the sandboxed UI example beside a diagnostics mod through the real capability path."""
 
 from contextlib import closing
+import json
 import shutil
 import sys
 
@@ -43,6 +44,14 @@ def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
     ) as scope:
         scope.load(record)
         assert list(scope.mods) == ["example.diagnostics", "example.menu"]
+        timings = [
+            json.loads(line.split(": ", 1)[1])
+            for line in messages
+            if line.startswith("CODE MOD TIMING:")
+        ]
+        assert [row["id"] for row in timings] == ["example.diagnostics", "example.menu"]
+        assert "registration" not in timings[0]["phase_seconds"]
+        assert timings[1]["phase_seconds"]["registration"] >= 0
         assert hub.MENU_ITEMS == ["Career", "Load", "Mod Launcher", "Exit"]
         screen = hub.HubScreen()
         screen._activate("Mod Launcher")
