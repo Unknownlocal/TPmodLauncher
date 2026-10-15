@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Test bundled Python startup, Frida imports, package damage and import isolation."""
+"""Test bundled Python startup, dependency imports, package damage and isolation."""
 
 import hashlib
 import os
@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
-def test_relocated_release_imports_frida_without_installation(
+def test_relocated_release_imports_dependencies_without_installation(
     embedded_project, tmp_path
 ):
     root = embedded_project
@@ -39,6 +39,7 @@ def test_relocated_release_imports_frida_without_installation(
     )
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert first.stdout == second.stdout and "Frida 17.23.3" in first.stdout
+    assert "Wasmtime 49.0.0" in first.stdout
     assert before == {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in runtime.iterdir()
@@ -50,18 +51,25 @@ def test_relocated_release_imports_frida_without_installation(
 
 
 @pytest.mark.embedded
+@pytest.mark.parametrize(
+    "package, replacement, label",
+    [("frida", "17.23.3+different-build", "Frida"), ("wasmtime", "0.0.0", "Wasmtime")],
+)
 def test_entry_checks_full_distribution_version_even_when_core_version_matches(
     embedded_project,
+    package,
+    replacement,
+    label,
 ):
     manifest = embedded_project / "bundled_packages.toml"
     original = manifest.read_bytes()
     import tomllib
 
-    expected = tomllib.loads(original.decode())["packages"]["frida"]
+    expected = tomllib.loads(original.decode())["packages"][package]
     try:
         manifest.write_text(
             original.decode().replace(
-                '"frida" = "' + expected + '"', '"frida" = "17.23.3+different-build"'
+                f'"{package}" = "{expected}"', f'"{package}" = "{replacement}"'
             )
         )
         result = subprocess.run(
@@ -75,19 +83,22 @@ def test_entry_checks_full_distribution_version_even_when_core_version_matches(
             text=True,
             timeout=30,
         )
-        assert result.returncode == 1 and "Frida did not load" in result.stderr
+        assert result.returncode == 1 and f"{label} did not load" in result.stderr
     finally:
         manifest.write_bytes(original)
 
 
 @pytest.mark.embedded
-def test_pythonpath_and_user_packages_cannot_supply_frida(embedded_project, tmp_path):
+def test_pythonpath_and_user_packages_cannot_supply_dependencies(
+    embedded_project, tmp_path
+):
     root = embedded_project
     hostile = tmp_path / "hostile"
-    (hostile / "frida").mkdir(parents=True)
-    (hostile / "frida/__init__.py").write_text(
-        "raise RuntimeError('foreign Frida imported')\n"
-    )
+    for package in ("frida", "wasmtime"):
+        (hostile / package).mkdir(parents=True)
+        (hostile / package / "__init__.py").write_text(
+            "raise RuntimeError('foreign dependency imported')\n"
+        )
     (hostile / "sitecustomize.py").write_text(
         "raise RuntimeError('foreign site imported')\n"
     )
@@ -132,7 +143,7 @@ def test_entry_rejects_developer_python_instead_of_using_its_packages(embedded_p
 
 
 @pytest.mark.embedded
-def test_embedded_startup_cannot_use_pip_network_or_subprocesses(
+def test_embedded_startup_cannot_install_packages_or_use_network(
     embedded_project, tmp_path
 ):
     root = embedded_project
@@ -155,12 +166,15 @@ def test_embedded_startup_cannot_use_pip_network_or_subprocesses(
 
 
 @pytest.mark.embedded
-def test_entry_reports_package_damage_without_repair(embedded_project):
+@pytest.mark.parametrize(
+    "name", ["frida/__init__.py", "wasmtime/win32-x86_64/_wasmtime.dll"]
+)
+def test_entry_reports_package_damage_without_repair(embedded_project, name):
     from launcher import bundled_dependencies as dependencies
 
     root = embedded_project
     directory = dependencies.verify_bundle(root)
-    payload = directory / "frida/__init__.py"
+    payload = directory / name
     original = payload.read_bytes()
     try:
         payload.write_bytes(b"damaged package")
@@ -180,6 +194,30 @@ def test_entry_reports_package_damage_without_repair(embedded_project):
         assert not (root / ".state").exists() and not (root / ".cache").exists()
     finally:
         payload.write_bytes(original)
+
+
+@pytest.mark.embedded
+def test_bundled_wasmtime_executes_an_owned_component(embedded_project, tmp_path):
+    root = embedded_project
+    probe = root / "launcher/wasmtime_probe.py"
+    shutil.copyfile(FIXTURES / "bundled_wasmtime_probe.py", probe)
+    try:
+        result = subprocess.run(
+            [
+                str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+                "-B",
+                str(probe),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert (
+            result.returncode == 0 and "Component returned 42" in result.stdout
+        ), result.stderr
+    finally:
+        probe.unlink()
 
 
 @pytest.mark.embedded

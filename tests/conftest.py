@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Create temporary projects, test wheels and copies of bundled Python and Frida files."""
+"""Create temporary projects, test wheels and copies of bundled runtime files."""
 
 from textwrap import dedent
 import base64
@@ -118,7 +118,7 @@ def bundled_project(project_factory):
 
 @pytest.fixture(scope="module")
 def embedded_project(tmp_path_factory):
-    """Return the folder of a temporary copy of bundled Python, Frida and launcher files."""
+    """Return a temporary copy of bundled Python, dependencies and launcher files."""
     # An isolated prepared candidate lets the same acceptance tests exercise either binding.
     source = Path(
         os.environ.get("TPM_TEST_RELEASE_ROOT", Path(__file__).resolve().parents[1])

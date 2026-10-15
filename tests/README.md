@@ -29,9 +29,13 @@ Pack-discovery tests check startup snapshots and folder boundaries using owned
 modules and folders. The native bridge test also checks discovery after manager
 readiness and clears its snapshot at shutdown. It never starts the actual game.
 
-Seven `embedded` tests cover Windows's packaged interpreter and entry point;
-they skip on Linux. The two `native` controller/bridge tests must not skip when
-native acceptance is requested. `frida_build` identifies the reduced binding's
+The `embedded` tests cover Windows's packaged interpreter and entry point,
+including both dependency versions, import isolation, damaged files, offline
+startup and real Wasmtime Component execution. The startup audit allows Python's
+exact Windows `cmd.exe /c "ver"` platform query; other subprocesses and network
+connections remain blocked. These tests skip on Linux. The two `native`
+controller/bridge tests must not skip when native acceptance is requested.
+`frida_build` identifies the reduced binding's
 native feature probe. CI requires these checks in the relevant jobs rather
 than counting missing runtime prerequisites as successful acceptance.
 
@@ -56,7 +60,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 .venv/bin/python -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
 ```
 
-This collects the full suite, including both native tests. Only the seven
+This collects the full suite, including both native tests. Only the
 Windows entry-point checks should skip. Missing Python/Frida prerequisites for
 the native tests fail when `TPM_REQUIRE_NATIVE_TESTS=1`. Linux helpers exercise
 explicit fork/exec with the normal exec-completion handoff before their parent

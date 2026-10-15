@@ -59,8 +59,9 @@ def test_named_lock_prepares_fallback_without_changing_default_lock(project_fact
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
-def test_cli_local_wheel_checks_hash_without_claiming_publisher_authentication(
-    project_factory, monkeypatch, capsys, corrupt
+@pytest.mark.parametrize("remote", [False, True])
+def test_cli_wheel_checks_hash_without_claiming_publisher_authentication(
+    project_factory, monkeypatch, capsys, corrupt, remote, tmp_path
 ):
     root, wheel = project_factory()
     archive = root / "runtime.zip"
@@ -72,15 +73,93 @@ def test_cli_local_wheel_checks_hash_without_claiming_publisher_authentication(
     if corrupt:
         with wheel.open("ab") as output:
             output.write(b"changed wheel")
+    if remote:
+        lock = root / "pylock.toml"
+        with lock.open("a") as output:
+            output.write(f'url = "https://example.invalid/{wheel.name}"\n')
+        source = tmp_path / "published.whl"
+        wheel.rename(source)
+        requested = []
+
+        def open_published(url, timeout):
+            requested.append(url)
+            return source.open("rb")
+
+        # Supply real wheel bytes at the network boundary; installation still uses real pip.
+        monkeypatch.setattr(release.urllib.request, "urlopen", open_published)
     result = release.main(["--refresh-manifest"])
     messages = capsys.readouterr()
     if corrupt:
         assert result == 1 and "SHA-256 mismatch" in messages.err
         assert not (root / "bundled_packages.toml").exists()
     else:
-        assert result == 0 and "Local package hashes checked" in messages.out
+        assert result == 0 and "Package hashes checked" in messages.out
         assert "inputs authenticated" not in messages.out
         assert release.dependencies.verify_bundle(root).is_dir()
+    if remote:
+        assert requested == [f"https://example.invalid/{wheel.name}"]
+
+
+@pytest.mark.parametrize("verification_succeeds", [False, True])
+def test_declared_publishing_identity_is_verified_without_fallback(
+    project_factory, monkeypatch, verification_succeeds
+):
+    root, wheel = project_factory()
+    with (root / "pylock.toml").open("a") as lock:
+        lock.write(dedent(f"""\
+            url = "https://example.invalid/{wheel.name}"
+            [[packages.attestation-identities]]
+            kind = "GitHub"
+            repository = "example/publisher"
+        """))
+    packages = release.read_lock(root, release.read_settings(root)["runtime"])
+    provenance = root / "record.json"
+    provenance.write_text("{}")
+    monkeypatch.setattr(
+        release.urllib.request, "urlopen", lambda url, timeout: provenance.open("rb")
+    )
+    calls = []
+
+    def verify(command, check):
+        calls.append(command)
+        assert check is True
+        if not verification_succeeds:
+            raise subprocess.CalledProcessError(1, command)
+
+    # This check tests the handoff and failure policy, not PyPI's signature verifier itself.
+    monkeypatch.setattr(release.subprocess, "run", verify)
+    if verification_succeeds:
+        release.prepare_wheels(root, packages)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            release.prepare_wheels(root, packages)
+    assert len(calls) == 1
+    assert calls[0][:5] == [
+        release.sys.executable,
+        "-m",
+        "pypi_attestations",
+        "verify",
+        "pypi",
+    ]
+    assert calls[0][5:7] == ["--repository", "https://github.com/example/publisher"]
+    assert calls[0][-1] == str(wheel)
+
+
+def test_unsupported_publishing_identity_cannot_be_treated_as_hash_only(
+    project_factory,
+):
+    root, wheel = project_factory()
+    with (root / "pylock.toml").open("a") as lock:
+        lock.write(dedent(f"""\
+            url = "https://example.invalid/{wheel.name}"
+            [[packages.attestation-identities]]
+            kind = "unsupported"
+        """))
+    packages = release.read_lock(root, release.read_settings(root)["runtime"])
+    with pytest.raises(
+        release.dependencies.DependencyError, match="publishing identity"
+    ):
+        release.prepare_wheels(root, packages)
 
 
 def test_runtime_is_extracted_and_existing_copy_checked_without_overwrite(tmp_path):

@@ -2,6 +2,7 @@
 """Check read-only startup; copied beside entry.py and run with bundled Python."""
 
 import importlib.util
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -14,6 +15,16 @@ def unexpected(*args, **kwargs):
 
 
 def audit(event, args):
+    # Python's platform.machine() queries Windows using ver when WMI is unavailable.
+    # Permit only that read-only query, not package installation or another command.
+    if event == "subprocess.Popen" and sys.platform == "win32":
+        executable, command, _, _ = args
+        expected = Path(os.environ["SystemRoot"]) / "System32/cmd.exe"
+        if (
+            Path(executable).resolve() == expected.resolve()
+            and command == f'{executable} /c "ver"'
+        ):
+            return
     if event in ("socket.connect", "subprocess.Popen"):
         unexpected()
 

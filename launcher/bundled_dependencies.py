@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Check the bundled package files and load Frida using the included Python.
+"""Check the bundled package files and load Frida and Wasmtime using the included Python.
 
 bundled_packages.toml lists the expected files, hashes and sizes.
 These checks read existing files without installing or downloading packages."""
@@ -236,18 +236,21 @@ def require_embedded_runtime(root: Path, manifest: dict) -> None:
         )
 
 
-def import_frida(root: Path):
-    """Check the bundled files, load Frida from their folder and return the imported module."""
-    # root is the launcher folder; check Frida and return it for the launcher to use.
+def import_dependencies(root: Path):
+    """Load both verified dependencies; return Frida for the process controller."""
+    # root is the launcher folder; Wasmtime stays loaded for the future sandbox host.
     manifest = read_manifest(root)
     require_embedded_runtime(root, manifest)
     directory = _verify_files(root, manifest)
     runtime = local_path(root, manifest["runtime"]["directory"])
-    # Stop if Frida was already loaded, since it may have come from another folder.
-    if any(name == "frida" or name.startswith("frida.") for name in sys.modules):
-        raise DependencyError(
-            "Frida was imported before controlled bundle verification."
-        )
+    # Reject packages loaded earlier, since they may have come from another folder.
+    for package in ("frida", "wasmtime"):
+        if any(
+            name == package or name.startswith(package + ".") for name in sys.modules
+        ):
+            raise DependencyError(
+                f"{package} was imported before controlled bundle verification."
+            )
     sys.dont_write_bytecode = (
         True  # Loading packages must not create compiled Python files.
     )
@@ -273,6 +276,19 @@ def import_frida(root: Path):
             raise DependencyError(
                 "Frida did not load from the verified bundled directory."
             )
+        wasm = importlib.import_module("wasmtime")
+        component = importlib.import_module("wasmtime.component")
+        ffi = importlib.import_module("wasmtime._ffi")
+        # Check the Python bindings, Component API and the DLL actually loaded by ctypes.
+        if (
+            importlib.metadata.version("wasmtime") != manifest["packages"]["wasmtime"]
+            or not Path(wasm.__file__).resolve().is_relative_to(directory)
+            or not Path(component.__file__).resolve().is_relative_to(directory)
+            or not Path(ffi.dll._name).resolve().is_relative_to(directory)
+        ):
+            raise DependencyError(
+                "Wasmtime did not load from the verified bundled directory."
+            )
         return module
     except (ImportError, OSError, KeyError) as error:
-        raise DependencyError(f"Cannot import bundled Frida: {error}") from error
+        raise DependencyError(f"Cannot import bundled dependencies: {error}") from error

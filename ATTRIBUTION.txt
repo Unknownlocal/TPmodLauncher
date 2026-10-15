@@ -31,5 +31,14 @@ Upstream source: https://github.com/frida/frida/tree/17.23.3
 Review incorporated-component notices and source obligations before a release;
 the wheel's COPYING alone is not a completed native-component distribution audit.
 
+Wasmtime Python bindings and native runtime 49.0.0: The Wasmtime Project Developers.
+Official origin: https://pypi.org/project/wasmtime/49.0.0/
+Source: https://github.com/bytecodealliance/wasmtime-py/tree/49.0.0
+Apache-2.0 WITH LLVM-exception; notices/LICENSE.Wasmtime.txt copies the wheel's
+original licence, also retained under wasmtime-49.0.0.dist-info/licenses/.
+Both package locks pin the official Windows x64 wheel's SHA-256. This is an
+integrity check, not publisher authentication; PyPI supplies no attestation
+for that wheel. Guest-building tools are not runtime dependencies.
+
 The source repository excludes the game executable, extracted game bytecode,
 any data-pack content, runtime binaries and dependency wheels.

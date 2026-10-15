@@ -19,3 +19,15 @@ name = "frida-17.23.3+modlauncher.1-cp37-abi3-win_amd64.whl"
 # Built locally from launcher/frida_build.toml; this hash does not authenticate a publisher.
 path = ".cache/wheels/frida-17.23.3+modlauncher.1-cp37-abi3-win_amd64.whl"
 hashes = {sha256 = "5394a979c02920c42069c57510803cbc81b3ff87fc929fa5e241ff27a9d69ba3"}
+
+[[packages]]
+name = "wasmtime"
+version = "49.0.0"
+requires-python = ">=3.9"
+
+[[packages.wheels]]
+name = "wasmtime-49.0.0-py3-none-win_amd64.whl"
+path = ".cache/wheels/wasmtime-49.0.0-py3-none-win_amd64.whl"
+url = "https://files.pythonhosted.org/packages/c7/41/b1d78d0ea1506abfa3005c8a50eee724b95a9cffbb2a0ed541f0965f5ab9/wasmtime-49.0.0-py3-none-win_amd64.whl"
+# PyPI provides no publishing attestation for this wheel; verify its pinned hash.
+hashes = {sha256 = "46a4e4220fd1bee45ad9c29a73cadad54373dad840eff104726490527bc7ef89"}

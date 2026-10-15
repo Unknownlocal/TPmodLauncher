@@ -28,7 +28,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--check-only",
         action="store_true",
-        help="check bundled Frida without starting anything",
+        help="check bundled Frida and Wasmtime without starting the game",
     )
     parser.add_argument(
         "--restart-grace",
@@ -56,12 +56,14 @@ def main(argv=None) -> int:
         )
     root = Path(__file__).resolve().parent.parent
     try:
-        frida = _dependencies.import_frida(root)
+        frida = _dependencies.import_dependencies(root)
     except _dependencies.DependencyError as error:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
         return 1
     if arguments.check_only:
-        print(f"Bundled dependencies ready: Frida {version('frida')}")
+        print(
+            f"Bundled dependencies ready: Frida {version('frida')}; Wasmtime {version('wasmtime')}"
+        )
         return 0
     try:
         # The launcher folder and game executable share the same installation folder.

@@ -23,3 +23,15 @@ hashes = {sha256 = "88b1f07514c38650faf6e803ed13dfaec1ba94efa4c8ed34c1525f8c1516
 [[packages.attestation-identities]]
 kind = "GitHub"
 repository = "frida/frida"
+
+[[packages]]
+name = "wasmtime"
+version = "49.0.0"
+requires-python = ">=3.9"
+
+[[packages.wheels]]
+name = "wasmtime-49.0.0-py3-none-win_amd64.whl"
+path = ".cache/wheels/wasmtime-49.0.0-py3-none-win_amd64.whl"
+url = "https://files.pythonhosted.org/packages/c7/41/b1d78d0ea1506abfa3005c8a50eee724b95a9cffbb2a0ed541f0965f5ab9/wasmtime-49.0.0-py3-none-win_amd64.whl"
+# PyPI provides no publishing attestation for this wheel; verify its pinned hash.
+hashes = {sha256 = "46a4e4220fd1bee45ad9c29a73cadad54373dad840eff104726490527bc7ef89"}

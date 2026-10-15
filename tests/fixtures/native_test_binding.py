@@ -15,7 +15,7 @@ def load(root):
     dependencies = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(dependencies)
     if sys.platform == "win32":
-        return dependencies.import_frida(root)
+        return dependencies.import_dependencies(root)
     assert sys.platform == "linux" and sys.version_info[:2] == (3, 13)
     assert sys.flags.isolated and sys.flags.no_site
     assert not any(name == "frida" or name.startswith("frida.") for name in sys.modules)

@@ -448,7 +448,8 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
     runtime = build.release.read_settings(candidate)["runtime"]
     packages = build.release.read_lock(candidate, runtime)
     assert [(package.name, str(package.version)) for package, _ in packages] == [
-        ("frida", "17.23.3+modlauncher.1")
+        ("frida", "17.23.3+modlauncher.1"),
+        ("demo", "1.0"),
     ]
     assert verified == [
         wheel.name,
@@ -461,6 +462,7 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
     ).read_bytes()
     installed = build.release.dependencies.verify_bundle(candidate)
     assert (installed / "frida/_frida.pyd").read_bytes() == b"synthetic, never executed"
+    assert (installed / "demo/__init__.py").read_text() == "VALUE = 42\n"
     assert build.release.prepare_packages(candidate) == installed
     assert (root / "pylock.toml").read_bytes() == before
     assert not (root / "bundled_packages.toml").exists()

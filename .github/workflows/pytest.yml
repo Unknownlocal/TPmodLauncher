@@ -62,12 +62,12 @@ jobs:
         run: |
           python -m venv .venv
           "${{ matrix.python }}" -m pip install -r requirements-dev.txt
-      - name: Authenticate and prepare the official Windows fallback for routine CI
+      - name: Verify and prepare the official Windows dependencies for routine CI
         if: runner.os == 'Windows'
         run: |
           # The locally built reduced wheel is tested separately; do not compile it on every push.
           "${{ matrix.python }}" -I launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
-      - name: Check bundled Frida imports without installing packages
+      - name: Check bundled Frida and Wasmtime without installing packages
         if: runner.os == 'Windows'
         run: |
           libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only

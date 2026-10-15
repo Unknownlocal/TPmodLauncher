@@ -724,6 +724,13 @@ def prepare_reduced_release(
         )
     sources.verify(source_output, build_output)
     settings = read_settings(root)
+    # Keep the launcher's other locked dependencies when replacing only its Frida build.
+    companions = [
+        (package, companion)
+        for package, companion in read_lock(root, settings["runtime"])
+        if package.name != "frida"
+    ]
+    prepare_wheels(root, companions)
     archive = authenticate_runtime(root, settings["runtime"])
     destination.parent.mkdir(parents=True, exist_ok=True)
     with build_directory(destination.parent, ".reduced-stage-") as stage:
@@ -757,6 +764,38 @@ def prepare_reduced_release(
                 "",
             ]
         )
+        for package, companion in companions:
+            shutil.copyfile(
+                dependencies.local_path(root, companion.path),
+                dependencies.local_path(stage, companion.path),
+            )
+            # Write the selected wheel and its checks into the candidate's standard lock.
+            lock += "\n".join(
+                [
+                    "\n[[packages]]",
+                    "name = " + json.dumps(package.name),
+                    "version = " + json.dumps(str(package.version)),
+                    "requires-python = "
+                    + json.dumps(str(package.requires_python or "")),
+                    "[[packages.wheels]]",
+                    "name = " + json.dumps(companion.filename),
+                    "path = " + json.dumps(companion.path),
+                    "hashes = {sha256 = "
+                    + json.dumps(companion.hashes["sha256"])
+                    + "}",
+                    *(["url = " + json.dumps(companion.url)] if companion.url else []),
+                    "",
+                ]
+            )
+            for identity in package.attestation_identities or []:
+                lock += "\n".join(
+                    [
+                        "[[packages.attestation-identities]]",
+                        "kind = " + json.dumps(identity["kind"]),
+                        "repository = " + json.dumps(identity["repository"]),
+                        "",
+                    ]
+                )
         (stage / "pylock.toml").write_text(lock, encoding="utf-8")
         prepare_runtime(stage, settings["runtime"], archive)
         prepare_packages(stage, refresh_manifest=True)
@@ -785,11 +824,62 @@ def prepare_reduced_release(
     return destination
 
 
+def prepare_wheels(root: Path, packages: list[tuple[Package, PackageWheel]]) -> None:
+    """Fetch locked wheels and verify any publishing identities declared in the lock."""
+    # Wheels without an identity get a hash check, not a publisher-authentication claim.
+    for package, wheel in packages:
+        identities = package.attestation_identities or []
+        if wheel.url is None:
+            # Local wheels are hash-checked by prepare_packages, including authenticated builds.
+            continue
+        if not wheel.url.startswith("https://"):
+            raise dependencies.DependencyError(
+                f"Expected an HTTPS wheel source: {package.name}"
+            )
+        # An unsupported identity must fail rather than silently lose its signature check.
+        if identities and (
+            len(identities) != 1
+            or identities[0].get("kind") != "GitHub"
+            or not isinstance(identities[0].get("repository"), str)
+            or not re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", identities[0]["repository"]
+            )
+        ):
+            raise dependencies.DependencyError(
+                f"Expected one GitHub publishing identity: {package.name}"
+            )
+        destination = dependencies.local_path(root, wheel.path)
+        download(wheel.url, destination, wheel.hashes["sha256"])
+        if not identities:
+            continue
+        provenance = dependencies.local_path(
+            root, ".cache/downloads/" + wheel.filename + ".provenance.json"
+        )
+        url = f"https://pypi.org/integrity/{package.name}/{package.version}/{wheel.filename}/provenance"
+        download(url, provenance)
+        # Signature failure is fatal; it must never fall back to a hash-only check.
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pypi_attestations",
+                "verify",
+                "pypi",
+                "--repository",
+                "https://github.com/" + identities[0]["repository"],
+                "--provenance-file",
+                str(provenance),
+                str(destination),
+            ],
+            check=True,
+        )
+
+
 def main(argv=None) -> int:
     """Prepare dependencies and return 0 on success or 1 on failure."""
     # argv can supply command-line arguments; None reads them normally; return 0 on success.
     parser = argparse.ArgumentParser(
-        description="Prepare bundled packages; authenticate downloads and hash-check local wheels."
+        description="Prepare bundled packages; check hashes and declared publishing identities."
     )
     parser.add_argument(
         "--lockfile",
@@ -840,7 +930,7 @@ def main(argv=None) -> int:
                 arguments.frida_sources.absolute() if arguments.frida_sources else None,
             )
             print(
-                f"Authenticated reduced candidate ready in {candidate.relative_to(root).as_posix()}; distribution and live acceptance remain separate gates."
+                f"Reduced Frida build authenticated; candidate ready in {candidate.relative_to(root).as_posix()}; distribution and live acceptance remain separate gates."
             )
             return 0
         if (
@@ -855,69 +945,17 @@ def main(argv=None) -> int:
         settings = read_settings(root)
         runtime = settings["runtime"]
         packages = read_lock(root, runtime, arguments.lockfile)
-        cache = dependencies.local_path(root, ".cache/downloads")
         archive = authenticate_runtime(root, runtime)
         prepare_runtime(root, runtime, archive)
-        local_packages = False
-        for package, wheel in packages:
-            if wheel.url is None:
-                # Local builds have no PyPI publishing record; installation still checks their locked hashes.
-                local_packages = True
-                continue
-            # A publishing identity is required before accepting a downloaded package for release.
-            repositories = {
-                identity.get("repository")
-                for identity in package.attestation_identities or []
-                if identity.get("kind") == "GitHub"
-            }
-            if len(repositories) != 1:
-                raise dependencies.DependencyError(
-                    f"Expected one GitHub publishing identity: {package.name}"
-                )
-            repository = repositories.pop()
-            if not isinstance(repository, str) or not re.fullmatch(
-                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
-            ):
-                raise dependencies.DependencyError(
-                    f"Invalid publishing repository: {package.name}"
-                )
-            # Release preparation downloads from the upstream URL; pip later uses the local cache path.
-            if not wheel.url or not wheel.url.startswith("https://"):
-                raise dependencies.DependencyError(
-                    f"Expected an HTTPS wheel source: {package.name}"
-                )
-            destination = dependencies.local_path(root, wheel.path)
-            download(wheel.url, destination, wheel.hashes["sha256"])
-            provenance = cache / (wheel.filename + ".provenance.json")
-            url = f"https://pypi.org/integrity/{package.name}/{package.version}/{wheel.filename}/provenance"
-            download(url, provenance)
-            # Check the signed publishing record links this wheel to the expected source repository.
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pypi_attestations",
-                    "verify",
-                    "pypi",
-                    "--repository",
-                    "https://github.com/" + repository,
-                    "--provenance-file",
-                    str(provenance),
-                    str(destination),
-                ],
-                check=True,
-            )
+        prepare_wheels(root, packages)
         directory = prepare_packages(
             root,
             refresh_manifest=arguments.refresh_manifest,
             lockfile=arguments.lockfile,
         )
-        status = (
-            "Local package hashes checked"
-            if local_packages
-            else "Release inputs authenticated"
+        print(
+            f"Package hashes checked; packages ready in {directory.relative_to(root).as_posix()}."
         )
-        print(f"{status}; packages ready in {directory.relative_to(root).as_posix()}.")
         return 0
     # Return an error if a download check, build step or package install fails.
     except (
