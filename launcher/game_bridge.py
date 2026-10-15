@@ -16,7 +16,7 @@ class BridgeError(RuntimeError):
 
 
 class Bridge:
-    """Own one Frida script; its messages accept status/shutdown names, never code or game objects."""
+    """Own a Frida script carrying fixed control operations and declarative menu data."""
 
     def __init__(self, frida, session, source, on_message):
         # session is already path-verified; source is our fixed script; callback queues diagnostic events.
@@ -61,10 +61,15 @@ class Bridge:
         finally:
             timer.cancel()
 
-    def request(self, operation, timeout=2.0):
-        """Send a status/shutdown name, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown"):
+    def request(self, operation, timeout=2.0, *, buttons=None):
+        """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
+        if operation not in ("status", "shutdown", "menu"):
             raise BridgeError("Unknown bridge operation")
+        if operation == "menu":
+            if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
+                raise BridgeError("Expected bounded menu declarations")
+        elif buttons is not None:
+            raise BridgeError("This operation accepts no menu declarations")
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
@@ -76,10 +81,10 @@ class Bridge:
                 raise BridgeError("A bridge request is already pending")
             self.waiters[token] = waiter
         try:
-            self._post(
-                {"type": "manager-request", "operation": operation, "id": token},
-                timeout,
-            )
+            message = {"type": "manager-request", "operation": operation, "id": token}
+            if operation == "menu":
+                message["buttons"] = buttons
+            self._post(message, timeout)
             response = waiter.get(timeout=max(0, deadline - time.monotonic()))
             answered = True
             if "error" in response:
@@ -102,6 +107,12 @@ class Bridge:
                     self._post({"type": "manager-cancel", "id": token}, 0.25)
                 except Exception:
                     pass  # close() still unloads the script after a failed cleanup request.
+
+    def set_menu(self, buttons):
+        """Apply a complete declarative registry; an exited game needs no native restoration."""
+        if self.session.is_detached:
+            return None
+        return self.request("menu", buttons=buttons)
 
     def close(self):
         """Stop the manager on its thread before unloading our native transport."""
@@ -130,10 +141,10 @@ def factory(root, frida):
             raise BridgeError("Bridge source path escapes the launcher folder")
         return path.read_text(encoding="utf-8-sig")
 
-    # This fixed list supplies both Python sources; packs cannot add entries.
+    # Only these trusted infrastructure sources enter the game; packs cannot add entries.
     sources = {
         f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
-        for name in ("manager", "pack_discovery")
+        for name in ("manager", "pack_discovery", "menu")
     }
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")

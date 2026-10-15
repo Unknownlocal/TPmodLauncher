@@ -325,9 +325,12 @@ class Controller:
                 if self.mods_factory is not None:
                     if pid not in self.pack_mods:
                         self.pack_mods[pid] = self.mods_factory(
-                            lambda line: self.report(f"pid={pid} {line}")
+                            lambda line: self.report(f"pid={pid} {line}"),
+                            self.bridges.get(pid),
                         )
                     self.pack_mods[pid].load(pack)
+            elif event == "menu" and pid in self.pack_mods:
+                self.pack_mods[pid].menu_status(payload.get("status", {}))
             elif event in ("waiting", "transport"):
                 self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:

@@ -1,8 +1,18 @@
-# Author API 0.1.0
+# Author API 0.2.0
 
-This experimental contract is defined in [mod.wit](mod.wit), using the standard
+This experimental contract is defined in [mod.wit](0.2.0/mod.wit), using the standard
 WebAssembly Component Model's WIT language. Its world is `code-mod`, in package
-`modlauncher:api@0.1.0`. It is implemented and tested against real Python guests.
+`modlauncher:api@0.2.0`. Existing API 0.1.0 diagnostics components remain supported
+through the retained [0.1.0 contract](0.1.0/mod.wit). The manifest selects its exact
+version; there is no automatic fallback. Both run as real sandboxed components.
+Every supported contract lives at `hook_manager/api/<version>/mod.wit`. The
+builder selects that path from the validated manifest's `api` field and passes
+requested capabilities as feature switches, without version-specific branches.
+
+The host's supported versions, capability lists and lifecycle signatures are
+defined in [launcher/mod_api.py](../../launcher/mod_api.py). Manifest validation
+and binding those permissions to trusted handlers live in
+[launcher/mod_contract.py](../../launcher/mod_contract.py).
 
 ## Mod layout
 
@@ -22,9 +32,11 @@ selected by the game:
 Several code-mod folders can coexist in one selected data pack. The external
 launcher discovers and activates their components after the game's startup pack
 is known. `constants.py` needs no executable additions. Mod code runs outside the
-game; game operations and event delivery are not implemented yet.
+game. The `main-menu` capability adds native rows with click confirmations;
+general game-event delivery and gameplay operations are not implemented yet.
 
-The runnable author template is [examples/diagnostic_mod](../../examples/diagnostic_mod).
+Runnable templates are [diagnostics](../../examples/diagnostic_mod), retained on
+API 0.1.0, and the [native UI example](../../examples/menu_mod), using API 0.2.0.
 Its manifest is plain TOML with the following complete schema:
 
 ```toml
@@ -42,10 +54,10 @@ capabilities = ["diagnostics"]
 | `schema` | Integer manifest format, currently 1. |
 | `id` | Stable mod identifier: starts with a lowercase letter, followed by lowercase letters, digits, `.`, `_`, `:`, or `-`; at most 128 characters. |
 | `version` | SemVer version, including optional prerelease/build identifiers; at most 64 characters. |
-| `api` | Exact supported API version, currently `0.1.0`; no automatic version fallback. |
+| `api` | Exact supported API version: `0.1.0` or `0.2.0`. Menu registration requires `0.2.0`. |
 | `runtime` | Approved host profile: `python` or `wasm`. This requests a resource profile, not native Python execution. |
 | `component` | Canonical relative `.wasm` path within this folder. Linked or escaping paths are rejected. |
-| `capabilities` | Unique requested permissions. Currently only `diagnostics` is implemented. Unknown permissions fail admission. |
+| `capabilities` | Unique requested permissions: `diagnostics`, plus `main-menu` in API 0.2.0. Unknown permissions fail admission. |
 
 All fields are required. Unknown fields are rejected. Manifests are limited to
 16 KiB and do not execute code. Imports must also match the manifest's grants;
@@ -77,13 +89,16 @@ merely declaring a permission cannot add a function to the manager API.
 The launcher log records `CODE MOD ACTIVE`, approved `CODE MOD REPORT` messages,
 rejections, the active count and `CODE MOD CLOSED`. IDs and messages are quoted
 as JSON, and each record is labelled with its game process ID. These are the
-current confirmation of mod loading; a game UI proof comes later.
+confirmation of mod loading. `CODE MOD MENU` reports native UI readiness separately;
+activation can finish while the adapter waits for the game's normal menu import.
 
 ## Calls
 
-- `report(message: string)` is the only host import. It requires `diagnostics`.
+- `report(message: string)` requires `diagnostics`.
   The host attaches the manifest ID and replaces non-printable characters before
   passing the message to its trusted diagnostic handler. It grants no game access.
+- `add-menu-button(id: string, label: string, message: string)` requires API 0.2.0
+  and `main-menu`. It stages an owned native row and a click confirmation.
 - `activate()` is called once after admission. Component initializers may execute
   before it, with the same granted functions and initialization resource limits.
 - `on-event(name: string, payload: string) -> string` receives and returns bounded
@@ -102,6 +117,43 @@ components also contain generated private exports; these do not enter the host's
 callable table. No private nested function or resource can be invoked through
 this API. Package labels alone are not proof of compatibility: manifest version,
 imports and public signatures all need to pass.
+
+## Native menu buttons
+
+Request `main-menu` in an API 0.2.0 manifest and register during `activate()`:
+
+```python
+wit_world.add_menu_button("confirmation", "Mod Launcher", "The sandboxed UI mod is active")
+```
+
+The host supplies the calling mod's identity. The item ID follows the same short
+identifier rules as mod IDs. Labels contain 1-64 printable characters; messages
+contain 1-160. Leading/trailing whitespace and control characters are rejected.
+Each mod may own four buttons, with 32 total per game process. Duplicate labels,
+duplicate owned IDs and labels already used by the native menu are rejected.
+The complete bridge declaration also has a 16 KiB encoded-JSON limit.
+
+After successful guest activation, the launcher publishes the declarations through
+the existing bounded Frida channel. The trusted adapter waits for the normally
+loaded `ui.screens.hub_screen` module and checks its expected native interface.
+It inserts rows before `Exit`, or at the end if no Exit row exists. The game keeps
+its renderer, layout, hover, keyboard and mouse handling. Clicking the button
+shows its confirmation for 2.5 seconds using the native message display. This
+capability does not invoke guest `on_event()` or arbitrary game actions on click.
+
+Declarations are plain values, never Python, target paths, callbacks or commands.
+Host work is published outside the guest's fuel/deadline window, using a separate
+bounded bridge request. A failed/trapping mod loses its own rows; scope shutdown
+removes all rows and restores the owned activation wrapper. An unsupported menu
+disables UI mods while diagnostics-only neighbours remain active. Deferred status
+records carry a host-owned counter so a stale failure cannot revoke a later
+replacement registry. Starting a plain pack adds no example button.
+
+API 0.2.0's WIT uses standard feature annotations to include only the imports
+requested by the manifest. Our builder selects these `--features` switches; authors
+do not edit WIT or manage the switches themselves. The switches select bindings,
+not permissions: runtime admission still checks every import against actual
+grants. Unsupported imports are rejected rather than linked to permissive stubs.
 
 ## Execution budgets
 
@@ -178,9 +230,9 @@ when distributing built components; a full distributable release is separate wor
 
 ## Current boundaries
 
-The launcher now discovers and activates sandboxed mods, but does not yet
-transport game events or offer game/UI operations. No event response is applied
-to the game by this phase. Additional
+The launcher discovers and activates sandboxed mods and offers the declarative
+native-menu capability. It does not yet deliver general game events or apply
+guest event responses to gameplay. Additional
 capabilities require reviewed adapters and a versioned contract change.
 Compilation and blocked trusted callbacks retain the limits documented in the
 sandbox host; there is no claim of OS-level isolation or a bug-free runtime.

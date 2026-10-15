@@ -493,7 +493,7 @@ def test_pack_mods_follow_session_identity_and_close_on_every_removal(
     game_root = Path(controller.game).parent
     for name in ("first", "second"):
         code_mod(game_root / "data" / name, f"owned.{name}")
-    controller.mods_factory = lambda report: PackMods(game_root, report)
+    controller.mods_factory = lambda report, bridge: PackMods(game_root, report)
 
     def send_pack(pid, session, name):
         pack = {

@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
-package modlauncher:api@0.1.0;
+package modlauncher:api@0.2.0;
 
-/// Initial experimental contract. Game capabilities will be added explicitly.
+/// Feature switches select bindings; runtime grants still enforce permissions.
 world code-mod {
     /// Requires diagnostics permission; the host attaches the calling mod's ID.
+    @unstable(feature = diagnostics)
     import report: func(message: string);
+
+    /// Register a native menu row with a short confirmation displayed when clicked.
+    /// Requires main-menu; the host supplies ownership and removes it on failure/exit.
+    @unstable(feature = main-menu)
+    import add-menu-button: func(id: string, label: string, message: string);
 
     /// Called once by trusted infrastructure after component admission.
     export activate: func();

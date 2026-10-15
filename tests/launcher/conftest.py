@@ -39,6 +39,16 @@ def code_mod():
 
 
 @pytest.fixture(scope="session")
+def built_menu_mod(tmp_path_factory):
+    """Build the public UI example once; it runs through the same author tool as other mods."""
+    root = Path(__file__).resolve().parents[2]
+    folder = tmp_path_factory.mktemp("owned-menu-contract")
+    shutil.copytree(root / "examples/menu_mod", folder, dirs_exist_ok=True)
+    build_mod.build(folder, folder / "mod.wasm")
+    return folder
+
+
+@pytest.fixture(scope="session")
 def built_python_mod(tmp_path_factory):
     """Build one owned Python component for both normal and shipped-interpreter checks."""
     root = Path(__file__).resolve().parents[2]

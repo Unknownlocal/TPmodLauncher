@@ -12,13 +12,34 @@ import platform
 import shutil
 import sys
 import sysconfig
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import zipfile
 
 import pytest
 
 from launcher import bundled_dependencies as dependencies
 from launcher import prepare_release as release
+
+
+@pytest.fixture
+def native_menu(monkeypatch):
+    """Provide the small native menu interface used by owned adapter and mod tests."""
+    hub = ModuleType("ui.screens.hub_screen")
+    calls = []
+
+    class HubScreen:
+        def _activate(self, item):
+            calls.append(item)
+            return "native activation"
+
+        def draw(self, surface):
+            calls.append(("draw", surface))
+            return "native draw"
+
+    hub.HubScreen, hub.MENU_ITEMS = HubScreen, ["Career", "Load", "Exit"]
+    hub.pygame = SimpleNamespace(time=SimpleNamespace(get_ticks=lambda: 10))
+    monkeypatch.setitem(sys.modules, hub.__name__, hub)
+    return hub, calls
 
 
 @pytest.fixture

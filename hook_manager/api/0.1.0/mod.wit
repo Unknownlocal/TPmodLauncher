@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: MPL-2.0
+package modlauncher:api@0.1.0;
+
+/// Retained contract for existing diagnostics-only components.
+world code-mod {
+    import report: func(message: string);
+    export activate: func();
+    export on-event: func(name: string, payload: string) -> string;
+}

@@ -38,6 +38,21 @@ try:
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages), messages
     current = next(iter(controller.bridges.values()))
+    status = current.set_menu(
+        [
+            {
+                "owner": "owned.ui",
+                "id": "proof",
+                "label": "Owned UI",
+                "message": "Sandbox UI capability",
+            }
+        ]
+    )
+    assert status["menu"]["state"] == "ready", status
+    deadline = time.monotonic() + 5
+    while not (output / "menu.json").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert (output / "menu.json").exists(), messages
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:

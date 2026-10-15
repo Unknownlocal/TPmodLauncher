@@ -8,8 +8,9 @@ Wasmtime native image. It links no WASI functions or unknown-import stubs.
 This is the low-level host. The [author API and manifest](../hook_manager/api/README.md)
 are implemented separately in mod_contract.py. pack_mods.py discovers/adopts
 components for the Formula pack reported by the game. Normal launcher startup
-creates external sandboxes for its admitted code mods. Game transport and the
-menu proof remain later steps.
+creates external sandboxes for its admitted code mods. API 0.2.0's approved menu
+capability stages declarative buttons, then publishes them through the bounded
+Frida channel outside guest execution. General game callbacks remain later work.
 
 ## Calls and grants
 
@@ -29,7 +30,8 @@ Callbacks receive validated plain values; the Wasmtime store is not passed to
 them. Callbacks must return bounded values and do bounded, nonblocking work.
 Each instance can supply a trusted `cleanup` function to revoke its owned
 registrations when it closes or fails. Cleanup cannot undo arbitrary external
-side effects; no game operations are exposed by this chunk.
+side effects. The menu capability owns its declarations/rows and revokes them on
+failure or teardown; broader game operations need their own reviewed adapters.
 
 Use an instance on its creating thread. Guest entries across all instances are
 serialized by rejecting nested/concurrent entry, rather than queueing it. This

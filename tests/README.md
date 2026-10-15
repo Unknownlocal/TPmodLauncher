@@ -49,6 +49,13 @@ mod sandboxes close on detach, missing processes, exec, PID reuse and shutdown.
 The relocated embedded probe uses the production source-package setup and loads
 a real Python mod from an owned selected pack without developer build tools.
 
+Menu tests exercise the public UI example alongside a legacy diagnostics guest,
+native row placement/click confirmation, import deferral, denied grants, conflict
+rollback, stale acknowledgements and per-mod resource revocation. The real Frida
+bridge test also sends menu declarations to an owned native-style target and
+checks restoration. It uses no actual game code, renderer or assets; the user
+checks the final game's appearance manually.
+
 The `embedded` tests cover Windows's packaged interpreter and entry point,
 including both dependency versions, import isolation, damaged files, offline
 startup and real Wasmtime Component execution. The startup audit allows Python's

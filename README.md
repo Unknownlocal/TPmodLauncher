@@ -4,7 +4,7 @@ A code mod entry point for Team Principal: A Racing Manager.
 
 ## Writing a code mod
 
-Mod authors write against the launcher's supplied [API contract](hook_manager/api/mod.wit).
+Mod authors write against the launcher's supplied [API contract](hook_manager/api/README.md).
 They do not need to write or change that WIT file. The build tool generates Python
 bindings from it, so Python mods can implement callbacks and call approved host
 functions through `wit_world`.
@@ -16,7 +16,8 @@ build tools. Players receive the compiled component with the mod; launcher
 maintainers do not need to build every author's mod.
 
 1. Create a folder containing `mod.toml` and `src/mod.py`. Start from the
-   [diagnostic example](examples/diagnostic_mod).
+   [diagnostic example](examples/diagnostic_mod), or the
+   [native-menu example](examples/menu_mod) for a sandboxed UI mod.
 2. Give the mod its own ID and version in `mod.toml`, select the supported API
    version and request only the permissions it needs. See the
    [complete manifest format](hook_manager/api/README.md#mod-layout).
@@ -50,9 +51,11 @@ maintainers do not need to build every author's mod.
 Several code mods can live under the same data pack. When the game reports its
 selected Formula pack, the launcher discovers its direct child code mods,
 validates them and activates each admitted component in its own sandbox.
-It logs activation and diagnostics; no new menu button is added yet.
-The current contract supports diagnostics and JSON event exchange; it exposes no
-game operations. New game capabilities require reviewed additions to the
+It logs activation and diagnostics. API 0.2.0 also grants native-menu registration
+to mods requesting `main-menu`: a row with a short native click confirmation,
+using the game's rendering and input. The diagnostic and UI examples can run
+together in one data pack. General gameplay operations and game-event delivery
+remain future work. New capabilities require reviewed additions to the
 launcher API. Editing a mod's own
 WIT file or inventing an event name cannot grant access to game functions.
 

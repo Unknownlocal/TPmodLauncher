@@ -66,5 +66,13 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         )
         assert not closed["status"]["errors"]
         assert closed["pack"] == {"state": "stopped"}
+        assert closed["menu"] == ["Career", "Exit"] and closed["menu_restored"]
+        menu = json.loads((output / "menu.json").read_text())
+        assert menu == {
+            "items": ["Career", "Owned UI", "Exit"],
+            "message": "Sandbox UI capability",
+            "until": 2510,
+            "native": "native Exit",
+        }
     finally:
         probe.unlink(missing_ok=True)

@@ -82,7 +82,9 @@ def main(argv=None) -> int:
             _dependencies.local_path(root, "logs/launcher.log"),
             restart_grace=arguments.restart_grace,
             bridge_factory=bridge_factory,
-            mods_factory=lambda report: PackMods(root.parent, report),
+            mods_factory=lambda report, bridge: PackMods(
+                root.parent, report, set_menu=bridge.set_menu
+            ),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.
     except Exception as error:

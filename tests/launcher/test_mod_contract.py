@@ -261,3 +261,19 @@ def test_builder_preserves_existing_output_and_rejects_non_source(author):
     (author / "src/native.pyd").write_bytes(b"not accepted")
     with pytest.raises(ValueError, match="Python source"):
         build_mod.build(author, author / "new.wasm")
+
+
+def test_current_api_build_can_request_diagnostics_without_menu_access(author):
+    # Build against the current contract with only one optional import enabled.
+    path = author / "mod.toml"
+    path.write_text(path.read_text().replace('api = "0.1.0"', 'api = "0.2.0"'))
+    shutil.copytree(EXAMPLE / "src", author / "src")
+    build_mod.build(author, author / "mod.wasm")
+    messages = []
+    # No menu provider is supplied: accidentally enabling its import must fail admission.
+    with Mod(
+        Manifest.read(author), report=lambda *message: messages.append(message)
+    ) as mod:
+        mod.activate()
+        assert messages == [("example.diagnostics", "Diagnostic example activated")]
+        assert mod.event("echo", 42) == {"event": "echo", "received": 42}

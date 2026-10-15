@@ -8,7 +8,7 @@ time.sleep(0.1)
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 output = Path(sys.argv[1])
 deadline = time.monotonic() + 15
@@ -34,6 +34,22 @@ while host.discovery.snapshot is None and time.monotonic() < deadline:
 assert host.discovery.snapshot is not None, "Bridge did not discover the startup pack"
 # Simulate a menu selection while this process still owns the original loaded pack.
 utils._ACTIVE_PACK_CACHE.clear()
+
+
+# An owned native-style menu lets the client exercise the real declarative transport.
+class HubScreen:
+    def _activate(self, item):
+        return "native " + item
+
+    def draw(self, surface):
+        return None
+
+
+hub = ModuleType("ui.screens.hub_screen")
+hub.HubScreen, hub.MENU_ITEMS = HubScreen, ["Career", "Exit"]
+hub.pygame = SimpleNamespace(time=SimpleNamespace(get_ticks=lambda: 10))
+sys.modules[hub.__name__] = hub
+original_menu = HubScreen._activate
 manager.dispatch = lambda record: {"action": "replace", "value": 9}
 manager.approve(
     host.Target(
@@ -61,6 +77,19 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if "Owned UI" in hub.MENU_ITEMS and not (output / "menu.json").exists():
+        screen = HubScreen()
+        screen._activate("Owned UI")
+        (output / "menu.json").write_text(
+            json.dumps(
+                {
+                    "items": hub.MENU_ITEMS,
+                    "message": screen.error_message,
+                    "until": screen.error_until,
+                    "native": screen._activate("Exit"),
+                }
+            )
+        )
     if (output / "pause-request").exists() and not paused:
         release = threading.Event()
         watcher = threading.Thread(
@@ -82,6 +111,8 @@ while not manager.closed and time.monotonic() < deadline:
             "status": manager.status(),
             "observer_removed": manager.finder not in sys.meta_path,
             "pack": host.discovery.poll(),
+            "menu": hub.MENU_ITEMS,
+            "menu_restored": HubScreen._activate is original_menu,
         }
     )
 )

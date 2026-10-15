@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Read one explicit mod manifest and enforce the experimental 0.1.0 Component API."""
+"""Validate mod metadata and enforce the supported versioned Component APIs."""
 
 from dataclasses import dataclass
 import json
@@ -9,10 +9,9 @@ import tomllib
 
 from hook_manager.manager import data_copy, identifier
 from launcher.bundled_dependencies import local_path
+from launcher.mod_api import CAPABILITIES, EXPORTS
 from launcher.sandbox import Limits, Operation, Sandbox, SandboxError
 
-API_VERSION = "0.1.0"
-EXPORTS = {"activate": ((), None), "on-event": (("string", "string"), "string")}
 # Fuel counts Wasm work, including the guest Python interpreter (see Limits).
 # Measured startup needs about 12 million units and more than 32 core instances.
 # Startup gets five seconds to allow slower hosts; activate/on-event retain one second.
@@ -38,6 +37,7 @@ class Manifest:
     root: Path
     id: str
     version: str
+    api: str
     runtime: str
     component: str
     capabilities: frozenset[str]
@@ -73,7 +73,11 @@ class Manifest:
                 or not re.fullmatch(_VERSION, data["version"])
             ):
                 raise ValueError("Expected a short SemVer version")
-            if data["api"] != API_VERSION or data["runtime"] not in ("wasm", "python"):
+            if (
+                type(data["api"]) is not str
+                or data["api"] not in CAPABILITIES
+                or data["runtime"] not in ("wasm", "python")
+            ):
                 raise ValueError("Unsupported API version or runtime profile")
             component = data["component"]
             path = local_path(root, component)
@@ -83,7 +87,7 @@ class Manifest:
             if (
                 type(capabilities) is not list
                 or any(
-                    type(name) is not str or name != "diagnostics"
+                    type(name) is not str or name not in CAPABILITIES[data["api"]]
                     for name in capabilities
                 )
                 or len(capabilities) != len(set(capabilities))
@@ -93,6 +97,7 @@ class Manifest:
                 root,
                 mod_id,
                 data["version"],
+                data["api"],
                 data["runtime"],
                 component,
                 frozenset(capabilities),
@@ -125,7 +130,7 @@ class Manifest:
 class Mod:
     """Own one admitted contract instance; trusted code decides which events it receives."""
 
-    def __init__(self, manifest: Manifest, *, report=None, cleanup=None):
+    def __init__(self, manifest: Manifest, *, report=None, menu=None, cleanup=None):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
             operations = {}
@@ -143,6 +148,16 @@ class Mod:
                     )
 
                 operations["report"] = Operation(("string",), None, emit)
+            if "main-menu" in manifest.capabilities:
+                if not callable(menu):
+                    raise ManifestError("Main menu requires a trusted menu provider")
+                operations["add-menu-button"] = Operation(
+                    ("string", "string", "string"),
+                    None,
+                    lambda item_id, label, message: menu(
+                        manifest.id, item_id, label, message
+                    ),
+                )
             component = manifest.read_component()
         except BaseException:
             # Own admission cleanup until Sandbox adopts it, including missing component/provider errors.

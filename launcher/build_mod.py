@@ -46,7 +46,13 @@ def build(folder, output):
             target = staged_source / path.relative_to(source)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
-        wit = Path(__file__).resolve().parents[1] / "hook_manager/api/mod.wit"
+        # Manifest validation restricts api to supported versions; every contract has the same layout.
+        wit = (
+            Path(__file__).resolve().parents[1]
+            / "hook_manager/api"
+            / manifest.api
+            / "mod.wit"
+        )
         shutil.copyfile(wit, stage / "mod.wit")
         empty = stage / "empty-environment"
         (empty / "lib/site-packages").mkdir(parents=True)
@@ -65,6 +71,11 @@ def build(folder, output):
                 str(stage / "mod.wit"),
                 "-w",
                 "code-mod",
+                *(
+                    ["--features", ",".join(sorted(manifest.capabilities))]
+                    if manifest.capabilities
+                    else []
+                ),
                 "componentize",
                 "--stub-wasi",
                 "-p",

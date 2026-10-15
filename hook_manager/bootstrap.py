@@ -41,11 +41,22 @@ def pulse(sources, digest, instance, game_root, request_json):
             # No dispatcher or game targets exist until a later sandbox integration phase.
             module.manager = module.Manager()
             module.discovery = module.PackDiscovery(game_root)
+            module.menu = module.MenuAdapter()
             sys.modules[name] = module
-        response = module.manager.request(json.loads(request_json))
+        request = json.loads(request_json)
+        if type(request) is dict and request.get("operation") == "menu":
+            if set(request) != {"operation", "buttons"}:
+                raise ValueError("Invalid menu request fields")
+            module.menu.update(request["buttons"])
+            response = module.manager.request({"operation": "status"})
+        else:
+            if request == {"operation": "shutdown"}:
+                module.menu.close()
+            response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
         response["pack"] = module.discovery.poll()
+        response["menu"] = module.menu.poll()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         return json.dumps({"event": "error", "detail": str(error)[:4096]})
