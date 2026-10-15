@@ -2,8 +2,10 @@
 """Owned relocated-player probe: verify runners and call one without build tooling."""
 
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 import sys
+import threading
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("_runner_dependencies", root / "launcher/bundled_dependencies.py")
@@ -18,6 +20,7 @@ spec.loader.exec_module(module)
 
 from mod_runtime import RunnerBundle
 from launcher.source_mod import SourceMod
+from mod_runtime.preparation import SourcePreparation
 from mod_runtime.source import SourceError, SourceSnapshot
 
 assert importlib.util.find_spec("componentize_py") is None
@@ -45,16 +48,23 @@ class WitWorld(wit_world.WitWorld):
     def activate(self): wit_world.report("source in bundled runtime")
     def on_event(self, name, payload): return payload
 ''' + "#" + "a" * 65536, encoding="utf-8")
-snapshot = SourceSnapshot.read(mod)
 try:
     SourceSnapshot.read(root / ".state/runner-linked")
 except SourceError:
     pass
 else:
     raise AssertionError("The bundled player must reject a junction to a valid source mod")
-(mod / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
-with SourceMod(bundle, snapshot, report=lambda *args: reports.append(args), cleanup=lambda: closed.append(True)) as runner:
-    runner.activate()
-    assert runner.event("probe", {"owned": True}) == {"owned": True}
+with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, bundle, mod) as job:
+    # Waiting is only probe synchronization; the player controller will poll take().
+    assert wait([job._future], timeout=20).done
+    with job.take() as prepared:
+        assert set(prepared.timings) == {"source_snapshot", "runner_read", "compile"}
+        (mod / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
+        with SourceMod(bundle, prepared.snapshot, prepared=prepared.compiled, timings=prepared.timings,
+                       report=lambda *args: reports.append(args), cleanup=lambda: closed.append(True)) as runner:
+            assert runner.sandbox._thread == threading.get_ident()
+            runner.activate()
+            assert runner.event("probe", {"owned": True}) == {"owned": True}
+    assert prepared.snapshot is None and prepared.compiled.closed
 assert reports == [("owned.embedded", "source in bundled runtime")] and closed == [True]
 print("Verified relocated runner; source activation/event/cleanup passed without componentize-py")

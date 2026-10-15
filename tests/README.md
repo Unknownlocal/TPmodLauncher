@@ -19,6 +19,10 @@ of normal callback limits. The bundled-interpreter probe uses the same loader.
 Source-adapter checks reuse the launcher's JSON contract and exercise identity,
 menu rollback, denied operations and admission cleanup through real source mods.
 The bundled-interpreter probe also exercises this contract adapter.
+Preparation tests use real compilation with synchronized worker gates to exercise
+queued/running cancellation, late disposal, thread ownership and immutable source
+adoption. The bundled-interpreter probe prepares on a worker before controller
+activation and event delivery.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies and a small owned native-menu interface. `launcher/conftest.py`

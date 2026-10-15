@@ -2,8 +2,9 @@
 
 `mod_runtime` owns trusted Python-in-Wasm runner artifacts independently of game
 process management and native hooks. Package, artifact and source-reader imports
-use only standard-library code. The runtime module explicitly loads the sandbox;
-the componentizer remains restricted to the developer build command.
+use only standard-library code. Runtime and preparation modules explicitly load
+the sandbox/compiler; the componentizer remains restricted to the developer build
+command.
 
 `bundle.py` defines the private ABI, verifies the complete bounded artifact
 inventory, and returns newly checked portable bytes for one `runner.wasm`.
@@ -58,6 +59,15 @@ JSON event contract to this runner. Both mod paths use the same host-operation
 factory for diagnostic identity, printable messages and menu ownership; the
 runner's own binding registry continues to enforce source-mod permissions.
 
-Player discovery, responsive preparation and startup integration are separate
+`preparation.py` runs bounded source snapshotting, runner-byte verification and
+native compilation on a caller-owned thread executor. Each job owns a future and
+cancellation signal; nonblocking `take()` transfers a completed snapshot,
+compiler result and worker-local timings to the controller once. `close()` cancels
+queued work or disposes an abandoned result when running work returns. Reads and
+native compilation are not forcibly interrupted. The controller retains executor
+lifetime and admission bounds; workers create no Store or game registrations.
+Bundle bootstrap and source-mod admission retain their own integrity reads.
+
+Player discovery and startup integration are separate
 implementation stages. The current component-loading path retains its existing
 manifest format and permission admission rules.

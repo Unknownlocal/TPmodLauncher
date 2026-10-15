@@ -232,6 +232,8 @@ bounded fuel and time across source initialization, and owns lifecycle cleanup.
 Activation and event calls retain the sandbox's ordinary per-call limits.
 `launcher/source_mod.py` adapts this runner to the existing mod lifecycle, JSON
 event validation and host-owned diagnostic/menu identity.
+`mod_runtime/preparation.py` snapshots source and compiles verified runner bytes
+on a caller-owned worker, with controller adoption and cancellation cleanup.
 
 `build_mod.py` builds author components separately from player startup.
 `build_frida.py` produces the reduced native transport; `frida_sources.py`
