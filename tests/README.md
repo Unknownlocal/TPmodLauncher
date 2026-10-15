@@ -5,6 +5,11 @@ the in-game hook manager. `launcher/` contains dependency, packaging, process
 lifecycle, component, cache and sandbox tests. `hook_manager/` contains manager,
 pack discovery, native menu and bridge tests.
 
+`mod_runtime/` checks trusted runner builds, private ABI compatibility, complete
+bundle inventories, per-mod permission enforcement and relocated bundled-interpreter
+execution without compiler packages. Build fixtures are separate from player
+execution, and the existing production sandbox supplies execution limits.
+
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies and a small owned native-menu interface. `launcher/conftest.py`
 adds real Git source repositories and Wasmtime components, and builds the public
@@ -31,7 +36,7 @@ Windows and Linux transports. Required acceptance modes turn missing native
 prerequisites into failures.
 
 `pyproject.toml` defines collection, markers and line/branch coverage for
-`launcher` and `hook_manager`. The pytest workflow separates launcher,
-hook-manager, native and embedded groups and combines their coverage artifacts.
+`launcher`, `hook_manager` and `mod_runtime`. The pytest workflow separates launcher,
+hook-manager, mod-runtime, native and embedded groups and combines their coverage artifacts.
 The coverage workflow consumes those artifacts, while the reduced-Frida workflow
 builds and checks platform transport candidates.

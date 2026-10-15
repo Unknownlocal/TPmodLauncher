@@ -219,6 +219,13 @@ closure releases mods in reverse activation order and restores owned hooks.
 
 ### Build and packaging
 
+`mod_runtime` defines the private Python-runner ABI and a separate developer
+builder/verifier for a single prebuilt runner. Its typed host-operation registry
+supports per-mod grants through `launcher/runner_host.py`, which binds trusted
+providers or rejection callbacks before sandbox instantiation. Bundles retain their source,
+upstream notice texts and a bounded integrity inventory. This artifact foundation
+is separate from the current player loading path.
+
 `build_mod.py` builds author components separately from player startup.
 `build_frida.py` produces the reduced native transport; `frida_sources.py`
 exports and restores matching build sources. `prepare_release.py` assembles

@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Trusted runner; author source is supplied only after instantiation.
+
+This module is frozen once at release-build time. The custom importer serves
+Python source from guest memory, never from host directories or installed packages.
+Each Wasmtime Store gets its own importer, source dictionary and mod instance.
+"""
+
+import importlib
+import importlib.abc
+import importlib.util
+# Freeze this initial standard-library profile for later guest imports.
+import json
+import math
+import os
+from pathlib import PurePosixPath
+import sys
+from types import ModuleType
+import runner_bindings as _bindings
+
+
+class AuthorWorld:
+    """Author facade deliberately excludes the runner's private loading exports."""
+
+    def activate(self):
+        raise NotImplementedError
+
+    def on_event(self, name, payload):
+        raise NotImplementedError
+
+
+_author_api = ModuleType("wit_world")
+_author_api.WitWorld = AuthorWorld
+for _python_name in ("report", "add_menu_button"):
+    setattr(_author_api, _python_name, getattr(_bindings, _python_name))
+sys.modules["wit_world"] = _author_api
+
+_sources = {}
+_bytes = 0
+_sealed = False
+_instance = None
+_activated = False
+_reserved = set(sys.modules) | set(sys.stdlib_module_names) | {"wit_world", "runner_guest"}
+
+
+def source_path(path):
+    item = PurePosixPath(path)
+    if (
+        not path
+        or len(path) > 256
+        or item.is_absolute()
+        or str(item) != path
+        or "\\" in path
+        or ".." in item.parts
+        or item.suffix != ".py"
+    ):
+        raise ValueError("Expected a canonical relative Python source path")
+    parts = item.parts[:-1] + (item.stem,)
+    if any(not part.isidentifier() for part in parts):
+        raise ValueError("Expected Python module identifiers")
+    if parts[0] in _reserved:
+        raise ValueError("Source conflicts with a trusted or standard-library module")
+    return path
+
+
+class MemoryImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Resolve ordinary modules and explicit packages from the supplied snapshot."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        stem = fullname.replace(".", "/")
+        package = stem + "/__init__.py"
+        module = stem + ".py"
+        if package in _sources and module in _sources:
+            raise ImportError("Ambiguous module and package")
+        if package in _sources:
+            return importlib.util.spec_from_loader(fullname, self, is_package=True)
+        if module in _sources:
+            return importlib.util.spec_from_loader(fullname, self, is_package=False)
+        return None
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        stem = module.__name__.replace(".", "/")
+        path = stem + ("/__init__.py" if module.__spec__.submodule_search_locations is not None else ".py")
+        module.__file__ = "<mod>/" + path
+        exec(compile(_sources[path], module.__file__, "exec"), module.__dict__)
+
+
+class RunnerBindings(_bindings.RunnerBindings):
+    def put_source(self, path, chunk):
+        global _bytes
+        if _sealed:
+            raise RuntimeError("Source snapshot is sealed")
+        source_path(path)
+        size = len(chunk.encode("utf-8"))
+        if _bytes + size > 1024 * 1024 or (path not in _sources and len(_sources) >= 256):
+            raise ValueError("Source snapshot exceeds its budget")
+        _sources[path] = _sources.get(path, "") + chunk
+        _bytes += size
+
+    def load_source(self, entry):
+        global _sealed, _instance
+        if _sealed or not entry or any(not part.isidentifier() for part in entry.split(".")):
+            raise RuntimeError("Invalid or repeated source load")
+        if entry.replace(".", "/") + ".py" not in _sources:
+            raise ValueError("Entry module is missing")
+        _sealed = True
+        # All import-time author code starts here, inside the normal sandbox call budget.
+        sys.meta_path.insert(0, MemoryImporter())
+        try:
+            module = importlib.import_module(entry)
+            _instance = module.WitWorld()
+        except BaseException as error:
+            # Avoid upstream traceback formatting, which otherwise tries to stat
+            # source files through denied WASI. The host closes a failed loader.
+            return (type(error).__name__ + ": " + str(error))[:1024]
+        return ""
+
+    def activate(self):
+        global _activated
+        if _instance is None or _activated:
+            raise RuntimeError("Mod must load once and activate once")
+        _instance.activate()
+        _activated = True
+
+    def on_event(self, name, payload):
+        if not _activated:
+            raise RuntimeError("Mod has not activated")
+        return _instance.on_event(name, payload)
+

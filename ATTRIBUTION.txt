@@ -40,5 +40,21 @@ Both package locks pin the official Windows x64 wheel's SHA-256. This is an
 integrity check, not publisher authentication; PyPI supplies no attestation
 for that wheel. Guest-building tools are not runtime dependencies.
 
+Prebuilt Python runner inputs (private ABI 0.1.0):
+componentize-py 0.25.1, https://github.com/bytecodealliance/componentize-py/tree/v0.25.1
+notices/mod-runtime/LICENSE.ComponentizePy.txt is the unchanged LICENSE from
+the installed pinned componentize-py wheel. The compiler is a developer tool;
+generated runners incorporate its Python/Wasm runtime support.
+Guest CPython source: https://github.com/dicej/cpython/tree/v3.14.0-wasi-sdk-30
+notices/mod-runtime/LICENSE.PythonGuest.txt preserves that source's LICENSE.
+The toolchain's guest Python 3.14 is separate from the launcher interpreter.
+WASI SDK 33 source pins:
+https://github.com/WebAssembly/wasi-libc/tree/161b3195fc2558d2b1ba3eb9ffae3b2b47407623
+https://github.com/llvm/llvm-project/tree/4434dabb69916856b824f68a64b029c67175e532
+notices/mod-runtime/LICENSE.WasiLibc.txt and LICENSE.LLVM.txt preserve their
+upstream overview and LLVM licence respectively. Component-specific terms and
+in-file notices remain applicable; these texts are not a completed inventory
+of every library incorporated into generated runners.
+
 The source repository excludes the game executable, extracted game bytecode,
 any data-pack content, runtime binaries and dependency wheels.

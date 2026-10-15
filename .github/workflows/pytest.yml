@@ -17,7 +17,7 @@ permissions:
 jobs:
   test:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - runner: windows-latest
@@ -84,6 +84,10 @@ jobs:
         if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
         run: |
           exec "${{ matrix.python }}" -B -m pytest tests/hook_manager -v -m "not embedded and not native and not frida_build" -p pytest_cov --cov --cov-append --cov-report=
+      - name: Run mod-runtime artifact and runner tests
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        run: |
+          exec "${{ matrix.python }}" -B -m pytest tests/mod_runtime -v -m "not embedded" -p pytest_cov --cov --cov-append --cov-report=
       - name: Run Windows native acceptance tests
         if: ${{ !cancelled() && steps.coverage.outcome == 'success' && runner.os == 'Windows' }}
         run: |
