@@ -197,10 +197,14 @@ def test_entry_reports_package_damage_without_repair(embedded_project, name):
 
 
 @pytest.mark.embedded
-def test_bundled_wasmtime_executes_an_owned_component(embedded_project, tmp_path):
+def test_bundled_sandbox_executes_and_disables_an_owned_component(
+    embedded_project, tmp_path
+):
     root = embedded_project
     probe = root / "launcher/wasmtime_probe.py"
+    guest = root / "launcher/sandbox_guest.wat"
     shutil.copyfile(FIXTURES / "bundled_wasmtime_probe.py", probe)
+    shutil.copyfile(FIXTURES / "sandbox/functions.wat", guest)
     try:
         result = subprocess.run(
             [
@@ -218,6 +222,7 @@ def test_bundled_wasmtime_executes_an_owned_component(embedded_project, tmp_path
         ), result.stderr
     finally:
         probe.unlink()
+        guest.unlink()
 
 
 @pytest.mark.embedded

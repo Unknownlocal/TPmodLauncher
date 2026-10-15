@@ -29,6 +29,12 @@ Pack-discovery tests check startup snapshots and folder boundaries using owned
 modules and folders. The native bridge test also checks discovery after manager
 readiness and clears its snapshot at shutdown. It never starts the actual game.
 
+Sandbox-host tests use real Wasmtime and owned Components to check capability
+admission, isolated state, memory/fuel/deadline limits, callback failures and
+cleanup. They run in the developer environment on each portable CI platform;
+the relocated embedded probe also exercises the production host. See
+[sandbox host](../launcher/SANDBOX.md) for scope and limits.
+
 The `embedded` tests cover Windows's packaged interpreter and entry point,
 including both dependency versions, import isolation, damaged files, offline
 startup and real Wasmtime Component execution. The startup audit allows Python's

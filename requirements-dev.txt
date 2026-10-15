@@ -43,3 +43,5 @@ tuf==7.0.1
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.8.0
+# Real sandbox-host tests; release copies are separately locked in pylock*.toml.
+wasmtime==49.0.0

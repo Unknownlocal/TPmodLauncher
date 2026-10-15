@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Run an owned Component through the real bundled Python bindings and native DLL."""
+"""Exercise the sandbox host on bundled Python with its verified native dependencies."""
 
 import importlib.util
 from pathlib import Path
+import sys
 
 root = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location(
@@ -12,24 +13,25 @@ dependencies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dependencies)
 dependencies.import_dependencies(root)
 
-# Only trusted test code creates an engine here; production mod hosting comes later.
-from wasmtime import Engine, Store
-from wasmtime.component import Component, Linker
+# Load trusted host source after dependency verification, just as the external launcher will.
+spec = importlib.util.spec_from_file_location(
+    "sandbox_host", root / "launcher/sandbox.py"
+)
+host = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = host
+spec.loader.exec_module(host)
+from wasmtime import wat2wasm
 
-with Engine() as engine, Store(engine) as store, Linker(engine) as linker:
-    with Component(
-        engine,
-        """
-        (component
-          (core module $module
-            (func (export "answer") (result i32) i32.const 42))
-          (core instance $instance (instantiate $module))
-          (func (export "answer") (result u32)
-            (canon lift (core func $instance "answer"))))
-    """,
-    ) as component:
-        instance = linker.instantiate(store, component)
-        answer = instance.get_func(store, "answer")
-        assert answer(store) == 42
-        answer.post_return(store)
+component = bytes(wat2wasm(Path(__file__).with_name("sandbox_guest.wat").read_text()))
+grants = {"bonus": host.Operation(("s32",), "s32", lambda value: value + 6)}
+cleaned = []
+with host.Sandbox(component, grants, cleanup=lambda: cleaned.append(True)) as sandbox:
+    assert sandbox.call("apply", 36) == 42
+    try:
+        sandbox.call("trap")
+    except host.SandboxError:
+        pass
+    else:
+        raise AssertionError("Guest trap was not rejected")
+    assert sandbox.closed and cleaned == [True]
 print("Component returned 42")
