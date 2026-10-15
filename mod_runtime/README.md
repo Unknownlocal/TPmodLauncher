@@ -52,6 +52,11 @@ transfer and import; UTF-8 chunks and aggregate byte/file/call bounds limit inpu
 work. Normal activation/event budgets resume afterward. Optional compiler
 results are adopted only after their portable bytes match the verified bundle.
 Cleanup ownership begins before admission and follows the sandbox until closure.
+Its read-only sandbox property exposes the execution boundary to trusted adapters.
+`launcher/source_mod.py` applies the launcher's shared mod lifecycle and bounded
+JSON event contract to this runner. Both mod paths use the same host-operation
+factory for diagnostic identity, printable messages and menu ownership; the
+runner's own binding registry continues to enforce source-mod permissions.
 
 Player discovery, responsive preparation and startup integration are separate
 implementation stages. The current component-loading path retains its existing

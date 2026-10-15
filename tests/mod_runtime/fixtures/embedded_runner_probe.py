@@ -17,7 +17,7 @@ sys.modules["mod_runtime"] = module
 spec.loader.exec_module(module)
 
 from mod_runtime import RunnerBundle
-from mod_runtime.runtime import PythonRunner
+from launcher.source_mod import SourceMod
 from mod_runtime.source import SourceError, SourceSnapshot
 
 assert importlib.util.find_spec("componentize_py") is None
@@ -53,8 +53,8 @@ except SourceError:
 else:
     raise AssertionError("The bundled player must reject a junction to a valid source mod")
 (mod / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
-with PythonRunner(bundle, snapshot, {"report": reports.append}, cleanup=lambda: closed.append(True)) as runner:
+with SourceMod(bundle, snapshot, report=lambda *args: reports.append(args), cleanup=lambda: closed.append(True)) as runner:
     runner.activate()
-    assert runner.on_event("probe", '{"owned":true}') == '{"owned":true}'
-assert reports == ["source in bundled runtime"] and closed == [True]
+    assert runner.event("probe", {"owned": True}) == {"owned": True}
+assert reports == [("owned.embedded", "source in bundled runtime")] and closed == [True]
 print("Verified relocated runner; source activation/event/cleanup passed without componentize-py")

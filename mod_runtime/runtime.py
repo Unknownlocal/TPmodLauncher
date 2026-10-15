@@ -89,6 +89,11 @@ class PythonRunner:
             raise
 
     @property
+    def sandbox(self):
+        """Expose the owned execution boundary for trusted contract adapters."""
+        return self._sandbox
+
+    @property
     def closed(self):
         return self._sandbox is None or self._sandbox.closed
 

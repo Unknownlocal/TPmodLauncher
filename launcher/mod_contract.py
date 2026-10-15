@@ -128,6 +128,31 @@ class Manifest:
             raise ManifestError(str(error)[:512]) from None
 
 
+def _host_operations(manifest, report, menu):
+    """Attach host-owned identity to the launcher's approved mod operations."""
+    operations = {}
+    if "diagnostics" in manifest.capabilities:
+        if not callable(report):
+            raise ManifestError("Diagnostics requires a trusted report handler")
+
+        def emit(message):
+            report(
+                manifest.id,
+                "".join(char if char.isprintable() else " " for char in message),
+            )
+
+        operations["report"] = Operation(("string",), None, emit)
+    if "main-menu" in manifest.capabilities:
+        if not callable(menu):
+            raise ManifestError("Main menu requires a trusted menu provider")
+        operations["add-menu-button"] = Operation(
+            ("string", "string", "string"),
+            None,
+            lambda item_id, label, message: menu(manifest.id, item_id, label, message),
+        )
+    return operations
+
+
 class Mod:
     """Own one admitted contract instance; trusted code decides which events it receives."""
 
@@ -143,31 +168,7 @@ class Mod:
     ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
-            operations = {}
-            if "diagnostics" in manifest.capabilities:
-                if not callable(report):
-                    raise ManifestError("Diagnostics requires a trusted report handler")
-
-                def emit(message):
-                    # Keep mod text within one printable diagnostic record; identity comes from the host.
-                    report(
-                        manifest.id,
-                        "".join(
-                            char if char.isprintable() else " " for char in message
-                        ),
-                    )
-
-                operations["report"] = Operation(("string",), None, emit)
-            if "main-menu" in manifest.capabilities:
-                if not callable(menu):
-                    raise ManifestError("Main menu requires a trusted menu provider")
-                operations["add-menu-button"] = Operation(
-                    ("string", "string", "string"),
-                    None,
-                    lambda item_id, label, message: menu(
-                        manifest.id, item_id, label, message
-                    ),
-                )
+            operations = _host_operations(manifest, report, menu)
             # The loader owns this timing dictionary; it is never passed into guest code.
             if prepared is None:
                 with measure(timings, "component_read"):
@@ -199,8 +200,14 @@ class Mod:
         """Invoke activation once; repeated activation is a caller error."""
         if self._active:
             raise SandboxError("Mod has already been activated")
-        self.sandbox.call("activate")
+        self._activate()
         self._active = True
+
+    def _activate(self):
+        self.sandbox.call("activate")
+
+    def _on_event(self, name, payload):
+        return self.sandbox.call("on-event", name, payload)
 
     def event(self, name, value):
         """Send/receive bounded JSON plain values through the typed on-event export."""
@@ -214,7 +221,7 @@ class Mod:
                 allow_nan=False,
                 separators=(",", ":"),
             )
-            result = self.sandbox.call("on-event", event, payload)
+            result = self._on_event(event, payload)
             # Reuse the manager's existing value limits; JSON strings never become executable commands.
             return data_copy(json.loads(result))
         except Exception as error:

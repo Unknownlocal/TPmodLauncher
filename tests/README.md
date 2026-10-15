@@ -16,6 +16,9 @@ Lifecycle tests exercise UTF-8 transfer, large inputs, shared source budgets,
 prepared-component ownership and cleanup across loading/callback failures.
 Sandbox phase tests verify aggregate fuel/deadlines/host calls and restoration
 of normal callback limits. The bundled-interpreter probe uses the same loader.
+Source-adapter checks reuse the launcher's JSON contract and exercise identity,
+menu rollback, denied operations and admission cleanup through real source mods.
+The bundled-interpreter probe also exercises this contract adapter.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies and a small owned native-menu interface. `launcher/conftest.py`
