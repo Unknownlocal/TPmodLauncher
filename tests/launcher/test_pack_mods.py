@@ -288,10 +288,10 @@ def test_background_compilation_never_executes_or_leaks_a_cancelled_mod(
     results, progress = [], []
     original = pack_mods._prepare
 
-    def prepare(manifest, timings):
+    def prepare(manifest, timings, cache=None):
         entered.set()
         assert release.wait(5), "Test did not release the compiler"
-        result = original(manifest, timings)
+        result = original(manifest, timings, cache)
         results.append(result)
         return result
 

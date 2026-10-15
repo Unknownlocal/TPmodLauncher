@@ -87,3 +87,5 @@ __pycache__/
 /.state/
 /.cache/
 /release/
+# Wasmtime's local native compilation cache; never distribute or commit it.
+/bin/

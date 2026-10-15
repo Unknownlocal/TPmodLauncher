@@ -70,11 +70,13 @@ def main(argv=None) -> int:
         _dependencies.load_source_packages(root)
         from launcher import game_bridge as bridge, process_lifecycle as lifecycle
         from launcher.pack_mods import PackMods
+        from launcher.compilation_cache import CompilationCache
 
         # The launcher folder and game executable share the same installation folder.
         expected = root.parent / "TeamPrincipal.exe"
         command = lifecycle.validate_command(command, expected)
         bridge_factory = bridge.factory(root, frida)
+        cache = CompilationCache(root)
         return lifecycle.run_launcher(
             frida,
             command,
@@ -88,6 +90,7 @@ def main(argv=None) -> int:
                 set_menu=bridge.set_menu,
                 set_loading=bridge.set_loading,
                 background=True,
+                cache=cache,
             ),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.

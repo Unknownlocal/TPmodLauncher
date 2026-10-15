@@ -564,10 +564,10 @@ def test_controller_handles_child_and_exit_while_a_compiler_is_running(
     entered, release = threading.Event(), threading.Event()
     original = pack_mods._prepare
 
-    def prepare(manifest, timings):
+    def prepare(manifest, timings, cache=None):
         entered.set()
         assert release.wait(5)
-        return original(manifest, timings)
+        return original(manifest, timings, cache)
 
     monkeypatch.setattr(pack_mods, "_prepare", prepare)
     controller.mods_factory = lambda report, bridge: PackMods(

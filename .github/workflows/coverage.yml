@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Coverage reports
+
+on:
+  workflow_run:
+    workflows: [Portable pytest and Windows runtime acceptance]
+    types: [completed]
+
+permissions:
+  actions: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Read reports only: never check out or execute code from the triggering PR.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Download the pytest run's coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: python-coverage*
+          path: ${{ runner.temp }}/pytest-coverage
+          merge-multiple: false
+      - name: Summarize platform coverage
+        shell: python {0}
+        env:
+          REPORT_DIRECTORY: ${{ runner.temp }}/pytest-coverage
+          TEST_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          TEST_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          TEST_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          platforms = {
+              "python-coverage": "Windows x64",
+              "python-coverage-linux": "Linux x64",
+              "python-coverage-macos-x86_64": "macOS Intel",
+              "python-coverage-macos-arm64": "macOS ARM",
+          }
+          directory = Path(os.environ["REPORT_DIRECTORY"])
+          conclusion = os.environ["TEST_RUN_CONCLUSION"]
+          summary = [
+              "## Python coverage",
+              "",
+              f"[Pytest run and downloadable XML/HTML reports]({os.environ['TEST_RUN_URL']})",
+              "",
+              f"Tested commit: `{os.environ['TEST_RUN_SHA']}`; test result: **{conclusion}**.",
+              "",
+              "| Platform | Lines | Branches |",
+              "| --- | --- | --- |",
+          ]
+          errors = []
+
+          def metric(root, kind):
+              covered = int(root.attrib[f"{kind}-covered"])
+              total = int(root.attrib[f"{kind}-valid"])
+              if not 0 <= covered <= total:
+                  raise ValueError("invalid coverage counts")
+              return f"{covered / total:.2%} ({covered}/{total})" if total else "N/A (0/0)"
+
+          for artifact, label in platforms.items():
+              report = directory / artifact / "coverage.xml"
+              if not report.is_file():
+                  summary.append(f"| {label} | Report unavailable | Report unavailable |")
+                  # A failed/cancelled test run may never reach coverage collection.
+                  if conclusion == "success":
+                      errors.append(f"Missing coverage report for {label}")
+                  continue
+              try:
+                  root = ET.parse(report).getroot()
+                  if root.tag != "coverage":
+                      raise ValueError("expected a coverage document")
+                  lines, branches = metric(root, "lines"), metric(root, "branches")
+              except (OSError, ET.ParseError, KeyError, ValueError):
+                  errors.append(f"Invalid coverage report for {label}")
+                  summary.append(f"| {label} | Invalid report | Invalid report |")
+              else:
+                  summary.append(f"| {label} | {lines} | {branches} |")
+
+          summary += [
+              "",
+              "Each row describes one platform's test selection; percentages are not added or averaged.",
+              "Coverage measures the pytest process; isolated embedded processes are not instrumented.",
+              "There is no fixed minimum coverage percentage. Review gaps alongside test behaviour.",
+          ]
+          text = "\n".join(summary) + "\n"
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(text, encoding="utf-8")
+          if errors:
+              raise SystemExit("; ".join(errors))

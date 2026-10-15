@@ -10,10 +10,11 @@ from launcher.load_timing import measure
 class CompiledMod:
     """Own one compiler result until the controller adopts or discards it."""
 
-    def __init__(self, data, timings=None):
+    def __init__(self, data, timings=None, *, cache=None):
         self.data = data
         self.resources = ExitStack()
         self.closed = False
+        self.cache_status = None
         try:
             if (
                 type(data) is not bytes
@@ -37,6 +38,8 @@ class CompiledMod:
                 config.parallel_compilation = True
                 # Prefer faster compilation for components that include a Python runtime.
                 config.cranelift_opt_level = "none"
+                if cache is not None:
+                    self.cache_status = cache.configure(config)
                 self.engine = self.resources.enter_context(Engine(config))
             # Compile portable bytes through Wasmtime's validator, not unsafe native deserialization.
             with measure(timings, "compile"):

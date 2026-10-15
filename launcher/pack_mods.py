@@ -19,11 +19,11 @@ MAX_PACK_ENTRIES = 4096
 MAX_MODS = 32
 
 
-def _prepare(manifest, timings):
+def _prepare(manifest, timings, cache=None):
     """Read and compile on a worker; no Store, guest entry or native registration occurs here."""
     with measure(timings, "component_read"):
         data = manifest.read_component()
-    return CompiledMod(data, timings)
+    return CompiledMod(data, timings, cache=cache)
 
 
 def _discard(future):
@@ -38,7 +38,14 @@ class PackMods:
     """Load once on the controller thread; close all instances with their game session."""
 
     def __init__(
-        self, game_root, report, *, set_menu=None, set_loading=None, background=False
+        self,
+        game_root,
+        report,
+        *,
+        set_menu=None,
+        set_loading=None,
+        background=False,
+        cache=None,
     ):
         # game_root and report come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
@@ -52,6 +59,7 @@ class PackMods:
         self.menu_generation = 0
         self.set_loading = set_loading
         self.background = background
+        self.cache = cache
         self.executor = None
         self.pending = None
         self.loading = None
@@ -215,12 +223,18 @@ class PackMods:
                         self.executor = ThreadPoolExecutor(
                             max_workers=1, thread_name_prefix="mod-compiler"
                         )
-                    self.pending = self.executor.submit(_prepare, manifest, timings)
+                    self.pending = self.executor.submit(
+                        _prepare, manifest, timings, self.cache
+                    )
                     while not self.pending.done():
                         yield
                     future = self.pending
                     self.pending = None
                     prepared = future.result()
+                elif self.cache is not None:
+                    prepared = _prepare(manifest, timings, self.cache)
+                if prepared is not None and prepared.cache_status is not None:
+                    self._log("CACHE", id=manifest.id, **prepared.cache_status)
                 mod = Mod(
                     manifest,
                     report=self._diagnostic,

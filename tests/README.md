@@ -17,6 +17,13 @@ result. There is no fixed minimum coverage percentage.
 
 ## Platform coverage
 
+Compilation-cache checks use real Wasmtime and filesystem entries: fresh processes,
+changed components/settings, fresh guest state/grants, current manifest validation,
+Unicode paths, regenerated config and cold fallback for rejected paths/access.
+Windows exercises actual ACL checks; Linux exercises real mode/FIFO checks.
+Darwin ACL return handling is tested at the OS-call boundary on other systems;
+native macOS permission behaviour still requires that platform's runner.
+
 Readiness tests check the three guarded season actions, preserved native
 Continue Season restrictions, footer states, deferred registration, timeout and
 owned restoration. Real components check compilation failure and admission in
@@ -109,6 +116,16 @@ limitation, not a supported case inferred from these passing tests.
 and ARM. Its Windows job also prepares and tests the packaged runtime. The
 Windows coverage artifact retains its existing `python-coverage` name; other
 platforms have separate names.
+
+`coverage.yml` follows completed runs of that workflow and reads its existing
+artifacts without rerunning tests. The **Coverage reports** run summary shows
+line and branch coverage separately for all four platforms and links to the
+original run's downloadable XML/HTML reports. It also shows the tested commit
+and test result. Failed or cancelled test runs can have unavailable reports;
+a successful test run must supply all four valid reports. Coverage percentages
+remain informational, with no minimum threshold. Embedded subprocess coverage
+is not included. The reporting workflow needs to be on the default branch
+before GitHub will trigger it; it needs no additional secrets or services.
 
 `reduced-frida.yml` builds the binding on all four targets. Its Linux job runs
 the launcher/manager suite with native tests required after compilation. Its

@@ -116,6 +116,38 @@ controller's thread checks and shared entry lock. A cancelled session cannot
 adopt a late result. Native compilation itself cannot be interrupted, and Python
 may wait for a running worker when the launcher process exits.
 
+## Compilation cache
+
+Player startup uses Wasmtime's built-in cache at
+`modLauncher/bin/wasmtime-cache/artifacts/`. The generated config sits beside
+artifacts, so Wasmtime's cleanup cannot remove the config itself. Wasmtime owns
+the cache keys for portable code, compiler configuration and runtime compatibility;
+the launcher does not deserialize author-supplied native binaries or maintain a
+second cache-key format. Each load still reads the current manifest and portable
+component, checks imports/exports, and creates a fresh Store, grants and guest
+instance. Readiness, activation and execution budgets remain unchanged.
+
+The cache stays outside data packs and is never distributed. The launcher creates
+a private cache directory, checks its owner/access rules, rejects links, hard-linked
+or nonregular files, bounds its inspection and generates its own configuration.
+Windows compares owner/DACL against Python's private-directory rules; Unix checks
+owner/mode and macOS additionally refuses extended ACL entries. It does not widen
+permissions or repair an untrusted tree. If these checks or cache setup fail,
+compilation proceeds without persistent caching. No guest receives cache paths or
+filesystem access. This assumes the launcher and its local cache remain trusted;
+it cannot protect against an account able to replace trusted launcher/native code.
+
+`CODE MOD CACHE` reports `enabled` when configuration succeeded, or `disabled`
+with a reason for cold fallback. Enabled does not claim a cache hit: Wasmtime's
+Python API provides no per-compilation hit counter. Existing compile timings show
+the observed cost. Wasmtime manages its own misses and writes after configuration.
+The 128 MiB and 4,096-file settings are soft cleanup targets, not hard disk quotas;
+metadata and temporary files add space. With the launcher closed, the cache folder
+can be removed to force rebuilding; no saves or mod data live there.
+
+See [Wasmtime cache configuration](https://docs.wasmtime.dev/cli-cache.html) and
+[Python's private-directory behaviour](https://docs.python.org/3.13/library/os.html#os.mkdir).
+
 ## Verification
 
 `tests/launcher/test_sandbox.py` uses real Wasmtime with owned WAT fixtures;
