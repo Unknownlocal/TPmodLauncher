@@ -12,6 +12,10 @@ execution, and the existing production sandbox supplies execution limits.
 Source-input checks cover schema validation, immutable snapshots, package
 layouts, resource limits, ordinary-file reads and replacement/link attempts on
 Windows and POSIX. The embedded probe snapshots source before guest execution.
+Lifecycle tests exercise UTF-8 transfer, large inputs, shared source budgets,
+prepared-component ownership and cleanup across loading/callback failures.
+Sandbox phase tests verify aggregate fuel/deadlines/host calls and restoration
+of normal callback limits. The bundled-interpreter probe uses the same loader.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies and a small owned native-menu interface. `launcher/conftest.py`

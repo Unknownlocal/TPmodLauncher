@@ -227,6 +227,9 @@ upstream notice texts and a bounded integrity inventory. This artifact foundatio
 is separate from the current player loading path.
 `mod_runtime/source.py` validates source manifests and snapshots bounded Python
 source as inert text, using pinned directory handles and ordinary-file checks.
+`mod_runtime/runtime.py` transfers snapshots into the trusted runner, shares
+bounded fuel and time across source initialization, and owns lifecycle cleanup.
+Activation and event calls retain the sandbox's ordinary per-call limits.
 
 `build_mod.py` builds author components separately from player startup.
 `build_frida.py` produces the reduced native transport; `frida_sources.py`

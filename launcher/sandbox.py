@@ -6,7 +6,7 @@ live in separate modules; this module never imports mod Python or links WASI.
 """
 
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import math
 import threading
@@ -32,6 +32,12 @@ class SandboxError(RuntimeError):
     """A component, call or host operation could not run within the allowed boundary."""
 
 
+def _message(error):
+    """Retain the cause after a long Wasm backtrace within the diagnostic bound."""
+    text = str(error)
+    return text if len(text) <= 512 else text[:128] + "\n...\n" + text[-379:]
+
+
 @dataclass(frozen=True)
 class Limits:
     """Resource budgets chosen by the launcher, not by mod manifests.
@@ -42,7 +48,8 @@ class Limits:
     Running out stops execution and closes the affected sandbox.
 
     Each exported call gets a fresh fuel budget, shared with its post-return
-    cleanup. Initialization uses initialization_fuel, or fuel when it is None.
+    cleanup. A trusted phase can instead share an aggregate allowance across
+    several calls. Initialization uses initialization_fuel, or fuel when it is None.
     Likewise, initialization_seconds overrides seconds only during startup.
     Trusted host callbacks do not spend guest fuel; seconds and host_calls
     separately limit elapsed time and the number of calls into the host.
@@ -196,6 +203,7 @@ class Sandbox:
         self._exports = {}
         self._instance = None
         self._limits = limits
+        self._phase_deadline = None
         if cleanup is not None:
             self._resources.callback(cleanup)
         try:
@@ -272,12 +280,38 @@ class Sandbox:
             self.close()
             if not isinstance(error, Exception):
                 raise
-            raise SandboxError(str(error)[:512]) from None
+            raise SandboxError(_message(error)) from None
 
     @property
     def closed(self):
         """Report whether the instance has released its native resources and grants."""
         return self._closed
+
+    @contextmanager
+    def phase(self, *, fuel, seconds):
+        """Share one trusted fuel/deadline/host-call allowance across several calls.
+
+        Host work between calls counts against the same deadline. Normal calls
+        after this context again use the sandbox's ordinary per-call limits.
+        Guest input cannot select these allowances or enter this context.
+        """
+        Limits(fuel=fuel, seconds=seconds)  # Reuse the trusted-budget validation.
+        self._check_entry()
+        if self._phase_deadline is not None:
+            raise SandboxError("Nested sandbox phases are unsupported")
+        self._phase_deadline = time.monotonic() + seconds
+        self._calls = 0
+        try:
+            self._store.set_fuel(fuel)
+            yield
+            if time.monotonic() >= self._phase_deadline:
+                raise SandboxError("Sandbox phase exceeded its deadline")
+        except BaseException as error:
+            self.failure = self.failure or _message(error)
+            self.close()
+            raise
+        finally:
+            self._phase_deadline = None
 
     def _host_function(self, operation):
         """Wrap a trusted operation with this instance's call budget and value checks."""
@@ -300,7 +334,7 @@ class Sandbox:
             except BaseException as error:
                 # Return a native error through Wasmtime's callback trampoline, never a Python exception.
                 # This also avoids leaving its global pending-exception slot set after instantiation.
-                self.failure = str(error)[:512]
+                self.failure = _message(error)
                 raise WasmtimeError(self.failure) from None
 
         return invoke
@@ -321,17 +355,24 @@ class Sandbox:
         if not _ENTRY_LOCK.acquire(blocking=False):
             raise SandboxError("Nested or concurrent sandbox entry is unsupported")
         self._busy = True
-        self._calls = 0
-        # Startup can have a longer allowance without extending later callbacks.
-        seconds = self._limits.initialization_seconds if initialize else None
-        seconds = seconds or self._limits.seconds
-        self._deadline = time.monotonic() + seconds
+        if self._phase_deadline is None:
+            self._calls = 0
+            # Startup can have a longer allowance without extending later callbacks.
+            seconds = self._limits.initialization_seconds if initialize else None
+            seconds = seconds or self._limits.seconds
+            self._deadline = time.monotonic() + seconds
+        else:
+            self._deadline = self._phase_deadline
+            seconds = max(0, self._deadline - time.monotonic())
         timer = threading.Timer(seconds, self._engine.increment_epoch)
         timer.daemon = True
         try:
-            # Reset guest work for this entry; unused fuel does not carry over to the next call.
-            fuel = self._limits.initialization_fuel if initialize else None
-            self._store.set_fuel(fuel or self._limits.fuel)
+            if time.monotonic() >= self._deadline:
+                raise SandboxError("Guest execution exceeded its deadline")
+            # Only ordinary calls reset fuel; phase calls share what remains.
+            if self._phase_deadline is None:
+                fuel = self._limits.initialization_fuel if initialize else None
+                self._store.set_fuel(fuel or self._limits.fuel)
             self._store.set_epoch_deadline(1)
             timer.start()
             result = action()
@@ -342,7 +383,7 @@ class Sandbox:
             return result
         except BaseException as error:
             # Keep diagnostics bounded; the original exception may contain guest-generated text.
-            self.failure = self.failure or str(error)[:512]
+            self.failure = self.failure or _message(error)
             if not isinstance(error, Exception):
                 raise
             raise SandboxError(self.failure) from None
@@ -385,7 +426,7 @@ class Sandbox:
         try:
             self._resources.close()
         except Exception as error:
-            self.failure = self.failure or str(error)[:512]
+            self.failure = self.failure or _message(error)
             raise SandboxError(self.failure) from None
 
     def __enter__(self):

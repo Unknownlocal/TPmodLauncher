@@ -47,6 +47,16 @@ _instance = None
 _activated = False
 
 
+def _in_memory_source(event, arguments):
+    # CPython fetches source text through fopen when constructing SyntaxError.
+    # Decline our virtual filenames before that reaches an unsupported WASI call.
+    if event == "open" and isinstance(arguments[0], str) and arguments[0].startswith("<mod>/"):
+        raise FileNotFoundError("Mod source is held in memory")
+
+
+sys.addaudithook(_in_memory_source)
+
+
 class MemoryImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     """Resolve ordinary modules and explicit packages from the supplied snapshot."""
 
@@ -83,7 +93,7 @@ class RunnerBindings(_bindings.RunnerBindings):
         size = len(chunk.encode("utf-8"))
         if _bytes + size > MAX_SOURCE_BYTES or (path not in _sources and len(_sources) >= MAX_SOURCE_FILES):
             raise ValueError("Source snapshot exceeds its budget")
-        _sources[path] = _sources.get(path, "") + chunk
+        _sources.setdefault(path, []).append(chunk)
         _bytes += size
 
     def load_source(self, entry):
@@ -93,7 +103,9 @@ class RunnerBindings(_bindings.RunnerBindings):
         if entry.replace(".", "/") + ".py" not in _sources:
             raise ValueError("Entry module is missing")
         _sealed = True
-        # All import-time author code starts here, inside the normal sandbox call budget.
+        for path, chunks in _sources.items():
+            _sources[path] = "".join(chunks)
+        # All import-time author code starts here, inside the sandbox.
         sys.meta_path.insert(0, MemoryImporter())
         try:
             module = importlib.import_module(entry)
