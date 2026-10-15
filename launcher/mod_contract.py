@@ -15,8 +15,11 @@ API_VERSION = "0.1.0"
 EXPORTS = {"activate": ((), None), "on-event": (("string", "string"), "string")}
 # Fuel counts Wasm work, including the guest Python interpreter (see Limits).
 # Measured startup needs about 12 million units and more than 32 core instances.
+# Startup gets five seconds to allow slower hosts; activate/on-event retain one second.
 # Only initialization gets extra fuel; activate/on-event each retain 5 million units.
-PYTHON_LIMITS = Limits(initialization_fuel=20_000_000, instances=64)
+PYTHON_LIMITS = Limits(
+    initialization_fuel=20_000_000, initialization_seconds=5.0, instances=64
+)
 _FIELDS = {"schema", "id", "version", "api", "runtime", "component", "capabilities"}
 # SemVer numeric identifiers have no leading zero; prereleases may also contain words.
 _NUMBER = r"(?:0|[1-9][0-9]*)"

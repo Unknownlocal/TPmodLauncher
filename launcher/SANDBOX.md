@@ -86,8 +86,11 @@ There are limits to these bounds:
   4,096-byte interface limit. Guest memory bounds limit its source data; the
   interface limit is not a promise to avoid every larger temporary allocation.
 
-The Python author profile uses 20,000,000 initialization fuel and 64 core instances;
-callbacks retain their 5,000,000 fuel budget. All other bounds stay the same.
+The Python author profile uses 20,000,000 initialization fuel, a five-second
+initialization deadline and 64 core instances. Callbacks retain their 5,000,000
+fuel budget and one-second deadline. Limits.initialization_seconds overrides
+seconds only during initialization; None reuses seconds. All other bounds stay
+the same.
 Compilation uses Cranelift's `none` optimization setting to reduce cold-start
 cost; code is still compiled and validated by Wasmtime. Larger real mods will
 need measurements before changing these approved profiles.

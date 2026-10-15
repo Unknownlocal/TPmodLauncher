@@ -94,9 +94,11 @@ closes the affected mod, revokes its permissions and runs its owned host cleanup
 other mod instances remain usable.
 
 Calls into trusted launcher handlers do not spend guest fuel. Separate limits
-allow one second of elapsed execution time and 64 host calls per initialization
-or exported call. The deadline can interrupt guest code, but cannot interrupt a
-blocked host handler; a late return is rejected. See the full
+allow one second of elapsed execution time per exported call; Python component
+initialization gets five seconds to accommodate slower hosts. The `wasm` profile
+retains a one-second initialization deadline. Both profiles allow 64 host calls
+per initialization or exported call. The deadline can interrupt guest code, but
+cannot interrupt a blocked host handler; a late return is rejected. See the full
 [sandbox limits](../../launcher/SANDBOX.md) for memory and other bounds.
 
 ## Build Python components
@@ -122,6 +124,11 @@ temporary staging, rejects links/non-Python inputs, uses an empty package search
 environment and builds with `--stub-wasi`. It preserves the original source and
 refuses to overwrite an existing output. Choose a fresh output when rebuilding.
 Builders and their packages are developer tools; players do not install them.
+
+The mod author runs this build command and distributes the resulting `mod.wasm`
+with the manifest and readable source. The tool is supplied by this repository;
+it is not run automatically by the launcher when a player starts the game, and
+launcher maintainers do not need to build each author's mod.
 
 `--stub-wasi` embeds denial stubs for unused WASI operations. Runtime startup
 links no host WASI environment, filesystem, network, process or native-library

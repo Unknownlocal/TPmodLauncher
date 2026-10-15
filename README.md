@@ -2,6 +2,61 @@
 
 A code mod entry point for Team Principal: A Racing Manager.
 
+## Writing a code mod
+
+Mod authors write against the launcher's supplied [API contract](hook_manager/api/mod.wit).
+They do not need to write or change that WIT file. The build tool generates Python
+bindings from it, so Python mods can implement callbacks and call approved host
+functions through `wit_world`.
+
+**The mod author builds and supplies `mod.wasm`, using our developer build tool.**
+The build tool lives in the launcher repository, but building is a separate
+developer command. Normal launcher startup does not compile source or install
+build tools. Players receive the compiled component with the mod; launcher
+maintainers do not need to build every author's mod.
+
+1. Create a folder containing `mod.toml` and `src/mod.py`. Start from the
+   [diagnostic example](examples/diagnostic_mod).
+2. Give the mod its own ID and version in `mod.toml`, select the supported API
+   version and request only the permissions it needs. See the
+   [complete manifest format](hook_manager/api/README.md#mod-layout).
+3. Implement `activate()` and `on_event(name, payload)` in a
+   `WitWorld(wit_world.WitWorld)` class. `activate` runs once; `on_event` receives
+   and returns JSON strings for events delivered by the host. With the
+   `diagnostics` permission, `wit_world.report("message")` sends a diagnostic
+   message to the host.
+4. Set up the [developer environment](hook_manager/api/README.md#build-python-components).
+   From the launcher checkout, use that environment's Python to build:
+
+   ```console
+   python -m launcher.build_mod path/to/my_mod --output path/to/my_mod/mod.wasm
+   ```
+
+   Choose a new output path when rebuilding; the tool refuses to overwrite an
+   existing component.
+5. Distribute the component, manifest and readable source together. The intended
+   installation layout is:
+
+   ```text
+   <game-root>/
+     modLauncher/
+     data/<selected-data-mod>/
+       <code-mod>/
+         mod.toml
+         mod.wasm
+         src/mod.py
+   ```
+
+Several code mods can live under the same data pack. **Automatic discovery and
+loading from this layout are not implemented yet.** The current contract supports
+diagnostics and JSON event exchange; it exposes no game operations. New game
+capabilities require reviewed additions to the launcher API. Editing a mod's own
+WIT file or inventing an event name cannot grant access to game functions.
+
+The [author guide](hook_manager/api/README.md) explains the API, permissions,
+build process and execution budgets, including what fuel counts and what happens
+when a mod exceeds its limits.
+
 # Verification of bundled code
 
 ## Verify the bundled Python runtime

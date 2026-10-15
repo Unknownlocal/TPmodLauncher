@@ -207,12 +207,16 @@ def test_python_build_and_real_guest_contract(built_python_mod, tmp_path, monkey
         }
         with pytest.raises(SandboxError) as denied:
             first.event("write", None)
-        assert "fuel" not in str(denied.value)
+        assert not any(
+            word in str(denied.value) for word in ("fuel", "deadline", "interrupt")
+        )
         assert first.sandbox.closed
         assert second.event("echo", None)["count"] == 2
         with pytest.raises(SandboxError) as denied:
             second.event("import-host", None)
-        assert "fuel" not in str(denied.value)
+        assert not any(
+            word in str(denied.value) for word in ("fuel", "deadline", "interrupt")
+        )
     assert not (folder / "src/runtime-write.txt").exists()
 
 
@@ -224,7 +228,10 @@ def test_python_guest_cannot_obtain_native_host_io(built_python_mod, operation):
             result = mod.event(operation, None)
         except SandboxError as denied:
             # A WASI trap or an unavailable Python operation both deny the request.
-            assert "fuel" not in str(denied)
+            # Budget exhaustion is not evidence that the requested operation was denied.
+            assert not any(
+                word in str(denied) for word in ("fuel", "deadline", "interrupt")
+            )
             assert mod.sandbox.closed
         else:
             assert result is False

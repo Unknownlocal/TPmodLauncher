@@ -41,6 +41,7 @@ class Limits:
 
     Each exported call gets a fresh fuel budget, shared with its post-return
     cleanup. Initialization uses initialization_fuel, or fuel when it is None.
+    Likewise, initialization_seconds overrides seconds only during startup.
     Trusted host callbacks do not spend guest fuel; seconds and host_calls
     separately limit elapsed time and the number of calls into the host.
     """
@@ -52,6 +53,7 @@ class Limits:
     host_calls: int = 64
     instances: int = 32
     initialization_fuel: int | None = None  # Optional startup budget; None reuses fuel.
+    initialization_seconds: float | None = None  # Optional startup deadline; None reuses seconds.
 
     def __post_init__(self):
         # A zero, negative or boolean budget would disable or confuse a limit.
@@ -70,15 +72,19 @@ class Limits:
                 or not 0 < getattr(self, name) < 2**63
             ):
                 raise ValueError(f"{name} must be a positive integer below 2**63")
-        if (
-            type(self.seconds) not in (int, float)
-            or not math.isfinite(self.seconds)
-            or self.seconds <= 0
-            or self.seconds > threading.TIMEOUT_MAX
-        ):
-            raise ValueError(
-                "seconds must be positive and within the threading timer limit"
-            )
+        for name in ("seconds", "initialization_seconds"):
+            value = getattr(self, name)
+            if name == "initialization_seconds" and value is None:
+                continue
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value <= 0
+                or value > threading.TIMEOUT_MAX
+            ):
+                raise ValueError(
+                    f"{name} must be positive and within the threading timer limit"
+                )
 
 
 # Restrict this first host to scalar WIT values; no resources or host objects cross it.
@@ -323,8 +329,11 @@ class Sandbox:
             raise SandboxError("Nested or concurrent sandbox entry is unsupported")
         self._busy = True
         self._calls = 0
-        self._deadline = time.monotonic() + self._limits.seconds
-        timer = threading.Timer(self._limits.seconds, self._engine.increment_epoch)
+        # Startup can have a longer allowance without extending later callbacks.
+        seconds = self._limits.initialization_seconds if initialize else None
+        seconds = seconds or self._limits.seconds
+        self._deadline = time.monotonic() + seconds
+        timer = threading.Timer(seconds, self._engine.increment_epoch)
         timer.daemon = True
         try:
             # Reset guest work for this entry; unused fuel does not carry over to the next call.

@@ -219,6 +219,36 @@ def test_late_host_operation_is_rejected_without_claiming_preemption(guest):
         assert sandbox.closed
 
 
+def test_startup_deadline_override_does_not_extend_exported_calls():
+    source = (FIXTURES / "functions.wat").read_text().replace(
+        '(global $counter',
+        '(func $initialize i32.const 0 call $bonus drop) (start $initialize) '
+        '(global $counter',
+    )
+
+    def slow(value):
+        time.sleep(0.2)
+        return value
+
+    # The same operation fits the startup budget but exceeds the later call budget.
+    component = bytes(wat2wasm(source))
+    with Sandbox(
+        component,
+        grants(slow),
+        limits=Limits(seconds=0.1, initialization_seconds=2.0),
+    ) as sandbox:
+        with pytest.raises(SandboxError, match="deadline"):
+            sandbox.call("apply", 3)
+        assert sandbox.closed
+    # An override must also be enforced when it is shorter than the normal budget.
+    with pytest.raises(SandboxError, match="deadline"):
+        Sandbox(
+            component,
+            grants(slow),
+            limits=Limits(seconds=2.0, initialization_seconds=0.1),
+        )
+
+
 def test_caught_nested_entry_still_disables_the_instance(guest):
     def reenter(value):
         with pytest.raises(SandboxError, match="Nested"):
@@ -291,6 +321,11 @@ def test_cleanup_failure_cannot_leave_the_instance_active_or_repeat_cleanup(gues
         {"seconds": float("nan")},
         {"seconds": float("inf")},
         {"seconds": threading.TIMEOUT_MAX * 2},
+        {"initialization_seconds": 0},
+        {"initialization_seconds": True},
+        {"initialization_seconds": float("nan")},
+        {"initialization_seconds": float("inf")},
+        {"initialization_seconds": threading.TIMEOUT_MAX * 2},
     ],
 )
 def test_limits_cannot_be_disabled_by_invalid_configuration(setting):
