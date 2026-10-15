@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MPL-2.0
+package modlauncher:api@0.1.0;
+
+/// Initial experimental contract. Game capabilities will be added explicitly.
+world code-mod {
+    /// Requires diagnostics permission; the host attaches the calling mod's ID.
+    import report: func(message: string);
+
+    /// Called once by trusted infrastructure after component admission.
+    export activate: func();
+
+    /// Bounded JSON plain values, interpreted only by the approved event adapter.
+    /// An event name does not grant access to a game target or operation.
+    export on-event: func(name: string, payload: string) -> string;
+}

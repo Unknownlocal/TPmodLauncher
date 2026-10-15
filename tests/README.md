@@ -35,6 +35,13 @@ cleanup. They run in the developer environment on each portable CI platform;
 the relocated embedded probe also exercises the production host. See
 [sandbox host](../launcher/SANDBOX.md) for scope and limits.
 
+Author-contract tests build an owned Python component once per pytest session
+with pinned componentize-py and the public WIT. They check real lifecycle/events,
+private state, denied host I/O and shipped-interpreter compatibility. Small owned
+WAT fixtures check manifest/response errors without repeatedly building Python.
+No game code or external service is needed, and builds never import mod source
+into the native test interpreter.
+
 The `embedded` tests cover Windows's packaged interpreter and entry point,
 including both dependency versions, import isolation, damaged files, offline
 startup and real Wasmtime Component execution. The startup audit allows Python's

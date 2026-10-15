@@ -1,9 +1,28 @@
 # SPDX-License-Identifier: MPL-2.0
 """Real Git source fixtures shared by launcher build and source-package tests."""
 
+from pathlib import Path
+import shutil
+
 import pytest
 
 from launcher import build_frida as build
+from launcher import build_mod
+
+
+@pytest.fixture(scope="session")
+def built_python_mod(tmp_path_factory):
+    """Build one owned Python component for both normal and shipped-interpreter checks."""
+    root = Path(__file__).resolve().parents[2]
+    folder = tmp_path_factory.mktemp("owned-python-contract")
+    shutil.copyfile(root / "examples/diagnostic_mod/mod.toml", folder / "mod.toml")
+    shutil.copytree(
+        Path(__file__).with_name("fixtures") / "contract_mod", folder / "src"
+    )
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("MODLAUNCHER_TEST_SECRET", "build-secret-not-for-guests")
+        build_mod.build(folder, folder / "mod.wasm")
+    return folder
 
 
 @pytest.fixture

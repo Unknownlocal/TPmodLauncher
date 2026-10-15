@@ -5,9 +5,10 @@ process. Trusted launcher code supplies its bytes, limits and approved operation
 It accepts no Python source, module path, native-library handle or precompiled
 Wasmtime native image. It links no WASI functions or unknown-import stubs.
 
-This is an internal interface. The author-facing WIT world, manifest, discovery,
-game transport and menu proof are later steps. Normal launcher startup does not
-create a sandbox or load code mods yet.
+This is the low-level host. The [author API and manifest](../hook_manager/api/README.md)
+are implemented separately in mod_contract.py. Discovery, game transport and menu
+proof are later steps. Normal launcher startup does not create a sandbox or load
+code mods yet.
 
 ## Calls and grants
 
@@ -16,8 +17,11 @@ instance. Its store cannot share memory with another instance. Each imported
 function must match an explicitly granted `Operation` name and scalar signature
 before initialization can execute. The initial profile supports booleans, signed
 and unsigned 32/64-bit integers, strings and void results. It rejects resources,
-compound values and other import/export kinds. Parameter names do not grant any
-authority; the types and granted function name determine the operation.
+compound values and other import kinds. Non-function exports, including Python's
+generated binding metadata, are ignored and never enter the callable table.
+An optional required_exports table checks the exact public signatures before
+initialization. Parameter names do not grant authority; the types and granted
+function name determine the operation.
 
 `Operation.callback` is trusted infrastructure, never mod-authored Python.
 Callbacks receive validated plain values; the Wasmtime store is not passed to
@@ -40,7 +44,7 @@ Default limits supplied by trusted infrastructure:
 | --- | --- |
 | Component binary | 32 MiB |
 | Linear memory | 64 MiB, at most one memory per store |
-| Instructions | 5,000,000 fuel units per initialization/exported call |
+| Guest execution work | 5,000,000 fuel units per initialization/exported call by default |
 | Guest deadline | 1 second per initialization/exported call |
 | Host operations | 64 per initialization/exported call |
 | Import/grant count | 32 |
@@ -56,8 +60,16 @@ when instantiation creates memories. Initializers, exported calls and canonical
 post-return code share the same execution checks. Budgets reset for the next
 successful call; post-return does not receive another budget.
 
-Fuel bounds guest instruction work; an epoch timer interrupts guest execution
-when its deadline expires. The timer is cancelled and joined before the engine
+Fuel is Wasmtime's counter for WebAssembly execution work. Most Wasm instructions
+cost one unit; some cost zero. A Python component spends fuel on its sandboxed
+interpreter as well as the mod's work. Fuel does not count Python statements,
+native CPU instructions or seconds, so there is no fixed conversion to runtime.
+Running out stops execution with a Wasmtime trap. Trusted host callbacks do not
+spend guest fuel; elapsed time and host-call counts have separate limits.
+See [Wasmtime's fuel definition](https://docs.rs/wasmtime/49.0.0/wasmtime/struct.Store.html#method.set_fuel).
+
+An epoch timer interrupts guest execution when its deadline expires.
+The timer is cancelled and joined before the engine
 can be freed. A trap, invalid call/value, host failure or exhausted budget closes
 the affected instance, revokes its grants and runs cleanup once. Unrelated
 instances remain usable. Calls made from an unsupported thread or during another
@@ -74,8 +86,11 @@ There are limits to these bounds:
   4,096-byte interface limit. Guest memory bounds limit its source data; the
   interface limit is not a promise to avoid every larger temporary allocation.
 
-These limits need reviewed profiles when adding real Python components. The
-scalar test components do not establish a working Python-guest author contract.
+The Python author profile uses 20,000,000 initialization fuel and 64 core instances;
+callbacks retain their 5,000,000 fuel budget. All other bounds stay the same.
+Compilation uses Cranelift's `none` optimization setting to reduce cold-start
+cost; code is still compiled and validated by Wasmtime. Larger real mods will
+need measurements before changing these approved profiles.
 The host is not an OS process sandbox or a guarantee against runtime/host bugs.
 
 ## Verification

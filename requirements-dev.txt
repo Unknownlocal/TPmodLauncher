@@ -5,6 +5,8 @@ certifi==2026.7.22
 cffi==2.1.1
 charset-normalizer==3.5.2
 colorama==0.4.6
+# Author component builds and real Python guest tests; never an end-user dependency.
+componentize-py==0.25.1
 coverage==7.16.2
 cryptography==50.0.2
 dnspython==2.9.0

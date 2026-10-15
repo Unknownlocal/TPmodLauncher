@@ -226,6 +226,33 @@ def test_bundled_sandbox_executes_and_disables_an_owned_component(
 
 
 @pytest.mark.embedded
+def test_bundled_python_runs_the_author_contract(
+    embedded_project, built_python_mod, tmp_path
+):
+    root = embedded_project
+    probe = root / "launcher/contract_probe.py"
+    shutil.copyfile(FIXTURES / "mod_contract_probe.py", probe)
+    try:
+        result = subprocess.run(
+            [
+                str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
+                "-B",
+                str(probe),
+                str(built_python_mod),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert (
+            result.returncode == 0 and "Python author contract passed" in result.stdout
+        ), result.stderr
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.embedded
 def test_entry_rejects_invalid_launch_requests_before_starting_processes(
     embedded_project,
 ):

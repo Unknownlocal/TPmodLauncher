@@ -32,17 +32,39 @@ class SandboxError(RuntimeError):
 
 @dataclass(frozen=True)
 class Limits:
-    """Trusted host settings: input/memory bytes, instruction fuel, seconds and host calls."""
+    """Resource budgets chosen by the launcher, not by mod manifests.
+
+    Fuel measures WebAssembly execution work: most Wasm instructions cost one
+    unit, while some cost zero. It includes a guest Python interpreter's work;
+    it does not count Python statements, native CPU instructions or seconds.
+    Running out stops execution and closes the affected sandbox.
+
+    Each exported call gets a fresh fuel budget, shared with its post-return
+    cleanup. Initialization uses initialization_fuel, or fuel when it is None.
+    Trusted host callbacks do not spend guest fuel; seconds and host_calls
+    separately limit elapsed time and the number of calls into the host.
+    """
 
     component_bytes: int = 32 * 1024 * 1024
     memory_bytes: int = 64 * 1024 * 1024
-    fuel: int = 5_000_000
+    fuel: int = 5_000_000  # Fresh Wasm work budget for each exported call.
     seconds: float = 1.0
     host_calls: int = 64
+    instances: int = 32
+    initialization_fuel: int | None = None  # Optional startup budget; None reuses fuel.
 
     def __post_init__(self):
         # A zero, negative or boolean budget would disable or confuse a limit.
-        for name in ("component_bytes", "memory_bytes", "fuel", "host_calls"):
+        for name in (
+            "component_bytes",
+            "memory_bytes",
+            "fuel",
+            "host_calls",
+            "instances",
+            "initialization_fuel",
+        ):
+            if name == "initialization_fuel" and self.initialization_fuel is None:
+                continue
             if (
                 type(getattr(self, name)) is not int
                 or not 0 < getattr(self, name) < 2**63
@@ -146,7 +168,13 @@ class Sandbox:
     """Own one component, store, capability table and cleanup scope on its creating thread."""
 
     def __init__(
-        self, component: bytes, capabilities=None, *, limits=Limits(), cleanup=None
+        self,
+        component: bytes,
+        capabilities=None,
+        *,
+        limits=Limits(),
+        cleanup=None,
+        required_exports=None,
     ):
         # Only trusted infrastructure supplies grants, limits and cleanup; the guest supplies bytes.
         self._thread = threading.get_ident()
@@ -191,6 +219,8 @@ class Sandbox:
                 config.wasm_function_references = False
                 config.max_wasm_stack = 512 * 1024
                 config.parallel_compilation = False
+                # Python components contain a runtime; fast compilation keeps admission responsive.
+                config.cranelift_opt_level = "none"
                 self._engine = self._resources.enter_context(Engine(config))
             # Compile portable bytes through Wasmtime's validator, not unsafe native deserialization.
             compiled = self._resources.enter_context(Component(self._engine, component))
@@ -214,24 +244,30 @@ class Sandbox:
                 for name, item in exports.items():
                     function = item.ty
                     if type(function) is not FuncType:
-                        raise SandboxError("Only scalar function exports are supported")
+                        # Python components include private binding metadata; it grants no host access.
+                        # Only flat scalar functions enter our callable export table.
+                        continue
                     self._exports[name] = _signature(function)
+                if required_exports is not None and self._exports != required_exports:
+                    raise SandboxError(
+                        "Component exports do not match the required API"
+                    )
             linker = self._resources.enter_context(Linker(self._engine))
             self._store = self._resources.enter_context(Store(self._engine))
             # With one memory allowed, memory_bytes is also the aggregate linear-memory bound.
             self._store.set_limits(
                 memory_size=limits.memory_bytes,
                 memories=1,
-                instances=32,
+                instances=limits.instances,
                 tables=4,
                 table_elements=10_000,
             )
             with linker.root() as root:
                 for name, operation in self._capabilities.items():
                     root.add_func(name, self._host_function(operation))
-            # Start functions execute here; they need the same limits as later exported calls.
+            # Start functions execute here, using the startup fuel budget and other execution limits.
             self._instance = self._run(
-                lambda: linker.instantiate(self._store, compiled)
+                lambda: linker.instantiate(self._store, compiled), initialize=True
             )
         except BaseException as error:
             self.close()
@@ -280,7 +316,7 @@ class Sandbox:
             self.failure = "Nested sandbox entry is unsupported"
             raise SandboxError(self.failure)
 
-    def _run(self, action):
+    def _run(self, action, *, initialize=False):
         """Bound one initialization/call, including host callbacks and post-return work."""
         self._check_entry()
         if not _ENTRY_LOCK.acquire(blocking=False):
@@ -291,7 +327,9 @@ class Sandbox:
         timer = threading.Timer(self._limits.seconds, self._engine.increment_epoch)
         timer.daemon = True
         try:
-            self._store.set_fuel(self._limits.fuel)
+            # Reset guest work for this entry; unused fuel does not carry over to the next call.
+            fuel = self._limits.initialization_fuel if initialize else None
+            self._store.set_fuel(fuel or self._limits.fuel)
             self._store.set_epoch_deadline(1)
             timer.start()
             result = action()

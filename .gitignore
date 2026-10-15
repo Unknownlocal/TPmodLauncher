@@ -29,6 +29,7 @@
 *.pyo
 *.pyz
 *.marshal
+*.wasm
 *.zip
 *.7z
 *.rar
