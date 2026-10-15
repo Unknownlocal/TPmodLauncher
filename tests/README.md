@@ -118,7 +118,7 @@ Windows coverage artifact retains its existing `python-coverage` name; other
 platforms have separate names.
 
 `coverage.yml` follows completed runs of that workflow and reads its existing
-artifacts without rerunning tests. The **Coverage reports** run summary shows
+artifacts without rerunning tests. The **Report test coverage** run summary shows
 line and branch coverage separately for all four platforms and links to the
 original run's downloadable XML/HTML reports. It also shows the tested commit
 and test result. Failed or cancelled test runs can have unavailable reports;

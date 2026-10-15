@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Portable pytest and Windows runtime acceptance
+name: Test Python and Windows runtime
 
 on:
   push:

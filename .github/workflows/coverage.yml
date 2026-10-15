@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Coverage reports
+name: Report test coverage
 
 on:
   workflow_run:
-    workflows: [Portable pytest and Windows runtime acceptance]
+    workflows: [Test Python and Windows runtime]
     types: [completed]
 
 permissions:

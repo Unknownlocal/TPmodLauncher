@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Reduced Frida build and acceptance
+name: Build and test reduced Frida
 
 on:
   workflow_dispatch:
