@@ -101,6 +101,7 @@ class Controller:
         restart_grace=2.0,
         clock=time.monotonic,
         bridge_factory=None,
+        mods_factory=None,
     ):
         # device is Frida's local device; command is validated argv; report receives one log line.
         # bridge_factory optionally supplies our trusted script for each verified session.
@@ -119,6 +120,9 @@ class Controller:
         self.sessions = {}
         self.bridges = {}
         self.bridge_factory = bridge_factory
+        # A trusted factory creates external mod scopes; Frida callbacks never execute mod code.
+        self.mods_factory = mods_factory
+        self.pack_mods = {}
         self.parents = set()
         self.held = set()
         self.resumed = set()
@@ -160,6 +164,7 @@ class Controller:
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
             del self.sessions[pid]
+            self._close_mods(pid)
             self.bridges.pop(pid, None)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
@@ -185,7 +190,9 @@ class Controller:
             self.bridges[pid] = bridge
             bridge.start()
         self.idle_since = None
-        self.report(f"ATTACHED pid={pid}; child tracking active; no mod code loaded")
+        self.report(
+            f"ATTACHED pid={pid}; child tracking active; awaiting manager bootstrap"
+        )
 
     def _resume(self, pid):
         # One child notification may also appear in the pending-child list during shutdown.
@@ -199,6 +206,16 @@ class Controller:
                 raise LaunchError(f"Could not resume pid={pid}: {error}") from error
         self.resumed.add(pid)
         self.held.discard(pid)
+
+    def _close_mods(self, pid):
+        """Release a process's external sandboxes before discarding or replacing its session."""
+        scope = self.pack_mods.pop(pid, None)
+        if scope is not None:
+            try:
+                scope.close()
+            except Exception as error:
+                self.cleanup_failed = True
+                self.report(f"CLEANUP ERROR pid={pid}: {error}")
 
     def start(self):
         """Spawn, attach and enable child tracking before allowing the game to run."""
@@ -246,6 +263,7 @@ class Controller:
                     # Unix exec can replace the process image while retaining its PID.
                     if getattr(child, "origin", None) == "exec":
                         previous = self.sessions.pop(child.pid, None)
+                        self._close_mods(child.pid)
                         self.bridges.pop(child.pid, None)
                         self.resumed.discard(child.pid)
                         if previous is not None and not previous.is_detached:
@@ -276,6 +294,7 @@ class Controller:
                         f"Game tracking ended unexpectedly for pid={pid}: {reason}"
                     )
                 del self.sessions[pid]
+                self._close_mods(pid)
                 self.bridges.pop(pid, None)
         elif kind == "bridge" and not self.stopping:
             pid, session, message = value
@@ -295,7 +314,7 @@ class Controller:
                 status = payload.get("status", {})
                 if status.get("state") != "ready":
                     raise LaunchError(f"Hook manager is not ready for pid={pid}")
-                self.report(f"HOOK MANAGER READY pid={pid}; no mod code loaded")
+                self.report(f"HOOK MANAGER READY pid={pid}; awaiting startup pack")
             elif event == "pack":
                 # Quote paths and IDs as JSON so a diagnostic remains a single log record.
                 # The session check above also rejects delayed records from replaced processes.
@@ -303,6 +322,12 @@ class Controller:
                 self.report(
                     f"PACK DISCOVERY pid={pid}: {json.dumps(pack, allow_nan=False)}"
                 )
+                if self.mods_factory is not None:
+                    if pid not in self.pack_mods:
+                        self.pack_mods[pid] = self.mods_factory(
+                            lambda line: self.report(f"pid={pid} {line}")
+                        )
+                    self.pack_mods[pid].load(pack)
             elif event in ("waiting", "transport"):
                 self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:
@@ -323,6 +348,7 @@ class Controller:
             for pid, session in list(self.sessions.items()):
                 if pid not in live:
                     del self.sessions[pid]
+                    self._close_mods(pid)
                     self.bridges.pop(pid, None)
                     # Drop the local handle without relying on a pending callback for shutdown.
                     try:
@@ -377,6 +403,8 @@ class Controller:
 
         attempt(release_pending)
         for pid, session in list(self.sessions.items()):
+            # Revoke external mod grants while the live game's bridge is still available.
+            self._close_mods(pid)
             bridge = self.bridges.pop(pid, None)
             if bridge is not None:
                 # Restore Python wrappers before detaching the script/session from a live process.
@@ -405,7 +433,14 @@ class Controller:
 
 
 def run_launcher(
-    frida, command, lock_path, log_path, *, restart_grace=2.0, bridge_factory=None
+    frida,
+    command,
+    lock_path,
+    log_path,
+    *,
+    restart_grace=2.0,
+    bridge_factory=None,
+    mods_factory=None,
 ):
     """Run one controller and return 0 on normal exit, 1 on failure or 130 on interruption."""
     # Acquire ownership before opening the log: a rejected duplicate must leave it untouched.
@@ -418,6 +453,7 @@ def run_launcher(
                     logger.info,
                     restart_grace=restart_grace,
                     bridge_factory=bridge_factory,
+                    mods_factory=mods_factory,
                 )
                 code = 0
                 try:

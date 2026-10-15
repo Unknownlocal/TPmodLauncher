@@ -42,6 +42,13 @@ WAT fixtures check manifest/response errors without repeatedly building Python.
 No game code or external service is needed, and builds never import mod source
 into the native test interpreter.
 
+Pack-mod tests use real manifests and Wasmtime components to check direct-child
+discovery, ID ordering/duplicates, independent failures, scan limits and linked
+paths. Controller tests reuse the minimal Frida event fake to verify that real
+mod sandboxes close on detach, missing processes, exec, PID reuse and shutdown.
+The relocated embedded probe uses the production source-package setup and loads
+a real Python mod from an owned selected pack without developer build tools.
+
 The `embedded` tests cover Windows's packaged interpreter and entry point,
 including both dependency versions, import isolation, damaged files, offline
 startup and real Wasmtime Component execution. The startup audit allows Python's

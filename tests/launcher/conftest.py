@@ -8,6 +8,34 @@ import pytest
 
 from launcher import build_frida as build
 from launcher import build_mod
+from wasmtime import wat2wasm
+
+
+@pytest.fixture
+def code_mod():
+    """Create a small owned mod with the real manifest and API; no Python build is needed."""
+    root = Path(__file__).resolve().parents[2]
+
+    def create(pack, name, *, mod_id=None, trap=False):
+        folder = pack / name
+        folder.mkdir(parents=True)
+        manifest = (root / "examples/diagnostic_mod/mod.toml").read_text()
+        (folder / "mod.toml").write_text(
+            manifest.replace("example.diagnostics", mod_id or name).replace(
+                'runtime = "python"', 'runtime = "wasm"'
+            ),
+            encoding="utf-8",
+        )
+        source = (Path(__file__).with_name("fixtures") / "contract.wat").read_text()
+        source = source.replace("@RESULT@", "{}").replace("@LENGTH@", "2")
+        if trap:
+            source = source.replace(
+                '(func (export "activate"))', '(func (export "activate") unreachable)'
+            )
+        (folder / "mod.wasm").write_bytes(wat2wasm(source))
+        return folder
+
+    return create
 
 
 @pytest.fixture(scope="session")

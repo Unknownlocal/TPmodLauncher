@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from launcher import process_lifecycle as lifecycle
+from launcher.pack_mods import PackMods
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -480,3 +481,71 @@ def test_fork_gates_child_without_bootstrapping_inherited_manager(rig):
     finally:
         controller.close()
     assert started == ["start", "start", "start", "close", "close"]
+
+
+@pytest.mark.parametrize(
+    "transition", ["detached", "missing", "exec", "pid-reuse", "shutdown"]
+)
+def test_pack_mods_follow_session_identity_and_close_on_every_removal(
+    rig, code_mod, transition
+):
+    device, controller, messages, now = rig
+    game_root = Path(controller.game).parent
+    for name in ("first", "second"):
+        code_mod(game_root / "data" / name, f"owned.{name}")
+    controller.mods_factory = lambda report: PackMods(game_root, report)
+
+    def send_pack(pid, session, name):
+        pack = {
+            "state": "ready",
+            "series": "formula",
+            "id": name,
+            "root": str((game_root / "data" / name).resolve()),
+        }
+        message = {"type": "send", "payload": {"event": "pack", "pack": pack}}
+        controller.events.put(("bridge", (pid, session, message)))
+
+    controller.start()
+    try:
+        first = controller.sessions[10]
+        send_pack(10, first, "first")
+        controller.poll()
+        initial = controller.pack_mods[10]
+        old_mod = initial.mods["owned.first"]
+        send_pack(10, first, "second")
+        controller.poll()
+        assert list(initial.mods) == ["owned.first"]  # Never reassign a live snapshot.
+        if transition != "shutdown":
+            if transition in ("detached", "missing"):
+                del device.processes[10]
+                if transition == "detached":
+                    first.handlers["detached"]("process-replaced")
+                now[0] = 1.0
+                controller.poll()
+                replacement_pid = 20
+            else:
+                replacement_pid = 10
+                if transition == "pid-reuse":
+                    first.is_detached = True
+            child = device.child(replacement_pid, controller.game)
+            if transition == "exec":
+                child.origin = "exec"
+            controller.poll()
+            assert initial.closed and old_mod.sandbox.closed
+            replacement = controller.sessions[replacement_pid]
+            # A delayed old record cannot recreate old mods.
+            send_pack(10, first, "first")
+            send_pack(replacement_pid, replacement, "second")
+            controller.poll()
+            active = controller.pack_mods[replacement_pid]
+            assert list(active.mods) == ["owned.second"]
+            current_mod = active.mods["owned.second"]
+        else:
+            active, current_mod = initial, old_mod
+    finally:
+        controller.close()
+    assert active.closed and current_mod.sandbox.closed
+    assert not controller.pack_mods and not controller.cleanup_failed
+    assert sum("CODE MOD ACTIVE:" in line for line in messages) == (
+        1 if transition == "shutdown" else 2
+    )

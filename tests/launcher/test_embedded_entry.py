@@ -231,6 +231,8 @@ def test_bundled_python_runs_the_author_contract(
 ):
     root = embedded_project
     probe = root / "launcher/contract_probe.py"
+    game = tmp_path / "owned game"
+    shutil.copytree(built_python_mod, game / "data/owned pack/python mod")
     shutil.copyfile(FIXTURES / "mod_contract_probe.py", probe)
     try:
         result = subprocess.run(
@@ -238,7 +240,7 @@ def test_bundled_python_runs_the_author_contract(
                 str(root / "libs/python-3.13.16-embed-amd64/python.exe"),
                 "-B",
                 str(probe),
-                str(built_python_mod),
+                str(game),
             ],
             cwd=tmp_path,
             capture_output=True,
@@ -246,7 +248,8 @@ def test_bundled_python_runs_the_author_contract(
             timeout=60,
         )
         assert (
-            result.returncode == 0 and "Python author contract passed" in result.stdout
+            result.returncode == 0
+            and "Python author contract and pack loading passed" in result.stdout
         ), result.stderr
     finally:
         probe.unlink()

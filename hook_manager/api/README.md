@@ -6,8 +6,8 @@ WebAssembly Component Model's WIT language. Its world is `code-mod`, in package
 
 ## Mod layout
 
-When discovery is implemented, each direct child with `mod.toml` will declare a
-code mod for the data pack selected by the game:
+Each direct child with `mod.toml` declares a code mod for the Formula data pack
+selected by the game:
 
 ```text
 <game-root>/
@@ -19,9 +19,10 @@ code mod for the data pack selected by the game:
       src/mod.py                       readable author source
 ```
 
-Several code-mod folders can coexist in one selected data pack. This phase reads
-only an explicitly supplied folder; it does not scan data packs or activate mods
-in the running game. `constants.py` needs no executable additions.
+Several code-mod folders can coexist in one selected data pack. The external
+launcher discovers and activates their components after the game's startup pack
+is known. `constants.py` needs no executable additions. Mod code runs outside the
+game; game operations and event delivery are not implemented yet.
 
 The runnable author template is [examples/diagnostic_mod](../../examples/diagnostic_mod).
 Its manifest is plain TOML with the following complete schema:
@@ -49,6 +50,34 @@ capabilities = ["diagnostics"]
 All fields are required. Unknown fields are rejected. Manifests are limited to
 16 KiB and do not execute code. Imports must also match the manifest's grants;
 merely declaring a permission cannot add a function to the manager API.
+
+## Discovery and lifetime
+
+- Only ordinary direct child directories containing `mod.toml` are candidates.
+  The pack root itself and deeper nested folders are not code-mod entries.
+  Linked directories and junctions are skipped; linked pack paths, manifest files
+  and component paths are rejected. Manifests and components must be regular files.
+- Valid manifests are collected before any component initializes. Every valid
+  manifest sharing a duplicate mod ID is rejected; no copy wins by folder order.
+  Remaining mods activate in ascending ID order. There is no dependency ordering
+  or mod-to-mod communication in this version.
+- Discovery allows at most 4,096 direct pack entries and 32 candidate mod folders.
+  Exceeding either limit rejects code loading for that process before activation.
+  These are launcher limits, not manifest options.
+- A malformed manifest, missing/invalid component, or initialization/activation
+  failure is logged without stopping valid neighbours or the game. An ordinary
+  data pack with no code mods is supported and loads zero components.
+- The startup pack is fixed for that process. Repeated bridge records do not
+  reload code or change its selected pack. Source edits do not trigger rebuilding
+  or live reloading; no compiler or package installer runs at player startup.
+- Each game session owns separate sandbox instances. Process exit, replacement,
+  PID reuse and launcher shutdown close them in reverse activation order. A new
+  game process discovers its own selected pack and receives fresh mod state.
+
+The launcher log records `CODE MOD ACTIVE`, approved `CODE MOD REPORT` messages,
+rejections, the active count and `CODE MOD CLOSED`. IDs and messages are quoted
+as JSON, and each record is labelled with its game process ID. These are the
+current confirmation of mod loading; a game UI proof comes later.
 
 ## Calls
 
@@ -149,8 +178,9 @@ when distributing built components; a full distributable release is separate wor
 
 ## Current boundaries
 
-The manager does not yet discover folders, transport game events or offer game/UI
-operations. No event response is applied to the game by this phase. Additional
+The launcher now discovers and activates sandboxed mods, but does not yet
+transport game events or offer game/UI operations. No event response is applied
+to the game by this phase. Additional
 capabilities require reviewed adapters and a versioned contract change.
 Compilation and blocked trusted callbacks retain the limits documented in the
 sandbox host; there is no claim of OS-level isolation or a bug-free runtime.

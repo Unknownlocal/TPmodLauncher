@@ -66,17 +66,14 @@ def main(argv=None) -> int:
         )
         return 0
     try:
+        # Only the launcher's own packages gain import paths; data-pack Python is never imported.
+        _dependencies.load_source_packages(root)
+        from launcher import game_bridge as bridge, process_lifecycle as lifecycle
+        from launcher.pack_mods import PackMods
+
         # The launcher folder and game executable share the same installation folder.
         expected = root.parent / "TeamPrincipal.exe"
-        source = _dependencies.local_path(root, "launcher/process_lifecycle.py")
-        spec = importlib.util.spec_from_file_location("_tpm_process_lifecycle", source)
-        lifecycle = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(lifecycle)
         command = lifecycle.validate_command(command, expected)
-        source = _dependencies.local_path(root, "launcher/game_bridge.py")
-        spec = importlib.util.spec_from_file_location("_tpm_game_bridge", source)
-        bridge = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(bridge)
         bridge_factory = bridge.factory(root, frida)
         return lifecycle.run_launcher(
             frida,
@@ -85,6 +82,7 @@ def main(argv=None) -> int:
             _dependencies.local_path(root, "logs/launcher.log"),
             restart_grace=arguments.restart_grace,
             bridge_factory=bridge_factory,
+            mods_factory=lambda report: PackMods(root.parent, report),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.
     except Exception as error:

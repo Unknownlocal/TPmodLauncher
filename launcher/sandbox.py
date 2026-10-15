@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Run one Component outside the game with only explicitly granted host functions.
 
-This is an internal host interface. The author-facing WIT contract and pack
-discovery are separate steps; this module never imports mod Python or links WASI.
+This is an internal host interface. The author-facing contract and pack loading
+live in separate modules; this module never imports mod Python or links WASI.
 """
 
 from collections.abc import Callable

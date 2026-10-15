@@ -44,14 +44,18 @@ class Manifest:
 
     @classmethod
     def read(cls, folder):
-        """Read mod.toml in this explicit folder; discovery of folders belongs to the next step."""
+        """Read mod.toml in this explicit folder without importing any mod code."""
         try:
             root = Path(folder)
             if root.is_symlink() or root.is_junction():
                 raise ValueError("Mod folder must not be linked")
             root = root.resolve(strict=True)
             # Bound the read itself, rather than loading an arbitrarily large manifest first.
-            with local_path(root, "mod.toml").open("rb") as source:
+            path = local_path(root, "mod.toml")
+            # FIFOs and devices can block an unbounded read; accept ordinary files only.
+            if not path.is_file():
+                raise ValueError("Manifest must be a regular file")
+            with path.open("rb") as source:
                 content = source.read(16_384 + 1)
             if len(content) > 16_384:
                 raise ValueError("Manifest exceeds 16 KiB")
@@ -106,7 +110,10 @@ class Manifest:
                 or self.root.resolve(strict=True) != self.root
             ):
                 raise ValueError("Mod folder changed or became linked")
-            with local_path(self.root, self.component).open("rb") as source:
+            path = local_path(self.root, self.component)
+            if not path.is_file():
+                raise ValueError("Component must be a regular file")
+            with path.open("rb") as source:
                 component = source.read(Limits().component_bytes + 1)
             if len(component) > Limits().component_bytes:
                 raise ValueError("Component exceeds 32 MiB")

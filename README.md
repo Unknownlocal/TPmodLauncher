@@ -47,15 +47,20 @@ maintainers do not need to build every author's mod.
          src/mod.py
    ```
 
-Several code mods can live under the same data pack. **Automatic discovery and
-loading from this layout are not implemented yet.** The current contract supports
-diagnostics and JSON event exchange; it exposes no game operations. New game
-capabilities require reviewed additions to the launcher API. Editing a mod's own
+Several code mods can live under the same data pack. When the game reports its
+selected Formula pack, the launcher discovers its direct child code mods,
+validates them and activates each admitted component in its own sandbox.
+It logs activation and diagnostics; no new menu button is added yet.
+The current contract supports diagnostics and JSON event exchange; it exposes no
+game operations. New game capabilities require reviewed additions to the
+launcher API. Editing a mod's own
 WIT file or inventing an event name cannot grant access to game functions.
 
 The [author guide](hook_manager/api/README.md) explains the API, permissions,
 build process and execution budgets, including what fuel counts and what happens
 when a mod exceeds its limits.
+See [loading rules](hook_manager/api/README.md#discovery-and-lifetime) for ordering,
+duplicate IDs, limits and cleanup when the game replaces its process.
 
 # Verification of bundled code
 

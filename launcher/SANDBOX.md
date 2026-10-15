@@ -6,9 +6,10 @@ It accepts no Python source, module path, native-library handle or precompiled
 Wasmtime native image. It links no WASI functions or unknown-import stubs.
 
 This is the low-level host. The [author API and manifest](../hook_manager/api/README.md)
-are implemented separately in mod_contract.py. Discovery, game transport and menu
-proof are later steps. Normal launcher startup does not create a sandbox or load
-code mods yet.
+are implemented separately in mod_contract.py. pack_mods.py discovers/adopts
+components for the Formula pack reported by the game. Normal launcher startup
+creates external sandboxes for its admitted code mods. Game transport and the
+menu proof remain later steps.
 
 ## Calls and grants
 

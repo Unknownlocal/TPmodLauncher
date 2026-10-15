@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.metadata
+import importlib.util
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -292,3 +293,22 @@ def import_dependencies(root: Path):
         return module
     except (ImportError, OSError, KeyError) as error:
         raise DependencyError(f"Cannot import bundled dependencies: {error}") from error
+
+
+def load_source_packages(root: Path) -> None:
+    """Register our two trusted packages without adding the game or pack folders to sys.path."""
+    # Call only after dependency verification; source is part of the launcher release.
+    for name in ("launcher", "hook_manager"):
+        if name in sys.modules:
+            raise DependencyError(f"{name} was imported before launcher source setup")
+        source = local_path(root, f"{name}/__init__.py")
+        spec = importlib.util.spec_from_file_location(
+            name, source, submodule_search_locations=[str(source.parent)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]
+            raise

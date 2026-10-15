@@ -1,30 +1,38 @@
 # SPDX-License-Identifier: MPL-2.0
 """Load a real Python mod through the contract using the shipped, verified interpreter."""
 
+from contextlib import closing
 import importlib.util
 from pathlib import Path
 import sys
 
 root = Path(__file__).resolve().parent.parent
-# Only these two trusted source packages gain import paths, after dependency verification.
-for name in ("launcher", "hook_manager"):
-    spec = importlib.util.spec_from_file_location(
-        name, root / name / "__init__.py", submodule_search_locations=[str(root / name)]
-    )
-    package = importlib.util.module_from_spec(spec)
-    sys.modules[name] = package
-    spec.loader.exec_module(package)
-from launcher.bundled_dependencies import import_dependencies
-
-import_dependencies(root)
-from launcher.mod_contract import Manifest, Mod
+spec = importlib.util.spec_from_file_location(
+    "test_dependencies", root / "launcher/bundled_dependencies.py"
+)
+dependencies = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(dependencies)
+dependencies.import_dependencies(root)
+# Use the same source setup as entry.py; no source or builder paths enter sys.path.
+dependencies.load_source_packages(root)
+from launcher.pack_mods import PackMods
 
 messages = []
-with Mod(
-    Manifest.read(sys.argv[1]), report=lambda *message: messages.append(message)
-) as mod:
-    mod.activate()
+with closing(PackMods(Path(sys.argv[1]), messages.append)) as scope:
+    folder = Path(sys.argv[1]) / "data/owned pack"
+    scope.load(
+        {
+            "state": "ready",
+            "series": "formula",
+            "id": folder.name,
+            "root": str(folder.resolve()),
+        }
+    )
+    mod = scope.mods["example.diagnostics"]
     assert mod.event("echo", {"number": 42}) == {"count": 1, "value": {"number": 42}}
-assert messages == [("example.diagnostics", "ready  ")]
+assert any(
+    '"id": "example.diagnostics", "message": "ready  "' in line for line in messages
+)
 assert mod.sandbox.closed
-print("Python author contract passed")
+assert importlib.util.find_spec("componentize_py") is None
+print("Python author contract and pack loading passed")

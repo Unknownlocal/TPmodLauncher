@@ -77,6 +77,21 @@ def test_manifest_read_is_size_limited(author):
         Manifest.read(author)
 
 
+@pytest.mark.parametrize("filename", ["mod.toml", "mod.wasm"])
+def test_nonregular_mod_files_are_rejected_before_opening(author, filename):
+    manifest = Manifest.read(author)
+    path = author / filename
+    path.unlink(missing_ok=True)
+    if os.name == "posix":
+        os.mkfifo(
+            path
+        )  # Opening this for reading would wait indefinitely for a writer.
+    else:
+        path.mkdir()
+    with pytest.raises(ManifestError, match="regular file"):
+        Manifest.read(author) if filename == "mod.toml" else manifest.read_component()
+
+
 def test_requested_diagnostics_requires_a_trusted_provider(author):
     cleaned = []
     with pytest.raises(ManifestError, match="trusted report"):
