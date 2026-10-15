@@ -163,6 +163,7 @@ assert not any(name.split(".")[0] in {"launcher","hook_manager","wasmtime","comp
 
 def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
     assert (runner_bundle.directory / "source/guest.py").read_bytes() == (ROOT / "mod_runtime/guest.py").read_bytes()
+    assert (runner_bundle.directory / "source/_source_policy.py").read_bytes() == (ROOT / "mod_runtime/_source_policy.py").read_bytes()
     assert (runner_bundle.directory / "source/runner.wit").read_bytes() == (ROOT / "mod_runtime" / ABI_VERSION / "runner.wit").read_bytes()
     for name in artifacts.NOTICE_FILES:
         origin = ROOT / "LICENCE" if name.endswith("LICENCE.Project.txt") else ROOT / "notices/mod-runtime" / Path(name).name
@@ -214,6 +215,13 @@ def test_relocated_player_verifies_and_runs_bundle_without_compiler(embedded_pro
     shutil.copytree(runner_bundle.directory, root / "libs/mod-runners")
     probe = root / "launcher/runner_probe.py"
     shutil.copyfile(Path(__file__).with_name("fixtures") / "embedded_runner_probe.py", probe)
-    result = subprocess.run([str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-I", "-B", str(probe)], capture_output=True, text=True, timeout=30)
+    owned_mod = root / ".state/runner-probe-mod"
+    owned_mod.mkdir(parents=True)
+    linked = root / ".state/runner-linked"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(linked), str(owned_mod)], check=True, capture_output=True)
+    try:
+        result = subprocess.run([str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-I", "-B", str(probe)], capture_output=True, text=True, timeout=30)
+    finally:
+        linked.rmdir()
     assert result.returncode == 0, result.stdout + result.stderr
     assert "without componentize-py" in result.stdout

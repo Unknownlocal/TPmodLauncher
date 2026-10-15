@@ -13,10 +13,10 @@ import importlib.util
 import json
 import math
 import os
-from pathlib import PurePosixPath
 import sys
 from types import ModuleType
 import runner_bindings as _bindings
+from _source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_path
 
 
 class AuthorWorld:
@@ -35,32 +35,16 @@ for _python_name in ("report", "add_menu_button"):
     setattr(_author_api, _python_name, getattr(_bindings, _python_name))
 sys.modules["wit_world"] = _author_api
 
+# Capture trusted runtime roots before any author source is accepted or loaded.
+_reserved = frozenset(
+    name.split(".", 1)[0].casefold()
+    for name in (*sys.stdlib_module_names, *sys.modules)
+)
 _sources = {}
 _bytes = 0
 _sealed = False
 _instance = None
 _activated = False
-_reserved = set(sys.modules) | set(sys.stdlib_module_names) | {"wit_world", "runner_guest"}
-
-
-def source_path(path):
-    item = PurePosixPath(path)
-    if (
-        not path
-        or len(path) > 256
-        or item.is_absolute()
-        or str(item) != path
-        or "\\" in path
-        or ".." in item.parts
-        or item.suffix != ".py"
-    ):
-        raise ValueError("Expected a canonical relative Python source path")
-    parts = item.parts[:-1] + (item.stem,)
-    if any(not part.isidentifier() for part in parts):
-        raise ValueError("Expected Python module identifiers")
-    if parts[0] in _reserved:
-        raise ValueError("Source conflicts with a trusted or standard-library module")
-    return path
 
 
 class MemoryImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -94,8 +78,10 @@ class RunnerBindings(_bindings.RunnerBindings):
         if _sealed:
             raise RuntimeError("Source snapshot is sealed")
         source_path(path)
+        if path.split("/", 1)[0].removesuffix(".py").casefold() in _reserved:
+            raise ValueError("Source conflicts with a trusted or standard-library module")
         size = len(chunk.encode("utf-8"))
-        if _bytes + size > 1024 * 1024 or (path not in _sources and len(_sources) >= 256):
+        if _bytes + size > MAX_SOURCE_BYTES or (path not in _sources and len(_sources) >= MAX_SOURCE_FILES):
             raise ValueError("Source snapshot exceeds its budget")
         _sources[path] = _sources.get(path, "") + chunk
         _bytes += size

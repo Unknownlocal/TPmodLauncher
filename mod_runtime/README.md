@@ -26,6 +26,21 @@ including calls made during component initialization or source loading.
 `guest.py` provides an in-memory source importer and a separate author-facing
 `wit_world` facade. Source loading and lifecycle calls form a private runtime
 protocol. The launcher retains process/session ownership and sandbox admission;
-`hook_manager` retains native integration. Source manifests, player discovery,
-loading budgets and startup integration are separate implementation stages. The
-current component-loading path retains its existing permission admission rules.
+`hook_manager` retains native integration.
+
+`source.py` validates schema 2 source-only manifests and creates immutable,
+ordered copies of UTF-8 Python files under `src/`. File, byte, entry, path and
+depth limits bound preparation. Portable module names, explicit packages and
+case checks prevent ambiguous inputs. `_source_files.py` pins ordinary ancestor
+directories and rejects linked, reparse, shared and special-file inputs. POSIX
+reads use directory-relative descriptors; Windows uses read-sharing handles to
+prevent replacement during reads. Source remains inert text on the host.
+`_source_policy.py` shares portable path rules and source byte/file limits
+between the host and the frozen runner. The guest captures reserved module roots
+from its own standard library and preloaded modules before author loading, then
+rejects collisions during source transfer. Host snapshots do not decide runtime
+module-name admission.
+
+Player discovery, loading budgets and startup integration are separate
+implementation stages. The current component-loading path retains its existing
+manifest format and permission admission rules.

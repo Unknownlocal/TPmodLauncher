@@ -18,6 +18,7 @@ spec.loader.exec_module(module)
 
 from mod_runtime import RunnerBundle
 from mod_runtime.bundle import EXPORTS
+from mod_runtime.source import SourceError, SourceSnapshot
 from launcher.mod_contract import PYTHON_LIMITS
 from launcher.runner_host import bind_operations
 from launcher.sandbox import Sandbox
@@ -32,14 +33,34 @@ sys.addaudithook(audit)
 
 bundle = RunnerBundle(root / "libs/mod-runners")
 reports, closed = [], []
-with Sandbox(bundle.component(), bind_operations({"diagnostics"}, {"report": reports.append}),
-             limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: closed.append(True)) as guest:
-    guest.call("put-source", "mod.py", '''import wit_world
+mod = root / ".state/runner-probe-mod"
+(mod / "src").mkdir(parents=True)
+(mod / "mod.toml").write_text('''schema = 2
+id = "owned.embedded"
+version = "0.1.0"
+api = "0.2.0"
+runtime = "python"
+entry = "mod"
+capabilities = ["diagnostics"]
+''', encoding="utf-8")
+(mod / "src/mod.py").write_text('''import wit_world
 class WitWorld(wit_world.WitWorld):
     def activate(self): wit_world.report("source in bundled runtime")
     def on_event(self, name, payload): return payload
-''')
-    assert guest.call("load-source", "mod") == ""
+''', encoding="utf-8")
+snapshot = SourceSnapshot.read(mod)
+try:
+    SourceSnapshot.read(root / ".state/runner-linked")
+except SourceError:
+    pass
+else:
+    raise AssertionError("The bundled player must reject a junction to a valid source mod")
+(mod / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
+with Sandbox(bundle.component(), bind_operations(snapshot.manifest.capabilities, {"report": reports.append}),
+             limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: closed.append(True)) as guest:
+    for name, text in snapshot.files:
+        guest.call("put-source", name, text)
+    assert guest.call("load-source", snapshot.manifest.entry) == ""
     guest.call("activate")
     assert guest.call("on-event", "probe", '{"owned":true}') == '{"owned":true}'
 assert reports == ["source in bundled runtime"] and closed == [True]

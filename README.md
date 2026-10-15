@@ -225,6 +225,8 @@ supports per-mod grants through `launcher/runner_host.py`, which binds trusted
 providers or rejection callbacks before sandbox instantiation. Bundles retain their source,
 upstream notice texts and a bounded integrity inventory. This artifact foundation
 is separate from the current player loading path.
+`mod_runtime/source.py` validates source manifests and snapshots bounded Python
+source as inert text, using pinned directory handles and ordinary-file checks.
 
 `build_mod.py` builds author components separately from player startup.
 `build_frida.py` produces the reduced native transport; `frida_sources.py`

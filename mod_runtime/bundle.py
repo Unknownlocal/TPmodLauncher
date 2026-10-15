@@ -22,7 +22,7 @@ EXPORTS = MappingProxyType({
     "activate": ((), None),
     "on-event": (("string", "string"), "string"),
 })
-SOURCES = ("source/runner.wit", "source/guest.py")
+SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",

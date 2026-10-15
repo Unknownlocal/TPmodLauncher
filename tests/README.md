@@ -9,6 +9,9 @@ pack discovery, native menu and bridge tests.
 bundle inventories, per-mod permission enforcement and relocated bundled-interpreter
 execution without compiler packages. Build fixtures are separate from player
 execution, and the existing production sandbox supplies execution limits.
+Source-input checks cover schema validation, immutable snapshots, package
+layouts, resource limits, ordinary-file reads and replacement/link attempts on
+Windows and POSIX. The embedded probe snapshots source before guest execution.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies and a small owned native-menu interface. `launcher/conftest.py`

@@ -69,11 +69,13 @@ def build(output):
         (stage / "notices").mkdir()
         (stage / "empty/lib/site-packages").mkdir(parents=True)
         (source / "guest.py").write_bytes(_read(package / "guest.py", 1024 * 1024))
+        (source / "_source_policy.py").write_bytes(_read(package / "_source_policy.py", 64 * 1024))
         (source / "runner.wit").write_bytes(_read(package / ABI_VERSION / "runner.wit", 64 * 1024))
         # The application module name is fixed; no pack or author path enters this command.
         build_source = stage / "input"
         build_source.mkdir()
         shutil.copyfile(source / "guest.py", build_source / "runner_guest.py")
+        shutil.copyfile(source / "_source_policy.py", build_source / "_source_policy.py")
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment["PYTHONNOUSERSITE"] = "1"
