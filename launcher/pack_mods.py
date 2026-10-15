@@ -2,6 +2,7 @@
 """Discover and own sandboxed code mods for one process's selected Formula pack."""
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from time import perf_counter
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
+from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod
 from hook_manager.menu import MenuRequests
 
@@ -17,10 +19,27 @@ MAX_PACK_ENTRIES = 4096
 MAX_MODS = 32
 
 
+def _prepare(manifest, timings):
+    """Read and compile on a worker; no Store, guest entry or native registration occurs here."""
+    with measure(timings, "component_read"):
+        data = manifest.read_component()
+    return CompiledMod(data, timings)
+
+
+def _discard(future):
+    """Release an abandoned compiler result; cancellation needs no guest or bridge work."""
+    try:
+        future.result().close()
+    except Exception:
+        pass  # Failed/cancelled preparations own no usable compiler result.
+
+
 class PackMods:
     """Load once on the controller thread; close all instances with their game session."""
 
-    def __init__(self, game_root, report, *, set_menu=None):
+    def __init__(
+        self, game_root, report, *, set_menu=None, set_loading=None, background=False
+    ):
         # game_root and report come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
         self.report = report
@@ -31,6 +50,13 @@ class PackMods:
         self.set_menu = set_menu
         self.applied_menu = []
         self.menu_generation = 0
+        self.set_loading = set_loading
+        self.background = background
+        self.executor = None
+        self.pending = None
+        self.loading = None
+        self.total = self.failed = 0
+        self.finished = False
 
     def _flush_menu(self):
         """Send staged declarations outside guest execution, without per-frame callbacks."""
@@ -95,12 +121,40 @@ class PackMods:
                         raise ManifestError("Data pack exceeds the 32-code-mod limit")
         return sorted(candidates)
 
+    def _progress(self, state="loading"):
+        """Publish host-owned counts; native readiness still waits for registry installation."""
+        if self.set_loading is not None:
+            self.set_loading(
+                dict(
+                    state=state,
+                    loaded=len(self.mods),
+                    failed=self.failed,
+                    total=self.total,
+                )
+            )
+
     def load(self, pack):
-        """Admit and activate this snapshot once; one failed mod does not stop its neighbours."""
+        """Start one immutable pack; normal launches advance preparations through poll()."""
         if self.started or self.closed:
             return
-        # Repeated or changed bridge records cannot reassign an existing process's mods.
         self.started = True
+        self.loading = self._load(pack)
+        self.poll()
+
+    def poll(self):
+        """Advance only ready work on the owning controller thread; never wait on a compiler."""
+        if self.loading is None or self.closed:
+            return
+        try:
+            next(self.loading)
+        except StopIteration:
+            self.loading = None
+        except BaseException:
+            self._progress("error")
+            raise
+
+    def _load(self, pack):
+        """Keep guest calls serial while yielding during optional background compilation."""
         started = perf_counter()
         load_timings = {}
         try:
@@ -114,7 +168,10 @@ class PackMods:
                 phase_seconds=load_timings,
                 total_seconds=round(perf_counter() - started, 6),
             )
+            self._progress("error")
             return
+        self.total = len(candidates)
+        self._progress()
         # Each immutable manifest owns its timings, including copies with duplicate IDs.
         manifests = {}
         for path in candidates:
@@ -129,6 +186,7 @@ class PackMods:
                         )
                 manifests[manifest] = timings
             except ManifestError as error:
+                self.failed += 1
                 self._log(
                     "REJECTED",
                     folder=path.name,
@@ -140,6 +198,8 @@ class PackMods:
             timings = manifests[manifest]
             # Decide duplicate identity before initializing either copy; never pick a winner.
             if counts[manifest.id] > 1:
+                self.failed += 1
+                self._progress()
                 self._log(
                     "REJECTED",
                     id=manifest.id,
@@ -148,13 +208,26 @@ class PackMods:
                     phase_seconds=timings,
                 )
                 continue
+            prepared = None
             try:
+                if self.background:
+                    if self.executor is None:
+                        self.executor = ThreadPoolExecutor(
+                            max_workers=1, thread_name_prefix="mod-compiler"
+                        )
+                    self.pending = self.executor.submit(_prepare, manifest, timings)
+                    while not self.pending.done():
+                        yield
+                    future = self.pending
+                    self.pending = None
+                    prepared = future.result()
                 mod = Mod(
                     manifest,
                     report=self._diagnostic,
                     menu=self.menu.add if self.set_menu is not None else None,
                     cleanup=lambda owner=manifest.id: self._remove_menu(owner),
                     timings=timings,
+                    prepared=prepared,
                 )
                 # Retain ownership before activation so interruption can still close this instance.
                 self.mods[manifest.id] = mod
@@ -164,6 +237,7 @@ class PackMods:
                     with measure(timings, "registration"):
                         self._flush_menu()
             except Exception as error:
+                self.failed += 1
                 failed = self.mods.pop(manifest.id, None)
                 if failed is not None:
                     failed.close()
@@ -185,10 +259,15 @@ class PackMods:
             else:
                 self._log("ACTIVE", id=manifest.id, version=manifest.version)
             finally:
+                if prepared is not None:
+                    prepared.close()  # An adopted result has already transferred its resources.
                 # Emit once per attempted mod, after guest execution and cleanup have returned.
                 self._log(
                     "TIMING", pack=folder.name, id=manifest.id, phase_seconds=timings
                 )
+            self._progress()
+        self.finished = True
+        self._progress("complete")
         self._log(
             "READY",
             pack=pack["id"],
@@ -214,18 +293,35 @@ class PackMods:
         for mod_id, mod in list(self.mods.items()):
             if "main-menu" in mod.manifest.capabilities:
                 self.mods.pop(mod_id).close()
+                self.failed += 1
                 self._log(
                     "REJECTED",
                     id=mod_id,
                     detail=status.get("detail", "Menu unavailable"),
                 )
         self._flush_menu()
+        self._progress("complete" if self.finished else "loading")
 
     def close(self):
         """Close in reverse activation order, attempting every instance even if cleanup fails."""
         if self.closed:
             return
         self.closed = True
+        if self.pending is not None:
+            if self.pending.running():
+                self._log(
+                    "COMPILER DRAINING",
+                    detail="Guest loading cancelled; releasing compiler result when it returns",
+                )
+            self.pending.cancel()
+            self.pending.add_done_callback(_discard)
+            self.pending = None
+        if self.loading is not None:
+            self.loading.close()
+            self.loading = None
+        if self.executor is not None:
+            # A native compiler cannot be interrupted by Future.cancel(); dispose its late result.
+            self.executor.shutdown(wait=False, cancel_futures=True)
         failed = False
         while self.mods:
             mod_id, mod = self.mods.popitem()

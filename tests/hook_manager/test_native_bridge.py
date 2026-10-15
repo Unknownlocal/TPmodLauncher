@@ -29,6 +29,11 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         "def method(value):\n    return value + 1\n"
     )
     shutil.copyfile(FIXTURES / "native_bridge_helper.py", helper)
+    menu = tmp_path / "ui/screens"
+    menu.mkdir(parents=True)
+    (menu.parent / "__init__.py").touch()
+    (menu / "__init__.py").touch()
+    shutil.copyfile(FIXTURES / "native_menu_fixture.py", menu / "hub_screen.py")
     output = tmp_path / "results"
     output.mkdir()
     probe = root / "launcher/bridge_probe.py"
@@ -67,6 +72,7 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         assert not closed["status"]["errors"]
         assert closed["pack"] == {"state": "stopped"}
         assert closed["menu"] == ["Career", "Exit"] and closed["menu_restored"]
+        assert closed["disabled_message_restored"]
         menu = json.loads((output / "menu.json").read_text())
         assert menu == {
             "items": ["Career", "Owned UI", "Exit"],

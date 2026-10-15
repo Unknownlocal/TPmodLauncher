@@ -38,6 +38,7 @@ try:
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages), messages
     current = next(iter(controller.bridges.values()))
+    current.set_loading(dict(state="loading", loaded=0, failed=0, total=1))
     status = current.set_menu(
         [
             {
@@ -49,6 +50,9 @@ try:
         ]
     )
     assert status["menu"]["state"] == "ready", status
+    assert status["menu"]["loading"]["blocked"], status
+    status = current.set_loading(dict(state="complete", loaded=1, failed=0, total=1))
+    assert not status["menu"]["loading"]["blocked"], status
     deadline = time.monotonic() + 5
     while not (output / "menu.json").exists() and time.monotonic() < deadline:
         time.sleep(0.02)

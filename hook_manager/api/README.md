@@ -255,6 +255,12 @@ when distributing built components; a full distributable release is separate wor
 
 ## Current boundaries
 
+Startup readiness is loader-owned infrastructure, not an author capability.
+The menu keeps New Season, Load Game and Continue Season unavailable until
+the selected pack's loading outcomes and native menu registration are settled.
+Authors do not supply readiness text, counts or completion messages, and no API
+version change is needed for this behaviour.
+
 The launcher discovers and activates sandboxed mods and offers the declarative
 native-menu capability. It does not yet deliver general game events or apply
 guest event responses to gameplay. Additional

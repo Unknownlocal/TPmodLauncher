@@ -118,6 +118,9 @@ class _Loader:
 
     def exec_module(self, module):
         self.original.exec_module(module)
+        # A shutdown during module execution must leave the normal import usable.
+        if self.manager.closed:
+            return
         self.manager.completed[self.name] = module
         # Worker imports wait for the next main-thread poll rather than installing from that worker.
         if threading.current_thread() is threading.main_thread():
@@ -168,6 +171,7 @@ class Manager:
         self.completed = {}
         self.rejected = set()
         self.wanted = set()
+        self.observers = {}
         self.finder = _Finder(self)
         self.errors = []
         self.closed = False
@@ -198,11 +202,24 @@ class Manager:
             if group["state"] == "pending"
             for binding in group["bindings"]
         }
+        self.wanted.update(self.observers)
         # Leave normal imports untouched when no pending target needs observation.
         if self.wanted and self.finder not in sys.meta_path:
             sys.meta_path.insert(0, self.finder)
         elif not self.wanted and self.finder in sys.meta_path:
             sys.meta_path.remove(self.finder)
+
+    def observe(self, module, callback):
+        """Run a trusted one-shot adapter after a normal module import, before its consumer."""
+        self._main()
+        if (
+            not isinstance(module, str)
+            or not all(part.isidentifier() for part in module.split("."))
+            or not callable(callback)
+        ):
+            raise HookError("Invalid trusted import observer")
+        self.observers[module] = callback
+        self.poll()
 
     def install(self, name, bindings):
         """Register a group of target/callback/phase records and install once all targets are ready."""
@@ -377,6 +394,18 @@ class Manager:
         for module in tuple(self.rejected):
             self._reject_pending(module)
         self.rejected.clear()
+        for name, callback in list(self.observers.items()):
+            module = sys.modules.get(name)
+            if type(module) is ModuleType and (
+                not getattr(getattr(module, "__spec__", None), "_initializing", False)
+                or self.completed.get(name) is module
+            ):
+                try:
+                    if callback(module):
+                        self.observers.pop(name, None)
+                except Exception as error:
+                    self.observers.pop(name, None)
+                    self._report(error)
         for name, group in list(self.groups.items()):
             if group["state"] == "pending":
                 try:
@@ -419,6 +448,8 @@ class Manager:
         self._main()
         for name in reversed(list(self.groups)):
             self._disable(name)
+        self.observers.clear()
+        self._watch()
         self.closed = True
         return self.status()
 

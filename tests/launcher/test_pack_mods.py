@@ -2,12 +2,14 @@
 """Load selected-pack child mods using real manifests, filesystem paths and Wasmtime."""
 
 from contextlib import closing
+from concurrent.futures import wait
 import json
 import math
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 
 import pytest
 from wasmtime import wat2wasm
@@ -118,8 +120,9 @@ def test_plain_pack_is_valid_and_does_not_import_python(pack):
 @pytest.mark.parametrize(
     "failure", ["component_read", "compile", "initialize", "activate"]
 )
+@pytest.mark.parametrize("background", [False, True])
 def test_loading_timings_survive_failed_phases_and_keep_mod_identity(
-    pack, code_mod, failure
+    pack, code_mod, failure, background
 ):
     game, folder, record = pack
     failed = code_mod(folder, "owned.failed", trap=failure == "activate")
@@ -139,9 +142,19 @@ def test_loading_timings_survive_failed_phases_and_keep_mod_identity(
         )
         component.write_bytes(wat2wasm(source))
     messages = []
-    with closing(PackMods(game, messages.append)) as scope:
+    progress = []
+    with closing(
+        PackMods(
+            game, messages.append, background=background, set_loading=progress.append
+        )
+    ) as scope:
         scope.load(record)
+        while scope.loading is not None:
+            if scope.pending is not None:
+                assert wait([scope.pending], timeout=10).done
+            scope.poll()
         assert list(scope.mods) == ["owned.healthy"]
+        assert progress[-1] == dict(state="complete", loaded=1, failed=1, total=2)
         assert scope.mods["owned.healthy"].event("echo", None) == {}
     timings = {}
     for line in messages:
@@ -261,3 +274,51 @@ def test_real_python_mod_reports_only_with_its_admitted_identity(
             "count": 1,
             "value": 42,
         }
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_background_compilation_never_executes_or_leaks_a_cancelled_mod(
+    pack, code_mod, monkeypatch, cancel
+):
+    from launcher import pack_mods
+
+    game, folder, record = pack
+    code_mod(folder, "owned.background")
+    entered, release = threading.Event(), threading.Event()
+    results, progress = [], []
+    original = pack_mods._prepare
+
+    def prepare(manifest, timings):
+        entered.set()
+        assert release.wait(5), "Test did not release the compiler"
+        result = original(manifest, timings)
+        results.append(result)
+        return result
+
+    monkeypatch.setattr(pack_mods, "_prepare", prepare)
+    scope = PackMods(game, lambda _: None, background=True, set_loading=progress.append)
+    try:
+        scope.load(record)
+        assert entered.wait(2) and not scope.mods and not scope.finished
+        assert progress[-1] == dict(state="loading", loaded=0, failed=0, total=1)
+        future = scope.pending
+        if cancel:
+            scope.close()
+        release.set()
+        future.result(timeout=5)
+        if not cancel:
+            scope.poll()
+            assert scope.finished and list(scope.mods) == ["owned.background"]
+            assert (
+                scope.mods["owned.background"].sandbox._thread == threading.get_ident()
+            )
+            assert progress[-1] == dict(state="complete", loaded=1, failed=0, total=1)
+    finally:
+        release.set()
+        scope.close()
+        scope.executor.shutdown(wait=True)
+    assert results[0].closed
+    if cancel:
+        assert not scope.mods and not any(
+            row["state"] == "complete" for row in progress
+        )

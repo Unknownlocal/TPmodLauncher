@@ -26,9 +26,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons) {
+function enqueue(operation, id, buttons, loading) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -37,7 +37,7 @@ function enqueue(operation, id, buttons) {
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, resolve, reject }; });
+    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, resolve, reject }; });
 }
 
 send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
@@ -91,6 +91,7 @@ observer = Process.attachModuleObserver({
                         const request = pending || { operation: 'status' };
                         const record = { operation: request.operation };
                         if (request.operation === 'menu') record.buttons = request.buttons;
+                        if (request.operation === 'loading') record.loading = request.loading;
                         const expression = config.prefix + JSON.stringify(JSON.stringify(record)) + config.suffix;
                         const source = Memory.allocUtf8String(expression);
                         const main = addModule(mainName); // Borrowed: never decrement this reference.
@@ -119,9 +120,9 @@ observer = Process.attachModuleObserver({
                             packReported = true;
                             send({ event: 'pack', pack });
                         }
-                        // Deferred UI installation needs pulses only until its normal import completes.
+                        // Keep checking until UI import and startup loading finish (or the watchdog fires).
                         const menu = response.status.menu;
-                        menuPending = menu.state === 'pending';
+                        menuPending = menu.state === 'pending' || (menu.loading && menu.loading.blocked && !menu.loading.timed_out);
                         if (JSON.stringify(menu) !== menuState) {
                             menuState = JSON.stringify(menu);
                             send({ event: 'menu', status: menu });
@@ -154,7 +155,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
             );

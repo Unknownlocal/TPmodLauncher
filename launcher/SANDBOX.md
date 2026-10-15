@@ -108,6 +108,14 @@ cost; code is still compiled and validated by Wasmtime. Larger real mods will
 need measurements before changing these approved profiles.
 The host is not an OS process sandbox or a guarantee against runtime/host bugs.
 
+Normal startup reads and compiles one mod at a time on a background worker.
+`CompiledMod` owns that Engine/Component until the controller transfers them into
+a Sandbox or discards them. Compilation creates no Store and executes no guest
+code; initialization, activation, later calls and sandbox cleanup retain the
+controller's thread checks and shared entry lock. A cancelled session cannot
+adopt a late result. Native compilation itself cannot be interrupted, and Python
+may wait for a running worker when the launcher process exits.
+
 ## Verification
 
 `tests/launcher/test_sandbox.py` uses real Wasmtime with owned WAT fixtures;

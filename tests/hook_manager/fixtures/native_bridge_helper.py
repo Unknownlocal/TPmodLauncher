@@ -8,7 +8,7 @@ time.sleep(0.1)
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 output = Path(sys.argv[1])
 deadline = time.monotonic() + 15
@@ -36,20 +36,14 @@ assert host.discovery.snapshot is not None, "Bridge did not discover the startup
 utils._ACTIVE_PACK_CACHE.clear()
 
 
-# An owned native-style menu lets the client exercise the real declarative transport.
-class HubScreen:
-    def _activate(self, item):
-        return "native " + item
-
-    def draw(self, surface):
-        return None
-
-
-hub = ModuleType("ui.screens.hub_screen")
-hub.HubScreen, hub.MENU_ITEMS = HubScreen, ["Career", "Exit"]
-hub.pygame = SimpleNamespace(time=SimpleNamespace(get_ticks=lambda: 10))
-sys.modules[hub.__name__] = hub
-original_menu = HubScreen._activate
+# Normal import exercises the readiness observer before this first menu consumer.
+sys.path.insert(0, str(Path(__file__).parent))
+hub = importlib.import_module("ui.screens.hub_screen")
+HubScreen = hub.HubScreen
+original_menu = hub.ORIGINAL_METHODS["_activate"]
+original_draw = hub.ORIGINAL_METHODS["draw"]
+original_enabled = hub.ORIGINAL_METHODS["_item_enabled"]
+original_disabled_message = hub.ORIGINAL_METHODS["_disabled_item_message"]
 manager.dispatch = lambda record: {"action": "replace", "value": 9}
 manager.approve(
     host.Target(
@@ -60,7 +54,16 @@ manager.install(
     "owned",
     [{"target": "owned.method", "callback": "owned.callback", "phase": "before"}],
 )
-sys.path.insert(0, str(Path(__file__).parent))
+# The startup observer must have armed the guard before a normal menu consumer runs.
+screen = HubScreen()
+assert all(
+    not screen._item_enabled(item)
+    for item in ("New Season", "Continue Season", "Load Game")
+)
+assert screen._activate("New Season") is None
+assert (
+    screen._item_enabled("Options") and screen._activate("Options") == "native Options"
+)
 fixture = importlib.import_module("owned_native_fixture")
 (output / "active.json").write_text(
     json.dumps({"value": fixture.method(3), "status": manager.status()})
@@ -77,8 +80,14 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
-    if "Owned UI" in hub.MENU_ITEMS and not (output / "menu.json").exists():
+    if (
+        "Owned UI" in hub.MENU_ITEMS
+        and host.menu.loading["state"] == "complete"
+        and not (output / "menu.json").exists()
+    ):
         screen = HubScreen()
+        assert screen._item_enabled("New Season") and screen._item_enabled("Load Game")
+        assert not screen._item_enabled("Continue Season")
         screen._activate("Owned UI")
         (output / "menu.json").write_text(
             json.dumps(
@@ -112,7 +121,11 @@ while not manager.closed and time.monotonic() < deadline:
             "observer_removed": manager.finder not in sys.meta_path,
             "pack": host.discovery.poll(),
             "menu": hub.MENU_ITEMS,
-            "menu_restored": HubScreen._activate is original_menu,
+            "menu_restored": HubScreen._activate is original_menu
+            and HubScreen.draw is original_draw
+            and HubScreen._item_enabled is original_enabled,
+            "disabled_message_restored": HubScreen._disabled_item_message
+            is original_disabled_message,
         }
     )
 )

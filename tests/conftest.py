@@ -28,6 +28,12 @@ def native_menu(monkeypatch):
     calls = []
 
     class HubScreen:
+        def _item_enabled(self, item):
+            return item != "Continue Season"
+
+        def _disabled_item_message(self, item):
+            return "native disabled message"
+
         def _activate(self, item):
             calls.append(item)
             return "native activation"

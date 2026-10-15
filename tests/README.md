@@ -17,6 +17,14 @@ result. There is no fixed minimum coverage percentage.
 
 ## Platform coverage
 
+Readiness tests check the three guarded season actions, preserved native
+Continue Season restrictions, footer states, deferred registration, timeout and
+owned restoration. Real components check compilation failure and admission in
+both direct and background modes. A controlled worker pause checks that the
+controller still handles children/exits and never admits an abandoned result.
+The real Frida bridge helper also checks loading/completion requests and removal
+of readiness wrappers at shutdown. Actual game layout remains a manual check.
+
 The portable Python tests cover both launcher and hook_manager. Native tests
 also run the real Frida controller and manager bridge against owned CPython 3.13
 helpers on Windows and Linux. They check process replacement, inherited launch

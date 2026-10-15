@@ -132,7 +132,14 @@ class Mod:
     """Own one admitted contract instance; trusted code decides which events it receives."""
 
     def __init__(
-        self, manifest: Manifest, *, report=None, menu=None, cleanup=None, timings=None
+        self,
+        manifest: Manifest,
+        *,
+        report=None,
+        menu=None,
+        cleanup=None,
+        timings=None,
+        prepared=None,
     ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
@@ -162,9 +169,14 @@ class Mod:
                     ),
                 )
             # The loader owns this timing dictionary; it is never passed into guest code.
-            with measure(timings, "component_read"):
-                component = manifest.read_component()
+            if prepared is None:
+                with measure(timings, "component_read"):
+                    component = manifest.read_component()
+            else:
+                component = prepared.data
         except BaseException:
+            if prepared is not None:
+                prepared.close()
             # Own admission cleanup until Sandbox adopts it, including missing component/provider errors.
             if cleanup is not None:
                 cleanup()
@@ -178,6 +190,7 @@ class Mod:
             cleanup=cleanup,
             required_exports=EXPORTS,
             timings=timings,
+            prepared=prepared,
         )
         # Admission and activation are distinct; construction cannot silently invoke a lifecycle export.
         self._active = False

@@ -2,6 +2,7 @@
 """Run the sandboxed UI example beside a diagnostics mod through the real capability path."""
 
 from contextlib import closing
+from concurrent.futures import wait
 import json
 import shutil
 import sys
@@ -28,22 +29,31 @@ def menu_pack(tmp_path, built_menu_mod, built_python_mod):
     return tmp_path, record
 
 
+@pytest.mark.parametrize("background", [False, True])
 def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
-    menu_pack, native_menu
+    menu_pack, native_menu, background
 ):
     game, record = menu_pack
     hub, _ = native_menu
     adapter, messages = MenuAdapter(), []
     original = hub.HubScreen._activate
-    with closing(
+    with closing(adapter), closing(
         PackMods(
             game,
             messages.append,
             set_menu=lambda items: {"menu": adapter.update(items)},
+            set_loading=adapter.set_loading,
+            background=background,
         )
     ) as scope:
         scope.load(record)
+        while scope.loading is not None:
+            if scope.pending is not None:
+                assert wait([scope.pending], timeout=10).done
+            scope.poll()
         assert list(scope.mods) == ["example.diagnostics", "example.menu"]
+        assert adapter._notice() == "Mods loaded: 2"
+        assert not adapter.status()["loading"]["blocked"]
         timings = [
             json.loads(line.split(": ", 1)[1])
             for line in messages

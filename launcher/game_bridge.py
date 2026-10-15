@@ -61,15 +61,20 @@ class Bridge:
         finally:
             timer.cancel()
 
-    def request(self, operation, timeout=2.0, *, buttons=None):
+    def request(self, operation, timeout=2.0, *, buttons=None, loading=None):
         """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown", "menu"):
+        if operation not in ("status", "shutdown", "menu", "loading"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
                 raise BridgeError("Expected bounded menu declarations")
         elif buttons is not None:
             raise BridgeError("This operation accepts no menu declarations")
+        if operation == "loading":
+            if type(loading) is not dict or len(json.dumps(loading)) > 1024:
+                raise BridgeError("Expected a bounded loading record")
+        elif loading is not None:
+            raise BridgeError("This operation accepts no loading record")
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
@@ -84,6 +89,8 @@ class Bridge:
             message = {"type": "manager-request", "operation": operation, "id": token}
             if operation == "menu":
                 message["buttons"] = buttons
+            if operation == "loading":
+                message["loading"] = loading
             self._post(message, timeout)
             response = waiter.get(timeout=max(0, deadline - time.monotonic()))
             answered = True
@@ -128,6 +135,17 @@ class Bridge:
             # Unload also detaches the interceptor even if the bounded shutdown failed.
             if not self.session.is_detached and not self.script.is_destroyed:
                 self.script.unload()
+
+    def set_loading(self, loading):
+        """Send trusted startup progress on the same serialized request channel as menu updates."""
+        if self.session.is_detached:
+            return None
+        result = self.request("loading", loading=loading)
+        if result["menu"]["state"] == "failed":
+            raise BridgeError(
+                "Native readiness guard unavailable: " + result["menu"]["detail"]
+            )
+        return result
 
 
 def factory(root, frida):

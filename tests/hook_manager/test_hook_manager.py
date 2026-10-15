@@ -396,3 +396,52 @@ def test_lazy_import_rejected_without_installing_or_forcing_execution(
     finally:
         manager.stop()
         sys.modules.pop(name, None)
+
+
+def test_trusted_import_observer_runs_before_the_import_consumer(tmp_path, monkeypatch):
+    name = "owned_readiness_target"
+    (tmp_path / (name + ".py")).write_text("def method(value): return value + 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    seen = []
+    manager = Manager()
+
+    def observe(module):
+        seen.append(module)
+        module.method = lambda value: value + 2
+        return True
+
+    try:
+        manager.observe(name, observe)
+        module = importlib.import_module(name)
+        assert module.method(1) == 3 and seen == [module]
+        manager.poll()
+        assert seen == [module] and not manager.observers
+    finally:
+        manager.stop()
+        sys.modules.pop(name, None)
+    assert manager.finder not in sys.meta_path
+
+
+def test_shutdown_during_observed_import_leaves_native_import_usable(
+    tmp_path, monkeypatch
+):
+    name = "owned_stopping_import"
+    manager, seen = Manager(), []
+    control = ModuleType("owned_observer_control")
+    control.manager = manager
+    monkeypatch.setitem(sys.modules, control.__name__, control)
+    (tmp_path / (name + ".py")).write_text(
+        "import owned_observer_control\n"
+        "owned_observer_control.manager.stop()\n"
+        "VALUE = 42\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        manager.observe(name, lambda module: seen.append(module))
+        module = importlib.import_module(name)
+        assert module.VALUE == 42 and manager.closed and not seen
+        assert manager.finder not in sys.meta_path
+    finally:
+        if not manager.closed:
+            manager.stop()
+        sys.modules.pop(name, None)

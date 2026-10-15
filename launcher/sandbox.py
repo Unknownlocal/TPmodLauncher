@@ -12,10 +12,9 @@ import math
 import threading
 import time
 
-from wasmtime import Config, Engine, Store, WasmtimeError
+from wasmtime import Store, WasmtimeError
 from wasmtime.component import (
     Bool,
-    Component,
     FuncType,
     Linker,
     S32,
@@ -26,6 +25,7 @@ from wasmtime.component import (
 )
 
 from launcher.load_timing import measure
+from launcher.compiled_mod import CompiledMod
 
 
 class SandboxError(RuntimeError):
@@ -184,6 +184,7 @@ class Sandbox:
         cleanup=None,
         required_exports=None,
         timings=None,
+        prepared=None,
     ):
         # Only trusted infrastructure supplies grants, limits and cleanup; the guest supplies bytes.
         self._thread = threading.get_ident()
@@ -215,28 +216,12 @@ class Sandbox:
                 for name, operation in self._capabilities.items()
             ):
                 raise SandboxError("Expected at most 32 named host operations")
-            with Config() as config:
-                config.wasm_component_model = True
-                config.consume_fuel = True
-                config.epoch_interruption = True
-                # Keep memory accounting simple; guests receive no threads, shared memory or GC heap.
-                config.wasm_threads = False
-                config.shared_memory = False
-                config.wasm_memory64 = False
-                config.wasm_multi_memory = False
-                config.wasm_gc = False
-                config.wasm_function_references = False
-                config.max_wasm_stack = 512 * 1024
-                # Compile functions on Wasmtime's worker threads; guest execution stays serialized.
-                config.parallel_compilation = True
-                # Prefer faster compilation for components that include a Python runtime.
-                config.cranelift_opt_level = "none"
-                self._engine = self._resources.enter_context(Engine(config))
-            # Compile portable bytes through Wasmtime's validator, not unsafe native deserialization.
-            with measure(timings, "compile"):
-                compiled = self._resources.enter_context(
-                    Component(self._engine, component)
-                )
+            if prepared is None:
+                prepared = CompiledMod(component, timings)
+            if type(prepared) is not CompiledMod:
+                raise SandboxError("Expected a trusted compiler result")
+            self._resources.enter_context(prepared.take(component))
+            self._engine, compiled = prepared.engine, prepared.component
             with compiled.type as interface:
                 imports = interface.imports(self._engine)
                 exports = interface.exports(self._engine)

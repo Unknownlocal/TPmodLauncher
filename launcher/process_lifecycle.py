@@ -344,6 +344,9 @@ class Controller:
             pass
         while not self.events.empty():
             self._event(*self.events.get_nowait())
+        # Compilation futures do not hold up exit/exec handling; stores stay on this thread.
+        for scope in list(self.pack_mods.values()):
+            scope.poll()
         now = self.clock()
         # Confirm process exits even if a detached notification is delayed or missing.
         if self.sessions and now >= self.next_check:

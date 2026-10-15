@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -549,3 +550,60 @@ def test_pack_mods_follow_session_identity_and_close_on_every_removal(
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == (
         1 if transition == "shutdown" else 2
     )
+
+
+def test_controller_handles_child_and_exit_while_a_compiler_is_running(
+    rig, code_mod, monkeypatch
+):
+    from launcher import pack_mods
+
+    device, controller, messages, _ = rig
+    game = Path(controller.game).parent
+    folder = game / "data/owned pack"
+    code_mod(folder, "owned.pending")
+    entered, release = threading.Event(), threading.Event()
+    original = pack_mods._prepare
+
+    def prepare(manifest, timings):
+        entered.set()
+        assert release.wait(5)
+        return original(manifest, timings)
+
+    monkeypatch.setattr(pack_mods, "_prepare", prepare)
+    controller.mods_factory = lambda report, bridge: PackMods(
+        game, report, background=True
+    )
+    controller.start()
+    scope = None
+    try:
+        first = controller.sessions[10]
+        pack = dict(
+            state="ready", series="formula", id=folder.name, root=str(folder.resolve())
+        )
+        controller.events.put(
+            (
+                "bridge",
+                (
+                    10,
+                    first,
+                    {"type": "send", "payload": {"event": "pack", "pack": pack}},
+                ),
+            )
+        )
+        controller.poll()
+        scope = controller.pack_mods[10]
+        assert entered.wait(2) and not scope.mods
+        device.child(20, controller.game)
+        controller.poll()
+        assert 20 in controller.sessions and ("resume", 20) in device.calls
+        first.is_detached = True
+        first.handlers["detached"]("process-terminated")
+        controller.poll()
+        assert scope.closed and 10 not in controller.pack_mods
+    finally:
+        release.set()
+        controller.close()
+        if scope is not None:
+            scope.executor.shutdown(wait=True)
+    assert not any("CODE MOD ACTIVE:" in line for line in messages)
+    assert not controller.cleanup_failed
