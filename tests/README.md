@@ -117,6 +117,13 @@ and ARM. Its Windows job also prepares and tests the packaged runtime. The
 Windows coverage artifact retains its existing `python-coverage` name; other
 platforms have separate names.
 
+Behavioural tests run in separate launcher and hook-manager steps, followed by
+Windows-only native and embedded-runtime steps. Each step runs pytest directly
+using `exec`, with per-test progress in its log. Cancelling the run stops the
+active step and prevents the remaining groups and report steps from starting.
+Ordinary test failures still allow the other groups to run and keep the job
+failed. Coverage is cleared once, appended across groups and reported at the end.
+
 `coverage.yml` follows completed runs of that workflow and reads its existing
 artifacts without rerunning tests. The **Report test coverage** run summary shows
 line and branch coverage separately for all four platforms and links to the
