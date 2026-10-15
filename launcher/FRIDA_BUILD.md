@@ -203,7 +203,7 @@ $env:TPM_REQUIRE_EMBEDDED_TESTS = '1'
 Trusted Windows workflow runs also prepare and test this candidate after signing.
 PRs continue unsigned native-binding tests. Candidate preparation authenticates
 inputs and retains matching source material. It does not complete every remaining
-[component/platform review](../notices/frida-sdk/README.md) or manual Steam
+[component/platform review](../notices/frida-sdk/DISTRIBUTION_REVIEW.md) or manual Steam
 acceptance. Binary uploads remain disabled until those release
 requirements are complete. Native macOS/Linux binding builds do not yet provide
 a complete launcher/runtime release for those platforms.
@@ -230,7 +230,7 @@ pin, the installed lock, and every published file against the actual agent build
 inputs. Both agent outputs must exist, including in compatibility builds when
 present. The same package is saved once. npm/esbuild remain developer build
 tools; they are not added to launcher runtime dependencies. See the
-[package notice](../notices/frida-npm/README.md).
+[macOS distribution review](../notices/frida-sdk/DISTRIBUTION_REVIEW.md#macos-review-still-required).
 
 The source receipt hashes the archive and binds it to the exact binary build
 record. Ordinary CI exports the source files; release-validation runs also sign

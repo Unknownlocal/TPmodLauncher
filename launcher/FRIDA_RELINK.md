@@ -34,7 +34,8 @@ in those checkouts. Git verifies the restored objects before publication.
 macOS archives also retain the incorporated bridge package under `deps/npm/`.
 This is the original npm archive, with editable JavaScript and type declarations,
 not the minified agent output. Its version/integrity remain recorded in the
-restored upstream locks. See the [package notice](../notices/frida-npm/README.md).
+restored upstream locks. See the
+[macOS distribution review](../notices/frida-sdk/DISTRIBUTION_REVIEW.md#macos-review-still-required).
 
 To modify that bridge, unpack it into a separate working directory and edit its
 source. Run `npm pack` there to produce your modified package. In each restored
@@ -88,5 +89,5 @@ that a locally modified library retain our original binary hash.
 
 This material provides a source/rebuilding route; it is not a guarantee of
 byte-identical outputs or a completed licence audit for every platform. See the
-[component review](../notices/frida-sdk/README.md) for remaining compiler/runtime,
+[distribution review](../notices/frida-sdk/DISTRIBUTION_REVIEW.md) for remaining compiler/runtime,
 additional incorporated-source and per-platform checks before distribution.

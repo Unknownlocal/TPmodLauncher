@@ -1,273 +1,153 @@
-# Author API 0.2.0
+# Hook manager and mod API
 
-This experimental contract is defined in [mod.wit](0.2.0/mod.wit), using the standard
-WebAssembly Component Model's WIT language. Its world is `code-mod`, in package
-`modlauncher:api@0.2.0`. Existing API 0.1.0 diagnostics components remain supported
-through the retained [0.1.0 contract](0.1.0/mod.wit). The manifest selects its exact
-version; there is no automatic fallback. Both run as real sandboxed components.
-Every supported contract lives at `hook_manager/api/<version>/mod.wit`. The
-builder selects that path from the validated manifest's `api` field and passes
-requested capabilities as feature switches, without version-specific branches.
+## Architectural overview
 
-The host's supported versions, capability lists and lifecycle signatures are
-defined in [launcher/mod_api.py](../../launcher/mod_api.py). Manifest validation
-and binding those permissions to trusted handlers live in
-[launcher/mod_contract.py](../../launcher/mod_contract.py).
+The hook manager is the trusted in-game side of the launcher. Mod components
+execute in the external launcher process; the manager supplies controlled access
+to native game interfaces through fixed bridge operations and declarative data.
 
-## Mod layout
+`launcher/game_bridge.py` assembles the trusted manager sources and loads
+`hook_manager/bridge.js` into each tracked game session. The JavaScript transport
+observes the CPython 3.13 runtime and enters Python at a main-thread boundary
+with the GIL held. Requests are serialized, bounded and restricted to status,
+shutdown, menu registration and loading progress.
 
-Each direct child with `mod.toml` declares a code mod for the Formula data pack
-selected by the game:
+`hook_manager/bootstrap.py` creates a private manager instance with a source
+digest and session ownership token. It initializes the hook manager, pack
+discovery and menu adapter, then dispatches bridge requests to those instances.
+Ownership checks prevent an unrelated manager from being overwritten.
 
-```text
-<game-root>/
-  modLauncher/                         trusted launcher and manager
-  data/<data-mod>/                      selected through the game's interface
-    <code-mod>/
-      mod.toml
-      mod.wasm
-      src/mod.py                       readable author source
-```
+`hook_manager/manager.py` provides approved target descriptors, bounded plain-value
+validation, deferred module observation and owned hook registration. It checks
+target signatures and restores wrappers during cleanup. These are trusted host
+facilities; the public mod contract exposes only the granted operations listed
+below.
 
-Several code-mod folders can coexist in one selected data pack. The external
-launcher discovers and activates their components after the game's startup pack
-is known. `constants.py` needs no executable additions. Mod code runs outside the
-game. The `main-menu` capability adds native rows with click confirmations;
-general game-event delivery and gameplay operations are not implemented yet.
+`hook_manager/pack_discovery.py` observes the game's startup selection and keeps
+one Formula-pack snapshot per process. `hook_manager/menu.py` validates owned
+button declarations, waits for the normal menu import and adapts the game's
+native menu. The adapter also displays loader progress and guards season
+actions until loading and registration outcomes settle. Registry generation
+counters prevent stale acknowledgements from revoking later registrations.
 
-Runnable templates are [diagnostics](../../examples/diagnostic_mod), retained on
-API 0.1.0, and the [native UI example](../../examples/menu_mod), using API 0.2.0.
-Its manifest is plain TOML with the following complete schema:
+Outside the game, `launcher/pack_mods.py` owns discovery and activation;
+`launcher/mod_contract.py` validates manifests and binds permissions to trusted
+handlers. `launcher/mod_api.py` defines supported versions and lifecycle
+signatures, while the versioned `mod.wit` files define the component interface.
+`launcher/build_mod.py` generates author bindings from that contract.
+`launcher/sandbox.py` enforces admission and execution limits for each instance.
+Process replacement and shutdown close the owned mod scopes and bridge, remove
+menu registrations and restore the manager's hooks.
 
-```toml
-schema = 1
-id = "example.diagnostics"
-version = "0.1.0"
-api = "0.1.0"
-runtime = "python"
-component = "mod.wasm"
-capabilities = ["diagnostics"]
-```
+## Mod API overview
 
-| Field | Meaning |
-| --- | --- |
-| `schema` | Integer manifest format, currently 1. |
-| `id` | Stable mod identifier: starts with a lowercase letter, followed by lowercase letters, digits, `.`, `_`, `:`, or `-`; at most 128 characters. |
-| `version` | SemVer version, including optional prerelease/build identifiers; at most 64 characters. |
-| `api` | Exact supported API version: `0.1.0` or `0.2.0`. Menu registration requires `0.2.0`. |
-| `runtime` | Approved host profile: `python` or `wasm`. This requests a resource profile, not native Python execution. |
-| `component` | Canonical relative `.wasm` path within this folder. Linked or escaping paths are rejected. |
-| `capabilities` | Unique requested permissions: `diagnostics`, plus `main-menu` in API 0.2.0. Unknown permissions fail admission. |
+The mod API is the versioned `code-mod` WebAssembly Component contract. Mods run
+in Wasmtime in the external launcher process and call explicitly granted host
+functions through generated bindings. The implemented capabilities are
+diagnostic reporting and declarative native-menu buttons.
 
-All fields are required. Unknown fields are rejected. Manifests are limited to
-16 KiB and do not execute code. Imports must also match the manifest's grants;
-merely declaring a permission cannot add a function to the manager API.
+### Supported versions and permissions
 
-## Discovery and lifetime
+| Manifest API version | Contract | Available permissions |
+| --- | --- | --- |
+| `0.1.0` | [mod.wit](0.1.0/mod.wit) | `diagnostics` |
+| `0.2.0` | [mod.wit](0.2.0/mod.wit) | `diagnostics`, `main-menu` |
 
-- Only ordinary direct child directories containing `mod.toml` are candidates.
-  The pack root itself and deeper nested folders are not code-mod entries.
-  Linked directories and junctions are skipped; linked pack paths, manifest files
-  and component paths are rejected. Manifests and components must be regular files.
-- Valid manifests are collected before any component initializes. Every valid
-  manifest sharing a duplicate mod ID is rejected; no copy wins by folder order.
-  Remaining mods activate in ascending ID order. There is no dependency ordering
-  or mod-to-mod communication in this version.
-- Discovery allows at most 4,096 direct pack entries and 32 candidate mod folders.
-  Exceeding either limit rejects code loading for that process before activation.
-  These are launcher limits, not manifest options.
-- A malformed manifest, missing/invalid component, or initialization/activation
-  failure is logged without stopping valid neighbours or the game. An ordinary
-  data pack with no code mods is supported and loads zero components.
-- The startup pack is fixed for that process. Repeated bridge records do not
-  reload code or change its selected pack. Source edits do not trigger rebuilding
-  or live reloading; no compiler or package installer runs at player startup.
-- Each game session owns separate sandbox instances. Process exit, replacement,
-  PID reuse and launcher shutdown close them in reverse activation order. A new
-  game process discovers its own selected pack and receives fresh mod state.
+The manifest selects an exact API version and requests its permissions through
+`capabilities`. Unknown versions, unknown or duplicate permissions, ungranted
+imports and incompatible public signatures fail admission. API 0.2.0 uses WIT
+feature annotations to select imports when generating bindings; runtime checks
+separately enforce the permissions. There is no automatic version fallback.
 
-The launcher log records `CODE MOD ACTIVE`, approved `CODE MOD REPORT` messages,
-rejections, the active count and `CODE MOD CLOSED`. IDs and messages are quoted
-as JSON, and each record is labelled with its game process ID. These are the
-confirmation of mod loading. `CODE MOD MENU` reports native UI readiness separately;
-activation can finish while the adapter waits for the game's normal menu import.
+### Lifecycle exports
 
-`CODE MOD TIMING` records each attempted mod's `phase_seconds`, labelled with
-its pack and mod ID. The phases are:
+Both versions require these exports from the mod component:
 
-| Phase | Work measured |
-| --- | --- |
-| `manifest` | Read and validate the manifest and its parent folder. |
-| `component_read` | Read the bounded portable Wasm file. |
-| `compile` | Validate and compile the component using Wasmtime's parallel compiler. |
-| `initialize` | Instantiate the component and run its start functions. |
-| `activate` | Run the mod's activation export. |
-| `registration` | Send staged menu registrations, for mods requesting menu access. |
+| WIT signature | Python implementation | Behaviour |
+| --- | --- | --- |
+| `activate: func()` | `WitWorld.activate(self)` | Called once after component admission and initialization. Registers the mod's initial host resources. |
+| `on-event: func(name: string, payload: string) -> string` | `WitWorld.on_event(self, name, payload)` | Accepts an event name and JSON payload string and returns a JSON response string. |
 
-Only reached phases are recorded; a failed phase retains its duration. Invalid
-manifests and duplicate IDs include their manifest timing in the rejection
-record. `CODE MOD READY` includes discovery timing and `total_seconds` for the
-whole pack-loading attempt; discovery failures include these in their rejection
-record instead. Totals also include validation, setup, logging and failure
-cleanup, so they need not equal the sum of the listed phases.
+Python components implement `wit_world.WitWorld` using the bindings generated
+from the selected contract. Component initialization can call granted host
+functions before `activate()` runs. Event calls require successful activation.
 
-Registration timing covers the request, not a later deferred UI installation;
-`CODE MOD MENU` remains the native readiness confirmation. These timings are
-elapsed seconds, separate from guest fuel and execution deadlines. Guest calls
-remain serialized, and components are compiled afresh each launch without a
-compilation cache.
+The host implements event serialization and response validation, but the current
+launcher does not deliver general gameplay events or apply event responses to
+gameplay. Menu clicks display their registered confirmation; they do not call
+`on_event()`.
 
-## Calls
+### Host functions
 
-- `report(message: string)` requires `diagnostics`.
-  The host attaches the manifest ID and replaces non-printable characters before
-  passing the message to its trusted diagnostic handler. It grants no game access.
-- `add-menu-button(id: string, label: string, message: string)` requires API 0.2.0
-  and `main-menu`. It stages an owned native row and a click confirmation.
-- `activate()` is called once after admission. Component initializers may execute
-  before it, with the same granted functions and initialization resource limits.
-- `on-event(name: string, payload: string) -> string` receives and returns bounded
-  JSON plain values. Host infrastructure decides which events to deliver. The
-  approved event adapter will validate its particular request/response schema;
-  an event name never resolves an arbitrary Python module, function or attribute.
+| WIT signature | Python binding | Required permission |
+| --- | --- | --- |
+| `report: func(message: string)` | `wit_world.report(message)` | `diagnostics` |
+| `add-menu-button: func(id: string, label: string, message: string)` | `wit_world.add_menu_button(id, label, message)` | `main-menu`, API `0.2.0` |
 
-JSON uses the existing manager's value checks: finite numbers, signed 64-bit
-integers, plain lists/dictionaries/strings/booleans/null, depth at most 8 and a
-1,024-node budget. Each WIT string must also fit 4,096 UTF-8 bytes, including the
-serialized payload/response. Native objects, functions and pointers cannot pass.
-Invalid responses close the mod and run its owned cleanup.
+`report` writes a diagnostic message through the launcher. The host supplies the
+calling mod's identity and replaces non-printable characters with spaces before
+logging the message.
 
-The host checks exact public function signatures before initialization. Python
-components also contain generated private exports; these do not enter the host's
-callable table. No private nested function or resource can be invoked through
-this API. Package labels alone are not proof of compatibility: manifest version,
-imports and public signatures all need to pass.
+`add-menu-button` stages a native menu row owned by the calling mod. After
+successful activation, the launcher publishes the declarations to the trusted
+menu adapter. The adapter waits for the game's normal menu import, inserts rows
+before `Exit` when present, and uses the native rendering and input handling.
+Clicking a row displays its confirmation message for 2.5 seconds.
 
-## Native menu buttons
+Menu declarations have these limits:
 
-Request `main-menu` in an API 0.2.0 manifest and register during `activate()`:
+- Item IDs start with a lowercase letter and contain up to 128 lowercase letters,
+  digits, `.`, `_`, `:` or `-` characters.
+- Labels contain 1-64 printable characters; messages contain 1-160. Leading and
+  trailing whitespace are rejected.
+- Each mod can own four buttons, with 32 total per game process. Item IDs must be
+  unique within their owning mod, and labels must be unique across mod buttons
+  and existing native menu entries.
+- The complete declaration sent through the bridge is limited to 16 KiB of
+  encoded JSON.
 
-```python
-wit_world.add_menu_button("confirmation", "Mod Launcher", "The sandboxed UI mod is active")
-```
+The host supplies ownership. Declarations contain text and identifiers; they
+cannot supply executable callbacks, game targets or commands. A failed or closed
+mod loses its owned registrations. Session shutdown removes the registry and
+restores owned menu wrappers.
 
-The host supplies the calling mod's identity. The item ID follows the same short
-identifier rules as mod IDs. Labels contain 1-64 printable characters; messages
-contain 1-160. Leading/trailing whitespace and control characters are rejected.
-Each mod may own four buttons, with 32 total per game process. Duplicate labels,
-duplicate owned IDs and labels already used by the native menu are rejected.
-The complete bridge declaration also has a 16 KiB encoded-JSON limit.
+### Values and execution limits
 
-After successful guest activation, the launcher publishes the declarations through
-the existing bounded Frida channel. The trusted adapter waits for the normally
-loaded `ui.screens.hub_screen` module and checks its expected native interface.
-It inserts rows before `Exit`, or at the end if no Exit row exists. The game keeps
-its renderer, layout, hover, keyboard and mouse handling. Clicking the button
-shows its confirmation for 2.5 seconds using the native message display. This
-capability does not invoke guest `on_event()` or arbitrary game actions on click.
+Each interface string is limited to 4,096 UTF-8 bytes. Event payloads and
+responses contain plain JSON values: null, booleans, strings, finite numbers,
+signed 64-bit integers, lists and dictionaries. Validation limits nesting depth
+to 8 and the value tree to 1,024 nodes. Invalid event data or responses close the
+affected mod. Native objects, pointers and callable targets cannot cross the
+interface.
 
-Declarations are plain values, never Python, target paths, callbacks or commands.
-Host work is published outside the guest's fuel/deadline window, using a separate
-bounded bridge request. A failed/trapping mod loses its own rows; scope shutdown
-removes all rows and restores the owned activation wrapper. An unsupported menu
-disables UI mods while diagnostics-only neighbours remain active. Deferred status
-records carry a host-owned counter so a stale failure cannot revoke a later
-replacement registry. Starting a plain pack adds no example button.
+Each mod has a separate Store, grants and guest state. The host limits component
+files to 32 MiB, guest linear memory to 64 MiB and host calls to 64 per
+initialization or exported call.
 
-API 0.2.0's WIT uses standard feature annotations to include only the imports
-requested by the manifest. Our builder selects these `--features` switches; authors
-do not edit WIT or manage the switches themselves. The switches select bindings,
-not permissions: runtime admission still checks every import against actual
-grants. Unsupported imports are rejected rather than linked to permissive stubs.
+| Runtime profile | Initialization budget | Budget per exported call |
+| --- | --- | --- |
+| `python` | 20,000,000 fuel units, 5 seconds | 5,000,000 fuel units, 1 second |
+| `wasm` | 5,000,000 fuel units, 1 second | 5,000,000 fuel units, 1 second |
 
-## Execution budgets
+Fuel measures Wasm execution work, including the guest Python interpreter.
+Budgets reset for each call and include post-return cleanup. Trusted host
+handlers do not consume guest fuel; host-call counts and elapsed-time checks
+bound that work separately. A deadline can interrupt guest execution, but cannot
+interrupt a blocked host handler. A late return is rejected.
 
-**Fuel is a budget for WebAssembly execution work.** Wasmtime deducts fuel while
-the component runs: most Wasm instructions cost one unit, and some cost zero.
-For Python mods, this includes the sandboxed Python interpreter's work. It does
-not count Python statements or native CPU instructions, and it is not a duration
-in seconds. A single Python statement can spend many units. See
-[Wasmtime's definition](https://docs.rs/wasmtime/49.0.0/wasmtime/struct.Store.html#method.set_fuel).
+Guest calls are serialized. Traps and execution-limit failures close the
+affected instance, revoke its grants and release its owned resources. Guest
+components receive only the linked API operations, with no host WASI filesystem,
+network or process environment.
 
-The `python` profile allows 20,000,000 fuel units for component initialization.
-Each later `activate()` or `on-event()` call receives a fresh 5,000,000 units,
-including any guest cleanup needed to return its result. Unused fuel does not
-carry over. The `wasm` profile uses 5,000,000 units for initialization too.
-The launcher chooses these budgets; a mod cannot raise them in its manifest.
+### Loader integration
 
-An endless loop keeps spending fuel until Wasmtime stops it. Fuel exhaustion
-closes the affected mod, revokes its permissions and runs its owned host cleanup;
-other mod instances remain usable.
+The loader activates admitted mods from the selected Formula pack in mod-ID
+order and maintains their lifetime with the tracked game process. Replacement
+processes receive fresh instances. Shutdown closes mods in reverse activation
+order.
 
-Calls into trusted launcher handlers do not spend guest fuel. Separate limits
-allow one second of elapsed execution time per exported call; Python component
-initialization gets five seconds to accommodate slower hosts. The `wasm` profile
-retains a one-second initialization deadline. Both profiles allow 64 host calls
-per initialization or exported call. The deadline can interrupt guest code, but
-cannot interrupt a blocked host handler; a late return is rejected. See the full
-[sandbox limits](../../launcher/SANDBOX.md) for memory and other bounds.
-
-## Build Python components
-
-Use full developer Python and a project-local venv. From the launcher checkout:
-
-```console
-python -m venv .venv
-python -m pip --python .venv install -r requirements-dev.txt
-```
-
-Then use that venv's Python (`.venv/Scripts/python.exe` on Windows,
-`.venv/bin/python` on Linux/macOS):
-
-```console
-python -m launcher.build_mod examples/diagnostic_mod --output examples/diagnostic_mod/mod.wasm
-```
-
-Here `python` means the venv interpreter. The helper uses pinned
-`componentize-py==0.25.1`, the supplied WIT and generated `wit_world` bindings.
-The entry module is `src/mod.py`. It copies up to 1 MiB of Python source into
-temporary staging, rejects links/non-Python inputs, uses an empty package search
-environment and builds with `--stub-wasi`. It preserves the original source and
-refuses to overwrite an existing output. Choose a fresh output when rebuilding.
-Builders and their packages are developer tools; players do not install them.
-
-The mod author runs this build command and distributes the resulting `mod.wasm`
-with the manifest and readable source. The tool is supplied by this repository;
-it is not run automatically by the launcher when a player starts the game, and
-launcher maintainers do not need to build each author's mod.
-
-`--stub-wasi` embeds denial stubs for unused WASI operations. Runtime startup
-links no host WASI environment, filesystem, network, process or native-library
-functions. An attempted operation may raise a Python exception or trap the whole
-component. A trap disables that instance; there is no unrestricted Python fallback.
-
-The `python` profile also raises the core-instance limit from 32 to 64 to fit its
-interpreter. The test component used about 11.9 million startup fuel units and
-about 94,000 for a simple JSON event. These measurements do not establish costs
-for every Python mod or a conversion between fuel and Python statements.
-
-Python components include their own sandboxed Python runtime; the current sample
-is roughly 18 MiB. Supplied source and a documented build are not proof that an
-arbitrary binary was built from them. Sandbox admission enforces host capabilities,
-while source/build review enforces the distribution policy on third-party code.
-Compiled artifacts are ignored by Git. Retain applicable Python/toolchain notices
-when distributing built components; a full distributable release is separate work.
-
-## Current boundaries
-
-Startup readiness is loader-owned infrastructure, not an author capability.
-The menu keeps New Season, Load Game and Continue Season unavailable until
-the selected pack's loading outcomes and native menu registration are settled.
-Authors do not supply readiness text, counts or completion messages, and no API
-version change is needed for this behaviour.
-
-The launcher discovers and activates sandboxed mods and offers the declarative
-native-menu capability. It does not yet deliver general game events or apply
-guest event responses to gameplay. Additional
-capabilities require reviewed adapters and a versioned contract change.
-Compilation and blocked trusted callbacks retain the limits documented in the
-sandbox host; there is no claim of OS-level isolation or a bug-free runtime.
-
-References: [WIT](https://component-model.bytecodealliance.org/design/wit.html),
-[componentize-py](https://github.com/bytecodealliance/componentize-py),
-[SemVer](https://semver.org/).
+Loading progress and season-action readiness belong to the loader and native
+menu adapter. They use the trusted bridge to keep New Season, Load Game and
+Continue Season unavailable until loading and menu-registration outcomes settle.
+They are not mod API capabilities.

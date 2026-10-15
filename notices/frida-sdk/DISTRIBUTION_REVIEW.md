@@ -69,7 +69,7 @@ DLLs, change Frida sources or remove objects from the pinned Git history.
 
 Ubuntu 24.04/WSL native and x86 compatibility records resolve 22 SDK packages:
 the Windows list plus elfutils, libbpf, libdwarf and libunwind. Their original
-licence texts were added to the [component inventory](README.md).
+licence texts are retained in the component subdirectories.
 
 Elfutils adds LGPLv3 terms for the selected library route. Its full LGPLv3 and
 GPLv3 texts are retained together. Follow the Combined Works requirements in
@@ -110,8 +110,8 @@ published files against both built agents. It includes the editable source under
 deps/npm/; offline restoration retains that archive unchanged. The published
 JavaScript and declarations match the package's published Git commit. The
 package declares LGPL-2.0 WITH WxWindows-exception-3.1 but ships no separate
-licence file; the full Library GPLv2 and wxWindows texts are retained here. See
-the [package notice](../frida-npm/README.md) and
+licence file; the full [Library GPLv2](libsoup/COPYING) and
+[wxWindows](../LICENSE.Frida.txt) texts are retained here. See the
 [rebuild instructions](../../launcher/FRIDA_RELINK.md).
 
 Both actual upstream agent targets compiled and exported successfully in a

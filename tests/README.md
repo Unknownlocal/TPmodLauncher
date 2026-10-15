@@ -1,142 +1,37 @@
-# Testing policy
+# Test architecture
 
-Write tests that check meaningful behaviour, edge cases and failure handling.
-Each test should catch a failure that matters to the launcher or hook manager.
+The pytest suite mirrors the production split between the external launcher and
+the in-game hook manager. `launcher/` contains dependency, packaging, process
+lifecycle, component, cache and sandbox tests. `hook_manager/` contains manager,
+pack discovery, native menu and bridge tests.
 
-- Preserve useful checks of behaviour that remains supported.
-- Prefer real classes and objects. Mock only dependencies or conditions necessary
-  to make a test practical and reliable, and keep each mock as small as possible.
-- Use coverage reports to find gaps worth investigating. Add a test when the
-  missing behaviour deserves a useful check, rather than to raise a percentage.
-- Treat lost coverage as a reason for review, not an automatic failure. Removing
-  obsolete code or replacing weak tests can legitimately change coverage. Check
-  whether the change loses a useful test of supported behaviour.
+The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
+runtime copies and a small owned native-menu interface. `launcher/conftest.py`
+adds real Git source repositories and Wasmtime components, and builds the public
+Python examples once per session. Fixtures stay separate from game files and
+external services.
 
-Coverage measures which code ran; it does not prove that a test checks the right
-result. There is no fixed minimum coverage percentage.
+Small WAT components exercise admission, permissions, limits, callback failures
+and cleanup. Built Python components exercise generated WIT bindings, private
+guest state, denied host I/O and the author build path. Cache tests combine real
+Wasmtime compilation with filesystem and platform access checks. Pack-loading
+tests combine manifests and components with controlled process and bridge events
+to exercise ordering, cancellation, readiness and per-session ownership.
 
-## Platform coverage
+Native integration tests run the real Frida controller and trusted bridge
+against owned CPython 3.13 helper processes. Their targets model module imports,
+menu interfaces and process replacement. Embedded-runtime tests relocate a
+prepared Windows bundle and invoke its production entry point in subprocesses,
+covering dependency verification, import isolation and component execution.
 
-Compilation-cache checks use real Wasmtime and filesystem entries: fresh processes,
-changed components/settings, fresh guest state/grants, current manifest validation,
-Unicode paths, regenerated config and cold fallback for rejected paths/access.
-Windows exercises actual ACL checks; Linux exercises real mode/FIFO checks.
-Darwin ACL return handling is tested at the OS-call boundary on other systems;
-native macOS permission behaviour still requires that platform's runner.
+The `native`, `embedded` and `frida_build` markers identify tests requiring native
+transport, the packaged Windows interpreter or a reduced Frida build. Portable
+jobs cover Windows, Linux and macOS; native acceptance uses the supported
+Windows and Linux transports. Required acceptance modes turn missing native
+prerequisites into failures.
 
-Readiness tests check the three guarded season actions, preserved native
-Continue Season restrictions, footer states, deferred registration, timeout and
-owned restoration. Real components check compilation failure and admission in
-both direct and background modes. A controlled worker pause checks that the
-controller still handles children/exits and never admits an abandoned result.
-The real Frida bridge helper also checks loading/completion requests and removal
-of readiness wrappers at shutdown. Actual game layout remains a manual check.
-
-The portable Python tests cover both launcher and hook_manager. Native tests
-also run the real Frida controller and manager bridge against owned CPython 3.13
-helpers on Windows and Linux. They check process replacement, inherited launch
-settings, timeouts, hook activation/restoration, shutdown and log replacement.
-Linux uses shared-library CPython 3.13 and a verified reduced Frida wheel in a
-temporary test bundle. This harness does not relax the production entry point's
-requirement to use the bundled Windows interpreter.
-
-Pack-discovery tests check startup snapshots and folder boundaries using owned
-modules and folders. The native bridge test also checks discovery after manager
-readiness and clears its snapshot at shutdown. It never starts the actual game.
-
-Sandbox-host tests use real Wasmtime and owned Components to check capability
-admission, isolated state, memory/fuel/deadline limits, callback failures and
-cleanup. They run in the developer environment on each portable CI platform;
-the relocated embedded probe also exercises the production host. See
-[sandbox host](../launcher/SANDBOX.md) for scope and limits.
-
-Author-contract tests build an owned Python component once per pytest session
-with pinned componentize-py and the public WIT. They check real lifecycle/events,
-private state, denied host I/O and shipped-interpreter compatibility. Small owned
-WAT fixtures check manifest/response errors without repeatedly building Python.
-No game code or external service is needed, and builds never import mod source
-into the native test interpreter.
-
-Pack-mod tests use real manifests and Wasmtime components to check direct-child
-discovery, ID ordering/duplicates, independent failures, scan limits and linked
-paths. Controller tests reuse the minimal Frida event fake to verify that real
-mod sandboxes close on detach, missing processes, exec, PID reuse and shutdown.
-The relocated embedded probe uses the production source-package setup and loads
-a real Python mod from an owned selected pack without developer build tools.
-
-Menu tests exercise the public UI example alongside a legacy diagnostics guest,
-native row placement/click confirmation, import deferral, denied grants, conflict
-rollback, stale acknowledgements and per-mod resource revocation. The real Frida
-bridge test also sends menu declarations to an owned native-style target and
-checks restoration. It uses no actual game code, renderer or assets; the user
-checks the final game's appearance manually.
-
-The `embedded` tests cover Windows's packaged interpreter and entry point,
-including both dependency versions, import isolation, damaged files, offline
-startup and real Wasmtime Component execution. The startup audit allows Python's
-exact Windows `cmd.exe /c "ver"` platform query; other subprocesses and network
-connections remain blocked. These tests skip on Linux. The two `native`
-controller/bridge tests must not skip when native acceptance is requested.
-`frida_build` identifies the reduced binding's
-native feature probe. CI requires these checks in the relevant jobs rather
-than counting missing runtime prerequisites as successful acceptance.
-
-## Run the full suite in WSL
-
-Use Ubuntu with the compiler prerequisites in
-[FRIDA_BUILD.md](../launcher/FRIDA_BUILD.md), and shared CPython 3.13 with its
-development headers. Create a separate Linux venv; a Windows venv is not usable
-in WSL. Keep compiler workspaces and pytest temporary files on Linux's filesystem.
-When a source build is needed, Python's `--enable-shared` configure option
-provides the library used by the native bridge.
-
-From a Linux checkout of this project:
-
-```bash
-python3.13 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -B launcher/build_frida.py
-TPM_FRIDA_BUILD_OUTPUT=.cache/reduced-frida/linux-x86_64 \
-TPM_REQUIRE_FRIDA_BUILD_TESTS=1 TPM_REQUIRE_NATIVE_TESTS=1 \
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-.venv/bin/python -B -m pytest -p pytest_cov --cov --cov-report=term-missing --cov-report=xml
-```
-
-This collects the full suite, including both native tests. Only the
-Windows entry-point checks should skip. Missing Python/Frida prerequisites for
-the native tests fail when `TPM_REQUIRE_NATIVE_TESTS=1`. Linux helpers exercise
-explicit fork/exec with the normal exec-completion handoff before their parent
-returns from spawning. Attaching during Python's subprocess fork implementation
-stalls with stock and reduced Frida on WSL; that path remains a documented
-limitation, not a supported case inferred from these passing tests.
-
-## GitHub Actions
-
-`pytest.yml` runs portable tests on Windows, Linux and GitHub-hosted macOS Intel
-and ARM. Its Windows job also prepares and tests the packaged runtime. The
-Windows coverage artifact retains its existing `python-coverage` name; other
-platforms have separate names.
-
-Behavioural tests run in separate launcher and hook-manager steps, followed by
-Windows-only native and embedded-runtime steps. Each step runs pytest directly
-using `exec`, with per-test progress in its log. Cancelling the run stops the
-active step and prevents the remaining groups and report steps from starting.
-Ordinary test failures still allow the other groups to run and keep the job
-failed. Coverage is cleared once, appended across groups and reported at the end.
-
-`coverage.yml` follows completed runs of that workflow and reads its existing
-artifacts without rerunning tests. The **Report test coverage** run summary shows
-line and branch coverage separately for all four platforms and links to the
-original run's downloadable XML/HTML reports. It also shows the tested commit
-and test result. Failed or cancelled test runs can have unavailable reports;
-a successful test run must supply all four valid reports. Coverage percentages
-remain informational, with no minimum threshold. Embedded subprocess coverage
-is not included. The reporting workflow needs to be on the default branch
-before GitHub will trigger it; it needs no additional secrets or services.
-
-`reduced-frida.yml` builds the binding on all four targets. Its Linux job runs
-the launcher/manager suite with native tests required after compilation. Its
-Windows trusted-run job tests the authenticated reduced candidate. macOS
-currently runs portable Python and binding checks; the manager's native
-transport is not yet adapted or accepted there. No self-hosted macOS runners
-are needed, and local WSL runs provide independent Linux evidence.
+`pyproject.toml` defines collection, markers and line/branch coverage for
+`launcher` and `hook_manager`. The pytest workflow separates launcher,
+hook-manager, native and embedded groups and combines their coverage artifacts.
+The coverage workflow consumes those artifacts, while the reduced-Frida workflow
+builds and checks platform transport candidates.
