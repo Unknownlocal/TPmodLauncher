@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise per-mod permission enforcement through the real sandbox boundary."""
 
+from dataclasses import replace
+
 import pytest
 from wasmtime import wat2wasm
 
@@ -70,8 +72,10 @@ def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle, op
     capabilities.clear()
     providers.clear()
     data = runner_bundle.component()
-    with Sandbox(data, allowed, limits=PYTHON_LIMITS, required_exports=dict(EXPORTS)) as first, Sandbox(
-        data, denied, limits=PYTHON_LIMITS, required_exports=dict(EXPORTS)
+    # This checks grant isolation; allow CI scheduling headroom without changing other budgets.
+    limits = replace(PYTHON_LIMITS, seconds=5.0)
+    with Sandbox(data, allowed, limits=limits, required_exports=dict(EXPORTS)) as first, Sandbox(
+        data, denied, limits=limits, required_exports=dict(EXPORTS)
     ) as second:
         for guest in (first, second):
             guest.call("put-source", "mod.py", source_for(operation, "event"))
