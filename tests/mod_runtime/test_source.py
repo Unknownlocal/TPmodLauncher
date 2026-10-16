@@ -278,16 +278,21 @@ def test_linked_directories_and_ancestors_are_rejected(mod, tmp_path, target):
         link.rmdir() if os.name == "nt" else link.unlink()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Case-sensitive paths and symlinks use the POSIX branch")
 @pytest.mark.parametrize("mutation", ["file-link", "case-file", "case-package"])
-def test_posix_links_and_portability_collisions(mod, tmp_path, mutation):
+def test_links_and_portability_collisions(mod, tmp_path, mutation):
     if mutation == "file-link":
+        if os.name == "nt":
+            pytest.skip("Creating file symlinks requires Windows developer mode")
         (mod / "src/mod.py").unlink()
         outside = tmp_path / "outside.py"
         outside.write_bytes(b"not permitted")
         (mod / "src/mod.py").symlink_to(outside)
     elif mutation == "case-file":
-        (mod / "src/MOD.py").write_bytes(b"")
+        try:
+            with (mod / "src/MOD.py").open("xb"):
+                pass
+        except FileExistsError:
+            pytest.skip("Filesystem cannot create separate case-colliding files")
     else:
         (mod / "src/helpers.py").write_bytes(b"")
         (mod / "src/Helpers").mkdir()
