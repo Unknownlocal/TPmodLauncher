@@ -8,17 +8,17 @@ real Wasm execution, owned native helper processes and relocated player bundles.
 
 | Area | Coverage |
 | --- | --- |
-| `launcher/` | Dependency verification, release/build tooling, component admission, compilation cache, sandbox limits, pack loading and process/session lifetime. |
-| `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu adaptation and the bridge. |
+| `launcher/` | Dependency verification, release/build tooling, component admission, compilation cache, sandbox limits, pack loading, settings persistence and process/session lifetime. |
+| `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adaptation and the bridge. |
 | `mod_runtime/` | Runner inventories and ABI, source snapshots, permissions, loading budgets, cancellation, controller adoption and source-mod lifecycle. |
-| `ci/` | Exhaustive suite selection and complete, platform-separated coverage aggregation. |
+| `ci/` | Exhaustive portable suite selection and complete Windows acceptance coverage aggregation. |
 
 Small WAT components exercise permissions, signatures, traps, budgets and cleanup.
-Built Python components retain legacy contract coverage. Public schema 2 examples
+Built Python components retain legacy contract coverage. Public Python source examples
 run through the trusted runner, independently of the legacy manifest fixtures.
 Source tests cover inert snapshots, portable layouts, file replacement and link
 attempts, and bounded loading into real guest instances. Source-adapter tests
-reuse the launcher JSON contract and diagnostic/menu ownership.
+reuse the launcher JSON contract and owned native UI resources.
 
 Preparation tests use synchronized worker gates to exercise queued and running
 cancellation, abandoned results and controller-thread adoption. Pack/session
@@ -47,35 +47,40 @@ specific skips are confined to the unsupported case.
 
 ## CI and coverage
 
-Launcher, hook manager, mod runtime and CI helpers have independent workflows.
-Each uses native path filters for pushes to `main` and pull requests, plus a
-manual trigger. Filters include the area's code/tests and shared dependencies;
-Markdown-only or unrelated changes create no test run. A reusable portable
-workflow supplies separate Windows and Linux jobs without a selector runner.
+`tests.yml` is the push-to-`main`, pull-request and manual entry point. Its path
+filter covers production code, tests, build inputs and dependencies, excluding
+Markdown-only changes. Every matching run calls the launcher, hook manager,
+mod runtime, CI-helper and Windows acceptance workflows. Component workflows
+are reusable `workflow_call` definitions; the portable workflow supplies separate
+Windows and Linux jobs for each area.
+
+`dev-dependencies.yml` prepares a wheelhouse once per platform. Test and build
+jobs download that run's wheels and install them into separate environments
+without consulting a package index. Windows acceptance also shares one verified
+player bundle between its embedded and native jobs.
 
 Test ownership follows the `tests/launcher`, `tests/hook_manager`,
 `tests/mod_runtime` and `tests/ci` directories. Each portable job collects all
 portable modules to check ownership, then executes its selected area. Unknown
-areas and overlapping ownership fail collection. The CI-helper workflow watches
-all test changes so newly added test areas cannot bypass that check. Collection
-still loads shared fixtures and test-module imports across areas.
+areas and overlapping ownership fail collection. Collection still loads shared
+fixtures and test-module imports across areas.
 
-Windows runtime acceptance has its own workflow and dependency filter. It
-prepares one verified player bundle for independent embedded and native jobs.
-Its completion check covers bundle preparation, both acceptance jobs and their
-coverage aggregation. Component workflows succeed only when their Windows and
-Linux jobs succeed; their results are separate from the runtime-only gate.
+The Windows runtime completion check covers bundle preparation, both acceptance
+jobs and their coverage aggregation. The parent `Test suite complete` check
+requires dependency preparation and all component/acceptance workflows to
+succeed. Each component requires both its Windows and Linux jobs.
 The reduced-Frida workflow remains manual and keeps matching builds, source
 export and candidate transport acceptance together on Windows and Linux.
 
 Every test job retains JUnit results and raw coverage. Portable jobs produce
 XML/HTML for their selected component directly; CI-helper coverage measures
 `.github`. Windows acceptance combines its two required fragments into one
-report, rejecting incomplete or corrupt data. Reports are scoped to one workflow
-run and are never assembled from different runs or previous commits.
+report, rejecting incomplete or corrupt data. Artifact names identify their
+suite and platform within the shared run.
 
 `pyproject.toml` configures line/branch coverage. Isolated embedded children are
-not instrumented. The separate reporting workflow downloads only the completed
-run's reports, labels their workflow scope and parses XML without checking out
-or executing tested code. Portable workflows report both platforms; Windows
-runtime acceptance requires only its Windows report.
+not instrumented. After a successful `Test suite` run, the separate reporting
+workflow downloads only that run's reports and parses XML without checking out
+or executing tested code. It expects nine reports: four portable areas on both
+platforms and Windows runtime acceptance. Percentages stay separate by suite and
+platform; reports are never combined across runs or commits.

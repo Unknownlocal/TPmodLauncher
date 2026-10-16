@@ -27,15 +27,15 @@ fresh scopes; shutdown closes them and releases the controller's resources.
 
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,
-then exchanges bounded status, pack, loading and menu data. Source digests and
-session tokens identify the in-game manager owner.
+then exchanges bounded status, pack, loading, menu, settings and palette data.
+Source digests and session tokens identify the in-game manager owner.
 
 ## Pack loading and preparation
 
 `pack_mods.py` scans direct children of the selected startup Formula pack. It
 bounds discovery, validates manifests and rejects every candidate sharing a
 duplicate ID before activating valid mods in ID order. Normal entry enables
-schema 2 Python source and explicit schema 1 Wasm components.
+Python source mods and mods with prebuilt Wasm components.
 
 For Python mods, `mod_runtime.preparation` snapshots source, checks it against the
 admitted metadata and compiles verified runner bytes on a worker. Wasm components
@@ -52,9 +52,9 @@ loader logs those timings and cache status.
 ## Mod execution and native readiness
 
 `mod_api.py` records public API versions, permissions and lifecycle signatures;
-`mod_contract.py` supplies schema 1 admission, bounded JSON events and host-owned
-diagnostic/menu identity. `source_mod.py` applies that lifecycle and event contract
-to the Python runner. `runner_host.py` binds the runner's complete typed interface
+`mod_contract.py` supplies prebuilt Wasm component admission, bounded JSON events and host-owned
+diagnostic and UI resource identity. `source_mod.py` applies that lifecycle and
+event contract to the Python runner. `runner_host.py` binds the complete typed interface
 to per-mod providers or permission-denial callbacks.
 
 `sandbox.py` owns the compiled component, linker, Store and cleanup scope. It
@@ -66,7 +66,21 @@ A failure closes the affected mod and revokes its owned registrations.
 The loader publishes progress and menu declarations to the native adapter after
 activation. Startup readiness waits for both preparation outcomes and native
 menu acknowledgement. Session closure releases active mods in reverse order;
-loading work, menu ownership and bridge lifetime remain tied to that session.
+loading work, native UI ownership and bridge lifetime remain tied to that session.
+
+## Settings and palette ownership
+
+`ui_settings.py` validates labelled colour fields and binds each mod to its fixed
+`settings.json`. `_settings_files.py` pins ordinary directories and uses atomic
+replacement for persistence. Registration returns saved values or defaults;
+saved files survive instance cleanup, while declarations remain session-owned.
+
+`pack_mods.py` stages settings and palettes for the trusted native adapters.
+It validates native save requests against the owner and registry generation,
+persists values, acknowledges the result and delivers `ui-settings.changed` to
+the owning instance. Palette declarations use `hook_manager.themes.ThemeRequests`
+and are published separately from settings. The native theme adapter owns
+Color Pack choices and applies the selected palette at startup.
 
 ## Build and release boundaries
 

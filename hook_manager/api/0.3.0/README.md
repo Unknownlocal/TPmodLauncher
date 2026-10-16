@@ -1,111 +1,42 @@
-# UI settings API
+# API 0.3.0 architecture
 
-API `0.3.0` adds the `ui-settings` capability. Python source mods use
-`wit_world.register_settings(definition)` and `wit_world.save_settings(values)`.
-Both accept and return JSON strings bounded to 4,096 UTF-8 bytes. This replaces
-the unreleased theme-specific contract; no `theme-settings` aliases are retained.
+[`mod.wit`](mod.wit) defines the public `code-mod` component world. It retains
+the `activate` and `on-event` lifecycle exports, diagnostics and menu operations,
+and adds settings and palette operations under the `ui-settings` feature.
+Feature selection controls generated bindings; the launcher separately checks
+manifest grants and component signatures at admission.
 
-## Declare a settings tab and load values
+## Guest and host boundary
 
-`register_settings` accepts one tab definition per mod:
+Mods with prebuilt Wasm components implement the public WIT contract directly.
+Python source mods use the trusted runner's `wit_world` facade and private ABI.
+Both paths reach the same host providers through bounded scalar calls and JSON
+strings. The host supplies identity and permissions; declarations contain data
+rather than callbacks, filesystem paths or executable game targets.
 
-```json
-{"schema":1,"label":"Widget Options","fields":[{"id":"accent","label":"Accent Colour","color":"#3070B9"},{"id":"overlay","label":"Overlay","color":"#000000A0"}]}
-```
+## Settings ownership
 
-`schema` is the mod's settings schema, a positive integer at most 65,535. `label`
-is the tab title. `fields` contains 1-64 typed field declarations in display order.
-Each field has a stable `id`, its display `label`, and one typed default member.
-The first supported type is `color`, whose value is a `#RRGGBB` or `#RRGGBBAA`
-default. Unsupported types are rejected until implemented. The typed member keeps
-declarations small enough for all 52 labelled fields in the theme example.
+`launcher/ui_settings.py` owns definitions, validation and mod-local storage.
+Registration binds a labelled tab to typed colour fields and returns saved
+values or defaults. `_settings_files.py` implements pinned-directory access and
+atomic replacement of the fixed `settings.json` file. Persistent values outlive
+the guest instance; tab registrations remain owned by its session.
 
-Field IDs contain 1-64 ASCII characters, starting with a lowercase letter and
-continuing with lowercase letters, digits, `.`, `_`, `:` or `-`. IDs must be
-unique within their mod. Tab and field labels contain 1-64 printable characters
-without surrounding whitespace. Mods choose their own labels; the shared API
-does not generate theme names, group colours or require distinct defaults.
-Callbacks, filenames and game targets are not accepted.
+`hook_manager/settings.py` owns the native Options editor and unsaved drafts.
+Save requests cross the bridge to `launcher/pack_mods.py`, which validates the
+owner and generation, persists the values and acknowledges success or failure.
+A successful native save then delivers `ui-settings.changed` to its owner.
+Request IDs and registry generations reject duplicate or stale work.
 
-The result contains saved values, or defaults if `settings.json` is absent:
+## Palette ownership
 
-```json
-{"schema":1,"values":{"accent":"#3070B9","overlay":"#000000A0"}}
-```
+Palette registration is separate from settings persistence, sharing the
+`ui-settings` grant. `hook_manager/themes.py` owns declarative palette validation
+and staged records in the launcher, and native adaptation inside the game.
+The adapter supplies owned Color Pack choices, checks native colour coupling
+and applies the selected palette at startup. It updates `UITheme`, imported
+aliases and chrome lookup while preserving restart-only selection behaviour.
+Cleanup restores owned changes without deleting saved settings or theme choices.
 
-Registration creates no file. An identical declaration can be registered again
-to read current values. Changing the definition during a session fails. Invalid,
-oversized or schema-incompatible existing settings fail registration without
-overwriting the file. Migrations are not automatic.
-
-## Save values
-
-`save_settings` accepts a complete values document and returns its normalized
-contents after an atomic save. Every registered field ID must appear exactly
-once; unknown IDs are rejected. Colour values include `#`, accept either letter
-case and are returned in uppercase. RGB defaults require six digits; RGBA
-defaults require eight. Equal default or edited values remain independent fields.
-Saving the declared defaults implements reset without a separate operation.
-
-The host binds each mod to its installed directory and the fixed `settings.json`
-filename. Guests cannot select paths or another owner's store. Reads and writes
-use pinned ordinary directories and reject linked, shared and special settings
-files. Atomic replacement retains the previous document and in-memory values if
-a write fails. Windows operations stay relative to the pinned directory handle.
-
-## Ownership and integration
-
-At most four mod settings tabs may register per process, with distinct tab titles.
-The host supplies ownership; failure or closure removes declarations while keeping
-saved files. Calls require `ui-settings`, including during source import. API
-`0.2.0` remains supported with its existing permissions. The prepared runner uses
-private ABI `0.3.0`.
-
-The native adapter appends a tab to Options and renders colour inputs, swatches,
-Save and Reset to Defaults. It preserves unsaved drafts across tab switches in
-one options screen, supports mouse-wheel scrolling, and validates all fields
-before Save. Reset stages defaults until saved. Registration conflicts with a
-built-in tab label reject the affected declaration.
-
-Native saves are queued as bounded data. The launcher validates the owner and
-values, writes settings, and acknowledges the request before reporting success
-in the editor. Failed writes preserve drafts and display a retry message. Request
-IDs and registry generations prevent duplicate writes and stale acknowledgements.
-After a successful native save, the mod receives `on_event("ui-settings.changed",
-payload)`, where the JSON payload is the complete saved values document. Its
-response is validated but has no executable meaning. A notification failure
-closes that mod and removes its tab; the user's saved file remains intact.
-
-The theme example consumes these settings. Registering or saving settings does
-not register a palette or change game colours; palette application is separate.
-
-## Register a UI palette
-
-The `ui-settings` permission also enables `wit_world.register_theme(definition)`
-(`register-theme: func(definition: string)` in WIT). The JSON string is bounded to
-4,096 UTF-8 bytes and has exactly `label` and `colours` members. `label` follows
-the settings label rules. `colours` maps all 59 named colour roles in the example's
-[palette mapping](../../../examples/theme_mod/src/palette.py) to hex strings.
-`OVERLAY` requires eight digits; the other roles require six. No paths, callbacks,
-module names or arbitrary attributes are accepted. Roles sharing a native default
-colour must retain the same chosen colour. The native adapter checks coupling
-against the loaded game before applying a selected palette.
-
-Each mod owns one palette; registering again replaces its staged colours. Up to
-four palettes may register, with unique labels. The host assigns the dropdown ID
-`code-mod:<mod-id>`. Native theme conflicts reject registration. A palette's mod
-decides where its values come from; this API does not write settings files.
-
-The existing Graphics → Color Pack menu supplies selection, confirmation and
-persistence. Choices and edited colours apply on the next launch, matching the
-game's restart-only themes. The startup selection stays fixed while mods finish
-registering. A missing provider falls back to the game's default. The selected
-palette updates UITheme and native UI colour aliases; resolved colours bypass
-the chrome lookup so matching values cannot be recoloured twice. Session chrome's
-lookup is unchanged, though UITheme roles used by session screens use their new
-values. Arbitrary drawing literals, artwork and computed colours are outside
-this palette contract.
-
-Cleanup removes only owned choices, colour aliases and lookup wrappers, including
-aliases captured by modules imported later. Saved settings and the user's native
-theme choice remain on disk. API 0.2.0 cannot request `ui-settings`.
+The [hook manager API overview](../../README.md#ui-settings-and-palettes)
+describes the implemented operations, JSON formats and limits.

@@ -29,8 +29,8 @@ including operations invoked during initialization or source import.
 
 ## Source admission
 
-`source.py` parses schema 2, API 0.2.0/0.3.0 manifests and snapshots UTF-8 Python files
-under `src/` as immutable, ordered text. File, byte, entry, path and depth limits
+`source.py` parses API 0.2.0/0.3.0 Python source mod manifests and snapshots
+UTF-8 Python files under `src/` as immutable, ordered text. File, byte, entry, path and depth limits
 bound the work. Portable names, explicit package initializers and case checks
 reject ambiguous layouts. `_source_files.py` pins ordinary ancestor directories
 and rejects linked, reparse, hardlinked and special-file inputs. POSIX reads are
@@ -46,8 +46,9 @@ loading, then rejects reserved-name collisions during transfer.
 `guest.py` serves author modules from guest memory through an in-memory importer.
 Its frozen standard-library profile includes `json`, `math`, `os` and their
 runtime dependencies. The public `wit_world` facade exposes the author base class,
-diagnostics, menu, UI settings and palette operations; source-transfer and loading exports remain a
-private host protocol.
+diagnostics, menu, UI settings and palette operations. Host providers own native
+registration and persistence; the guest exchanges bounded strings through the
+private contract. Source-transfer and loading exports remain a private host protocol.
 
 `runtime.py` owns one verified bundle and source snapshot through transfer, import,
 explicit activation, string events and cleanup. UTF-8 chunks are accumulated and
@@ -59,7 +60,7 @@ activation and events keep the ordinary callback budgets.
 Optional compiler results are adopted only when their portable bytes match the
 verified runner. Cleanup ownership starts before admission and passes to the
 sandbox until closure. `launcher/source_mod.py` adds the shared launcher lifecycle,
-bounded JSON validation and host-owned diagnostic/menu identity to this runtime.
+bounded JSON validation and host-owned diagnostic and UI resource identity.
 
 ## Worker and session ownership
 
@@ -70,17 +71,10 @@ controller takes it once. Cancellation prevents queued work or disposes a late
 result; active ordinary-file reads and native compilation finish before cleanup.
 The controller owns executor lifetime and admission bounds.
 
-`launcher/pack_mods.py` dispatches schema 2 Python source and explicit schema 1
+`launcher/pack_mods.py` dispatches Python source mods and mods with prebuilt
 Wasm components after duplicate-ID checks. It owns preparation jobs with the
 session's loading scope and uses the existing progress, menu-readiness and
 cleanup protocols. Source loading never falls back to author-supplied Wasm.
-
-`launcher/ui_settings.py` owns labelled UI field declarations and per-mod
-`settings.json` storage through API 0.3.0's `ui-settings` grant. The host stages
-copied row records for the native Options adapter. `_settings_files.py` uses
-directory-relative file access and atomic replacement; author paths never enter
-the storage API. Saved settings survive instance cleanup, while registrations do
-not. Existing API 0.2.0 manifests keep their original capability set.
 
 Normal entry verifies the complete installed runner before creating sessions.
 Release preparation verifies and copies that bundle with trusted package sources
