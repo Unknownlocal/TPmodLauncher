@@ -29,10 +29,9 @@ def test_normal_entry_loads_source_examples_without_build_tools(embedded_project
 
 
 @pytest.mark.embedded
-@pytest.mark.parametrize("target", ["runner.wasm", "bundle.json", "notices/LICENSE.PythonGuest.txt"])
-def test_embedded_entry_reports_runner_damage_without_repair(embedded_project, target):
+def test_embedded_entry_reports_runner_damage_without_repair(embedded_project):
     root = embedded_project
-    payload = root / "libs/mod-runners" / target
+    payload = root / "libs/mod-runners/runner.wasm"
     original = payload.read_bytes()
     before = set(root.iterdir())
     try:

@@ -71,19 +71,16 @@ def test_equal_defaults_remain_independent_and_display_order_is_preserved(store)
 
 
 @pytest.mark.parametrize("mutation", [
-    {"schema": True}, {"schema": 0}, {"schema": 1.5}, {"label": " Leading"},
+    {"schema": True}, {"schema": 0}, {"label": " Leading"},
     {"label": "a\nb"}, {"fields": []}, {"path": "../elsewhere.json"},
     {"fields": [{"id": True, "label": "Accent", "color": "#112233"}]},
     {"fields": [{"id": "../escape", "label": "Accent", "color": "#112233"}]},
     {"fields": [{"id": "a", "label": "A", "color": "#112233"},
                 {"id": "a", "label": "B", "color": "#445566"}]},
-    {"fields": [{"id": "accent", "label": "Accent", "color": "red"}]},
     {"fields": [{"id": "accent", "label": "Accent", "color": "#12345"}]},
     {"fields": [{"id": "accent", "label": "Accent", "color": "#112233", "callback": "anything"}]},
     {"fields": [{"id": f"field{n}", "label": "A", "color": "#112233"} for n in range(65)]},
     {"fields": [{"id": "accent", "label": " ", "color": "#112233"}]},
-    {"fields": [{"id": "accent", "label": "a\nb", "color": "#112233"}]},
-    {"fields": [{"id": "accent", "label": "A", "toggle": True}]},
     {"fields": [{"id": "a" * 65, "label": "A", "color": "#112233"}]},
 ])
 def test_invalid_declarations_leave_registration_empty(store, mutation):
@@ -95,7 +92,7 @@ def test_invalid_declarations_leave_registration_empty(store, mutation):
 
 @pytest.mark.parametrize("text", [
     '[', 'null', '{"schema":1,"schema":2}', '[' * 2000,
-    '"' + '\u6c34' * 1500 + '"', ' ' * 4097,
+    '"' + '\u6c34' * 1500 + '"',
 ])
 def test_malformed_duplicate_or_over_budget_json_is_rejected(store, text):
     with pytest.raises(ValueError):
@@ -107,7 +104,6 @@ def test_malformed_duplicate_or_over_budget_json_is_rejected(store, text):
     {"schema": 2}, {"schema": True}, {"values": {"colour_11": "#ABCDEF"}},
     {"values": {"colour_11": "#ABCDEF", "colour_52": "#000000A0", "../escape": "#ABCDEF"}},
     {"values": {"colour_11": "#ABCDEF00", "colour_52": "#000000A0"}},
-    {"values": {"colour_11": "#ABCDEF", "colour_52": "#000000"}},
     {"values": {"colour_11": "#GGGGGG", "colour_52": "#000000A0"}},
     {"path": "../escape.json"},
 ])

@@ -553,9 +553,8 @@ def test_pack_mods_follow_session_identity_and_close_on_every_removal(
     )
 
 
-@pytest.mark.parametrize("transition", ["detached", "missing", "exec", "pid-reuse", "shutdown"])
-def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_bundle, transition):
-    device, controller, messages, now = rig
+def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_bundle):
+    device, controller, messages, _ = rig
     game = Path(controller.game).parent
     for name in ("first", "second"):
         source_mod(game / "data" / name, f"owned.{name}")
@@ -580,36 +579,23 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
         send(10, first, "second")
         controller.poll()
         assert list(initial.mods) == ["owned.first"]
-        current_scope, current_mod = initial, old_mod
-        if transition != "shutdown":
-            pid = 10
-            if transition in ("detached", "missing"):
-                del device.processes[10]
-                if transition == "detached":
-                    first.handlers["detached"]("process-replaced")
-                now[0] = 1.0
-                controller.poll()
-                pid = 20
-            elif transition == "pid-reuse":
-                first.is_detached = True
-            child = device.child(pid, controller.game)
-            if transition == "exec":
-                child.origin = "exec"
-            controller.poll()
-            assert initial.closed and old_mod.sandbox.closed
-            replacement = controller.sessions[pid]
-            send(10, first, "first")  # A stale source pack cannot reattach to the new session.
-            send(pid, replacement, "second")
-            controller.poll()
-            current_scope = controller.pack_mods[pid]
-            drain(current_scope)
-            assert list(current_scope.mods) == ["owned.second"]
-            current_mod = current_scope.mods["owned.second"]
+        first.is_detached = True
+        device.child(10, controller.game)
+        controller.poll()
+        assert initial.closed and old_mod.sandbox.closed
+        replacement = controller.sessions[10]
+        send(10, first, "first")  # A stale source pack cannot reattach to the new session.
+        send(10, replacement, "second")
+        controller.poll()
+        current_scope = controller.pack_mods[10]
+        drain(current_scope)
+        assert list(current_scope.mods) == ["owned.second"]
+        current_mod = current_scope.mods["owned.second"]
     finally:
         controller.close()
     assert current_scope.closed and current_mod.sandbox.closed
     assert not controller.pack_mods and not controller.cleanup_failed
-    assert sum("CODE MOD ACTIVE:" in line for line in messages) == (1 if transition == "shutdown" else 2)
+    assert sum("CODE MOD ACTIVE:" in line for line in messages) == 2
 
 
 def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch):

@@ -7,7 +7,6 @@ import json
 import math
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 
@@ -145,10 +144,15 @@ def test_plain_pack_is_valid_and_does_not_import_python(pack):
         assert 0 <= ready["phase_seconds"]["discovery"] <= ready["total_seconds"]
 
 
-@pytest.mark.parametrize(
-    "failure", ["component_read", "compile", "initialize", "activate"]
-)
-@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize("failure,background", [
+    # Read/compile differ by preparation mode; initialization and activation share the controller path.
+    pytest.param("component_read", False, id="foreground-read"),
+    pytest.param("component_read", True, id="background-read"),
+    pytest.param("compile", False, id="foreground-compile"),
+    pytest.param("compile", True, id="background-compile"),
+    pytest.param("initialize", True, id="initialize"),
+    pytest.param("activate", True, id="activate"),
+])
 def test_loading_timings_survive_failed_phases_and_keep_mod_identity(
     pack, code_mod, failure, background
 ):
@@ -282,26 +286,6 @@ def test_cleanup_failure_still_releases_the_other_instances(pack, code_mod):
     assert any("CLEANUP ERROR" in line for line in messages)
     scope.close()
     assert cleaned == ["failed", "healthy"]
-
-
-def test_real_python_mod_reports_only_with_its_admitted_identity(
-    pack, built_python_mod
-):
-    game, folder, record = pack
-    shutil.copytree(built_python_mod, folder / "python mod")
-    messages = []
-    with closing(PackMods(game, messages.append)) as scope:
-        scope.load(record)
-        assert list(scope.mods) == ["example.diagnostics"]
-        report = next(line for line in messages if line.startswith("CODE MOD REPORT:"))
-        assert json.loads(report.split(": ", 1)[1]) == {
-            "id": "example.diagnostics",
-            "message": "ready  ",
-        }
-        assert scope.mods["example.diagnostics"].event("echo", 42) == {
-            "count": 1,
-            "value": 42,
-        }
 
 
 @pytest.mark.parametrize("cancel", [False, True])

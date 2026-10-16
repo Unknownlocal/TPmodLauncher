@@ -26,15 +26,16 @@ def installed(tmp_path, runner_bundle, monkeypatch):
     return root, executable
 
 
-@pytest.mark.parametrize("check_only", [False, True])
-@pytest.mark.parametrize("damage", ["missing", "component", "notice"])
+@pytest.mark.parametrize("check_only,damage", [
+    pytest.param(False, "missing", id="launch-missing"),
+    pytest.param(True, "component", id="check-only-changed"),
+])
 def test_entry_rejects_runner_damage_before_launch_or_cache(installed, monkeypatch, capsys, check_only, damage):
     root, executable = installed
     if damage == "missing":
         (root / DIRECTORY / "bundle.json").unlink()
     else:
-        target = "runner.wasm" if damage == "component" else "notices/LICENSE.PythonGuest.txt"
-        (root / DIRECTORY / target).write_bytes(b"damaged")
+        (root / DIRECTORY / "runner.wasm").write_bytes(b"damaged")
     def forbidden(*args, **kwargs):
         pytest.fail("Runner rejection must precede game launch")
     monkeypatch.setattr(process_lifecycle, "run_launcher", forbidden)

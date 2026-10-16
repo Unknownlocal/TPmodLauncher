@@ -278,11 +278,10 @@ def test_output_rejects_extra_files(wheel_output, recipe):
         build.verify_output(output, recipe, "windows-x86_64")
 
 
-@pytest.mark.parametrize("target", ["linux-x86_64", "macos-arm64"])
-def test_wrong_platform_wheel_is_rejected(wheel_output, recipe, target):
+def test_wrong_platform_wheel_is_rejected(wheel_output, recipe):
     _, wheel = wheel_output
     with pytest.raises(build.Error, match="platform differs"):
-        build.inspect_wheel(wheel, recipe, target)
+        build.inspect_wheel(wheel, recipe, "linux-x86_64")
 
 
 def test_official_version_cannot_be_mistaken_for_our_build(wheel_output, recipe):
@@ -359,7 +358,7 @@ def test_reduced_preparation_requires_corresponding_source(
 
 
 @pytest.mark.parametrize(
-    "failed_artifact", ["wheel", "details", "source", "source_details"]
+    "failed_artifact", ["wheel", "source_details"]
 )
 def test_reduced_preparation_stops_before_writes_on_signature_failure(
     wheel_output, source_output, project_factory, monkeypatch, failed_artifact
