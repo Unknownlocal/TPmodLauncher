@@ -48,6 +48,7 @@ jobs:
     uses: ./.github/workflows/dev-dependencies.yml
     with:
       ref: ${{ needs.resolve.outputs.sha }}
+      pr_number: ${{ needs.resolve.outputs.pr }}
 
   launcher:
     needs: [resolve, dependencies]
