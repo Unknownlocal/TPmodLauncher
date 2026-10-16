@@ -11,11 +11,11 @@ import tomllib
 
 from . import _source_files as disk
 from ._source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, module_part
-from .contract import HOST_OPERATIONS
+from .contract import SOURCE_CAPABILITIES
 
 MAX_TREE_ENTRIES = 512
 MAX_DEPTH = 16
-SOURCE_API_VERSION = "0.2.0"
+SOURCE_API_VERSION = "0.3.0"
 _FIELDS = {"schema", "id", "version", "api", "runtime", "entry", "capabilities"}
 _NUMBER = r"(?:0|[1-9][0-9]*)"
 _PRE = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -59,7 +59,8 @@ class SourceManifest:
                 raise SourceError("Expected a short named mod identifier")
             if type(data["version"]) is not str or len(data["version"]) > 64 or not re.fullmatch(_VERSION, data["version"]):
                 raise SourceError("Expected a short SemVer version")
-            if data["api"] != SOURCE_API_VERSION or data["runtime"] != "python":
+            if (type(data["api"]) is not str or data["api"] not in SOURCE_CAPABILITIES
+                    or data["runtime"] != "python"):
                 raise SourceError("Unsupported source API version or runtime profile")
             entry = data["entry"]
             if type(entry) is not str or not 0 < len(entry) <= 128:
@@ -67,7 +68,7 @@ class SourceManifest:
             for part in entry.split("."):
                 module_part(part)
             capabilities = data["capabilities"]
-            known = {spec.capability for spec in HOST_OPERATIONS.values()}
+            known = SOURCE_CAPABILITIES[data["api"]]
             if (type(capabilities) is not list
                 or any(type(name) is not str or name not in known for name in capabilities)
                 or len(capabilities) != len(set(capabilities))):

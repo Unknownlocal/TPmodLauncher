@@ -40,8 +40,9 @@ and readiness are trusted infrastructure rather than mod API capabilities.
 
 ## Current mod API overview
 
-The implemented public operations are diagnostic reporting and declarative native
-menu buttons. Python source mods use schema 2, API `0.2.0` and the prebuilt
+The implemented public operations are diagnostic reporting, declarative native
+menu buttons and staged UI settings with mod-local storage. Python source mods
+use schema 2, API `0.2.0` or `0.3.0` and the prebuilt
 runner's `wit_world` facade. The runner supplies its base class and functions;
 authors supply their manifest and Python source without generated bindings.
 Explicit schema 1 Wasm components retain the versioned `code-mod` contracts.
@@ -49,8 +50,10 @@ Explicit schema 1 Wasm components retain the versioned `code-mod` contracts.
 | Mod format | API version | Available permissions |
 | --- | --- | --- |
 | Schema 2 Python source | `0.2.0` | `diagnostics`, `main-menu` |
+| Schema 2 Python source | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
 | Schema 1 Wasm component | `0.1.0` | `diagnostics` |
 | Schema 1 Wasm component | `0.2.0` | `diagnostics`, `main-menu` |
+| Schema 1 Wasm component | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
 
 The manifest selects an exact version and requests unique capabilities. Unknown
 versions or permissions and incompatible interfaces fail admission. Python
@@ -83,6 +86,8 @@ not invoke `on_event()`.
 | --- | --- | --- |
 | `wit_world.report(message)` | `report: func(message: string)` | `diagnostics` |
 | `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0` |
+| `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0` |
+| `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0` |
 
 `report` logs the supplied message with the host-owned mod ID. Non-printable
 characters are replaced with spaces before logging.
@@ -99,6 +104,12 @@ whitespace. A mod can own four buttons and a process can hold 32. Item IDs are
 unique within their owner; labels must also avoid registered and native menu
 items. The bridge bounds the encoded declaration list to 16 KiB. Failure or
 closure removes that mod's registrations.
+
+UI settings are validated and stored by the external launcher. They stage
+labelled colour fields and saved values for later native integration; this
+release does not yet render those rows or apply custom colours. The
+[UI settings contract](api/0.3.0/README.md) defines fields, limits and storage
+ownership.
 
 ### Execution boundary
 

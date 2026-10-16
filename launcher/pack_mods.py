@@ -15,6 +15,7 @@ from launcher.load_timing import measure
 from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod
 from launcher.source_mod import SourceMod
+from launcher.ui_settings import SettingsRequests
 from hook_manager.menu import MenuRequests
 from mod_runtime.bundle import RunnerBundle
 from mod_runtime.preparation import SourcePreparation
@@ -68,6 +69,7 @@ class PackMods:
         self.started = False
         self.closed = False
         self.menu = MenuRequests()
+        self.settings = SettingsRequests()
         self.set_menu = set_menu
         self.applied_menu = []
         self.menu_generation = 0
@@ -100,6 +102,7 @@ class PackMods:
         """Revoke a closed mod immediately; bulk shutdown publishes one final empty registry."""
         self.mods.pop(owner, None)
         self.menu.remove(owner)
+        self.settings.remove(owner)
         if (
             not self.closed
             and self.applied_menu is not None
@@ -280,8 +283,11 @@ class PackMods:
                     prepared = _prepare(manifest, timings, self.cache)
                 if prepared is not None and prepared.cache_status is not None:
                     self._log("CACHE", id=manifest.id, **prepared.cache_status)
+                if "ui-settings" in manifest.capabilities:
+                    self.settings.bind(manifest.id, candidate.root)
                 options = dict(report=self._diagnostic,
                                menu=self.menu.add if self.set_menu is not None else None,
+                               settings=self.settings.call,
                                cleanup=lambda owner=manifest.id: self._remove_menu(owner),
                                timings=timings, prepared=prepared)
                 if source_result is not None:
@@ -298,6 +304,7 @@ class PackMods:
                         self._flush_menu()
             except Exception as error:
                 self.failed += 1
+                self.settings.remove(manifest.id)
                 failed = self.mods.pop(manifest.id, None)
                 if failed is not None:
                     failed.close()

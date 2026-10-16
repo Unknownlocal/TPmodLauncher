@@ -16,6 +16,8 @@ from mod_runtime.contract import HOST_OPERATIONS
 CALLS = {
     "report": 'api.report("probe")',
     "add-menu-button": 'api.add_menu_button("probe", "Probe", "probe")',
+    "register-settings": 'api.register_settings("{}")',
+    "save-settings": 'api.save_settings("{}")',
 }
 
 
@@ -33,12 +35,14 @@ class WitWorld:
 '''
 
 
-@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"diagnostics", "main-menu"}], ids=["empty", "diagnostics", "menu", "combined"])
+@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"diagnostics", "main-menu", "ui-settings"}], ids=["empty", "diagnostics", "menu", "settings", "combined"])
 @pytest.mark.parametrize("operation", CALLS)
 @pytest.mark.parametrize("phase", ["load", "activate", "event"])
 def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilities, operation, phase):
     calls, cleaned = [], []
-    providers = {name: lambda *args, name=name: calls.append(name) for name in HOST_OPERATIONS}
+    providers = {name: lambda *args, name=name: calls.append(name) or (
+        "{}" if HOST_OPERATIONS[name].result == "string" else None
+    ) for name in HOST_OPERATIONS}
     guest = Sandbox(runner_bundle.component(), bind_operations(capabilities, providers),
                     limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True))
     granted = HOST_OPERATIONS[operation].capability in capabilities
@@ -66,7 +70,9 @@ def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilit
 def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle, operation):
     calls = []
     capabilities = {HOST_OPERATIONS[operation].capability}
-    providers = {operation: lambda *args: calls.append(operation)}
+    providers = {name: lambda *args, name=name: calls.append(name) or (
+        "{}" if HOST_OPERATIONS[name].result == "string" else None
+    ) for name, spec in HOST_OPERATIONS.items() if spec.capability in capabilities}
     allowed = bind_operations(capabilities, providers)
     denied = bind_operations(set(), providers)
     capabilities.clear()

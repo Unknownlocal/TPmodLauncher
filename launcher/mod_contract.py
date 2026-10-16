@@ -138,7 +138,7 @@ class Manifest:
             raise ManifestError(str(error)[:512]) from None
 
 
-def _host_operations(manifest, report, menu):
+def _host_operations(manifest, report, menu, settings=None):
     """Attach host-owned identity to the launcher's approved mod operations."""
     operations = {}
     if "diagnostics" in manifest.capabilities:
@@ -160,6 +160,14 @@ def _host_operations(manifest, report, menu):
             None,
             lambda item_id, label, message: menu(manifest.id, item_id, label, message),
         )
+    if "ui-settings" in manifest.capabilities:
+        if not callable(settings):
+            raise ManifestError("UI settings requires a trusted settings provider")
+        for name in ("register-settings", "save-settings"):
+            operations[name] = Operation(
+                ("string",), "string",
+                lambda text, name=name: settings(manifest.id, name, text),
+            )
     return operations
 
 
@@ -172,13 +180,14 @@ class Mod:
         *,
         report=None,
         menu=None,
+        settings=None,
         cleanup=None,
         timings=None,
         prepared=None,
     ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
-            operations = _host_operations(manifest, report, menu)
+            operations = _host_operations(manifest, report, menu, settings)
             # The loader owns this timing dictionary; it is never passed into guest code.
             if prepared is None:
                 with measure(timings, "component_read"):

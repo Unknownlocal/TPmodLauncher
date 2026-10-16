@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MPL-2.0
+package modlauncher:api@0.3.0;
+
+world code-mod {
+    @unstable(feature = diagnostics)
+    import report: func(message: string);
+
+    @unstable(feature = main-menu)
+    import add-menu-button: func(id: string, label: string, message: string);
+
+    /// Declare a mod-owned settings tab and typed fields; return saved values or defaults.
+    /// Requires ui-settings; ownership and the storage path come from the host.
+    @unstable(feature = ui-settings)
+    import register-settings: func(definition: string) -> string;
+
+    /// Atomically save complete registered values in this mod's settings.json.
+    @unstable(feature = ui-settings)
+    import save-settings: func(values: string) -> string;
+
+    export activate: func();
+    export on-event: func(name: string, payload: string) -> string;
+}

@@ -146,6 +146,53 @@ def test_source_enablement_is_explicit_and_legacy_python_is_rejected(pack, sourc
         assert list(new.mods) == ["owned.source"] and new.failed == 1
 
 
+@pytest.mark.parametrize("activation_failure", [False, True])
+def test_source_ui_settings_api_owns_storage_registration_and_failure_cleanup(
+    pack, source_mod, runner_bundle, activation_failure,
+):
+    game, folder, record = pack
+    definition = {"schema": 1, "label": "Theme", "fields": [
+        {"id": "colour_11", "label": "Custom Theme Colour 11", "color": "#3070B9"},
+        {"id": "colour_52", "label": "Custom Theme Colour 52", "color": "#000000A0"},
+    ]}
+    code = f'''import wit_world
+class WitWorld(wit_world.WitWorld):
+    def activate(self):
+        self.saved = wit_world.register_settings({json.dumps(json.dumps(definition))})
+        {"raise ValueError('owned activation failure')" if activation_failure else "pass"}
+    def on_event(self, name, payload):
+        if name == "save": return wit_world.save_settings(payload)
+        return self.saved
+'''
+    root = source_mod(folder, "owned.theme", code=code, capabilities=("ui-settings",), api="0.3.0")
+    source_mod(folder, "owned.other")
+    messages = []
+    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle)) as scope:
+        scope.load(record)
+        finish(scope)
+        if activation_failure:
+            assert list(scope.mods) == ["owned.other"]
+            assert scope.settings.records == []
+            assert not (root / "settings.json").exists()
+            return
+        assert list(scope.mods) == ["owned.other", "owned.theme"]
+        mod = scope.mods["owned.theme"]
+        assert mod.event("load", None)["values"]["colour_11"] == "#3070B9"
+        assert scope.settings.records[0]["owner"] == "owned.theme"
+        assert not (root / "settings.json").exists()
+        value = {"schema": 1, "values": {"colour_11": "#123456", "colour_52": "#00000080"}}
+        assert mod.event("save", value) == value
+        assert json.loads((root / "settings.json").read_text()) == value
+        assert not (folder / "owned.other/settings.json").exists()
+        # A malformed event fails the owning sandbox, releases its rows, and preserves its last save.
+        with pytest.raises(SandboxError, match="registered field IDs"):
+            mod.event("save", {"schema": 1, "values": {"colour_11": "#FFFFFF"}})
+        assert list(scope.mods) == ["owned.other"]
+        assert scope.settings.records == []
+        assert json.loads((root / "settings.json").read_text()) == value
+    assert scope.settings.records == []
+
+
 def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):
     game, folder, record = pack
     root = Path(__file__).resolve().parents[2]

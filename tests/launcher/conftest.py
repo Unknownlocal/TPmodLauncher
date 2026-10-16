@@ -15,13 +15,13 @@ from wasmtime import wat2wasm
 @pytest.fixture
 def source_mod():
     """Create source-only Python inputs; stale author Wasm is deliberately unusable."""
-    def create(pack, name, *, mod_id=None, code=None, capabilities=("diagnostics",)):
+    def create(pack, name, *, mod_id=None, code=None, capabilities=("diagnostics",), api="0.2.0"):
         folder = pack / name
         (folder / "src").mkdir(parents=True)
         (folder / "mod.toml").write_text(f'''schema = 2
 id = "{mod_id or name}"
 version = "0.1.0"
-api = "0.2.0"
+api = "{api}"
 runtime = "python"
 entry = "mod"
 capabilities = {json.dumps(capabilities)}
