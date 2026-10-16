@@ -1,5 +1,7 @@
 # modLauncher
 
+Mainly a learning exercise in Frida, architecting a design and trying to optimise both code and repo management policies. Side effect is the below.
+
 ## Licence and attribution
 
 - [Licence](LICENCE)
