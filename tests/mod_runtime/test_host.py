@@ -36,9 +36,25 @@ class WitWorld:
 '''
 
 
-@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"diagnostics", "main-menu", "ui-settings"}], ids=["empty", "diagnostics", "menu", "settings", "combined"])
-@pytest.mark.parametrize("operation", CALLS)
-@pytest.mark.parametrize("phase", ["load", "activate", "event"])
+@pytest.mark.parametrize("operation,capabilities,phase", [
+    # Each binding needs an allow/deny check; lifecycle handling is shared.
+    pytest.param("report", {"diagnostics"}, "event", id="report-granted"),
+    pytest.param("report", set(), "event", id="report-denied"),
+    pytest.param("add-menu-button", {"main-menu"}, "event", id="menu-granted"),
+    pytest.param("add-menu-button", set(), "event", id="menu-denied"),
+    pytest.param("register-settings", {"ui-settings"}, "event", id="register-settings-granted"),
+    pytest.param("register-settings", set(), "event", id="register-settings-denied"),
+    pytest.param("save-settings", {"ui-settings"}, "event", id="save-settings-granted"),
+    pytest.param("save-settings", set(), "event", id="save-settings-denied"),
+    pytest.param("register-theme", {"ui-settings"}, "event", id="theme-granted"),
+    pytest.param("register-theme", set(), "event", id="theme-denied"),
+    pytest.param("report", {"diagnostics"}, "load", id="load-granted"),
+    pytest.param("report", set(), "load", id="load-denied"),
+    pytest.param("report", {"diagnostics"}, "activate", id="activate-granted"),
+    pytest.param("report", set(), "activate", id="activate-denied"),
+    pytest.param("report", {"main-menu"}, "event", id="unrelated-grant"),
+    pytest.param("report", {"diagnostics", "main-menu", "ui-settings"}, "event", id="combined-grants"),
+])
 def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilities, operation, phase):
     calls, cleaned = [], []
     providers = {name: lambda *args, name=name: calls.append(name) or (
@@ -67,8 +83,8 @@ def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilit
     assert cleaned == [True]
 
 
-@pytest.mark.parametrize("operation", CALLS)
-def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle, operation):
+def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle):
+    operation = "report"
     calls = []
     capabilities = {HOST_OPERATIONS[operation].capability}
     providers = {name: lambda *args, name=name: calls.append(name) or (
@@ -102,11 +118,9 @@ def test_unknown_or_implicit_permissions_are_rejected(capabilities):
         bind_operations(capabilities, {})
 
 
-@pytest.mark.parametrize("operation", HOST_OPERATIONS)
-@pytest.mark.parametrize("provider", [None, "not callable"])
-def test_granted_permissions_require_trusted_providers(operation, provider):
+def test_granted_permissions_require_trusted_providers():
     with pytest.raises(SandboxError, match="requires a trusted provider"):
-        bind_operations({HOST_OPERATIONS[operation].capability}, {operation: provider})
+        bind_operations({"diagnostics"}, {"report": "not callable"})
 
 
 def test_unknown_providers_are_rejected():

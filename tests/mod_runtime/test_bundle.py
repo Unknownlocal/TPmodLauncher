@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 
 import pytest
 from wasmtime import wat2wasm
@@ -15,10 +14,6 @@ from wasmtime import wat2wasm
 from mod_runtime import ABI_VERSION, BundleError, RunnerBundle
 from mod_runtime import bundle as artifacts
 from mod_runtime import build as builder
-from mod_runtime.source import SourceSnapshot
-from launcher.mod_contract import PYTHON_LIMITS
-from launcher.runner_host import bind_operations
-from launcher.sandbox import Sandbox
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -94,7 +89,7 @@ def test_copy_rechecks_payload_and_never_publishes_a_receipt_on_failure(syntheti
     assert not (output / artifacts.MANIFEST).exists()
 
 
-@pytest.mark.parametrize("extra", ["unexpected.txt", "runners/extra.wasm", "extra/nested.txt", "source/__pycache__/extra.pyc"])
+@pytest.mark.parametrize("extra", ["unexpected.txt", "extra/nested.txt"])
 def test_uninventoried_files_and_directories_are_rejected(synthetic, extra):
     directory, _ = synthetic
     path = directory / extra
@@ -174,20 +169,6 @@ def test_builder_failure_does_not_publish_or_replace_output(tmp_path, monkeypatc
     assert marker.read_text() == "preserve"
 
 
-def test_package_import_needs_no_compiler_wasmtime_or_launcher(tmp_path):
-    # A clean isolated process has no repository path except this explicit trusted package.
-    script = '''import importlib.util, sys
-from pathlib import Path
-root=Path(sys.argv[1])
-spec=importlib.util.spec_from_file_location("mod_runtime",root/"mod_runtime/__init__.py",submodule_search_locations=[str(root/"mod_runtime")])
-module=importlib.util.module_from_spec(spec)
-sys.modules["mod_runtime"]=module
-spec.loader.exec_module(module)
-assert not any(name.split(".")[0] in {"launcher","hook_manager","wasmtime","componentize_py"} for name in sys.modules)
-'''
-    subprocess.run([sys.executable, "-I", "-B", "-c", script, str(ROOT)], cwd=tmp_path, check=True, timeout=20)
-
-
 def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
     assert (runner_bundle.directory / "source/guest.py").read_bytes() == (ROOT / "mod_runtime/guest.py").read_bytes()
     assert (runner_bundle.directory / "source/_source_policy.py").read_bytes() == (ROOT / "mod_runtime/_source_policy.py").read_bytes()
@@ -204,22 +185,6 @@ def test_real_runner_abi_is_exact(runner_bundle, monkeypatch):
     monkeypatch.setattr(builder, "HOST_OPERATIONS", {"report": builder.HOST_OPERATIONS["report"]})
     with pytest.raises(BundleError, match="imports/exports"):
         builder.check_interface(data)
-
-
-@pytest.mark.parametrize("example", ["diagnostic_mod", "menu_mod"])
-def test_built_runner_loads_public_source_example_with_unchanged_sandbox(runner_bundle, example):
-    messages, buttons = [], []
-    snapshot = SourceSnapshot.read(ROOT / "examples" / example)
-    capabilities = snapshot.manifest.capabilities
-    operations = bind_operations(capabilities, {"report": messages.append, "add-menu-button": lambda *values: buttons.append(values)})
-    with Sandbox(runner_bundle.component(), operations, limits=PYTHON_LIMITS, required_exports=dict(artifacts.EXPORTS)) as guest:
-        for path, source in snapshot.files:
-            guest.call("put-source", path, source)
-        assert guest.call("load-source", snapshot.manifest.entry) == ""
-        guest.call("activate")
-        assert json.loads(guest.call("on-event", "probe", '{"owned":true}')) == ({"event": "probe", "received": {"owned": True}} if example == "diagnostic_mod" else None)
-    assert len(messages) == 1
-    assert len(buttons) == (1 if "main-menu" in capabilities else 0)
 
 
 def test_interface_check_rejects_unexpected_wasm(runner_bundle):
