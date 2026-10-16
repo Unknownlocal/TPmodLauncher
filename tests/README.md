@@ -78,6 +78,12 @@ jobs download that run's wheels and install them into separate environments
 without consulting a package index. Windows acceptance also shares one verified
 player bundle between its embedded and native jobs.
 
+Pip's download and built-wheel cache is preserved between commits on each PR,
+separately for Windows/Linux and the Python version. Dependency changes create a
+new cache key and can restore the PR's earlier cache. A first PR run can also
+reuse the existing matching `setup-python` cache; new saves use a `pr-pip` key
+so routine PR caching stays separate from release-build cache keys.
+
 Test ownership follows the `tests/launcher`, `tests/hook_manager`,
 `tests/mod_runtime` and `tests/ci` directories. Each portable job collects all
 portable modules to check ownership, then executes its selected area. Unknown
