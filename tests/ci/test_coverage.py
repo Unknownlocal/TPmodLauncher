@@ -67,7 +67,7 @@ def test_combines_disjoint_branches_without_merging_platforms(helper, fragments)
         counts[platform] = (int(report.attrib["lines-covered"]), int(report.attrib["branches-covered"]))
         assert (output / platform / "htmlcov" / "index.html").is_file()
     assert counts["windows"] == (4, 2)
-    assert counts["linux"] == counts["macos-x86_64"] == counts["macos-arm64"] == (3, 1)
+    assert counts["linux"] == (3, 1)
     assert all(path.is_file() for path in input_dir.glob("*/.coverage"))
 
 

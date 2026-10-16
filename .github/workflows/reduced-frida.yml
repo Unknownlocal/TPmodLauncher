@@ -5,14 +5,12 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Native build target (release validation always builds all targets)
+        description: Native build target (release validation builds Windows and Linux)
         type: choice
         default: linux-x86_64
         options:
           - linux-x86_64
           - windows-x86_64
-          - macos-x86_64
-          - macos-arm64
           - all
       release_validation:
         description: Sign provenance and verify the Windows candidate (requires GitHub attestation support)
@@ -32,8 +30,8 @@ jobs:
       fail-fast: false
       matrix:
         # Rebuild only the platform under investigation; release checks retain the full matrix.
-        target: ${{ fromJSON((inputs.release_validation || inputs.target == 'all') && '["windows-x86_64","linux-x86_64","macos-x86_64","macos-arm64"]' || format('["{0}"]', inputs.target)) }}
-    runs-on: ${{ fromJSON('{"windows-x86_64":"windows-latest","linux-x86_64":"ubuntu-24.04","macos-x86_64":"macos-15-intel","macos-arm64":"macos-15"}')[matrix.target] }}
+        target: ${{ fromJSON((inputs.release_validation || inputs.target == 'all') && '["windows-x86_64","linux-x86_64"]' || format('["{0}"]', inputs.target)) }}
+    runs-on: ${{ fromJSON('{"windows-x86_64":"windows-latest","linux-x86_64":"ubuntu-24.04"}')[matrix.target] }}
     env:
       BUILD_PYTHON: ${{ matrix.target == 'windows-x86_64' && '.venv/Scripts/python.exe' || '.venv/bin/python' }}
     timeout-minutes: 30
@@ -62,9 +60,6 @@ jobs:
           python -m venv .venv
           "$BUILD_PYTHON" -m pip install -r requirements-dev.txt
       - name: Build the pinned reduced wheel
-        env:
-          # Use ad-hoc signing for macOS CI builds; this is not a distribution identity.
-          MACOS_CERTID: ${{ runner.os == 'macOS' && '-' || '' }}
         run: |
           # A short fresh directory avoids Windows compiler and Ninja path limits.
           "$BUILD_PYTHON" -B launcher/build_frida.py --target "${{ matrix.target }}" --work-dir "$RUNNER_TEMP/fb"

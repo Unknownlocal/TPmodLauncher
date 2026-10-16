@@ -14,8 +14,6 @@ from coverage.exceptions import CoverageException
 SUITES = {
     "windows": ("host", "runner", "api", "pack", "embedded", "native"),
     "linux": ("host", "runner", "api", "pack"),
-    "macos-x86_64": ("host", "runner", "api", "pack"),
-    "macos-arm64": ("host", "runner", "api", "pack"),
 }
 
 

@@ -52,13 +52,13 @@ covering dependency verification, import isolation and component execution.
 
 The `native`, `embedded` and `frida_build` markers identify tests requiring native
 transport, the packaged Windows interpreter or a reduced Frida build. Portable
-jobs cover Windows, Linux and macOS; native acceptance uses the supported
+jobs cover Windows and Linux; native acceptance uses the supported
 Windows and Linux transports. Required acceptance modes turn missing native
 prerequisites into failures.
 
 `pyproject.toml` defines collection, markers and line/branch coverage for
 `launcher`, `hook_manager` and `mod_runtime`. The pytest workflow runs four portable
-suites independently on Windows, Linux, macOS Intel and macOS ARM: host infrastructure
+suites independently on Windows and Linux: host infrastructure
 and tooling, runner internals, mod API, and pack/session integration. The CI selector
 requires every portable test module to belong to exactly one suite; new unassigned
 modules and overlapping ownership fail collection. CI helper tests live in `ci/`.

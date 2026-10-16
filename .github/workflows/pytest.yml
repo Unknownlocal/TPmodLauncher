@@ -29,14 +29,6 @@ jobs:
             runner: ubuntu-24.04
             python: .venv/bin/python
             architecture: x64
-          - id: macos-x86_64
-            runner: macos-15-intel
-            python: .venv/bin/python
-            architecture: x64
-          - id: macos-arm64
-            runner: macos-15
-            python: .venv/bin/python
-            architecture: arm64
         suite: [host, runner, api, pack]
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 20
@@ -202,24 +194,6 @@ jobs:
           path: |
             .cache/ci-coverage/linux/coverage.xml
             .cache/ci-coverage/linux/htmlcov/
-          if-no-files-found: error
-      - name: Upload macOS Intel coverage
-        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/macos-x86_64/coverage.xml') != '' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: python-coverage-macos-x86_64
-          path: |
-            .cache/ci-coverage/macos-x86_64/coverage.xml
-            .cache/ci-coverage/macos-x86_64/htmlcov/
-          if-no-files-found: error
-      - name: Upload macOS ARM coverage
-        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/macos-arm64/coverage.xml') != '' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: python-coverage-macos-arm64
-          path: |
-            .cache/ci-coverage/macos-arm64/coverage.xml
-            .cache/ci-coverage/macos-arm64/htmlcov/
           if-no-files-found: error
 
   complete:
