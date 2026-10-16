@@ -29,9 +29,47 @@ NOTICE_FILES = (
     "notices/LICENSE.PythonGuest.txt",
     "notices/LICENSE.WasiLibc.txt",
     "notices/LICENSE.LLVM.txt",
+    "notices/LICENSE.PythonThirdParty.rst",
+    "notices/LICENSE.Expat.txt",
+    "notices/LICENSE.Libcxx.txt",
+    "notices/LICENSE.Libcxxabi.txt",
+    "notices/LICENSE.CompilerRt.txt",
+    "notices/LICENSE.Zlib.txt",
+    "notices/LICENSE.HACL.txt",
+    "notices/LICENSE.HACLProject.txt",
+    "notices/LICENSE.Rust.txt",
+    "notices/COPYRIGHT.RustStd.html",
+    "notices/LICENSE.Unicode.txt",
+    "notices/LICENSE.WitDylibMIT.txt",
+    "notices/LICENSE.WitDylibApache.txt",
+    "notices/LICENSE.WasiLibcApache.txt",
+    "notices/LICENSE.WasiLibcApacheLLVM.txt",
+    "notices/LICENSE.WasiLibcMIT.txt",
+    "notices/LICENSE.WasiCloudlibc.txt",
+    "notices/LICENSE.Musl.txt",
+    "notices/LICENSE.MuslFts.txt",
+    "notices/LICENSE.Anyhow.txt",
+    "notices/LICENSE.NumBigint.txt",
+    "notices/LICENSE.NumInteger.txt",
+    "notices/LICENSE.NumTraits.txt",
+    "notices/LICENSE.OnceCell.txt",
+    "notices/LICENSE.PyO3.txt",
+    "notices/LICENSE.PyO3Ffi.txt",
+    "notices/LICENSE.RustLibc.txt",
+    "notices/LICENSE.PortableAtomic.txt",
+    "notices/LICENSE.WitBindgen.txt",
+    "notices/LICENSE.WitBindgenLLVM.txt",
+    "notices/NOTICE.HaclHeaders.txt",
+    "notices/NOTICE.Libmpdec.txt",
+    "notices/NOTICE.CPythonNative.txt",
+    "notices/NOTICE.WasiLibcSources.txt",
+    "notices/NOTICE.Dlmalloc.txt",
+    "notices/NOTICE.SQLite.txt",
+    "notices/NOTICE.PythonChanges.txt",
 )
 FILES = frozenset((*SOURCES, *NOTICE_FILES, "runner.wasm"))
 MANIFEST = "bundle.json"
+DIRECTORY = "libs/mod-runners"
 MAX_COMPONENT_BYTES = 32 * 1024 * 1024
 _HEADER = b"\0asm\x0d\0\x01\0"
 
@@ -81,7 +119,8 @@ class RunnerBundle:
     def __init__(self, directory):
         self.directory = _checked(directory)
         try:
-            receipt = json.loads(_read(self.directory / MANIFEST, 64 * 1024), object_pairs_hook=_unique_object)
+            self._receipt = _read(self.directory / MANIFEST, 64 * 1024)
+            receipt = json.loads(self._receipt, object_pairs_hook=_unique_object)
             if (
                 type(receipt) is not dict
                 or set(receipt) != {"format", "abi", "componentize_py", "files"}
@@ -137,3 +176,17 @@ class RunnerBundle:
     def component(self):
         """Return newly verified portable bytes; the host binds per-mod permissions."""
         return self._file("runner.wasm")
+
+    def copy_to(self, directory):
+        """Copy the accepted inventory into a fresh release folder, receipt last."""
+        directory = _checked(directory)
+        directory.mkdir(parents=True)
+        for name in sorted(FILES):
+            data = self._file(name)
+            target = directory / name
+            target.parent.mkdir(exist_ok=True)
+            with target.open("xb") as destination:
+                destination.write(data)
+        with (directory / MANIFEST).open("xb") as destination:
+            destination.write(self._receipt)
+        return RunnerBundle(directory)

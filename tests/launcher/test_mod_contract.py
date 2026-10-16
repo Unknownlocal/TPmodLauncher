@@ -19,10 +19,10 @@ EXAMPLE = ROOT / "examples/diagnostic_mod"
 
 
 @pytest.fixture
-def author(tmp_path):
+def author(tmp_path, legacy_diagnostic_manifest):
     folder = tmp_path / "owned mod"
     folder.mkdir()
-    shutil.copyfile(EXAMPLE / "mod.toml", folder / "mod.toml")
+    (folder / "mod.toml").write_text(legacy_diagnostic_manifest, encoding="utf-8")
     return folder
 
 

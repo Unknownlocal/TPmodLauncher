@@ -89,7 +89,7 @@ def build(output):
         check_interface(_read(stage / "runner.wasm", MAX_COMPONENT_BYTES))
         for path in NOTICE_FILES:
             origin = root / "LICENCE" if path.endswith("LICENCE.Project.txt") else root / "notices/mod-runtime" / Path(path).name
-            (stage / path).write_bytes(_read(origin, 1024 * 1024))
+            (stage / path).write_bytes(_read(origin, 2 * 1024 * 1024))
         records = {}
         for name in sorted(FILES):
             data = _read(stage / name, MAX_COMPONENT_BYTES)

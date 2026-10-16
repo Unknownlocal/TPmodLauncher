@@ -2,7 +2,7 @@
 """Trusted Python-in-Wasm runner artifacts, independent of launcher/game lifetimes.
 
 Importing this package never loads a compiler, Wasmtime, a runner or mod source.
-The existing player loading path is unchanged until source-mod integration.
+Player startup verifies the installed bundle before selected-pack source loading.
 """
 
 from .bundle import ABI_VERSION, BundleError, RunnerBundle

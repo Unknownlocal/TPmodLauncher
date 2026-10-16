@@ -19,6 +19,8 @@ import pytest
 
 from launcher import bundled_dependencies as dependencies
 from launcher import prepare_release as release
+from mod_runtime import RunnerBundle
+from mod_runtime.bundle import DIRECTORY
 
 
 @pytest.fixture(scope="session")
@@ -186,7 +188,9 @@ def embedded_project(tmp_path_factory):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copytree(source / "mod_runtime", root / "mod_runtime", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(source / "examples", root / "examples", ignore=shutil.ignore_patterns("__pycache__", "*.wasm"))
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
+    RunnerBundle(source / DIRECTORY).copy_to(root / DIRECTORY)
     return root
 
 

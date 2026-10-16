@@ -1,0 +1,2 @@
+# Preserve upstream runner licence and attribution bytes on every platform.
+notices/mod-runtime/** -text -whitespace

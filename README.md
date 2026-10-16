@@ -37,16 +37,16 @@ have settled.
 ### Create a mod
 
 Start with the [diagnostic example](examples/diagnostic_mod) or
-[menu example](examples/menu_mod). Each mod contains a `mod.toml` manifest,
-readable Python source in `src/mod.py`, and a compiled `mod.wasm` component.
+[menu example](examples/menu_mod). Write a `mod.toml` manifest and readable Python
+source in `src/mod.py`:
 
 ```toml
-schema = 1
+schema = 2
 id = "my.mod"
 version = "0.1.0"
 api = "0.2.0"
 runtime = "python"
-component = "mod.wasm"
+entry = "mod"
 capabilities = ["diagnostics", "main-menu"]
 ```
 
@@ -54,15 +54,15 @@ All seven fields are required; additional fields are rejected.
 
 | Field | Accepted value |
 | --- | --- |
-| `schema` | Integer `1`. |
+| `schema` | Integer `2`. |
 | `id` | Unique ID, at most 128 characters, starting with a lowercase letter and continuing with lowercase letters, digits, `.`, `_`, `:` or `-`. |
 | `version` | SemVer version, at most 64 characters. |
-| `api` | Exact contract version: `0.1.0` or `0.2.0`. |
-| `runtime` | `python` for components built with the supplied Python builder; `wasm` for the standard Wasm resource profile. |
-| `component` | Relative `.wasm` path inside this mod's folder, with no links or path traversal. |
-| `capabilities` | Unique permissions: `diagnostics`, and optionally `main-menu` with API `0.2.0`. An empty list is valid. |
+| `api` | Exact source API version `0.2.0`. |
+| `runtime` | `python`. |
+| `entry` | Dotted module name under `src/`, at most 128 characters; `mod` loads `src/mod.py`. |
+| `capabilities` | Unique permissions: `diagnostics` and `main-menu`. An empty list is valid. |
 
-Implement the supplied contract through the generated `wit_world` bindings:
+Implement the `wit_world` API provided by the runner:
 
 ```python
 import wit_world
@@ -80,9 +80,9 @@ class WitWorld(wit_world.WitWorld):
 ```
 
 `activate()` runs once after admission. `report()` requires `diagnostics`;
-`add_menu_button()` requires API `0.2.0` and `main-menu`. Request only the
-permissions used by your mod. The builder selects the supplied WIT contract and
-generates bindings from the manifest; authors implement those bindings.
+`add_menu_button()` requires `main-menu`. Request only the permissions used by
+your mod. The runner supplies `wit_world.WitWorld`, `report()` and
+`add_menu_button()`; mods do not generate or distribute API bindings.
 
 Menu registrations supply an item ID, label and confirmation message. Item IDs
 follow the manifest ID rules. Labels contain 1-64 printable characters and
@@ -97,46 +97,10 @@ plain JSON values, with a depth limit of 8, a 1,024-node budget and a 4,096-byte
 UTF-8 limit per interface string. General gameplay event delivery is not
 implemented; menu clicks display their declared confirmation message.
 
-### Build the component
-
-Use a full developer Python 3.13 installation. In PowerShell, from the
-`modLauncher` folder, create a development environment and install the pinned
-tools:
-
-```powershell
-python -m venv .venv
-& .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-```
-
-Build your mod using that environment:
-
-```powershell
-& .\.venv\Scripts\python.exe -m launcher.build_mod "C:\path\to\my_mod" --output "C:\path\to\my_mod\mod.wasm"
-```
-
-The builder uses `componentize-py==0.25.1`, `src/mod.py` and the selected API
-contract. It accepts up to 1 MiB of Python source, rejects linked and non-Python
-inputs, and builds in temporary staging with WASI denial stubs. Choose a fresh
-output path when rebuilding: existing components are preserved. If the output
-filename changes, update the manifest's `component` field to match.
-
 ### Install and distribute
 
-The mod author supplies all three files:
-
-| File | Responsibility |
-| --- | --- |
-| `src/mod.py` | Written by the mod author. |
-| `mod.toml` | Written by the mod author, using the manifest format above. The build tool reads this file; it does not generate it. |
-| `mod.wasm` | Built by the mod author from their source using our supplied `launcher.build_mod` tool, then included in the distributed mod. |
-
-We supply the API contract and build tool. Launcher maintainers do not build each
-author's mod, and the player launcher does not generate the manifest or compile
-Python source at startup.
-
-The mod author distributes the manifest, compiled component and readable source
-together. Players install that complete mod folder as a direct child of the
-selected Formula data pack:
+The mod author supplies the manifest and source. Distribute them together as a
+mod folder, installed directly inside the selected Formula data pack:
 
 ```text
 <game-root>/
@@ -145,41 +109,58 @@ selected Formula data pack:
   data/<selected-data-pack>/
     my_mod/
       mod.toml
-      mod.wasm
       src/mod.py
 ```
+
+The launcher loads your Python source into its bundled trusted Wasm runner at
+startup. Authors and players need no component build tool, generated bindings or
+`mod.wasm`. The launcher reads the supplied manifest; it does not generate it.
+
+You can include additional Python modules and packages under `src/`. Packages
+require `__init__.py`; module names must be portable ASCII Python identifiers.
+Paths must be unambiguous across case-sensitive and case-insensitive systems.
+Top-level module names must not shadow the runner API or Python standard library.
+The source snapshot accepts only UTF-8 `.py` files: up to 1 MiB across 256 files,
+512 tree entries, 16 path levels and 256 characters per relative path. Third-party
+packages and native extensions are not bundled. The frozen guest standard-library
+profile includes `json`, `math`, `os` and their runtime dependencies; availability
+of a module does not provide access to host files, networking or processes.
 
 Several code mods can share a data pack. Valid mods activate in ascending mod-ID
 order; every candidate sharing a duplicate ID is rejected. Discovery accepts up
 to 4,096 direct pack entries and 32 candidate mod folders. Linked folders and
-files are rejected or skipped. Manifests are limited to 16 KiB and components to
-32 MiB. Players receive compiled components; launcher startup uses those
-components without a source build step.
+files are rejected or skipped. Manifests are limited to 16 KiB. A source manifest
+or source-loading failure rejects that mod without falling back to a `mod.wasm`.
+
+Explicit schema 1 `runtime = "wasm"` components remain supported with a relative
+`component` path and a 32 MiB component limit. Schema 1 Python components are not
+accepted by the source-enabled launcher.
 
 Check the launcher log for `CODE MOD ACTIVE`, `CODE MOD REPORT` and
 `CODE MOD MENU` records. Rejections identify the affected mod. Each process gets
 fresh mod state, and shutdown or process replacement releases its mod instances.
 
-Mods run with a 64 MiB guest linear-memory limit, up to 64 host calls per
-initialization or exported call, and fresh execution budgets. The `python`
-profile allows 20,000,000 fuel units and five seconds for initialization; later
-calls allow 5,000,000 units and one second. The `wasm` profile also uses the
-smaller budget for initialization. Fuel measures Wasm execution work, including
-the guest Python interpreter. Exceeding a budget or trapping closes the affected
-mod and removes its owned registrations. The host links only granted API
-functions; guest components receive no host WASI filesystem, network or process
-environment.
+Each mod has separate guest state and a 64 MiB guest linear-memory limit.
+Python interpreter initialization allows 20,000,000 fuel units and five seconds.
+Source transfer and import then share 256,000,000 fuel units and five seconds;
+activation and each event allow 5,000,000 units and one second. Each phase allows
+up to 64 host calls. Standard Wasm components use the smaller execution budget
+for initialization as well. Fuel measures Wasm execution work, including the
+guest Python interpreter. Exceeding a budget or trapping closes the affected mod
+and removes its owned registrations. Guest components receive no host WASI
+filesystem, network or process environment.
 
 ## Architectural overview
 
 ### Launch and process ownership
 
-`launcher/entry.py` verifies the bundled interpreter and dependency inventory,
-loads the trusted launcher packages and validates Steam's command against the
-installed `TeamPrincipal.exe`. `process_lifecycle.py` holds a controller lock,
-starts the game through Frida and tracks child processes, exits, replacement,
-exec transitions and PID reuse. Each tracked game session owns its bridge and
-mod instances.
+`launcher/entry.py` verifies the bundled interpreter, dependency inventory and
+trusted Python runner under `libs/mod-runners`, then validates Steam's command
+against the installed `TeamPrincipal.exe`. `--check-only` verifies dependencies
+and the runner without starting the game. `process_lifecycle.py` holds a
+controller lock, starts the game through Frida and tracks child processes, exits,
+replacement, exec transitions and PID reuse. Each tracked game session owns its
+bridge and mod instances.
 
 ### Game bridge and native adapters
 
@@ -200,11 +181,10 @@ reject stale acknowledgements.
 
 `launcher/pack_mods.py` scans the selected pack's direct children, validates all
 manifests, rejects duplicate IDs and loads the remaining mods independently.
-An explicitly supplied trusted runner enables schema 2 Python source admission
-through the same progress, native readiness and session ownership. Source
-snapshots must match admitted metadata; source preparation is cancelled when its
-session closes. Normal launcher entry retains component loading until the runner
-release inventory and installation are complete.
+Normal launcher entry supplies the verified runner for schema 2 Python source
+admission and explicit schema 1 Wasm compatibility. Source snapshots must match
+admitted metadata; source preparation is cancelled when its session closes.
+Both profiles use the same progress, native readiness and session ownership.
 `mod_contract.py` binds manifest permissions to trusted host handlers;
 `mod_api.py` and the versioned WIT files define accepted imports and lifecycle
 signatures.
@@ -227,9 +207,10 @@ closure releases mods in reverse activation order and restores owned hooks.
 `mod_runtime` defines the private Python-runner ABI and a separate developer
 builder/verifier for a single prebuilt runner. Its typed host-operation registry
 supports per-mod grants through `launcher/runner_host.py`, which binds trusted
-providers or rejection callbacks before sandbox instantiation. Bundles retain their source,
-upstream notice texts and a bounded integrity inventory. This artifact foundation
-is separate from the current player loading path.
+providers or rejection callbacks before sandbox instantiation. The installed
+bundle retains its source, upstream notice texts and a bounded integrity
+inventory. One fixed runner artifact supplies a separate instance for each mod;
+source enters guest memory and executes there without per-mod component builds.
 `mod_runtime/source.py` validates source manifests and snapshots bounded Python
 source as inert text, using pinned directory handles and ordinary-file checks.
 `mod_runtime/runtime.py` transfers snapshots into the trusted runner, shares
@@ -240,9 +221,12 @@ event validation and host-owned diagnostic/menu identity.
 `mod_runtime/preparation.py` snapshots source and compiles verified runner bytes
 on a caller-owned worker, with controller adoption and cancellation cleanup.
 
-`build_mod.py` builds author components separately from player startup.
-`build_frida.py` produces the reduced native transport; `frida_sources.py`
-exports and restores matching build sources. `prepare_release.py` assembles
-runtime dependencies and records their file inventory in `bundled_packages.toml`.
-The test tree separates launcher and hook-manager behaviour, with owned fixtures
-for component execution, native bridge sessions and packaged-runtime probes.
+The release workflow builds the fixed trusted runner once using the pinned
+developer componentizer. `build_frida.py` produces the reduced native transport;
+`frida_sources.py` exports and restores matching build sources.
+`prepare_release.py` assembles runtime dependencies and copies the verified
+runner, trusted sources and notices into release staging. Dependency files are
+inventoried in `bundled_packages.toml`; the runner carries its own exact inventory.
+The test tree separates launcher, runtime and hook-manager behaviour, with owned
+fixtures for component execution, native bridge sessions and packaged-runtime
+probes.

@@ -1,0 +1,11 @@
+Python runner change summary
+
+This project packages the upstream WASI-enabled CPython fork at
+https://github.com/dicej/cpython/tree/v3.14.0-wasi-sdk-30
+using componentize-py 0.25.1. The interpreter is compiled and preinitialized
+into a WebAssembly component with the fixed project runner and frozen
+Python sources. WASI imports are stubbed by the componentizer.
+
+This repository applies no additional patches to the CPython source.
+This project-authored notice supplies the change summary required by
+section 3 of the Python Software Foundation License Version 2.

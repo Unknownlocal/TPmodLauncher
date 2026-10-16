@@ -61,9 +61,11 @@ def test_named_lock_prepares_fallback_without_changing_default_lock(project_fact
 @pytest.mark.parametrize("corrupt", [False, True])
 @pytest.mark.parametrize("remote", [False, True])
 def test_cli_wheel_checks_hash_without_claiming_publisher_authentication(
-    project_factory, monkeypatch, capsys, corrupt, remote, tmp_path
+    project_factory, monkeypatch, capsys, corrupt, remote, tmp_path, runner_bundle
 ):
     root, wheel = project_factory()
+    from mod_runtime.bundle import DIRECTORY
+    runner_bundle.copy_to(root / DIRECTORY)
     archive = root / "runtime.zip"
     with zipfile.ZipFile(archive, "w") as runtime:
         runtime.writestr("python.exe", b"synthetic runtime, never executed")
@@ -98,6 +100,17 @@ def test_cli_wheel_checks_hash_without_claiming_publisher_authentication(
         assert release.dependencies.verify_bundle(root).is_dir()
     if remote:
         assert requested == [f"https://example.invalid/{wheel.name}"]
+
+
+def test_missing_runner_fails_before_release_downloads_or_installation(project_factory, monkeypatch, capsys):
+    root, _ = project_factory()
+    monkeypatch.setattr(release, "__file__", str(root / "launcher/prepare_release.py"))
+    def forbidden(*args, **kwargs):
+        pytest.fail("Missing runner must be rejected before dependency preparation")
+    monkeypatch.setattr(release, "authenticate_runtime", forbidden)
+    assert release.main(["--refresh-manifest"]) == 1
+    assert "runner" in capsys.readouterr().err.lower()
+    assert not (root / "libs").exists() and not (root / "bundled_packages.toml").exists()
 
 
 @pytest.mark.parametrize("verification_succeeds", [False, True])

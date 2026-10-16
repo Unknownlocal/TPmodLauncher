@@ -39,16 +39,14 @@ class WitWorld(wit_world.WitWorld):
 
 
 @pytest.fixture
-def code_mod():
-    """Create a small owned mod with the real manifest and API; no Python build is needed."""
-    root = Path(__file__).resolve().parents[2]
+def code_mod(legacy_diagnostic_manifest):
+    """Create a small owned legacy component; no Python build is needed."""
 
     def create(pack, name, *, mod_id=None, trap=False):
         folder = pack / name
         folder.mkdir(parents=True)
-        manifest = (root / "examples/diagnostic_mod/mod.toml").read_text()
         (folder / "mod.toml").write_text(
-            manifest.replace("example.diagnostics", mod_id or name).replace(
+            legacy_diagnostic_manifest.replace("example.diagnostics", mod_id or name).replace(
                 'runtime = "python"', 'runtime = "wasm"'
             ),
             encoding="utf-8",
@@ -66,21 +64,41 @@ def code_mod():
 
 
 @pytest.fixture(scope="session")
+def legacy_diagnostic_manifest():
+    """Keep legacy author-component coverage independent of public source examples."""
+    return '''schema = 1
+id = "example.diagnostics"
+version = "0.1.0"
+api = "0.1.0"
+runtime = "python"
+component = "mod.wasm"
+capabilities = ["diagnostics"]
+'''
+
+
+@pytest.fixture(scope="session")
 def built_menu_mod(tmp_path_factory):
-    """Build the public UI example once; it runs through the same author tool as other mods."""
+    """Exercise the legacy author builder with current menu example source."""
     root = Path(__file__).resolve().parents[2]
     folder = tmp_path_factory.mktemp("owned-menu-contract")
-    shutil.copytree(root / "examples/menu_mod", folder, dirs_exist_ok=True)
+    shutil.copytree(root / "examples/menu_mod/src", folder / "src")
+    (folder / "mod.toml").write_text('''schema = 1
+id = "example.menu"
+version = "0.1.0"
+api = "0.2.0"
+runtime = "python"
+component = "mod.wasm"
+capabilities = ["diagnostics", "main-menu"]
+''', encoding="utf-8")
     build_mod.build(folder, folder / "mod.wasm")
     return folder
 
 
 @pytest.fixture(scope="session")
-def built_python_mod(tmp_path_factory):
+def built_python_mod(tmp_path_factory, legacy_diagnostic_manifest):
     """Build one owned Python component for both normal and shipped-interpreter checks."""
-    root = Path(__file__).resolve().parents[2]
     folder = tmp_path_factory.mktemp("owned-python-contract")
-    shutil.copyfile(root / "examples/diagnostic_mod/mod.toml", folder / "mod.toml")
+    (folder / "mod.toml").write_text(legacy_diagnostic_manifest, encoding="utf-8")
     shutil.copytree(
         Path(__file__).with_name("fixtures") / "contract_mod", folder / "src"
     )

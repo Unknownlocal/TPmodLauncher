@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Check portable CI ownership and selection without executing other suites."""
+
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+
+spec = importlib.util.spec_from_file_location(
+    "ci_tests", Path(__file__).resolve().parents[2] / ".github/ci_tests.py"
+)
+ci = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ci)
+
+
+@pytest.mark.parametrize(
+    ("path", "suite"),
+    [
+        ("tests/launcher/test_mod_contract.py", "api"),
+        ("tests/hook_manager/test_menu.py", "host"),
+        ("tests/ci/test_suites.py", "host"),
+    ],
+)
+def test_portable_modules_have_one_owner(tmp_path, path, suite):
+    assert ci.suite_for(tmp_path / path, tmp_path) == suite
+
+
+def test_unassigned_module_fails(tmp_path):
+    with pytest.raises(pytest.UsageError, match="exactly one CI suite"):
+        ci.suite_for(tmp_path / "tests/launcher/test_new_feature.py", tmp_path)
+
+
+def test_overlapping_ownership_fails(tmp_path, monkeypatch):
+    duplicate = "tests/launcher/test_pack_mods.py"
+    monkeypatch.setitem(ci.SUITES, "host", ci.SUITES["host"] | {duplicate})
+    with pytest.raises(pytest.UsageError, match="exactly one CI suite"):
+        ci.suite_for(tmp_path / duplicate, tmp_path)
+
+
+@pytest.mark.parametrize("suite", [*ci.SUITES, "check"])
+def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
+    original = [
+        SimpleNamespace(path=tmp_path / next(iter(paths)))
+        for paths in ci.SUITES.values()
+    ]
+    deselections = []
+    config = SimpleNamespace(
+        pluginmanager=SimpleNamespace(getplugin=lambda _: None),
+        hook=SimpleNamespace(pytest_deselected=lambda items: deselections.extend(items)),
+    )
+    items = original.copy()
+    ci.SuiteSelection(suite, tmp_path).pytest_collection_modifyitems(config, items)
+    if suite == "check":
+        assert items == original
+        assert deselections == []
+    else:
+        assert len(items) == 1
+        assert ci.suite_for(items[0].path, tmp_path) == suite
+        assert [item for item in original if item not in items] == deselections
+
+
+def test_empty_suite_fails(tmp_path):
+    config = SimpleNamespace(pluginmanager=SimpleNamespace(getplugin=lambda _: None))
+    with pytest.raises(pytest.UsageError, match="is empty"):
+        ci.SuiteSelection("runner", tmp_path).pytest_collection_modifyitems(config, [])
+
+
+def test_main_always_applies_portable_markers_and_check_only_collects(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ci.pytest, "main", lambda args, plugins: calls.append((args, plugins)) or 0)
+    assert ci.main(["--suite", "check", "-q"]) == 0
+    args, plugins = calls.pop()
+    assert args == [str(ci.ROOT / "tests"), "-q", "--collect-only", "-m", ci.PORTABLE]
+    assert plugins[0].suite == "check"
+
+
+def test_real_collection_filters_acceptance_before_assigning_suites(tmp_path):
+    modules = {
+        "tests/hook_manager/test_host.py": "def test_host(): pass\n",
+        "tests/launcher/test_pack_mods.py": "def test_other_suite(): assert False\n",
+        "tests/test_acceptance_only.py": (
+            "import pytest\n@pytest.mark.native\ndef test_native(): assert False\n"
+        ),
+    }
+    for name, source in modules.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers = native: native acceptance\n", encoding="utf-8"
+    )
+    script = """
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location('ci_tests', sys.argv[1])
+ci = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ci)
+root = pathlib.Path(sys.argv[2])
+raise SystemExit(ci.pytest.main(
+    [str(root / 'tests'), '-q', '-m', ci.PORTABLE],
+    plugins=[ci.SuiteSelection('host', root)],
+))
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script, str(spec.origin), str(tmp_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed, 2 deselected" in result.stdout

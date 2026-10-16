@@ -30,14 +30,16 @@ cancellation. The relocated probe uses real selected-pack loading and trusted
 package bootstrap without build tools.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
-runtime copies, a shared trusted runner build and a small owned native-menu interface. `launcher/conftest.py`
-adds real Git source repositories and Wasmtime components, and builds the public
-Python examples once per session. Fixtures stay separate from game files and
-external services.
+runtime copies, a shared trusted runner build and a small owned native-menu
+interface. `launcher/conftest.py` adds real Git source repositories, Wasmtime
+components and independent legacy Python component fixtures built once per
+session. Public schema 2 examples load through the trusted runner. Embedded entry
+checks use the installed runner inventory and relocated sources without developer
+tools. Fixtures stay separate from game files and external services.
 
 Small WAT components exercise admission, permissions, limits, callback failures
 and cleanup. Built Python components exercise generated WIT bindings, private
-guest state, denied host I/O and the author build path. Cache tests combine real
+guest state, denied host I/O and the retained legacy component builder. Cache tests combine real
 Wasmtime compilation with filesystem and platform access checks. Pack-loading
 tests combine manifests and components with controlled process and bridge events
 to exercise ordering, cancellation, readiness and per-session ownership.
@@ -55,7 +57,17 @@ Windows and Linux transports. Required acceptance modes turn missing native
 prerequisites into failures.
 
 `pyproject.toml` defines collection, markers and line/branch coverage for
-`launcher`, `hook_manager` and `mod_runtime`. The pytest workflow separates launcher,
-hook-manager, mod-runtime, native and embedded groups and combines their coverage artifacts.
-The coverage workflow consumes those artifacts, while the reduced-Frida workflow
-builds and checks platform transport candidates.
+`launcher`, `hook_manager` and `mod_runtime`. The pytest workflow runs four portable
+suites independently on Windows, Linux, macOS Intel and macOS ARM: host infrastructure
+and tooling, runner internals, mod API, and pack/session integration. The CI selector
+requires every portable test module to belong to exactly one suite; new unassigned
+modules and overlapping ownership fail collection. CI helper tests live in `ci/`.
+
+A separate Windows job prepares one verified player bundle for independent embedded
+and native acceptance jobs. Each test job retains JUnit results and raw coverage.
+An unprivileged job combines complete coverage fragments separately for each
+platform; missing or corrupt fragments fail collection. The `Tests complete` job
+requires every test, bundle and coverage job to succeed. The reporting workflow
+reads the resulting XML reports without checking out or executing tested code.
+The reduced-Frida workflow keeps candidate builds, source export and transport
+acceptance together, while portable behavior is covered by the pytest workflow.

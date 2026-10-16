@@ -5,11 +5,28 @@ import io
 import base64
 import hashlib
 import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tarfile
 
 import pytest
 
 from launcher import frida_sources as sources
+
+
+def test_exported_build_tools_import_without_launcher_runtime(tmp_path):
+    source = Path(__file__).resolve().parents[2] / "launcher"
+    tools = tmp_path / "tools/launcher"
+    tools.mkdir(parents=True)
+    for name in ("build_frida.py", "prepare_release.py", "bundled_dependencies.py", "frida_build.toml"):
+        shutil.copyfile(source / name, tools / name)
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(tools / "build_frida.py"), "--help"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0 and "--target" in result.stdout, result.stderr
 
 
 def source_archive(content, output):

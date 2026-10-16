@@ -15,6 +15,7 @@ from wasmtime import wat2wasm
 from mod_runtime import ABI_VERSION, BundleError, RunnerBundle
 from mod_runtime import bundle as artifacts
 from mod_runtime import build as builder
+from mod_runtime.source import SourceSnapshot
 from launcher.mod_contract import PYTHON_LIMITS
 from launcher.runner_host import bind_operations
 from launcher.sandbox import Sandbox
@@ -65,6 +66,32 @@ def test_component_changed_after_open_is_checked_again(synthetic):
     (directory / "runner.wasm").write_bytes(b"changed")
     with pytest.raises(BundleError, match="receipt|size"):
         bundle.component()
+
+
+def test_copy_preserves_verified_inventory_and_refuses_existing_output(synthetic, tmp_path):
+    directory, _ = synthetic
+    bundle = RunnerBundle(directory)
+    original_receipt = (directory / artifacts.MANIFEST).read_bytes()
+    # A later receipt edit must not replace the inventory accepted by this owner.
+    (directory / artifacts.MANIFEST).write_bytes(b"changed after verification")
+    output = tmp_path / "release/libs/mod-runners"
+    copied = bundle.copy_to(output)
+    assert copied.component() == bundle.component()
+    assert (output / artifacts.MANIFEST).read_bytes() == original_receipt
+    assert {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()} == artifacts.FILES | {artifacts.MANIFEST}
+    with pytest.raises(FileExistsError):
+        bundle.copy_to(output)
+    assert copied.component() == bundle.component()
+
+
+def test_copy_rechecks_payload_and_never_publishes_a_receipt_on_failure(synthetic, tmp_path):
+    directory, _ = synthetic
+    bundle = RunnerBundle(directory)
+    (directory / "source/guest.py").write_bytes(b"changed after verification")
+    output = tmp_path / "incomplete"
+    with pytest.raises(BundleError):
+        bundle.copy_to(output)
+    assert not (output / artifacts.MANIFEST).exists()
 
 
 @pytest.mark.parametrize("extra", ["unexpected.txt", "runners/extra.wasm", "extra/nested.txt", "source/__pycache__/extra.pyc"])
@@ -180,14 +207,15 @@ def test_real_runner_abi_is_exact(runner_bundle, monkeypatch):
 
 
 @pytest.mark.parametrize("example", ["diagnostic_mod", "menu_mod"])
-def test_built_runner_loads_existing_example_with_unchanged_sandbox(runner_bundle, example):
+def test_built_runner_loads_public_source_example_with_unchanged_sandbox(runner_bundle, example):
     messages, buttons = [], []
-    capabilities = {"diagnostics"} if example == "diagnostic_mod" else {"diagnostics", "main-menu"}
+    snapshot = SourceSnapshot.read(ROOT / "examples" / example)
+    capabilities = snapshot.manifest.capabilities
     operations = bind_operations(capabilities, {"report": messages.append, "add-menu-button": lambda *values: buttons.append(values)})
     with Sandbox(runner_bundle.component(), operations, limits=PYTHON_LIMITS, required_exports=dict(artifacts.EXPORTS)) as guest:
-        source = (ROOT / "examples" / example / "src/mod.py").read_text(encoding="utf-8")
-        guest.call("put-source", "mod.py", source)
-        assert guest.call("load-source", "mod") == ""
+        for path, source in snapshot.files:
+            guest.call("put-source", path, source)
+        assert guest.call("load-source", snapshot.manifest.entry) == ""
         guest.call("activate")
         assert json.loads(guest.call("on-event", "probe", '{"owned":true}')) == ({"event": "probe", "received": {"owned": True}} if example == "diagnostic_mod" else None)
     assert len(messages) == 1
@@ -209,9 +237,8 @@ def test_interface_check_rejects_extra_nonfunction_export(runner_bundle):
 
 
 @pytest.mark.embedded
-def test_relocated_player_verifies_and_runs_bundle_without_compiler(embedded_project, runner_bundle):
+def test_relocated_player_verifies_and_runs_bundle_without_compiler(embedded_project):
     root = embedded_project
-    shutil.copytree(runner_bundle.directory, root / "libs/mod-runners")
     probe = root / "launcher/runner_probe.py"
     shutil.copyfile(Path(__file__).with_name("fixtures") / "embedded_runner_probe.py", probe)
     owned_mod = root / ".state/runner-game/data/owned pack/owned.source"

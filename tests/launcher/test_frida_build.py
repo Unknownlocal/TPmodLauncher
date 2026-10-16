@@ -410,14 +410,16 @@ def test_reduced_preparation_stops_before_writes_on_signature_failure(
 
 
 def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
-    wheel_output, source_output, project_factory, monkeypatch, tmp_path
+    wheel_output, source_output, project_factory, monkeypatch, tmp_path, runner_bundle
 ):
     root, _ = project_factory()
+    from mod_runtime.bundle import DIRECTORY, RunnerBundle
+    runner_bundle.copy_to(root / DIRECTORY)
     output, wheel = wheel_output
-    for name in ("launcher", "hook_manager", "mod_runtime", "notices"):
+    for name in ("launcher", "hook_manager", "mod_runtime", "notices", "examples"):
         (root / name).mkdir()
         (root / name / "fixture.txt").write_text("synthetic source")
-    for name in ("LICENCE", "README.md"):
+    for name in ("LICENCE", "ATTRIBUTION.txt", "README.md"):
         (root / name).write_text("synthetic fixture")
     archive = tmp_path / "runtime.zip"
     with zipfile.ZipFile(archive, "w") as runtime:
@@ -446,7 +448,9 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
         source_output,
     )
     runtime = build.release.read_settings(candidate)["runtime"]
-    for name in ("launcher", "hook_manager", "mod_runtime", "notices"):
+    bundled_runner = RunnerBundle(candidate / DIRECTORY)
+    assert bundled_runner.component() == runner_bundle.component()
+    for name in ("launcher", "hook_manager", "mod_runtime", "notices", "examples"):
         assert (candidate / name / "fixture.txt").read_text() == "synthetic source"
     packages = build.release.read_lock(candidate, runtime)
     assert [(package.name, str(package.version)) for package, _ in packages] == [
