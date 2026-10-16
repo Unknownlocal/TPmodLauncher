@@ -18,6 +18,7 @@ CALLS = {
     "add-menu-button": 'api.add_menu_button("probe", "Probe", "probe")',
     "register-settings": 'api.register_settings("{}")',
     "save-settings": 'api.save_settings("{}")',
+    "register-theme": 'api.register_theme("{}")',
 }
 
 
@@ -35,7 +36,7 @@ class WitWorld:
 '''
 
 
-@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"diagnostics", "main-menu", "ui-settings"}], ids=["empty", "diagnostics", "menu", "settings", "combined"])
+@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"ui-theme"}, {"diagnostics", "main-menu", "ui-settings", "ui-theme"}], ids=["empty", "diagnostics", "menu", "settings", "theme", "combined"])
 @pytest.mark.parametrize("operation", CALLS)
 @pytest.mark.parametrize("phase", ["load", "activate", "event"])
 def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilities, operation, phase):

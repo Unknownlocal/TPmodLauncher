@@ -312,7 +312,8 @@ class SettingsEditor:
 class SettingsAdapter:
     """Own appended options tabs, wrappers and one acknowledged native save request."""
 
-    def __init__(self):
+    def __init__(self, themes=None):
+        self.themes = themes
         self.records, self.installed = [], []
         self.owner = self.module = self.tabs = None
         self.originals, self.wrappers, self.messages = {}, {}, {}
@@ -354,7 +355,13 @@ class SettingsAdapter:
         if self.pending is not None and self.pending["owner"] not in owners:
             self.pending = None
         self.detail = ""
-        self.state = "pending" if records else "idle"
+        return self.refresh()
+
+    def refresh(self):
+        """Refresh native extensions without replacing the settings registry generation."""
+        self._main()
+        self._restore()
+        self.state = "pending" if self.records or (self.themes is not None and self.themes.has_choices()) else "idle"
         return self.poll()
 
     def queue_save(self, owner, values):
@@ -387,6 +394,8 @@ class SettingsAdapter:
                 editor.blur(self.module.pygame)
                 screen = editor.screen()
                 if screen is not None:
+                    if self.themes is not None:
+                        self.themes.prepare_screen(screen)
                     screen._layout_cache = screen._chrome_cache = None
         self.owner = self.module = self.tabs = None
         self.originals, self.wrappers = {}, {}
@@ -396,6 +405,8 @@ class SettingsAdapter:
 
     def poll(self, completed=None):
         self._main()
+        if self.state == "idle" and self.themes is not None and self.themes.has_choices():
+            self.state = "pending"
         if self.state != "pending":
             return self.status()
         module = sys.modules.get("ui.screens.options_screen")
@@ -418,6 +429,8 @@ class SettingsAdapter:
             keys = {self.tab_key(row["owner"]): row["owner"] for row in self.records}
 
             def editor_for(screen):
+                if self.themes is not None:
+                    self.themes.prepare_screen(screen)
                 editor = getattr(screen, "_tpm_settings_editor", None)
                 if editor is None or editor.adapter is not self:
                     editor = SettingsEditor(self)
@@ -482,4 +495,10 @@ class SettingsAdapter:
     def close(self):
         self._main()
         self.pending = None
+        if self.themes is not None:
+            for editor in self.editors:
+                screen = editor.screen()
+                if screen is not None:
+                    self.themes.prepare_screen(screen)
+        self.themes = None
         self.update([])

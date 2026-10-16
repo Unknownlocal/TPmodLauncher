@@ -13,16 +13,23 @@ a checkerboard to show transparency. Invalid entries disable Save.
 Defaults** stages defaults; Save keeps them. Unsaved edits survive tab switches
 within the options screen. Back leaves the screen without saving those edits.
 
-Palette selection and application remain the next step: this editor currently
-saves colours without changing the game's appearance. Theme numbering and
-coupling are defined by this example, rather than by the shared settings API.
+After saving, select **Custom Theme** in the existing **Color Pack** dropdown
+under **Graphics**, confirm **Save choice**, and restart the game through the
+launcher. The selected palette loads from this mod's saved settings on startup.
+Further colour edits also take effect after restarting, matching the game's
+built-in themes. Selecting a built-in pack restores its usual behaviour on the
+next launch. Without this mod, the game falls back to Default Blue.
+
+Theme numbering and coupling are defined by this example. Shared UI settings
+remain independent of palette registration, which requires the separate
+`ui-theme` permission. No colour picker is included yet.
 
 The palette covers all 59 named colour entries in the inspected game's `UITheme`,
 grouped into 52 distinct default colours. Typography settings, caches and computed
 rating colours are not separate editable entries.
 
 Each `COLOR_GROUPS` record contains a stable number, the default RGB or RGBA tuple,
-and all native theme roles coupled to that colour. The editor will label these
+and all native theme roles coupled to that colour. The editor labels these
 records **Custom Theme Colour 1** through **Custom Theme Colour 52**, with a hex
 input and swatch beside each row. Native role names are internal metadata.
 
@@ -64,5 +71,8 @@ dbc18d2fe4ec24d4039104a40dd43fa948004c59823b0309baf7849f02ee6ef2
 The baseline comparison checked exact role coverage, default channel values,
 unique group numbers and colours, and shared-colour membership. It read the
 packaged theme without starting the game or changing its settings. The mapping
-defines colour identities; application to drawing code belongs to the later
-palette adapter work.
+defines colour identities. The native adapter applies the selected colours to
+`UITheme`, imported native UI colour aliases and the management chrome lookup.
+Already-resolved colours bypass that lookup, so equal custom and default colours
+cannot cause a second translation. Computed colours, artwork and arbitrary
+literal drawing colours are not individually editable theme roles.

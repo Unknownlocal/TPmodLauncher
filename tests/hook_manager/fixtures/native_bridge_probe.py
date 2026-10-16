@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Run the real bridge against an owned target; copied beside entry.py before execution."""
 
-import importlib.util, json, sys, time
+import importlib.util, json, runpy, sys, time
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -51,6 +51,11 @@ try:
     )
     assert status["menu"]["state"] == "ready", status
     assert status["menu"]["loading"]["blocked"], status
+    status = current.set_loading(dict(state="error", loaded=0, failed=1, total=1))
+    deadline = time.monotonic() + 5
+    while not (output / "themes-error-cleaned").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert (output / "themes-error-cleaned").exists(), messages
     status = current.set_loading(dict(state="complete", loaded=1, failed=0, total=1))
     assert not status["menu"]["loading"]["blocked"], status
     deadline = time.monotonic() + 5
@@ -74,6 +79,32 @@ try:
     while not (output / "settings-acknowledged").exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert (output / "settings-acknowledged").exists(), messages
+    colours = {role: "#" + "".join(f"{channel:02X}" for channel in colour)
+               for _, colour, roles in runpy.run_path(str(Path(sys.argv[2]).with_name("palette.py")))["COLOR_GROUPS"]
+               for role in roles}
+    colours["BACKGROUND"] = "#ABCDEF"
+    settings_generation = status["settings"]["generation"]
+    status = current.set_themes([{"owner": "owned.theme", "label": "Custom Theme", "colours": colours}])
+    assert status["themes"]["state"] == "ready", status
+    assert status["settings"]["generation"] == settings_generation
+    deadline = time.monotonic() + 5
+    while not (output / "themes-applied.json").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    applied = json.loads((output / "themes-applied.json").read_text())
+    assert applied == {"background": [171, 205, 239], "choices": ["blue", "emerald", "code-mod:owned.theme"]}
+    (output / "settings-again-request").touch()
+    while status["settings"]["save"] is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = current.request("status")
+    assert status["settings"]["save"] == {
+        "id": 2, "owner": "owned.settings", "schema": 1, "values": {"accent": "#123456"},
+    }, status
+    assert status["settings"]["generation"] == settings_generation
+    settings[0]["fields"][0]["value"] = "#123456"
+    status = current.set_settings(settings, {"id": 2, "owner": "owned.settings", "success": True})
+    while not (output / "settings-again-acknowledged").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert (output / "settings-again-acknowledged").exists(), messages
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:

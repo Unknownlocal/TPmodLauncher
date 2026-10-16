@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Declare the theme editor through shared UI settings; palette application is separate."""
+"""Declare the editor and publish saved colours as a restart-only UI palette."""
 
 import json
 import wit_world
@@ -9,7 +9,7 @@ from palette import COLOR_GROUPS, COLOR_LABEL_PREFIX, PALETTE_SCHEMA
 
 class WitWorld(wit_world.WitWorld):
     def activate(self):
-        wit_world.register_settings(json.dumps({
+        values = wit_world.register_settings(json.dumps({
             "schema": PALETTE_SCHEMA,
             "label": "Theme",
             "fields": [
@@ -18,6 +18,17 @@ class WitWorld(wit_world.WitWorld):
                 for number, default, _ in COLOR_GROUPS
             ],
         }, separators=(",", ":")))
+        self.publish(values)
+
+    def publish(self, payload):
+        values = json.loads(payload)["values"]
+        wit_world.register_theme(json.dumps({
+            "label": "Custom Theme",
+            "colours": {role: values[f"colour_{number}"]
+                        for number, _, roles in COLOR_GROUPS for role in roles},
+        }, separators=(",", ":")))
 
     def on_event(self, name, payload):
+        if name == "ui-settings.changed":
+            self.publish(payload)
         return "null"

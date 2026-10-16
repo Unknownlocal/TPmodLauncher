@@ -15,7 +15,7 @@ uses the previously accepted receipt, publishing that receipt last into a fresh
 directory. The receipt detects mismatches against its inventory; trust in that
 inventory comes from the launcher distribution.
 
-`build.py` freezes the fixed `guest.py` against `0.2.0/runner.wit` with the pinned
+`build.py` freezes the fixed `guest.py` against `0.3.0/runner.wit` with the pinned
 developer componentizer. It checks the resulting interface and publishes a fresh
 bundle. Artifact and source-reader imports require only the standard library;
 execution modules load the sandbox/compiler explicitly. Player startup needs no
@@ -46,7 +46,7 @@ loading, then rejects reserved-name collisions during transfer.
 `guest.py` serves author modules from guest memory through an in-memory importer.
 Its frozen standard-library profile includes `json`, `math`, `os` and their
 runtime dependencies. The public `wit_world` facade exposes the author base class,
-diagnostics, menu and UI settings operations; source-transfer and loading exports remain a
+diagnostics, menu, UI settings and palette operations; source-transfer and loading exports remain a
 private host protocol.
 
 `runtime.py` owns one verified bundle and source snapshot through transfer, import,

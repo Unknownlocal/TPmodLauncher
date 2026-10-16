@@ -101,6 +101,7 @@ def main(argv=None) -> int:
                 report,
                 set_menu=bridge.set_menu,
                 set_settings=bridge.set_settings,
+                set_themes=bridge.set_themes,
                 set_loading=bridge.set_loading,
                 background=True,
                 cache=cache,

@@ -42,7 +42,8 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.manager = module.Manager()
             module.discovery = module.PackDiscovery(game_root)
             module.menu = module.MenuAdapter()
-            module.settings = module.SettingsAdapter()
+            module.themes = module.ThemeAdapter()
+            module.settings = module.SettingsAdapter(module.themes)
             module.menu.set_loading(dict(state="loading", loaded=0, failed=0, total=0))
             module.manager.observe(
                 "ui.screens.hub_screen",
@@ -50,18 +51,25 @@ def pulse(sources, digest, instance, game_root, request_json):
             )
             module.manager.observe(
                 "ui.screens.options_screen",
-                lambda imported: module.settings.poll(imported)["state"] != "pending",
+                lambda imported: all(status["state"] != "pending" for status in (
+                    module.themes.poll(imported), module.settings.poll(imported),
+                )),
             )
+            for target in ("ui.color_packs", "ui.theme"):
+                module.manager.observe(target, lambda imported: module.themes.poll(imported)["state"] != "pending")
             sys.modules[name] = module
         request = json.loads(request_json)
-        if type(request) is dict and request.get("operation") in ("menu", "loading", "settings"):
-            field = {"menu": "buttons", "loading": "loading", "settings": "settings"}[request["operation"]]
+        if type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
+            field = {"menu": "buttons", "loading": "loading", "settings": "settings", "themes": "themes"}[request["operation"]]
             if set(request) != {"operation", field}:
                 raise ValueError("Invalid native UI request fields")
             if field == "buttons":
                 module.menu.update(request[field])
             elif field == "loading":
                 module.menu.set_loading(request[field])
+            elif field == "themes":
+                module.themes.update(request[field])
+                module.settings.refresh()
             else:
                 settings = request[field]
                 if type(settings) is not dict or set(settings) != {"records", "result"}:
@@ -71,12 +79,19 @@ def pulse(sources, digest, instance, game_root, request_json):
         else:
             if request == {"operation": "shutdown"}:
                 module.menu.close()
+                module.themes.close()
                 module.settings.close()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
         response["pack"] = module.discovery.poll()
         response["menu"] = module.menu.poll()
+        loading = response["menu"].get("loading", {})
+        if (loading.get("state") in ("complete", "error") or loading.get("timed_out")
+                or response["pack"].get("state") == "unavailable"):
+            if module.themes.finish_loading():
+                module.settings.refresh()
+        response["themes"] = module.themes.poll()
         response["settings"] = module.settings.poll()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:

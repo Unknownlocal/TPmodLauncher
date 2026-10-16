@@ -17,6 +17,7 @@ from launcher.mod_contract import Manifest, ManifestError, Mod
 from launcher.source_mod import SourceMod
 from launcher.ui_settings import SettingsRequests
 from hook_manager.menu import MenuRequests
+from hook_manager.themes import ThemeRequests
 from mod_runtime.bundle import RunnerBundle
 from mod_runtime.preparation import SourcePreparation
 from mod_runtime.source import SourceManifest, read_manifest
@@ -58,6 +59,7 @@ class PackMods:
         *,
         set_menu=None,
         set_settings=None,
+        set_themes=None,
         set_loading=None,
         background=False,
         cache=None,
@@ -75,6 +77,10 @@ class PackMods:
         self.applied_settings = []
         self.settings_generation = self.last_settings_request = 0
         self.settings_result = None
+        self.themes = ThemeRequests()
+        self.set_themes = set_themes
+        self.applied_themes = []
+        self.themes_generation = 0
         self.set_menu = set_menu
         self.applied_menu = []
         self.menu_generation = 0
@@ -108,8 +114,10 @@ class PackMods:
         self.mods.pop(owner, None)
         self.menu.remove(owner)
         self.settings.remove(owner)
+        self.themes.remove(owner)
         error = None
-        for applied, flush in ((self.applied_settings, self._flush_settings), (self.applied_menu, self._flush_menu)):
+        for applied, flush in ((self.applied_settings, self._flush_settings), (self.applied_menu, self._flush_menu),
+                               (self.applied_themes, self._flush_themes)):
             if not self.closed and applied is not None and any(item["owner"] == owner for item in applied):
                 try:
                     flush()
@@ -131,6 +139,30 @@ class PackMods:
                 raise ManifestError(result["settings"]["detail"])
         self.applied_settings = records
         self.settings_result = None
+
+    def _flush_themes(self):
+        records = self.themes.records
+        if self.set_themes is None or self.applied_themes == records:
+            return
+        self.applied_themes = None
+        result = self.set_themes(records)
+        if result is not None:
+            self.themes_generation = result["themes"]["generation"]
+            if result["themes"]["state"] == "failed":
+                raise ManifestError(result["themes"]["detail"])
+        self.applied_themes = records
+
+    def themes_status(self, status):
+        if status.get("generation") != self.themes_generation or status.get("state") != "failed":
+            return
+        self.applied_themes = None
+        for owner, mod in list(self.mods.items()):
+            if "ui-theme" in mod.manifest.capabilities:
+                self.mods.pop(owner).close()
+                self.failed += 1
+                self._log("REJECTED", id=owner, detail=status.get("detail", "Themes unavailable"))
+        self._flush_themes()
+        self._progress("complete" if self.finished else "loading")
 
     def settings_status(self, status):
         """Persist one user save, acknowledge it once, then notify its sandboxed owner."""
@@ -174,8 +206,11 @@ class PackMods:
             try:
                 mod.event("ui-settings.changed", values)
                 self._flush_settings()
+                self._flush_themes()
             except Exception as error:
                 self._log("SETTINGS EVENT FAILED", id=owner, detail=str(error)[:512])
+                if owner in self.mods:
+                    self.mods.pop(owner).close()
 
     def _log(self, event, **fields):
         """Keep paths, errors and mod messages inside one quoted log record."""
@@ -263,6 +298,7 @@ class PackMods:
             return
         if self.loading is None:
             self._flush_settings()
+            self._flush_themes()
             return
         try:
             next(self.loading)
@@ -358,6 +394,7 @@ class PackMods:
                 options = dict(report=self._diagnostic,
                                menu=self.menu.add if self.set_menu is not None else None,
                                settings=self.settings.call,
+                               theme=self.themes.register,
                                cleanup=lambda owner=manifest.id: self._remove_menu(owner),
                                timings=timings, prepared=prepared)
                 if source_result is not None:
@@ -374,13 +411,17 @@ class PackMods:
                         self._flush_menu()
                 if "ui-settings" in manifest.capabilities:
                     self._flush_settings()
+                if "ui-theme" in manifest.capabilities:
+                    self._flush_themes()
             except Exception as error:
                 self.failed += 1
                 self.settings.remove(manifest.id)
+                self.themes.remove(manifest.id)
                 failed = self.mods.pop(manifest.id, None)
                 if failed is not None:
                     failed.close()
-                for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings)):
+                for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),
+                                          ("ui-theme", self._flush_themes)):
                     if capability in manifest.capabilities:
                         try:
                             flush()
@@ -470,7 +511,7 @@ class PackMods:
                 self._log("CLEANUP ERROR", id=mod_id, detail=str(error)[:512])
             else:
                 self._log("CLOSED", id=mod_id)
-        for flush in (self._flush_menu, self._flush_settings):
+        for flush in (self._flush_menu, self._flush_settings, self._flush_themes):
             try:
                 flush()
             except Exception as error:

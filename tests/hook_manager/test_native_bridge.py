@@ -35,6 +35,8 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
     (menu / "__init__.py").touch()
     shutil.copyfile(FIXTURES / "native_menu_fixture.py", menu / "hub_screen.py")
     shutil.copyfile(FIXTURES / "native_settings_fixture.py", menu / "options_screen.py")
+    shutil.copyfile(FIXTURES / "native_themes_fixture.py", tmp_path / "native_themes_fixture.py")
+    shutil.copyfile(FIXTURES.parents[1].parent / "examples/theme_mod/src/palette.py", tmp_path / "palette.py")
     output = tmp_path / "results"
     output.mkdir()
     probe = root / "launcher/bridge_probe.py"
@@ -76,6 +78,8 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         assert closed["disabled_message_restored"]
         assert closed["settings_tabs"] == [["game", "Game"], ["graphics", "Graphics"]]
         assert closed["settings_restored"]
+        assert closed["theme_background"] == [5, 10, 19]
+        assert closed["theme_choices"] == ["blue", "emerald"] and closed["theme_restored"]
         menu = json.loads((output / "menu.json").read_text())
         assert menu == {
             "items": ["Career", "Owned UI", "Exit"],

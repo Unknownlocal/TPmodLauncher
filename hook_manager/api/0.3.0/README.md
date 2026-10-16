@@ -59,7 +59,7 @@ At most four mod settings tabs may register per process, with distinct tab title
 The host supplies ownership; failure or closure removes declarations while keeping
 saved files. Calls require `ui-settings`, including during source import. API
 `0.2.0` remains supported with its existing permissions. The prepared runner uses
-private ABI `0.2.0`.
+private ABI `0.3.0`.
 
 The native adapter appends a tab to Options and renders colour inputs, swatches,
 Save and Reset to Defaults. It preserves unsaved drafts across tab switches in
@@ -78,3 +78,34 @@ closes that mod and removes its tab; the user's saved file remains intact.
 
 The theme example consumes these settings. Registering or saving settings does
 not register a palette or change game colours; palette application is separate.
+
+## Register a UI palette
+
+The separate `ui-theme` permission enables `wit_world.register_theme(definition)`
+(`register-theme: func(definition: string)` in WIT). The JSON string is bounded to
+4,096 UTF-8 bytes and has exactly `label` and `colours` members. `label` follows
+the settings label rules. `colours` maps all 59 named colour roles in the example's
+[palette mapping](../../../examples/theme_mod/src/palette.py) to hex strings.
+`OVERLAY` requires eight digits; the other roles require six. No paths, callbacks,
+module names or arbitrary attributes are accepted. Roles sharing a native default
+colour must retain the same chosen colour. The native adapter checks coupling
+against the loaded game before applying a selected palette.
+
+Each mod owns one palette; registering again replaces its staged colours. Up to
+four palettes may register, with unique labels. The host assigns the dropdown ID
+`code-mod:<mod-id>`. Native theme conflicts reject registration. A palette's mod
+decides where its values come from; this API does not write settings files.
+
+The existing Graphics → Color Pack menu supplies selection, confirmation and
+persistence. Choices and edited colours apply on the next launch, matching the
+game's restart-only themes. The startup selection stays fixed while mods finish
+registering. A missing provider falls back to the game's default. The selected
+palette updates UITheme and native UI colour aliases; resolved colours bypass
+the chrome lookup so matching values cannot be recoloured twice. Session chrome's
+lookup is unchanged, though UITheme roles used by session screens use their new
+values. Arbitrary drawing literals, artwork and computed colours are outside
+this palette contract.
+
+Cleanup removes only owned choices, colour aliases and lookup wrappers, including
+aliases captured by modules imported later. Saved settings and the user's native
+theme choice remain on disk. API 0.2.0 cannot request `ui-theme`.

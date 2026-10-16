@@ -31,7 +31,7 @@ class AuthorWorld:
 
 _author_api = ModuleType("wit_world")
 _author_api.WitWorld = AuthorWorld
-for _python_name in ("report", "add_menu_button", "register_settings", "save_settings"):
+for _python_name in ("report", "add_menu_button", "register_settings", "save_settings", "register_theme"):
     setattr(_author_api, _python_name, getattr(_bindings, _python_name))
 sys.modules["wit_world"] = _author_api
 

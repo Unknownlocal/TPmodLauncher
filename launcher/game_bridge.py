@@ -61,9 +61,9 @@ class Bridge:
         finally:
             timer.cancel()
 
-    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None):
+    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None):
         """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings"):
+        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -80,6 +80,11 @@ class Bridge:
                 raise BridgeError("Expected bounded settings declarations")
         elif settings is not None:
             raise BridgeError("This operation accepts no settings declarations")
+        if operation == "themes":
+            if type(themes) is not list or len(json.dumps(themes).encode("utf-8")) > 16_384:
+                raise BridgeError("Expected bounded theme declarations")
+        elif themes is not None:
+            raise BridgeError("This operation accepts no theme declarations")
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
@@ -98,6 +103,8 @@ class Bridge:
                 message["loading"] = loading
             if operation == "settings":
                 message["settings"] = settings
+            if operation == "themes":
+                message["themes"] = themes
             self._post(message, timeout)
             response = waiter.get(timeout=max(0, deadline - time.monotonic()))
             answered = True
@@ -149,6 +156,11 @@ class Bridge:
             if not self.session.is_detached and not self.script.is_destroyed:
                 self.script.unload()
 
+    def set_themes(self, records):
+        if self.session.is_detached:
+            return None
+        return self.request("themes", themes=records)
+
     def set_loading(self, loading):
         """Send trusted startup progress on the same serialized request channel as menu updates."""
         if self.session.is_detached:
@@ -175,7 +187,7 @@ def factory(root, frida):
     # Only these trusted infrastructure sources enter the game; packs cannot add entries.
     sources = {
         f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
-        for name in ("manager", "pack_discovery", "menu", "settings")
+        for name in ("manager", "pack_discovery", "menu", "settings", "themes")
     }
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")

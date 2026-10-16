@@ -202,11 +202,12 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     theme = folder / "theme example"
     shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
     source_mod(folder, "owned.other")
-    adapter, messages = SettingsAdapter(), []
+    adapter, messages, palettes = SettingsAdapter(), [], []
     native_originals = native_settings.ORIGINAL_METHODS.copy()
     with closing(adapter), closing(PackMods(
         game, messages.append, runner_bundle=runner_bundle,
         set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
+        set_themes=lambda rows: palettes.append(rows),
     )) as scope:
         scope.load(startup)
         finish(scope)
@@ -215,6 +216,8 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         assert len(fields) == 52 and fields[0]["label"] == "Custom Theme Colour 1"
         assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
         assert not (theme / "settings.json").exists()
+        assert palettes[-1][0]["label"] == "Custom Theme"
+        assert len(palettes[-1][0]["colours"]) == 59
         values = {field["id"]: field["value"] for field in fields}
         values["colour_1"] = "#ABCDEF"
         adapter.queue_save("example.theme", {"schema": 1, "values": values})
@@ -228,12 +231,15 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         scope.settings_status(request)
         assert json.loads((theme / "settings.json").read_text())["values"] == values
         assert notifications == [("ui-settings.changed", {"schema": 1, "values": values})]
+        assert palettes[-1][0]["colours"]["BACKGROUND"] == "#ABCDEF"
+        assert palettes[-1][0]["colours"]["PRIMARY"] == palettes[-1][0]["colours"]["SELECTION_BORDER"]
         assert adapter.pending is None and adapter.messages["example.theme"] == "Settings saved."
         # Both stale generations and duplicate IDs in a current generation are ignored.
         scope.settings_status(request)
         scope.settings_status(adapter.status() | {"save": request["save"]})
         assert len(notifications) == 1
         previous = (theme / "settings.json").read_bytes()
+        previous_palette = palettes[-1]
         from launcher import _settings_files
         original_write = _settings_files.write
         def fail(*args):
@@ -245,6 +251,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         assert (theme / "settings.json").read_bytes() == previous
         assert adapter.pending is None and "Try again" in adapter.messages["example.theme"]
         assert len(notifications) == 1 and "example.theme" in scope.mods
+        assert palettes[-1] == previous_palette
         monkeypatch.setattr(_settings_files, "write", original_write)
         adapter.queue_save("example.theme", {"schema": 1, "values": values})
         scope.settings_status(adapter.status())
@@ -254,8 +261,15 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
             scope.mods["example.theme"].event("invalid/event", None)
         assert list(scope.mods) == ["owned.other"]
         assert adapter.records == []
+        assert scope.themes.records == palettes[-1] == []
     assert native_settings.OptionsScreen.draw is native_originals["draw"]
     assert native_settings.OPTION_TABS == [("game", "Game"), ("graphics", "Graphics")]
+    # A fresh process's mod registration consumes the saved palette immediately.
+    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
+                          set_themes=lambda rows: palettes.append(rows))) as restarted:
+        restarted.load(startup)
+        finish(restarted)
+        assert palettes[-1][0]["colours"]["BACKGROUND"] == "#010203"
 
 
 def test_settings_notification_failure_keeps_save_and_removes_only_its_tab(
