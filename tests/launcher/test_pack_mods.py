@@ -62,6 +62,34 @@ def test_only_direct_declared_mods_load_once_in_id_order(pack, code_mod):
     assert not scope.mods and messages == before
 
 
+def test_default_loading_accepts_a_hardlinked_legacy_manifest(pack, code_mod):
+    game, folder, record = pack
+    mod = code_mod(folder, "owned.linked")
+    os.link(mod / "mod.toml", game / "manifest-copy.toml")
+    with closing(PackMods(game, lambda _: None)) as scope:
+        scope.load(record)
+        assert list(scope.mods) == ["owned.linked"] and scope.failed == 0
+        assert scope.mods["owned.linked"].event("owned.event", None) == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory traversal permissions")
+def test_default_loading_needs_only_traversal_of_installation_ancestors(tmp_path, code_mod):
+    if os.geteuid() == 0:
+        pytest.skip("Root bypasses directory permissions")
+    ancestor = tmp_path / "traverse-only"
+    game = ancestor / "game"
+    folder = game / "data/owned pack"
+    code_mod(folder, "owned.traversal")
+    record = dict(state="ready", series="formula", id=folder.name, root=str(folder.resolve()))
+    ancestor.chmod(0o111)
+    try:
+        with closing(PackMods(game, lambda _: None)) as scope:
+            scope.load(record)
+            assert list(scope.mods) == ["owned.traversal"] and scope.failed == 0
+    finally:
+        ancestor.chmod(0o700)
+
+
 def test_duplicate_invalid_missing_and_trapping_mods_do_not_stop_neighbours(
     pack, code_mod
 ):

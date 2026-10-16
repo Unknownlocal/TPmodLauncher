@@ -2,10 +2,12 @@
 """Owned relocated-player probe: verify runners and call one without build tooling."""
 
 import importlib.util
-from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import closing
+import json
 from pathlib import Path
 import sys
 import threading
+import time
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("_runner_dependencies", root / "launcher/bundled_dependencies.py")
@@ -13,14 +15,9 @@ dependencies = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dependencies)
 dependencies.import_dependencies(root)
 dependencies.load_source_packages(root)
-spec = importlib.util.spec_from_file_location("mod_runtime", root / "mod_runtime/__init__.py", submodule_search_locations=[str(root / "mod_runtime")])
-module = importlib.util.module_from_spec(spec)
-sys.modules["mod_runtime"] = module
-spec.loader.exec_module(module)
 
 from mod_runtime import RunnerBundle
-from launcher.source_mod import SourceMod
-from mod_runtime.preparation import SourcePreparation
+from launcher.pack_mods import PackMods
 from mod_runtime.source import SourceError, SourceSnapshot
 
 assert importlib.util.find_spec("componentize_py") is None
@@ -32,8 +29,10 @@ def audit(event, args):
 sys.addaudithook(audit)
 
 bundle = RunnerBundle(root / "libs/mod-runners")
-reports, closed = [], []
-mod = root / ".state/runner-probe-mod"
+reports, progress = [], []
+game = root / ".state/runner-game"
+pack = game / "data/owned pack"
+mod = pack / "owned.source"
 (mod / "src").mkdir(parents=True)
 (mod / "mod.toml").write_text('''schema = 2
 id = "owned.embedded"
@@ -54,17 +53,27 @@ except SourceError:
     pass
 else:
     raise AssertionError("The bundled player must reject a junction to a valid source mod")
-with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, bundle, mod) as job:
-    # Waiting is only probe synchronization; the player controller will poll take().
-    assert wait([job._future], timeout=20).done
-    with job.take() as prepared:
-        assert set(prepared.timings) == {"source_snapshot", "runner_read", "compile"}
-        (mod / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
-        with SourceMod(bundle, prepared.snapshot, prepared=prepared.compiled, timings=prepared.timings,
-                       report=lambda *args: reports.append(args), cleanup=lambda: closed.append(True)) as runner:
-            assert runner.sandbox._thread == threading.get_ident()
-            runner.activate()
-            assert runner.event("probe", {"owned": True}) == {"owned": True}
-    assert prepared.snapshot is None and prepared.compiled.closed
-assert reports == [("owned.embedded", "source in bundled runtime")] and closed == [True]
+owner = threading.get_ident()
+read = SourceSnapshot.read
+def snapshot(folder):
+    assert threading.get_ident() != owner
+    result = read(folder)
+    (Path(folder) / "src/mod.py").write_text('raise AssertionError("Changed after snapshot")', encoding="utf-8")
+    return result
+SourceSnapshot.read = snapshot
+with closing(PackMods(game, reports.append, runner_bundle=bundle, set_loading=progress.append)) as scope:
+    scope.load(dict(state="ready", series="formula", id=pack.name, root=str(pack.resolve())))
+    deadline = time.monotonic() + 20
+    while scope.loading is not None:
+        assert time.monotonic() < deadline
+        scope.poll()
+        time.sleep(0.002)
+    runner = scope.mods["owned.embedded"]
+    assert runner.sandbox._thread == owner
+    assert runner.event("probe", {"owned": True}) == {"owned": True}
+    assert progress[-1] == dict(state="complete", loaded=1, failed=0, total=1)
+    timing = next(json.loads(line.split(": ", 1)[1])["phase_seconds"] for line in reports if line.startswith("CODE MOD TIMING:"))
+    assert {"source_snapshot", "runner_read", "compile", "source_load", "activate"} <= timing.keys()
+assert runner.sandbox.closed
+assert any('"message": "source in bundled runtime"' in line for line in reports)
 print("Verified relocated runner; source activation/event/cleanup passed without componentize-py")

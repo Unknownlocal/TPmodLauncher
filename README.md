@@ -200,6 +200,11 @@ reject stale acknowledgements.
 
 `launcher/pack_mods.py` scans the selected pack's direct children, validates all
 manifests, rejects duplicate IDs and loads the remaining mods independently.
+An explicitly supplied trusted runner enables schema 2 Python source admission
+through the same progress, native readiness and session ownership. Source
+snapshots must match admitted metadata; source preparation is cancelled when its
+session closes. Normal launcher entry retains component loading until the runner
+release inventory and installation are complete.
 `mod_contract.py` binds manifest permissions to trusted host handlers;
 `mod_api.py` and the versioned WIT files define accepted imports and lifecycle
 signatures.

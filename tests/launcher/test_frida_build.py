@@ -414,7 +414,7 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
 ):
     root, _ = project_factory()
     output, wheel = wheel_output
-    for name in ("launcher", "hook_manager", "notices"):
+    for name in ("launcher", "hook_manager", "mod_runtime", "notices"):
         (root / name).mkdir()
         (root / name / "fixture.txt").write_text("synthetic source")
     for name in ("LICENCE", "README.md"):
@@ -446,6 +446,8 @@ def test_reduced_candidate_uses_real_pip_and_preserves_active_files(
         source_output,
     )
     runtime = build.release.read_settings(candidate)["runtime"]
+    for name in ("launcher", "hook_manager", "mod_runtime", "notices"):
+        assert (candidate / name / "fixture.txt").read_text() == "synthetic source"
     packages = build.release.read_lock(candidate, runtime)
     assert [(package.name, str(package.version)) for package, _ in packages] == [
         ("frida", "17.23.3+modlauncher.1"),

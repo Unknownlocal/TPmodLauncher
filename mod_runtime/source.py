@@ -26,6 +26,16 @@ class SourceError(ValueError):
     """A source manifest or tree is unsupported, unsafe, changed or over budget."""
 
 
+def read_manifest(folder):
+    """Return a pinned ordinary folder's path and bounded, inert manifest bytes."""
+    try:
+        with ExitStack() as stack:
+            root, parent = disk.root_directory(stack, folder)
+            return root, disk.read_file(root / "mod.toml", parent, 16 * 1024)
+    except (OSError, ValueError, TypeError) as error:
+        raise SourceError("Cannot read mod manifest: " + str(error)[:256]) from error
+
+
 @dataclass(frozen=True)
 class SourceManifest:
     """Schema 2 metadata; source entry modules replace author component paths."""

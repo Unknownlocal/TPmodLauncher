@@ -67,7 +67,19 @@ queued work or disposes an abandoned result when running work returns. Reads and
 native compilation are not forcibly interrupted. The controller retains executor
 lifetime and admission bounds; workers create no Store or game registrations.
 Bundle bootstrap and source-mod admission retain their own integrity reads.
+An optional admitted manifest is compared with the worker snapshot before native
+compilation, preventing identity or permission changes during preparation.
 
-Player discovery and startup integration are separate
-implementation stages. The current component-loading path retains its existing
-manifest format and permission admission rules.
+Source-enabled sessions in `launcher/pack_mods.py` use the pinned manifest reader
+to dispatch supported schemas and reject duplicate IDs before guest execution.
+Default component sessions retain the original Manifest.read admission behavior.
+Sessions supplied with a trusted runner load schema 2 Python sources through
+SourcePreparation/SourceMod and retain explicit schema 1 Wasm support. Python components in schema 1 are
+rejected in that mode. Preparation jobs belong to the session's loading generator;
+closing it cancels or disposes unfinished work. Activation, progress, native menu
+readiness and cleanup use the existing controller and bridge protocols.
+
+Bootstrap registers this package alongside launcher and hook_manager without
+adding game directories to Python's search path. Release staging includes these
+trusted sources. Installing/inventorying the runner artifact and enabling it in
+normal player entry remain a subsequent release stage.

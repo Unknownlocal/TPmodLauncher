@@ -211,11 +211,10 @@ def test_interface_check_rejects_extra_nonfunction_export(runner_bundle):
 @pytest.mark.embedded
 def test_relocated_player_verifies_and_runs_bundle_without_compiler(embedded_project, runner_bundle):
     root = embedded_project
-    shutil.copytree(ROOT / "mod_runtime", root / "mod_runtime", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(runner_bundle.directory, root / "libs/mod-runners")
     probe = root / "launcher/runner_probe.py"
     shutil.copyfile(Path(__file__).with_name("fixtures") / "embedded_runner_probe.py", probe)
-    owned_mod = root / ".state/runner-probe-mod"
+    owned_mod = root / ".state/runner-game/data/owned pack/owned.source"
     owned_mod.mkdir(parents=True)
     linked = root / ".state/runner-linked"
     subprocess.run(["cmd", "/c", "mklink", "/J", str(linked), str(owned_mod)], check=True, capture_output=True)

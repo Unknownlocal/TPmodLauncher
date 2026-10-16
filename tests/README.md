@@ -23,9 +23,14 @@ Preparation tests use real compilation with synchronized worker gates to exercis
 queued/running cancellation, late disposal, thread ownership and immutable source
 adoption. The bundled-interpreter probe prepares on a worker before controller
 activation and event delivery.
+Source-pack tests cover schema admission, metadata changes, mixed-profile duplicate
+IDs, no author-Wasm fallback, progress and native registration. Controller tests
+exercise source ownership through exits, exec/PID replacement and pending worker
+cancellation. The relocated probe uses real selected-pack loading and trusted
+package bootstrap without build tools.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
-runtime copies and a small owned native-menu interface. `launcher/conftest.py`
+runtime copies, a shared trusted runner build and a small owned native-menu interface. `launcher/conftest.py`
 adds real Git source repositories and Wasmtime components, and builds the public
 Python examples once per session. Fixtures stay separate from game files and
 external services.

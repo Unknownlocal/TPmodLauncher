@@ -800,7 +800,7 @@ def prepare_reduced_release(
         prepare_runtime(stage, settings["runtime"], archive)
         prepare_packages(stage, refresh_manifest=True)
         # Retain the signed build record alongside existing licences and the usable launcher source.
-        for directory in ("launcher", "hook_manager", "notices"):
+        for directory in ("launcher", "hook_manager", "mod_runtime", "notices"):
             shutil.copytree(
                 root / directory,
                 stage / directory,

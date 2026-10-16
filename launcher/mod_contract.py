@@ -60,6 +60,16 @@ class Manifest:
                 content = source.read(16_384 + 1)
             if len(content) > 16_384:
                 raise ValueError("Manifest exceeds 16 KiB")
+            return cls.parse(root, content)
+        except (OSError, ValueError, TypeError, RuntimeError) as error:
+            raise ManifestError(str(error)[:512]) from None
+
+    @classmethod
+    def parse(cls, root, content):
+        """Validate bounded metadata already read by trusted pack admission."""
+        try:
+            if type(content) is not bytes or len(content) > 16_384:
+                raise ValueError("Expected at most 16 KiB of manifest bytes")
             data = tomllib.loads(content.decode("utf-8"))
             if (
                 set(data) != _FIELDS

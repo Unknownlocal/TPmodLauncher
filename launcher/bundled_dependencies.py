@@ -296,9 +296,9 @@ def import_dependencies(root: Path):
 
 
 def load_source_packages(root: Path) -> None:
-    """Register our two trusted packages without adding the game or pack folders to sys.path."""
+    """Register trusted packages without adding game or pack folders to sys.path."""
     # Call only after dependency verification; source is part of the launcher release.
-    for name in ("launcher", "hook_manager"):
+    for name in ("launcher", "hook_manager", "mod_runtime"):
         if name in sys.modules:
             raise DependencyError(f"{name} was imported before launcher source setup")
         source = local_path(root, f"{name}/__init__.py")
