@@ -23,7 +23,8 @@ pack = game / "data/entry-owned-pack"
 for example in ("diagnostic_mod", "menu_mod"):
     shutil.copytree(root / "examples" / example, pack / example)
 reports, progress, menus = [], [], []
-bridge = SimpleNamespace(set_loading=progress.append, set_menu=lambda items: menus.append(items))
+bridge = SimpleNamespace(set_loading=progress.append, set_menu=lambda items: menus.append(items),
+                         set_settings=lambda records, result=None: None, set_themes=lambda records: None)
 setup = entry._dependencies.load_source_packages
 
 

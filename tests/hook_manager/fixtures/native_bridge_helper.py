@@ -40,6 +40,16 @@ utils._ACTIVE_PACK_CACHE.clear()
 sys.path.insert(0, str(Path(__file__).parent))
 hub = importlib.import_module("ui.screens.hub_screen")
 HubScreen = hub.HubScreen
+options = importlib.import_module("ui.screens.options_screen")
+from native_themes_fixture import modules
+theme_path = output / "display_settings.json"
+theme_path.write_text('{"color_pack":"code-mod:owned.theme"}')
+theme, packs = modules(Path(__file__).with_name("palette.py"), theme_path)
+sys.modules[theme.__name__], sys.modules[packs.__name__] = theme, packs
+options.COLOR_PACKS = packs.COLOR_PACKS
+host.themes.poll()  # Native post-import arm precedes background mod registration.
+assert host.themes.placeholder is not None
+original_palette_getitem = packs.ChromePalette.__getitem__
 original_menu = hub.ORIGINAL_METHODS["_activate"]
 original_draw = hub.ORIGINAL_METHODS["draw"]
 original_enabled = hub.ORIGINAL_METHODS["_item_enabled"]
@@ -80,6 +90,27 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if host.menu.loading["state"] == "error" and host.themes.placeholder is None:
+        assert "code-mod:owned.theme" not in packs.COLOR_PACK_LABELS
+        (output / "themes-error-cleaned").touch()
+    if host.themes.applied == "owned.theme" and not (output / "themes-applied.json").exists():
+        theme_proof = output / "themes-applied.tmp"
+        theme_proof.write_text(json.dumps({
+            "background": theme.UITheme.BACKGROUND, "choices": options.COLOR_PACKS,
+        }))
+        theme_proof.replace(output / "themes-applied.json")
+    if host.settings.records and not (output / "settings-requested").exists():
+        host.settings.queue_save("owned.settings", {"schema": 1, "values": {"accent": "#ABCDEF"}})
+        (output / "settings-requested").touch()
+    if (host.settings.records and host.settings.pending is None
+            and host.settings.records[0]["fields"][0]["value"] == "#ABCDEF"):
+        (output / "settings-acknowledged").touch()
+    if (output / "settings-again-request").exists() and not (output / "settings-again-requested").exists():
+        host.settings.queue_save("owned.settings", {"schema": 1, "values": {"accent": "#123456"}})
+        (output / "settings-again-requested").touch()
+    if (host.settings.records and host.settings.pending is None
+            and host.settings.records[0]["fields"][0]["value"] == "#123456"):
+        (output / "settings-again-acknowledged").touch()
     if (
         "Owned UI" in hub.MENU_ITEMS
         and host.menu.loading["state"] == "complete"
@@ -126,6 +157,12 @@ while not manager.closed and time.monotonic() < deadline:
             and HubScreen._item_enabled is original_enabled,
             "disabled_message_restored": HubScreen._disabled_item_message
             is original_disabled_message,
+            "settings_tabs": options.OPTION_TABS,
+            "settings_restored": all(getattr(options.OptionsScreen, name) is original
+                                     for name, original in options.ORIGINAL_METHODS.items()),
+            "theme_background": theme.UITheme.BACKGROUND,
+            "theme_choices": options.COLOR_PACKS,
+            "theme_restored": packs.ChromePalette.__getitem__ is original_palette_getitem,
         }
     )
 )

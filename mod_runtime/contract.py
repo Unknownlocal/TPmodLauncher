@@ -17,4 +17,13 @@ class HostOperation:
 HOST_OPERATIONS = MappingProxyType({
     "report": HostOperation("diagnostics", ("string",)),
     "add-menu-button": HostOperation("main-menu", ("string", "string", "string")),
+    "register-settings": HostOperation("ui-settings", ("string",), "string"),
+    "save-settings": HostOperation("ui-settings", ("string",), "string"),
+    "register-theme": HostOperation("ui-settings", ("string",)),
+})
+
+# Source manifests select an exact public version, independently of the runner ABI.
+SOURCE_CAPABILITIES = MappingProxyType({
+    "0.2.0": frozenset({"diagnostics", "main-menu"}),
+    "0.3.0": frozenset(spec.capability for spec in HOST_OPERATIONS.values()),
 })

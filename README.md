@@ -37,7 +37,8 @@ have settled.
 ### Create a mod
 
 Start with the [diagnostic example](examples/diagnostic_mod) or
-[menu example](examples/menu_mod). Write a `mod.toml` manifest and readable Python
+[menu example](examples/menu_mod), or use the [theme editor](examples/theme_mod)
+for shared UI settings. Write a `mod.toml` manifest and readable Python
 source in `src/mod.py`:
 
 ```toml
@@ -57,10 +58,10 @@ All seven fields are required; additional fields are rejected.
 | `schema` | Integer `2`. |
 | `id` | Unique ID, at most 128 characters, starting with a lowercase letter and continuing with lowercase letters, digits, `.`, `_`, `:` or `-`. |
 | `version` | SemVer version, at most 64 characters. |
-| `api` | Exact source API version `0.2.0`. |
+| `api` | Exact source API version `0.2.0` or `0.3.0`. |
 | `runtime` | `python`. |
 | `entry` | Dotted module name under `src/`, at most 128 characters; `mod` loads `src/mod.py`. |
-| `capabilities` | Unique permissions: `diagnostics` and `main-menu`. An empty list is valid. |
+| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, and (API `0.3.0` only) `ui-settings`. An empty list is valid. |
 
 Implement the `wit_world` API provided by the runner:
 
@@ -91,6 +92,15 @@ register four buttons, with 32 total per game process. IDs must be unique within
 the mod, and labels must be unique across registered and existing native items.
 Clicking a button displays its confirmation for 2.5 seconds through the game's
 native menu.
+
+API `0.3.0` also supplies `register_settings(definition)` and `save_settings(values)`
+under the `ui-settings` permission. These stage labelled colour fields and own
+the mod's local `settings.json`; see the [UI settings contract](hook_manager/api/0.3.0/README.md).
+The native editor supplies hex inputs, live swatches, Save and Reset to Defaults
+under a mod-owned Options tab. Successful native saves deliver the
+`ui-settings.changed` event to the owner. The same `ui-settings` permission
+provides `register_theme(definition)` for named palettes in the existing Color
+Pack dropdown. Choices and saved palette edits take effect after restarting.
 
 `on_event(name, payload)` receives a named event and a JSON payload string, and
 returns a JSON response string. The host validates plain JSON values, with a depth limit of 8, a 1,024-node budget and a 4,096-byte

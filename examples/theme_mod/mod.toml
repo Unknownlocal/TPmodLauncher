@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MPL-2.0
+schema = 2
+id = "example.theme"
+version = "0.1.0"
+api = "0.3.0"
+runtime = "python"
+entry = "mod"
+capabilities = ["ui-settings"]

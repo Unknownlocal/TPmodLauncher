@@ -14,7 +14,7 @@ import re
 import stat
 from types import MappingProxyType
 
-ABI_VERSION = "0.1.0"
+ABI_VERSION = "0.3.0"
 COMPONENTIZE_VERSION = "0.25.1"
 EXPORTS = MappingProxyType({
     "put-source": (("string", "string"), None),

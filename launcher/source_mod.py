@@ -17,7 +17,7 @@ class SourceMod(Mod):
     discovery, background preparation and session readiness remain caller work.
     """
 
-    def __init__(self, bundle, snapshot, *, report=None, menu=None, cleanup=None,
+    def __init__(self, bundle, snapshot, *, report=None, menu=None, settings=None, theme=None, cleanup=None,
                  timings=None, prepared=None):
         ownership = ExitStack()
         try:
@@ -29,7 +29,7 @@ class SourceMod(Mod):
                 ownership.callback(prepared.close)
             if type(snapshot) is not SourceSnapshot:
                 raise SandboxError("Expected a validated source snapshot")
-            operations = _host_operations(snapshot.manifest, report, menu)
+            operations = _host_operations(snapshot.manifest, report, menu, settings, theme)
             self.runner = PythonRunner(
                 bundle, snapshot, {name: operation.callback for name, operation in operations.items()},
                 cleanup=ownership.close, timings=timings, prepared=prepared,

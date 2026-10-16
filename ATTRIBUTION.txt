@@ -21,15 +21,33 @@ Runtime directory: libs/python-3.13.16-embed-amd64/.
 The runtime is separately licensed and is not this project's original code.
 
 Frida 17.23.3: Frida Developers, https://frida.re/
-Official wheel: frida-17.23.3-cp37-abi3-win_amd64.whl, from PyPI.
-notices/LICENSE.Frida.txt is byte-identical to licenses/COPYING in that wheel.
-Preparation retains the original licence and package payload. Developer pip adds
-INSTALLER/REQUESTED and rewrites installed RECORD; the manifest records the output.
+The active pylock.toml and bundled_packages.toml select our locally built reduced
+Windows binding: frida-17.23.3+modlauncher.1-cp37-abi3-win_amd64.whl.
+It is built from unmodified upstream source with the feature selection recorded in
+launcher/frida_build.toml; the local version suffix identifies our build.
+This is not the official PyPI wheel or an upstream-authenticated binary.
+pylock.stock.toml retains the official 17.23.3 wheel as a separate fallback.
+Frida's own code uses the wxWindows Library Licence 3.1 (GNU Library GPL version
+2 or later, with the wxWindows binary-distribution exception).
+notices/LICENSE.Frida.txt is byte-identical to licenses/COPYING in both wheels.
+notices/LICENSE.FridaGum.txt preserves Gum's complete upstream COPYING, including
+the additional source-map/Closure Compiler and regenerator BSD notices.
+Preparation retains the selected wheel's licence and package payload. Developer
+pip adds INSTALLER/REQUESTED and rewrites installed RECORD; the manifest records
+the output.
 Packages under the selected libs/vendor directory are distributed alongside Python;
 wheels and developer pip are build tools/inputs, not end-user dependencies.
 Upstream source: https://github.com/frida/frida/tree/17.23.3
-Review incorporated-component notices and source obligations before a release;
-the wheel's COPYING alone is not a completed native-component distribution audit.
+Frida's normal Windows build embeds Microsoft's dbghelp.dll and symsrv.dll.
+Our code uses these only through Frida. They remain separately licensed Microsoft
+components; Frida's wxWindows licence does not establish their Microsoft terms.
+The SDK redistribution list permits the Debugging Tools versions as part of a
+program, subject to the SDK licence and its distribution requirements:
+https://learn.microsoft.com/en-us/legal/windows-sdk/redist
+See notices/frida-sdk/DISTRIBUTION_REVIEW.md for the exact-file provenance and
+remaining release checks, and launcher/FRIDA_RELINK.md for matching source and
+rebuilding instructions. Keep the applicable component notices and matching
+source/relinking materials available with a binary release.
 
 Wasmtime Python bindings and native runtime 49.0.0: The Wasmtime Project Developers.
 Official origin: https://pypi.org/project/wasmtime/49.0.0/

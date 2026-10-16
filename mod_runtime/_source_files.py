@@ -7,9 +7,9 @@ from pathlib import Path
 import stat
 
 
-def _windows_open(path, directory):
-    # No write/delete sharing: opened files and ancestor directories cannot be
-    # replaced or converted into reparse points while the snapshot uses them.
+def _windows_open(path, directory, writable_directory=False):
+    # By default, no write/delete sharing: opened files and ancestor directories
+    # cannot be replaced or converted into reparse points during a source read.
     import ctypes
     from ctypes import wintypes
     import msvcrt
@@ -25,7 +25,10 @@ def _windows_open(path, directory):
     # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES makes directory sharing locks
     # effective too; metadata-only handles do not prevent renaming on Windows.
     # FILE_SHARE_READ, OPEN_EXISTING, OPEN_REPARSE_POINT | BACKUP_SEMANTICS.
-    handle = create(str(path), 0x81 if directory else 0x80000000, 1, None, 3, 0x02200000, None)
+    # UI settings storage permits writes inside its final pinned directory. Ancestors
+    # and source snapshots keep the original read-only sharing policy.
+    share = 3 if directory and writable_directory else 1
+    handle = create(str(path), 0x81 if directory else 0x80000000, share, None, 3, 0x02200000, None)
     if handle == ctypes.c_void_p(-1).value:
         error = ctypes.WinError(ctypes.get_last_error())
         error.filename = str(path)
@@ -38,10 +41,10 @@ def _windows_open(path, directory):
 
 
 @contextmanager
-def opened(path, parent=None, *, directory=False):
+def opened(path, parent=None, *, directory=False, writable_directory=False):
     """Keep ownership of a no-follow descriptor until its caller finishes."""
     if os.name == "nt":
-        descriptor = _windows_open(path, directory)
+        descriptor = _windows_open(path, directory, writable_directory)
     else:
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
         if directory:
@@ -61,8 +64,12 @@ def opened(path, parent=None, *, directory=False):
         os.close(descriptor)
 
 
-def root_directory(stack, folder):
-    """Pin each ancestor from the filesystem anchor, including the supplied root."""
+def root_directory(stack, folder, *, writable=False):
+    """Pin every ancestor; writable permits Windows writes in the final directory.
+
+    Writers must use directory-relative operations against the returned handle.
+    Source snapshots retain the stricter default sharing policy.
+    """
     path = Path(folder).absolute()
     if ".." in path.parts:
         raise ValueError("Expected a canonical mod folder")
@@ -71,7 +78,8 @@ def root_directory(stack, folder):
     for part in (path.anchor, *path.parts[1:]):
         if part != path.anchor:
             current /= part
-        parent = stack.enter_context(opened(current, parent, directory=True))
+        parent = stack.enter_context(opened(current, parent, directory=True,
+                                           writable_directory=writable and current == path))
     return path, parent
 
 

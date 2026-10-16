@@ -70,6 +70,24 @@ def test_invalid_or_over_budget_manifest(data):
         SourceManifest.parse(data)
 
 
+def test_ui_settings_permissions_require_api_030_while_existing_source_api_stays_supported():
+    settings = MANIFEST.replace(b'["diagnostics"]', b'["ui-settings"]')
+    with pytest.raises(SourceError, match="capability"):
+        SourceManifest.parse(settings)
+    current = SourceManifest.parse(settings.replace(b'api = "0.2.0"', b'api = "0.3.0"'))
+    assert current.capabilities == frozenset({"ui-settings"})
+    assert SourceManifest.parse(MANIFEST).api == "0.2.0"
+
+
+@pytest.mark.parametrize("capability", ["theme-settings", "ui-theme"])
+def test_unreleased_theme_capability_is_not_a_ui_settings_alias(capability):
+    retired = MANIFEST.replace(b'api = "0.2.0"', b'api = "0.3.0"').replace(
+        b'["diagnostics"]', f'["{capability}"]'.encode(),
+    )
+    with pytest.raises(SourceError, match="capability"):
+        SourceManifest.parse(retired)
+
+
 @pytest.mark.parametrize("version", ["0.1.0", "1.2.3-beta.1+build.2"])
 def test_source_metadata_and_snapshot_are_immutable_and_do_not_execute(mod, version):
     (mod / "mod.toml").write_bytes(MANIFEST.replace(b"0.1.0", version.encode()))

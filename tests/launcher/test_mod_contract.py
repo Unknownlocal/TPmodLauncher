@@ -61,6 +61,15 @@ def test_manifest_rejects_unsupported_or_escaping_metadata(author, old, new):
         Manifest.read(author)
 
 
+def test_ui_theme_is_not_a_separate_wasm_capability(author):
+    path = author / "mod.toml"
+    path.write_text(path.read_text().replace('api = "0.1.0"', 'api = "0.3.0"').replace(
+        '["diagnostics"]', '["ui-theme"]',
+    ))
+    with pytest.raises(ManifestError, match="capability"):
+        Manifest.read(author)
+
+
 def test_manifest_is_data_only_and_component_can_be_built_later(author):
     path = author / "mod.toml"
     path.write_text(path.read_text().replace('"0.1.0"', '"0.1.0-beta.1+build.2"', 1))

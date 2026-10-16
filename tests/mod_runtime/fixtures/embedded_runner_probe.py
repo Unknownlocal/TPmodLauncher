@@ -37,15 +37,19 @@ mod = pack / "owned.source"
 (mod / "mod.toml").write_text('''schema = 2
 id = "owned.embedded"
 version = "0.1.0"
-api = "0.2.0"
+api = "0.3.0"
 runtime = "python"
 entry = "mod"
-capabilities = ["diagnostics"]
+capabilities = ["diagnostics", "ui-settings"]
 ''', encoding="utf-8")
 (mod / "src/mod.py").write_text('''import wit_world
 class WitWorld(wit_world.WitWorld):
-    def activate(self): wit_world.report("source in bundled runtime")
-    def on_event(self, name, payload): return payload
+    def activate(self):
+        wit_world.report("source in bundled runtime")
+        wit_world.register_settings('{"schema":1,"label":"Owned UI","fields":[{"id":"accent","label":"Accent","color":"#112233"}]}')
+    def on_event(self, name, payload):
+        if name == "settings.save": return wit_world.save_settings(payload)
+        return payload
 ''' + "#" + "a" * 65536, encoding="utf-8")
 try:
     SourceSnapshot.read(root / ".state/runner-linked")
@@ -71,9 +75,18 @@ with closing(PackMods(game, reports.append, runner_bundle=bundle, set_loading=pr
     runner = scope.mods["owned.embedded"]
     assert runner.sandbox._thread == owner
     assert runner.event("probe", {"owned": True}) == {"owned": True}
+    assert scope.settings.records[0]["fields"][0]["label"] == "Accent"
+    assert not (mod / "settings.json").exists()
+    saved_settings = {"schema": 1, "values": {"accent": "#ABCDEF"}}
+    assert runner.event("settings.save", saved_settings) == saved_settings
+    assert json.loads((mod / "settings.json").read_text(encoding="utf-8")) == saved_settings
     assert progress[-1] == dict(state="complete", loaded=1, failed=0, total=1)
     timing = next(json.loads(line.split(": ", 1)[1])["phase_seconds"] for line in reports if line.startswith("CODE MOD TIMING:"))
     assert {"source_snapshot", "runner_read", "compile", "source_load", "activate"} <= timing.keys()
 assert runner.sandbox.closed
+assert scope.settings.records == []
+from launcher.ui_settings import UISettings
+fresh = UISettings(mod)
+assert json.loads(fresh.register('{"schema":1,"label":"Owned UI","fields":[{"id":"accent","label":"Accent","color":"#112233"}]}')) == saved_settings
 assert any('"message": "source in bundled runtime"' in line for line in reports)
-print("Verified relocated runner; source activation/event/cleanup passed without componentize-py")
+print("Verified relocated runner; source and UI settings save/load/cleanup passed without componentize-py")
