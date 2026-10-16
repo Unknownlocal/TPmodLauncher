@@ -57,6 +57,23 @@ try:
     while not (output / "menu.json").exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert (output / "menu.json").exists(), messages
+    settings = [{"owner": "owned.settings", "label": "Owned Settings", "schema": 1, "fields": [
+        {"id": "accent", "label": "Accent", "type": "color", "default": "#112233", "value": "#112233"},
+    ]}]
+    status = current.set_settings(settings)
+    assert status["settings"]["state"] == "ready", status
+    deadline = time.monotonic() + 5
+    while status["settings"]["save"] is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = current.request("status")
+    request = status["settings"]["save"]
+    assert request == {"id": 1, "owner": "owned.settings", "schema": 1, "values": {"accent": "#ABCDEF"}}, status
+    settings[0]["fields"][0]["value"] = "#ABCDEF"
+    status = current.set_settings(settings, {"id": 1, "owner": "owned.settings", "success": True})
+    assert status["settings"]["save"] is None
+    while not (output / "settings-acknowledged").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert (output / "settings-acknowledged").exists(), messages
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:

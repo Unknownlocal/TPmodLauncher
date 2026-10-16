@@ -1,11 +1,21 @@
-# Custom theme example: palette definition
+# Custom theme example
 
-Step 1 defines the colour groups in [src/palette.py](src/palette.py). Step 2 adds
-the host's [UI settings API](../../hook_manager/api/0.3.0/README.md), including
-declaration validation and mod-local persistence. The theme mod supplies its own
-field IDs, labels and coupling rules; palette application stays separate. The
-settings tab, custom palette adapter and installable mod entry point are still
-to be implemented.
+This source mod adds a **Theme** tab to the game's Options screen through the
+shared [UI settings API](../../hook_manager/api/0.3.0/README.md). Copy this folder
+into the selected Formula data pack and restart the game through the launcher.
+
+Each row has a hex input and a live colour swatch. Click a row to edit it; Tab and
+Shift+Tab move between rows. Ctrl+A selects its text, Ctrl+V pastes a colour, and
+Enter saves. Mouse-wheel scrolling reaches all 52 rows. The overlay's swatch uses
+a checkerboard to show transparency. Invalid entries disable Save.
+
+**Save** writes `settings.json` inside the installed mod folder. **Reset to
+Defaults** stages defaults; Save keeps them. Unsaved edits survive tab switches
+within the options screen. Back leaves the screen without saving those edits.
+
+Palette selection and application remain the next step: this editor currently
+saves colours without changing the game's appearance. Theme numbering and
+coupling are defined by this example, rather than by the shared settings API.
 
 The palette covers all 59 named colour entries in the inspected game's `UITheme`,
 grouped into 52 distinct default colours. Typography settings, caches and computed

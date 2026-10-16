@@ -37,7 +37,8 @@ have settled.
 ### Create a mod
 
 Start with the [diagnostic example](examples/diagnostic_mod) or
-[menu example](examples/menu_mod). Write a `mod.toml` manifest and readable Python
+[menu example](examples/menu_mod), or use the [theme editor](examples/theme_mod)
+for shared UI settings. Write a `mod.toml` manifest and readable Python
 source in `src/mod.py`:
 
 ```toml
@@ -95,7 +96,9 @@ native menu.
 API `0.3.0` also supplies `register_settings(definition)` and `save_settings(values)`
 under the `ui-settings` permission. These stage labelled colour fields and own
 the mod's local `settings.json`; see the [UI settings contract](hook_manager/api/0.3.0/README.md).
-The native editor and custom palette application are not integrated yet.
+The native editor supplies hex inputs, live swatches, Save and Reset to Defaults
+under a mod-owned Options tab. Successful native saves deliver the
+`ui-settings.changed` event to the owner. Custom palette application is separate.
 
 `on_event(name, payload)` receives a named event and a JSON payload string, and
 returns a JSON response string. The host validates plain JSON values, with a depth limit of 8, a 1,024-node budget and a 4,096-byte

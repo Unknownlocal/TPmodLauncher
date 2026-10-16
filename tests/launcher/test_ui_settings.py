@@ -285,3 +285,22 @@ def test_full_example_palette_fits_interface_and_retains_all_52_rows(store):
     assert store.save(saved) == saved
     assert len(store.record("example.theme")["fields"]) == 52
     assert store.record("example.theme")["fields"][-1]["value"] == "#000000A0"
+
+
+@pytest.mark.parametrize("failure", ["menu", "settings"])
+@pytest.mark.parametrize("closing", [False, True])
+def test_both_native_registries_are_cleaned_when_one_transport_fails(tmp_path, failure, closing):
+    from launcher.pack_mods import PackMods
+
+    calls = []
+    def publish(area):
+        def update(*args):
+            calls.append(area)
+            if area == failure:
+                raise OSError("owned transport failure")
+        return update
+    scope = PackMods(tmp_path, lambda line: None, set_menu=publish("menu"), set_settings=publish("settings"))
+    scope.applied_menu = scope.applied_settings = [{"owner": "owned.mod"}]
+    with pytest.raises((OSError, RuntimeError)):
+        scope.close() if closing else scope._remove_menu("owned.mod")
+    assert sorted(calls) == ["menu", "settings"]

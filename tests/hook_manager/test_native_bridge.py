@@ -34,6 +34,7 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
     (menu.parent / "__init__.py").touch()
     (menu / "__init__.py").touch()
     shutil.copyfile(FIXTURES / "native_menu_fixture.py", menu / "hub_screen.py")
+    shutil.copyfile(FIXTURES / "native_settings_fixture.py", menu / "options_screen.py")
     output = tmp_path / "results"
     output.mkdir()
     probe = root / "launcher/bridge_probe.py"
@@ -73,6 +74,8 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         assert closed["pack"] == {"state": "stopped"}
         assert closed["menu"] == ["Career", "Exit"] and closed["menu_restored"]
         assert closed["disabled_message_restored"]
+        assert closed["settings_tabs"] == [["game", "Game"], ["graphics", "Graphics"]]
+        assert closed["settings_restored"]
         menu = json.loads((output / "menu.json").read_text())
         assert menu == {
             "items": ["Career", "Owned UI", "Exit"],

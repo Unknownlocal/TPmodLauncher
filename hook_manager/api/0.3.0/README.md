@@ -61,8 +61,20 @@ saved files. Calls require `ui-settings`, including during source import. API
 `0.2.0` remains supported with its existing permissions. The prepared runner uses
 private ABI `0.2.0`.
 
-The host stages copied typed fields, including defaults and current swatch values.
-Native tab rendering and settings-change event delivery remain subsequent UI
-integration work. The theme mod will consume these settings; registering or
-saving settings does not register a palette or change game colours. Palette
-application belongs to a separate adapter.
+The native adapter appends a tab to Options and renders colour inputs, swatches,
+Save and Reset to Defaults. It preserves unsaved drafts across tab switches in
+one options screen, supports mouse-wheel scrolling, and validates all fields
+before Save. Reset stages defaults until saved. Registration conflicts with a
+built-in tab label reject the affected declaration.
+
+Native saves are queued as bounded data. The launcher validates the owner and
+values, writes settings, and acknowledges the request before reporting success
+in the editor. Failed writes preserve drafts and display a retry message. Request
+IDs and registry generations prevent duplicate writes and stale acknowledgements.
+After a successful native save, the mod receives `on_event("ui-settings.changed",
+payload)`, where the JSON payload is the complete saved values document. Its
+response is validated but has no executable meaning. A notification failure
+closes that mod and removes its tab; the user's saved file remains intact.
+
+The theme example consumes these settings. Registering or saving settings does
+not register a palette or change game colours; palette application is separate.

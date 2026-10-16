@@ -57,6 +57,7 @@ class PackMods:
         report,
         *,
         set_menu=None,
+        set_settings=None,
         set_loading=None,
         background=False,
         cache=None,
@@ -70,6 +71,10 @@ class PackMods:
         self.closed = False
         self.menu = MenuRequests()
         self.settings = SettingsRequests()
+        self.set_settings = set_settings
+        self.applied_settings = []
+        self.settings_generation = self.last_settings_request = 0
+        self.settings_result = None
         self.set_menu = set_menu
         self.applied_menu = []
         self.menu_generation = 0
@@ -103,12 +108,74 @@ class PackMods:
         self.mods.pop(owner, None)
         self.menu.remove(owner)
         self.settings.remove(owner)
-        if (
-            not self.closed
-            and self.applied_menu is not None
-            and any(item["owner"] == owner for item in self.applied_menu)
-        ):
-            self._flush_menu()
+        error = None
+        for applied, flush in ((self.applied_settings, self._flush_settings), (self.applied_menu, self._flush_menu)):
+            if not self.closed and applied is not None and any(item["owner"] == owner for item in applied):
+                try:
+                    flush()
+                except Exception as failure:
+                    error = error or failure
+        if error is not None:
+            raise error
+
+    def _flush_settings(self):
+        """Publish copied declarations only after guest execution has returned."""
+        records = self.settings.records
+        if self.set_settings is None or (self.applied_settings == records and self.settings_result is None):
+            return
+        self.applied_settings = None
+        result = self.set_settings(records, self.settings_result)
+        if result is not None:
+            self.settings_generation = result["settings"]["generation"]
+            if result["settings"]["state"] == "failed":
+                raise ManifestError(result["settings"]["detail"])
+        self.applied_settings = records
+        self.settings_result = None
+
+    def settings_status(self, status):
+        """Persist one user save, acknowledge it once, then notify its sandboxed owner."""
+        if status.get("generation") != self.settings_generation:
+            return
+        if status.get("state") == "failed":
+            self.applied_settings = None
+            for owner, mod in list(self.mods.items()):
+                if "ui-settings" in mod.manifest.capabilities:
+                    self.mods.pop(owner).close()
+                    self.failed += 1
+                    self._log("REJECTED", id=owner, detail=status.get("detail", "Settings unavailable"))
+            self._flush_settings()
+            self._progress("complete" if self.finished else "loading")
+            return
+        request = status.get("save")
+        if request is None:
+            return
+        if (type(request) is not dict or set(request) != {"id", "owner", "schema", "values"}
+                or type(request["id"]) is not int or not 0 < request["id"] <= 2**53 - 1
+                or type(request["owner"]) is not str):
+            raise ValueError("Invalid native settings request")
+        if request["id"] <= self.last_settings_request:
+            self._flush_settings()
+            return
+        self.last_settings_request = request["id"]
+        owner = request["owner"]
+        mod = self.mods.get(owner)
+        success, values = False, None
+        try:
+            if mod is None or "ui-settings" not in mod.manifest.capabilities:
+                raise ValueError("Settings owner is no longer active")
+            payload = json.dumps({"schema": request["schema"], "values": request["values"]}, separators=(",", ":"))
+            values = json.loads(self.settings.call(owner, "save-settings", payload))
+            success = True
+        except (OSError, ValueError, KeyError) as error:
+            self._log("SETTINGS SAVE FAILED", id=owner, detail=str(error)[:512])
+        self.settings_result = {"id": request["id"], "owner": owner, "success": success}
+        self._flush_settings()
+        if success:
+            try:
+                mod.event("ui-settings.changed", values)
+                self._flush_settings()
+            except Exception as error:
+                self._log("SETTINGS EVENT FAILED", id=owner, detail=str(error)[:512])
 
     def _log(self, event, **fields):
         """Keep paths, errors and mod messages inside one quoted log record."""
@@ -192,7 +259,10 @@ class PackMods:
 
     def poll(self):
         """Advance only ready work on the owning controller thread; never wait on a compiler."""
-        if self.loading is None or self.closed:
+        if self.closed:
+            return
+        if self.loading is None:
+            self._flush_settings()
             return
         try:
             next(self.loading)
@@ -302,21 +372,20 @@ class PackMods:
                 if "main-menu" in manifest.capabilities:
                     with measure(timings, "registration"):
                         self._flush_menu()
+                if "ui-settings" in manifest.capabilities:
+                    self._flush_settings()
             except Exception as error:
                 self.failed += 1
                 self.settings.remove(manifest.id)
                 failed = self.mods.pop(manifest.id, None)
                 if failed is not None:
                     failed.close()
-                if "main-menu" in manifest.capabilities:
-                    try:
-                        self._flush_menu()
-                    except Exception as cleanup_error:
-                        self._log(
-                            "CLEANUP ERROR",
-                            id=manifest.id,
-                            detail=str(cleanup_error)[:512],
-                        )
+                for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings)):
+                    if capability in manifest.capabilities:
+                        try:
+                            flush()
+                        except Exception as cleanup_error:
+                            self._log("CLEANUP ERROR", id=manifest.id, detail=str(cleanup_error)[:512])
                 self._log(
                     "REJECTED",
                     id=manifest.id,
@@ -401,10 +470,11 @@ class PackMods:
                 self._log("CLEANUP ERROR", id=mod_id, detail=str(error)[:512])
             else:
                 self._log("CLOSED", id=mod_id)
-        try:
-            self._flush_menu()
-        except Exception as error:
-            failed = True
-            self._log("CLEANUP ERROR", detail=str(error)[:512])
+        for flush in (self._flush_menu, self._flush_settings):
+            try:
+                flush()
+            except Exception as error:
+                failed = True
+                self._log("CLEANUP ERROR", detail=str(error)[:512])
         if failed:
             raise RuntimeError("Code mod cleanup failed; see the launcher log")

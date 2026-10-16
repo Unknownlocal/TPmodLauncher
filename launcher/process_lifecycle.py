@@ -331,6 +331,8 @@ class Controller:
                     self.pack_mods[pid].load(pack)
             elif event == "menu" and pid in self.pack_mods:
                 self.pack_mods[pid].menu_status(payload.get("status", {}))
+            elif event == "settings" and pid in self.pack_mods:
+                self.pack_mods[pid].settings_status(payload.get("status", {}))
             elif event in ("waiting", "transport"):
                 self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:

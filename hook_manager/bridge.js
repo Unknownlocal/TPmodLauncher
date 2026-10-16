@@ -12,6 +12,8 @@ let pending = null;
 let lastAttempt = 0;
 let menuPending = false;
 let menuState = null;
+let settingsWatching = false;
+let settingsState = null;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -26,9 +28,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons, loading) {
+function enqueue(operation, id, buttons, loading, settings) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -37,7 +39,7 @@ function enqueue(operation, id, buttons, loading) {
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, resolve, reject }; });
+    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, resolve, reject }; });
 }
 
 send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
@@ -79,7 +81,7 @@ observer = Process.attachModuleObserver({
                 onEnter() {
                     // Before SaveThread executes, this thread still holds the GIL and its thread state.
                     // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending)) return;
+                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching)) return;
                     if (!initialized() || finalizing()) return;
                     const state = threadState();
                     if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
@@ -92,6 +94,7 @@ observer = Process.attachModuleObserver({
                         const record = { operation: request.operation };
                         if (request.operation === 'menu') record.buttons = request.buttons;
                         if (request.operation === 'loading') record.loading = request.loading;
+                        if (request.operation === 'settings') record.settings = request.settings;
                         const expression = config.prefix + JSON.stringify(JSON.stringify(record)) + config.suffix;
                         const source = Memory.allocUtf8String(expression);
                         const main = addModule(mainName); // Borrowed: never decrement this reference.
@@ -127,6 +130,12 @@ observer = Process.attachModuleObserver({
                             menuState = JSON.stringify(menu);
                             send({ event: 'menu', status: menu });
                         }
+                        const settings = response.status.settings;
+                        settingsWatching = settings && settings.state !== 'idle' && settings.state !== 'failed';
+                        if (settings && JSON.stringify(settings) !== settingsState) {
+                            settingsState = JSON.stringify(settings);
+                            send({ event: 'settings', status: settings });
+                        }
                         if (pending) {
                             const completed = pending;
                             pending = null;
@@ -155,7 +164,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
             );

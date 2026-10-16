@@ -77,7 +77,7 @@ cleanup protocols. Source loading never falls back to author-supplied Wasm.
 
 `launcher/ui_settings.py` owns labelled UI field declarations and per-mod
 `settings.json` storage through API 0.3.0's `ui-settings` grant. The host stages
-copied row records for subsequent native UI integration. `_settings_files.py` uses
+copied row records for the native Options adapter. `_settings_files.py` uses
 directory-relative file access and atomic replacement; author paths never enter
 the storage API. Saved settings survive instance cleanup, while registrations do
 not. Existing API 0.2.0 manifests keep their original capability set.

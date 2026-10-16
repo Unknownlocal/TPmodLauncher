@@ -1,8 +1,10 @@
 # Reduced Frida distribution review
 
 Reviewed 14 October 2026 against the pinned Frida 17.23.3 repositories and
-20261004 SDKs. This records findings and remaining release work. Binary/source
-artifact publication is still disabled; the stock runtime remains selected.
+20261004 SDKs; Frida/Microsoft licence findings updated 16 October 2026. This
+records findings and remaining release work. Binary/source artifact publication
+is still disabled. The local Windows installation selects the reduced
+17.23.3+modlauncher.1 binding; pylock.stock.toml retains the official fallback.
 
 ## Matching source and download arrangement
 
@@ -42,14 +44,14 @@ wxWindows exception permits additional binary uses; it does not automatically
 extend to separately incorporated SDK libraries. The full GNU Library licence
 text referred to by that exception is also retained in [libsoup/COPYING](libsoup/COPYING).
 
-An additional issue was found outside the SDK manifests. Frida Gum tracks
+Separately licensed components were found outside the SDK manifests. Frida Gum tracks
 Microsoft dbghelp.dll and symsrv.dll for x86, x64 and ARM64, and Core's
 embed-agent.py embeds the selected debugging DLLs in the Windows binding.
 Git bundles preserve all six upstream-tracked DLLs even for a Linux source
 archive. No claim that those bundles contain only open-source code is valid.
 
-The exact DLL provenance and applicable redistribution grant still need to be
-established before publication. Microsoft's
+The exact DLL provenance and satisfaction of the applicable distribution
+conditions still need to be established before publication. Microsoft's
 [DbgHelp documentation](https://learn.microsoft.com/en-us/windows/win32/debug/dbghelp-versions)
 distinguishes the Debugging Tools package from the non-redistributable DLL
 shipped with Windows. A Microsoft signature, or presence in Frida's repository,
@@ -57,6 +59,50 @@ does not establish which redistribution conditions apply to our archive.
 The six retained DLLs have valid Microsoft signatures. The x86/x64 files report
 10.0.19041.1; the ARM64 files report 10.0.26100.1. These observations identify
 the files for the grant/provenance check; they do not close it.
+
+### Frida and Microsoft licence follow-up (16 October 2026)
+
+The pinned main Frida, Core, Gum and Python-binding COPYING files use the
+wxWindows Library Licence 3.1: GNU Library GPL version 2 or later with an
+exception permitting binary works based on the library to be distributed under
+the distributor's own terms. That is affirmative permission for Frida's own
+binary code. It does not establish Microsoft's terms for separately owned DLLs.
+Gum's COPYING additionally preserves BSD notices for source-map/Closure Compiler
+and regenerator; its full unchanged text is now retained in
+[LICENSE.FridaGum.txt](../LICENSE.FridaGum.txt), alongside the wheel's shorter
+[COPYING text](../LICENSE.Frida.txt).
+
+The pinned ext/dbghelp and ext/symsrv directories contain DLLs and build files,
+plus dbghelp.h in the former, but no separate Microsoft licence or REDIST file.
+The header retains Microsoft's copyright and describes debugging support
+routines as redistributable. No DLL-specific onward-distribution conditions
+were found in the inspected Frida licence/readme files or wheel COPYING.
+This absence is not evidence of prohibited distribution.
+
+Microsoft's [Windows SDK REDIST list](https://learn.microsoft.com/en-us/legal/windows-sdk/redist#debugging-tools-for-windows)
+expressly lists Dbghelp.dll and Symsrv.dll from Debugging Tools for Windows as
+files that may be distributed as part of a program, subject to the SDK terms.
+The installed 10.0.19041.0 and 10.0.26100.0 SDK licence files both contain the
+Distributable Code grant and permit third-party distribution as part of the
+program. An online [Microsoft copy of the SDK terms](https://github.com/microsoft/win32metadata/blob/main/licenses/sdk_license.txt)
+also records those provisions. Thus an onward-distribution route exists; a new
+individual permission from Microsoft is not inherently required.
+
+Those terms also impose distribution requirements, including significant primary
+functionality, preservation of notices, protective terms for distributors and
+external end users, a valid program copyright notice and indemnity. They limit
+the permitted target platform and prohibit applying source-disclosure or
+modification-right requirements to Microsoft's code. Retain Microsoft's separate
+terms rather than labelling the DLLs wxWindows or MPL.
+
+The locally installed Debuggers x64 DLLs are version 10.0.26100.6584, so they do
+not establish byte-for-byte provenance for Frida's recorded older DLLs. The
+remaining check is to bind those exact files to the permitted Debugging Tools
+distribution and carry the applicable terms through our release. Our launcher,
+hook manager and Wasm runner have no direct DbgHelp/SymSrv use: embedding and
+loading occur in upstream Frida. Our source exporter also preserves the DLLs
+in upstream Git bundles. This is an outstanding evidence/packaging check, not a
+finding that Frida or this project is infringing.
 
 Also check the actual MSVC compiler/runtime terms for the statically linked
 runtime and the embedded Python distribution's included runtime files.

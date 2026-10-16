@@ -3,6 +3,7 @@
 
 from contextlib import closing
 import json
+import shutil
 from pathlib import Path
 import threading
 import time
@@ -11,6 +12,7 @@ import sys
 import pytest
 
 from hook_manager.menu import MenuAdapter
+from hook_manager.settings import SettingsAdapter
 from launcher.pack_mods import PackMods
 from launcher.sandbox import SandboxError
 from mod_runtime import preparation
@@ -191,6 +193,95 @@ class WitWorld(wit_world.WitWorld):
         assert scope.settings.records == []
         assert json.loads((root / "settings.json").read_text()) == value
     assert scope.settings.records == []
+
+
+def test_theme_example_native_save_ack_retry_notification_and_cleanup(
+    pack, source_mod, runner_bundle, native_settings, monkeypatch,
+):
+    game, folder, startup = pack
+    theme = folder / "theme example"
+    shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
+    source_mod(folder, "owned.other")
+    adapter, messages = SettingsAdapter(), []
+    native_originals = native_settings.ORIGINAL_METHODS.copy()
+    with closing(adapter), closing(PackMods(
+        game, messages.append, runner_bundle=runner_bundle,
+        set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
+    )) as scope:
+        scope.load(startup)
+        finish(scope)
+        assert list(scope.mods) == ["example.theme", "owned.other"]
+        fields = scope.settings.records[0]["fields"]
+        assert len(fields) == 52 and fields[0]["label"] == "Custom Theme Colour 1"
+        assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
+        assert not (theme / "settings.json").exists()
+        values = {field["id"]: field["value"] for field in fields}
+        values["colour_1"] = "#ABCDEF"
+        adapter.queue_save("example.theme", {"schema": 1, "values": values})
+        request = adapter.status()
+        notifications = []
+        original_event = scope.mods["example.theme"].event
+        def event(name, payload):
+            notifications.append((name, payload))
+            return original_event(name, payload)
+        monkeypatch.setattr(scope.mods["example.theme"], "event", event)
+        scope.settings_status(request)
+        assert json.loads((theme / "settings.json").read_text())["values"] == values
+        assert notifications == [("ui-settings.changed", {"schema": 1, "values": values})]
+        assert adapter.pending is None and adapter.messages["example.theme"] == "Settings saved."
+        # Both stale generations and duplicate IDs in a current generation are ignored.
+        scope.settings_status(request)
+        scope.settings_status(adapter.status() | {"save": request["save"]})
+        assert len(notifications) == 1
+        previous = (theme / "settings.json").read_bytes()
+        from launcher import _settings_files
+        original_write = _settings_files.write
+        def fail(*args):
+            raise OSError("owned disk failure")
+        monkeypatch.setattr(_settings_files, "write", fail)
+        values["colour_1"] = "#010203"
+        adapter.queue_save("example.theme", {"schema": 1, "values": values})
+        scope.settings_status(adapter.status())
+        assert (theme / "settings.json").read_bytes() == previous
+        assert adapter.pending is None and "Try again" in adapter.messages["example.theme"]
+        assert len(notifications) == 1 and "example.theme" in scope.mods
+        monkeypatch.setattr(_settings_files, "write", original_write)
+        adapter.queue_save("example.theme", {"schema": 1, "values": values})
+        scope.settings_status(adapter.status())
+        assert json.loads((theme / "settings.json").read_text())["values"] == values
+        assert len(notifications) == 2
+        with pytest.raises(SandboxError):
+            scope.mods["example.theme"].event("invalid/event", None)
+        assert list(scope.mods) == ["owned.other"]
+        assert adapter.records == []
+    assert native_settings.OptionsScreen.draw is native_originals["draw"]
+    assert native_settings.OPTION_TABS == [("game", "Game"), ("graphics", "Graphics")]
+
+
+def test_settings_notification_failure_keeps_save_and_removes_only_its_tab(
+    pack, source_mod, runner_bundle, native_settings,
+):
+    game, folder, startup = pack
+    theme = folder / "theme example"
+    shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
+    source = theme / "src/mod.py"
+    source.write_text(source.read_text().replace('return "null"', 'raise ValueError("owned notification failure")'))
+    source_mod(folder, "owned.other")
+    adapter = SettingsAdapter()
+    with closing(adapter), closing(PackMods(
+        game, lambda line: None, runner_bundle=runner_bundle,
+        set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
+    )) as scope:
+        scope.load(startup)
+        finish(scope)
+        fields = scope.settings.records[0]["fields"]
+        values = {field["id"]: field["value"] for field in fields}
+        values["colour_1"] = "#ABCDEF"
+        adapter.queue_save("example.theme", {"schema": 1, "values": values})
+        scope.settings_status(adapter.status())
+        assert list(scope.mods) == ["owned.other"]
+        assert adapter.records == [] and adapter.pending is None
+        assert json.loads((theme / "settings.json").read_text())["values"] == values
 
 
 def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):

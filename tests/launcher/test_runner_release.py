@@ -50,7 +50,8 @@ def test_entry_supplies_installed_runner_to_real_source_pack(installed, source_m
     folder = game / "data/owned pack"
     source_mod(folder, "owned.source")
     messages, progress = [], []
-    bridge = SimpleNamespace(set_menu=lambda items: None, set_loading=progress.append)
+    bridge = SimpleNamespace(set_menu=lambda items: None, set_loading=progress.append,
+                             set_settings=lambda records, result=None: None)
     monkeypatch.setattr(game_bridge, "factory", lambda *args: object())
     def run(frida, command, *args, mods_factory, **kwargs):
         assert command == [str(executable), "owned-argument"]

@@ -38,34 +38,46 @@ def pulse(sources, digest, instance, game_root, request_json):
             for filename, source in sources.items():
                 exec(compile(source, filename, "exec"), module.__dict__)
             module.source_digest, module.instance = digest, instance
-            # No dispatcher or game targets exist until a later sandbox integration phase.
+            # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
             module.discovery = module.PackDiscovery(game_root)
             module.menu = module.MenuAdapter()
+            module.settings = module.SettingsAdapter()
             module.menu.set_loading(dict(state="loading", loaded=0, failed=0, total=0))
             module.manager.observe(
                 "ui.screens.hub_screen",
                 lambda imported: module.menu.poll(imported)["state"] != "pending",
             )
+            module.manager.observe(
+                "ui.screens.options_screen",
+                lambda imported: module.settings.poll(imported)["state"] != "pending",
+            )
             sys.modules[name] = module
         request = json.loads(request_json)
-        if type(request) is dict and request.get("operation") in ("menu", "loading"):
-            field = "buttons" if request["operation"] == "menu" else "loading"
+        if type(request) is dict and request.get("operation") in ("menu", "loading", "settings"):
+            field = {"menu": "buttons", "loading": "loading", "settings": "settings"}[request["operation"]]
             if set(request) != {"operation", field}:
-                raise ValueError("Invalid menu/loading request fields")
+                raise ValueError("Invalid native UI request fields")
             if field == "buttons":
                 module.menu.update(request[field])
-            else:
+            elif field == "loading":
                 module.menu.set_loading(request[field])
+            else:
+                settings = request[field]
+                if type(settings) is not dict or set(settings) != {"records", "result"}:
+                    raise ValueError("Invalid settings request fields")
+                module.settings.update(settings["records"], settings["result"])
             response = module.manager.request({"operation": "status"})
         else:
             if request == {"operation": "shutdown"}:
                 module.menu.close()
+                module.settings.close()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
         response["pack"] = module.discovery.poll()
         response["menu"] = module.menu.poll()
+        response["settings"] = module.settings.poll()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         return json.dumps({"event": "error", "detail": str(error)[:4096]})

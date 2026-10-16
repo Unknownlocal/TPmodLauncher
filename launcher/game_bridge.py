@@ -16,7 +16,7 @@ class BridgeError(RuntimeError):
 
 
 class Bridge:
-    """Own a Frida script carrying fixed control operations and declarative menu data."""
+    """Own a Frida script carrying fixed control operations and declarative UI data."""
 
     def __init__(self, frida, session, source, on_message):
         # session is already path-verified; source is our fixed script; callback queues diagnostic events.
@@ -61,9 +61,9 @@ class Bridge:
         finally:
             timer.cancel()
 
-    def request(self, operation, timeout=2.0, *, buttons=None, loading=None):
+    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None):
         """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown", "menu", "loading"):
+        if operation not in ("status", "shutdown", "menu", "loading", "settings"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -75,6 +75,11 @@ class Bridge:
                 raise BridgeError("Expected a bounded loading record")
         elif loading is not None:
             raise BridgeError("This operation accepts no loading record")
+        if operation == "settings":
+            if type(settings) is not dict or len(json.dumps(settings).encode("utf-8")) > 65_536:
+                raise BridgeError("Expected bounded settings declarations")
+        elif settings is not None:
+            raise BridgeError("This operation accepts no settings declarations")
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
@@ -91,6 +96,8 @@ class Bridge:
                 message["buttons"] = buttons
             if operation == "loading":
                 message["loading"] = loading
+            if operation == "settings":
+                message["settings"] = settings
             self._post(message, timeout)
             response = waiter.get(timeout=max(0, deadline - time.monotonic()))
             answered = True
@@ -120,6 +127,12 @@ class Bridge:
         if self.session.is_detached:
             return None
         return self.request("menu", buttons=buttons)
+
+    def set_settings(self, records, result=None):
+        """Publish owned tabs and optionally acknowledge one native save request."""
+        if self.session.is_detached:
+            return None
+        return self.request("settings", settings={"records": records, "result": result})
 
     def close(self):
         """Stop the manager on its thread before unloading our native transport."""
@@ -162,7 +175,7 @@ def factory(root, frida):
     # Only these trusted infrastructure sources enter the game; packs cannot add entries.
     sources = {
         f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
-        for name in ("manager", "pack_discovery", "menu")
+        for name in ("manager", "pack_discovery", "menu", "settings")
     }
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")

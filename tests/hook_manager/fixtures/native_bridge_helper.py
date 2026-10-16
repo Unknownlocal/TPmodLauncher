@@ -40,6 +40,7 @@ utils._ACTIVE_PACK_CACHE.clear()
 sys.path.insert(0, str(Path(__file__).parent))
 hub = importlib.import_module("ui.screens.hub_screen")
 HubScreen = hub.HubScreen
+options = importlib.import_module("ui.screens.options_screen")
 original_menu = hub.ORIGINAL_METHODS["_activate"]
 original_draw = hub.ORIGINAL_METHODS["draw"]
 original_enabled = hub.ORIGINAL_METHODS["_item_enabled"]
@@ -80,6 +81,12 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if host.settings.records and not (output / "settings-requested").exists():
+        host.settings.queue_save("owned.settings", {"schema": 1, "values": {"accent": "#ABCDEF"}})
+        (output / "settings-requested").touch()
+    if (host.settings.records and host.settings.pending is None
+            and host.settings.records[0]["fields"][0]["value"] == "#ABCDEF"):
+        (output / "settings-acknowledged").touch()
     if (
         "Owned UI" in hub.MENU_ITEMS
         and host.menu.loading["state"] == "complete"
@@ -126,6 +133,9 @@ while not manager.closed and time.monotonic() < deadline:
             and HubScreen._item_enabled is original_enabled,
             "disabled_message_restored": HubScreen._disabled_item_message
             is original_disabled_message,
+            "settings_tabs": options.OPTION_TABS,
+            "settings_restored": all(getattr(options.OptionsScreen, name) is original
+                                     for name, original in options.ORIGINAL_METHODS.items()),
         }
     )
 )

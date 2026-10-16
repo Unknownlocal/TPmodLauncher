@@ -11,7 +11,7 @@ integration through fixed bridge operations and declarative data.
 `launcher/game_bridge.py` supplies `bridge.js` and the fixed Python adapter
 sources to each tracked game session. The transport waits for CPython 3.13 and
 enters Python on its main thread with the GIL held. Requests are serialized and
-bounded, covering status, shutdown, menu registration and loading progress.
+bounded, covering status, shutdown, menu/settings registration and loading progress.
 
 `bootstrap.py` creates a private manager, pack discovery and menu adapter. A
 source digest and session token identify their owner and prevent another active
@@ -41,7 +41,7 @@ and readiness are trusted infrastructure rather than mod API capabilities.
 ## Current mod API overview
 
 The implemented public operations are diagnostic reporting, declarative native
-menu buttons and staged UI settings with mod-local storage. Python source mods
+menu buttons and native UI settings with mod-local storage. Python source mods
 use schema 2, API `0.2.0` or `0.3.0` and the prebuilt
 runner's `wit_world` facade. The runner supplies its base class and functions;
 authors supply their manifest and Python source without generated bindings.
@@ -76,9 +76,10 @@ JSON: null, booleans, finite numbers, signed 64-bit integers, strings, lists and
 dictionaries. Nesting is limited to eight levels and 1,024 nodes; each interface
 string is limited to 4,096 UTF-8 bytes.
 
-The launcher currently supplies no general gameplay event stream or application
-of event responses. Menu clicks display the declared confirmation message and do
-not invoke `on_event()`.
+Successful native settings saves deliver `ui-settings.changed` with the complete
+saved values document. The launcher supplies no general gameplay event stream or
+application of event responses. Menu clicks display their declared confirmation
+message and do not invoke `on_event()`.
 
 ### Host operations
 
@@ -105,9 +106,11 @@ unique within their owner; labels must also avoid registered and native menu
 items. The bridge bounds the encoded declaration list to 16 KiB. Failure or
 closure removes that mod's registrations.
 
-UI settings are validated and stored by the external launcher. They stage
-labelled colour fields and saved values for later native integration; this
-release does not yet render those rows or apply custom colours. The
+UI settings are validated and stored by the external launcher. `settings.py`
+owns appended native Options tabs, hex input, swatches, draft state and save
+requests. The bridge checks for native settings changes at most four times per
+second while tabs are registered; idle UI does not call sandboxed mods. Save
+requests are acknowledged after persistence and then notify the owning mod. The
 [UI settings contract](api/0.3.0/README.md) defines fields, limits and storage
 ownership.
 

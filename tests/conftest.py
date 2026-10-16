@@ -128,6 +128,19 @@ def project_factory(tmp_path):
 
 
 @pytest.fixture
+def native_settings(monkeypatch):
+    """Provide an owned native options interface shared by adapter and loader tests."""
+    import importlib.util
+    name = "ui.screens.options_screen"
+    path = Path(__file__).parent / "hook_manager/fixtures/native_settings_fixture.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(sys.modules, name, module)
+    return module
+
+
+@pytest.fixture
 def bundled_project(project_factory):
     """Create a test package and matching manifest; return the project and package folders."""
     root, _ = project_factory()
