@@ -47,12 +47,31 @@ specific skips are confined to the unsupported case.
 
 ## CI and coverage
 
-`tests.yml` is the push-to-`main`, pull-request and manual entry point. Its path
-filter covers production code, tests, build inputs and dependencies, excluding
-Markdown-only changes. Every matching run calls the launcher, hook manager,
-mod runtime, CI-helper and Windows acceptance workflows. Component workflows
-are reusable `workflow_call` definitions; the portable workflow supplies separate
-Windows and Linux jobs for each area.
+`tests.yml` is the manual entry point. A maintainer with write access opens
+**Actions > Test suite > Run workflow**, selects **main**, and supplies the open
+PR number. This works for branches in this repository and in forks. PRs targeting
+`main` require the `manual-ci` commit status; new commits need their own passing
+result. Pushes and PR events do not automatically start the test suite.
+
+The trusted workflow resolves the PR's exact head SHA, then atomically creates
+an annotated `ci-tested/<SHA>` tag to claim its only CI attempt. The tag records
+the PR, workflow commit and run ID. Protected marker tags cannot be updated or
+deleted by collaborators. Duplicate requests and Actions re-runs are refused
+before tests execute, without changing the original commit status. There can
+still be a small rejected workflow run when someone requests a duplicate.
+Failures, cancellations and infrastructure interruptions consume the attempt;
+push a new commit to retry. The owner can bypass merge requirements. Marker tags
+must be retained: deleting one through owner bypass allows that commit to run again.
+
+Every accepted run calls the launcher, hook manager, mod runtime, CI-helper and
+Windows acceptance workflows. Their definitions come from the trusted workflow
+commit on `main`; every source checkout uses the resolved PR head SHA, including
+dependency preparation and coverage combination. Jobs executing PR code have
+read-only tokens and no inherited secrets. Only separate trusted jobs reserve
+the commit and publish `manual-ci`, and only the original run can publish it.
+The tests cover the PR head itself, rather than a synthetic merge with `main`.
+Component workflows are reusable `workflow_call` definitions; the portable
+workflow supplies separate Windows and Linux jobs for each area.
 
 `dev-dependencies.yml` prepares a wheelhouse once per platform. Test and build
 jobs download that run's wheels and install them into separate environments
