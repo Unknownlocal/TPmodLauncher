@@ -1,64 +1,115 @@
 # SPDX-License-Identifier: MPL-2.0
 name: Test suite
+run-name: 'Manual CI for PR #${{ inputs.pr_number }}'
 
 on:
-  push:
-    branches: [main]
-    paths: &paths
-      - '.github/**'
-      - '.gitattributes'
-      - 'pyproject.toml'
-      - 'requirements-dev.txt'
-      - 'tests/**'
-      - 'launcher/**'
-      - 'hook_manager/**'
-      - 'mod_runtime/**'
-      - 'examples/**'
-      - 'notices/**'
-      - 'LICENCE'
-      - 'ATTRIBUTION.txt'
-      - 'pylock*.toml'
-      - 'bundled_packages.toml'
-      - '!**/*.md'
-  pull_request:
-    paths: *paths
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open pull request targeting main (including fork PRs)
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: manual-ci-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  resolve:
+    name: Claim one CI attempt for the PR commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      statuses: write
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.claim.outputs.sha }}
+      pr: ${{ steps.claim.outputs.pr }}
+    steps:
+      # The workflow and helper come from main, never from the contributor's PR.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve the PR head and atomically reserve this commit
+        id: claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: python3 -B .github/ci_pr.py claim
+
   dependencies:
+    needs: resolve
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/dev-dependencies.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   launcher:
-    needs: dependencies
+    needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-launcher.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   hook-manager:
-    needs: dependencies
+    needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-hook-manager.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   mod-runtime:
-    needs: dependencies
+    needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-mod-runtime.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   ci:
-    needs: dependencies
+    needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   windows-runtime:
-    needs: dependencies
+    needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/pytest.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  publish:
+    name: Publish the required PR status
+    needs: [resolve, complete]
+    if: ${{ always() && needs.resolve.result == 'success' && github.run_attempt == '1' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      # A fresh runner reads only the trusted helper; no PR code gets this token.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Publish success only after every required test workflow succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_SHA: ${{ needs.resolve.outputs.sha }}
+          CI_RESULT: ${{ needs.complete.result }}
+        run: python3 -B .github/ci_pr.py publish
 
   complete:
     name: Test suite complete
-    needs: [dependencies, launcher, hook-manager, mod-runtime, ci, windows-runtime]
-    if: ${{ always() }}
+    needs: [resolve, dependencies, launcher, hook-manager, mod-runtime, ci, windows-runtime]
+    if: ${{ always() && needs.resolve.result == 'success' && github.run_attempt == '1' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

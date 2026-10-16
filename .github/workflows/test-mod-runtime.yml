@@ -3,12 +3,18 @@ name: Test mod runtime
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/portable.yml
     with:
+      ref: ${{ inputs.ref }}
       suite: mod_runtime
