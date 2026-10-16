@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Prepare developer dependencies
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare dependencies / ${{ matrix.platform.id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - id: windows
+            runner: windows-latest
+          - id: linux
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Prepare wheels for every developer requirement and dependency
+        run: python -m pip wheel --wheel-dir wheelhouse -r requirements-dev.txt
+      - name: Share the platform's wheels within this workflow run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dev-dependencies-${{ matrix.platform.id }}
+          path: wheelhouse/*.whl
+          retention-days: 1
+          # Wheels are already compressed ZIP archives.
+          compression-level: 0
+          if-no-files-found: error

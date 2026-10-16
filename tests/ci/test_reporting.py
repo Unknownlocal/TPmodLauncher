@@ -97,11 +97,11 @@ def test_empty_coverage_denominators_are_reported_without_division_by_zero(repor
     ).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("suite", ["launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"])
+@pytest.mark.parametrize("suite", ["dependencies", "launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"])
 @pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped"])
-def test_parent_completion_requires_every_suite_to_succeed(monkeypatch, suite, result):
+def test_parent_completion_requires_preparation_and_every_suite_to_succeed(monkeypatch, suite, result):
     results = {name: {"result": "success"} for name in (
-        "launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"
+        "dependencies", "launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"
     )}
     results[suite]["result"] = result
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))

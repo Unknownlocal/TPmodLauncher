@@ -21,12 +21,15 @@ jobs:
         with:
           python-version: '3.13'
           architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Create the developer build environment
+      - name: Download the prepared Windows dependencies
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dev-dependencies-windows
+          path: wheelhouse
+      - name: Create the developer build environment from prepared wheels
         run: |
           python -m venv .venv
-          .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+          .venv/Scripts/python.exe -m pip install --no-index --find-links wheelhouse -r requirements-dev.txt
       - name: Prepare and verify the official Windows dependency profile
         run: |
           .venv/Scripts/python.exe -B -m mod_runtime.build --output libs/mod-runners
@@ -71,12 +74,15 @@ jobs:
         with:
           python-version: '3.13'
           architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Create the developer test environment
+      - name: Download the prepared Windows dependencies
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dev-dependencies-windows
+          path: wheelhouse
+      - name: Create the developer test environment from prepared wheels
         run: |
           python -m venv .venv
-          .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+          .venv/Scripts/python.exe -m pip install --no-index --find-links wheelhouse -r requirements-dev.txt
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-player-bundle
@@ -108,13 +114,17 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Install the pinned coverage tool
+          architecture: x64
+      - name: Download the prepared Linux dependencies
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dev-dependencies-linux
+          path: wheelhouse
+      - name: Install the pinned coverage tool from prepared wheels
         shell: bash
         run: |
           python -c 'from pathlib import Path; print(next(line for line in Path("requirements-dev.txt").read_text().splitlines() if line.startswith("coverage==")))' > "$RUNNER_TEMP/coverage-requirement.txt"
-          python -m pip install -r "$RUNNER_TEMP/coverage-requirement.txt"
+          python -m pip install --no-index --find-links wheelhouse -r "$RUNNER_TEMP/coverage-requirement.txt"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: test-data-windows-*

@@ -37,12 +37,15 @@ jobs:
         with:
           python-version: '3.13'
           architecture: x64
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Create the developer test environment
+      - name: Download the prepared platform dependencies
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dev-dependencies-${{ matrix.platform.id }}
+          path: wheelhouse
+      - name: Create the developer test environment from prepared wheels
         run: |
           python -m venv .venv
-          "${{ matrix.platform.python }}" -m pip install -r requirements-dev.txt
+          "${{ matrix.platform.python }}" -m pip install --no-index --find-links wheelhouse -r requirements-dev.txt
       - name: Run the selected component suite
         run: |
           exec "${{ matrix.platform.python }}" -B .github/ci_tests.py --suite "${{ inputs.suite }}" -v --junitxml=junit.xml -p pytest_cov --cov="${{ inputs.suite == 'ci' && '.github' || inputs.suite }}" --cov-report=xml --cov-report=html

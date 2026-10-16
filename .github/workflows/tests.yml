@@ -32,29 +32,37 @@ permissions:
   contents: read
 
 jobs:
+  dependencies:
+    uses: ./.github/workflows/dev-dependencies.yml
+
   launcher:
+    needs: dependencies
     uses: ./.github/workflows/test-launcher.yml
 
   hook-manager:
+    needs: dependencies
     uses: ./.github/workflows/test-hook-manager.yml
 
   mod-runtime:
+    needs: dependencies
     uses: ./.github/workflows/test-mod-runtime.yml
 
   ci:
+    needs: dependencies
     uses: ./.github/workflows/test-ci.yml
 
   windows-runtime:
+    needs: dependencies
     uses: ./.github/workflows/pytest.yml
 
   complete:
     name: Test suite complete
-    needs: [launcher, hook-manager, mod-runtime, ci, windows-runtime]
+    needs: [dependencies, launcher, hook-manager, mod-runtime, ci, windows-runtime]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every test workflow to succeed
+      - name: Require dependency preparation and every test workflow to succeed
         shell: python {0}
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
@@ -65,5 +73,5 @@ jobs:
           results = json.loads(os.environ["JOB_RESULTS"])
           failed = [f"{name}: {job['result']}" for name, job in results.items() if job["result"] != "success"]
           if failed:
-              raise SystemExit("Required test workflows did not succeed: " + "; ".join(failed))
-          print("Every required test workflow succeeded.")
+              raise SystemExit("Required workflows did not succeed: " + "; ".join(failed))
+          print("Dependency preparation and every required test workflow succeeded.")
