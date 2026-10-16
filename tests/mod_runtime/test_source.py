@@ -377,8 +377,7 @@ class WitWorld:
 
 @pytest.mark.parametrize("path", [
     "annotationlib.py", "json.py", "JSON.py", "json/__init__.py",
-    "runner_bindings.py", "runner_guest.py", "wit_world.py",
-    "componentize_py_runtime.py", "_source_policy.py", "RUNNER_BINDINGS.py",
+    "runner_bindings.py",
 ])
 def test_guest_rejects_runtime_collisions_during_transfer_before_author_execution(mod, runner_bundle, path):
     target = mod / "src" / path

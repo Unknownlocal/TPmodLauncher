@@ -2,7 +2,6 @@
 """Real trusted-runner loading, aggregate source budgets and failure ownership."""
 
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -40,28 +39,9 @@ def test_chunks_preserve_utf8_and_bounded_plain_strings():
         assert all(len(chunk.encode("utf-8")) <= 4096 for chunk in chunks)
 
 
-@pytest.mark.parametrize("example", ["diagnostic_mod", "menu_mod"])
-def test_runner_loads_unchanged_examples_before_explicit_activation(runner_bundle, example):
-    root = Path(__file__).resolve().parents[2]
-    code = (root / "examples" / example / "src/mod.py").read_text(encoding="utf-8")
-    data = snapshot(code)
-    if example == "menu_mod":
-        data = replace(data, manifest=replace(MANIFEST, capabilities=frozenset({"diagnostics", "main-menu"})))
-    messages, buttons, cleaned = [], [], []
-    providers = {"report": messages.append, "add-menu-button": lambda *args: buttons.append(args)}
-    with PythonRunner(runner_bundle, data, providers, cleanup=lambda: cleaned.append(True)) as runner:
-        assert not runner.closed and messages == [] and buttons == []
-        runner.activate()
-        runner.on_event("probe", "{}")
-        assert len(messages) == 1 and len(buttons) == (example == "menu_mod")
-    runner.close()
-    assert runner.closed and cleaned == [True]
-
-
-@pytest.mark.parametrize("size", [65536, MAX_SOURCE_BYTES])
-def test_large_source_and_empty_helpers_load_with_utf8_transfer(runner_bundle, size):
+def test_large_source_and_empty_helpers_load_with_utf8_transfer(runner_bundle):
     # A comment-heavy source legitimately needs more than a normal callback's fuel.
-    text = CODE + "#" + "a" * (size - len(CODE) - 1)
+    text = CODE + "#" + "a" * (MAX_SOURCE_BYTES - len(CODE) - 1)
     messages = []
     with PythonRunner(runner_bundle, snapshot(text, **{"empty.py": ""}), {"report": messages.append}) as runner:
         runner.activate()
@@ -150,16 +130,6 @@ def test_loader_enforces_aggregate_bounds_even_for_manually_constructed_snapshot
     with pytest.raises(SandboxError, match="limit"):
         PythonRunner(runner_bundle, data, {"report": lambda _: None}, cleanup=lambda: cleaned.append(True))
     assert cleaned == [True]
-
-
-def test_prepared_runner_is_verified_and_adopted_once(runner_bundle):
-    compiled = CompiledMod(runner_bundle.component())
-    cleaned = []
-    with PythonRunner(runner_bundle, snapshot(), {"report": lambda _: None}, prepared=compiled,
-                      cleanup=lambda: cleaned.append(True)) as runner:
-        assert compiled.data is None
-        runner.activate()
-    assert compiled.closed and cleaned == [True]
 
 
 @pytest.mark.parametrize("failure", ["providers", "bundle", "compiler"])

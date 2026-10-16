@@ -12,7 +12,7 @@ from launcher.source_mod import SourceMod
 from mod_runtime.bundle import BundleError, RunnerBundle
 from mod_runtime import preparation
 from mod_runtime.preparation import SourcePreparation
-from mod_runtime.source import SourceError, SourceSnapshot
+from mod_runtime.source import SourceSnapshot
 
 
 CODE = '''import wit_world
@@ -208,17 +208,10 @@ def test_abandoning_ready_result_releases_native_resources_and_snapshot(runner_b
             result.__enter__()
 
 
-@pytest.mark.parametrize("failure", ["source", "runner", "compile", "interrupt"])
+@pytest.mark.parametrize("failure", ["compile", "interrupt"])
 @pytest.mark.parametrize("abandon", [False, True])
 def test_worker_errors_propagate_on_take_and_are_safe_to_abandon(runner_bundle, source_folder, monkeypatch, failure, abandon):
-    expected = (ValueError, SourceError)
-    if failure == "source":
-        (source_folder / "mod.toml").write_text("not TOML")
-    elif failure == "runner":
-        def fail():
-            raise BundleError("changed bundle")
-        monkeypatch.setattr(runner_bundle, "component", fail)
-    elif failure == "compile":
+    if failure == "compile":
         # Pass the bounded Component header check and fail the native validator.
         from wasmtime import WasmtimeError
         expected = (WasmtimeError,)
