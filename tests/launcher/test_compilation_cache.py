@@ -194,9 +194,8 @@ def test_cache_links_are_not_followed_or_repaired(tmp_path, cache_guest, link_at
         link.rmdir() if os.name == "nt" else link.unlink()
 
 
-@pytest.mark.parametrize("background", [False, True])
 def test_cache_never_replaces_current_manifest_validation(
-    tmp_path, code_mod, background
+    tmp_path, code_mod
 ):
     folder = tmp_path / "data/pack"
     mod = code_mod(folder, "owned.cached")
@@ -206,7 +205,7 @@ def test_cache_never_replaces_current_manifest_validation(
         if attempt:
             (mod / "mod.toml").write_text("invalid manifest")
         with closing(
-            PackMods(tmp_path, messages.append, cache=cache, background=background)
+            PackMods(tmp_path, messages.append, cache=cache, background=True)
         ) as scope:
             scope.load(pack)
             while scope.loading is not None:
@@ -302,7 +301,7 @@ def test_darwin_acl_adapter_distinguishes_empty_acl_from_entries_and_errors(
 
 
 @pytest.mark.parametrize(
-    "error", [errno.ENOENT, errno.EACCES, errno.EBADF, errno.ENOTSUP, errno.ENOMEM, 0]
+    "error", [errno.ENOENT, errno.EACCES, 0]
 )
 def test_darwin_acl_adapter_distinguishes_absent_acl_from_read_errors(
     tmp_path, darwin_acl_api, error

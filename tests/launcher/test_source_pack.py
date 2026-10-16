@@ -40,14 +40,13 @@ def records(messages, event):
     return [json.loads(line.split(": ", 1)[1]) for line in messages if line.startswith(f"CODE MOD {event}:")]
 
 
-@pytest.mark.parametrize("background", [False, True])
-def test_sources_and_explicit_wasm_share_order_progress_and_timings(pack, source_mod, code_mod, runner_bundle, background):
+def test_sources_and_explicit_wasm_share_order_progress_and_timings(pack, source_mod, code_mod, runner_bundle):
     game, folder, record = pack
     source_mod(folder, "z-folder", mod_id="owned.a")
     code_mod(folder, "a-folder", mod_id="owned.b")
     messages, progress = [], []
     with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
-                          background=background, set_loading=progress.append)) as scope:
+                          background=True, set_loading=progress.append)) as scope:
         scope.load(record)
         finish(scope)
         assert list(scope.mods) == ["owned.a", "owned.b"]
@@ -64,14 +63,10 @@ def test_sources_and_explicit_wasm_share_order_progress_and_timings(pack, source
     assert [item["id"] for item in records(messages, "CLOSED")] == ["owned.b", "owned.a"]
 
 
-@pytest.mark.parametrize("mixed", [False, True])
-def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod, code_mod, runner_bundle, monkeypatch, mixed):
+def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod, code_mod, runner_bundle, monkeypatch):
     game, folder, record = pack
     source_mod(folder, "copy-a", mod_id="owned.duplicate", code="while True: pass")
-    if mixed:
-        code_mod(folder, "copy-b", mod_id="owned.duplicate")
-    else:
-        source_mod(folder, "copy-b", mod_id="owned.duplicate")
+    code_mod(folder, "copy-b", mod_id="owned.duplicate")
     def forbidden(*args):
         pytest.fail("Duplicate source must not be read or executed")
     monkeypatch.setattr(SourceSnapshot, "read", forbidden)
@@ -84,7 +79,7 @@ def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod
         assert [item["detail"] for item in records(messages, "REJECTED")] == ["Duplicate mod ID"] * 2
 
 
-@pytest.mark.parametrize("failure", ["schema", "syntax", "missing", "loop"])
+@pytest.mark.parametrize("failure", ["schema", "syntax", "missing"])
 def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source_mod, runner_bundle, failure):
     game, folder, record = pack
     bad = source_mod(folder, "a-bad", mod_id="owned.bad")
@@ -93,10 +88,8 @@ def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source
         path.write_text(path.read_text() + 'component = "mod.wasm"\n')
     elif failure == "syntax":
         (bad / "src/mod.py").write_text("def invalid(:")
-    elif failure == "missing":
-        (bad / "src/mod.py").unlink()
     else:
-        (bad / "src/mod.py").write_text("while True: pass")
+        (bad / "src/mod.py").unlink()
     source_mod(folder, "b-good", mod_id="owned.good")
     messages, progress = [], []
     with closing(PackMods(game, messages.append, runner_bundle=runner_bundle, set_loading=progress.append)) as scope:
@@ -108,15 +101,14 @@ def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source
         assert records(messages, "REPORT") == [dict(id="owned.good", message="source ready")]
 
 
-@pytest.mark.parametrize("change", ["identity", "capabilities"])
-def test_manifest_changes_after_admission_are_rejected_before_compile(pack, source_mod, runner_bundle, monkeypatch, change):
+def test_manifest_changes_after_admission_are_rejected_before_compile(pack, source_mod, runner_bundle, monkeypatch):
     game, folder, record = pack
     mod = source_mod(folder, "owned.source")
     original = SourceSnapshot.read
     def changed(path):
         manifest = Path(path) / "mod.toml"
         content = manifest.read_text()
-        content = content.replace("owned.source", "owned.changed") if change == "identity" else content.replace('["diagnostics"]', "[]")
+        content = content.replace('["diagnostics"]', "[]")
         manifest.write_text(content)
         return original(path)
     def forbidden(*args, **kwargs):

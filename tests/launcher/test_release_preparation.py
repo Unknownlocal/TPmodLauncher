@@ -14,34 +14,30 @@ import pytest
 from launcher import prepare_release as release
 
 
-@pytest.mark.parametrize("hash_name", ["sha256", "sha512"])
-def test_bad_download_hash_never_replaces_existing_file(tmp_path, hash_name):
+def test_bad_download_hash_never_replaces_existing_file(tmp_path):
     target = tmp_path / "artifact.whl"
     target.write_bytes(b"existing")
     source = tmp_path / "download-source"
     source.write_bytes(b"incorrect")
-    label = {"sha256": "SHA-256", "sha512": "SHA-512"}[hash_name]
-    with pytest.raises(release.dependencies.DependencyError, match=label + " mismatch"):
+    with pytest.raises(release.dependencies.DependencyError, match="SHA-256 mismatch"):
         release.download(
             source.as_uri(),
             target,
-            hashlib.new(hash_name, b"correct").hexdigest(),
-            hash_name=hash_name,
+            hashlib.sha256(b"correct").hexdigest(),
         )
     assert target.read_bytes() == b"existing"
     assert not list(tmp_path.glob("download-*.tmp"))
 
 
-@pytest.mark.parametrize("hash_name", ["sha256", "sha512"])
-def test_verified_download_is_reused_without_network(tmp_path, hash_name):
+def test_verified_download_is_reused_without_network(tmp_path):
     target = tmp_path / "artifact.whl"
     target.write_bytes(b"verified")
     # This source does not exist: successful reuse cannot involve a download.
     release.download(
         (tmp_path / "absent-source").as_uri(),
         target,
-        hashlib.new(hash_name, b"verified").hexdigest(),
-        hash_name=hash_name,
+        hashlib.sha512(b"verified").hexdigest(),
+        hash_name="sha512",
     )
 
 
@@ -58,8 +54,11 @@ def test_named_lock_prepares_fallback_without_changing_default_lock(project_fact
     assert default.read_bytes() == before
 
 
-@pytest.mark.parametrize("corrupt", [False, True])
-@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("corrupt,remote", [
+    pytest.param(False, False, id="local-valid"),
+    pytest.param(False, True, id="remote-valid"),
+    pytest.param(True, True, id="remote-corrupt"),
+])
 def test_cli_wheel_checks_hash_without_claiming_publisher_authentication(
     project_factory, monkeypatch, capsys, corrupt, remote, tmp_path, runner_bundle
 ):

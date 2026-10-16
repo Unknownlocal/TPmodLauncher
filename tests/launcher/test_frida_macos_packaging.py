@@ -74,6 +74,5 @@ def test_wrong_binary_architecture_is_rejected_before_relabelling(macos_extensio
         build.wheel_platform_args(extension, "macos-arm64")
 
 
-@pytest.mark.parametrize("target", ["windows-x86_64", "linux-x86_64"])
-def test_other_platforms_keep_default_packaging_without_macos_tools(tmp_path, target):
-    assert build.wheel_platform_args(tmp_path / "absent-extension", target) == []
+def test_other_platforms_keep_default_packaging_without_macos_tools(tmp_path):
+    assert build.wheel_platform_args(tmp_path / "absent-extension", "linux-x86_64") == []

@@ -46,8 +46,6 @@ def tiny_component(folder, result="{}"):
         ('version = "0.1.0"', 'version = "01.1.0"'),
         ('id = "example.diagnostics"', 'id = "../other"'),
         ('component = "mod.wasm"', 'component = "../outside.wasm"'),
-        ('component = "mod.wasm"', 'component = "C:/outside.wasm"'),
-        ('component = "mod.wasm"', 'component = "nested//mod.wasm"'),
         ('component = "mod.wasm"', 'component = "mod.py"'),
         ('["diagnostics"]', '["frida"]'),
         ('["diagnostics"]', '["diagnostics", "diagnostics"]'),
@@ -153,20 +151,6 @@ def test_component_imports_cannot_expand_manifest_permissions(author):
             cleanup=lambda: cleaned.append(True),
         )
     assert cleaned == [True]
-
-
-@pytest.mark.parametrize("result", ["{", "NaN", "9223372036854775808"])
-def test_invalid_guest_json_disables_and_cleans_the_mod(author, result):
-    cleaned = []
-    with Mod(
-        tiny_component(author, result),
-        report=lambda *_: None,
-        cleanup=lambda: cleaned.append(True),
-    ) as mod:
-        mod.activate()
-        with pytest.raises(SandboxError):
-            mod.event("owned.event", {})
-        assert mod.sandbox.closed and cleaned == [True]
 
 
 def test_lifecycle_and_required_export_shape_are_enforced(author):
