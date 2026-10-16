@@ -2,43 +2,7 @@
 name: Test mod runtime
 
 on:
-  push:
-    branches: [main]
-    paths: &paths
-      - '.github/workflows/test-mod-runtime.yml'
-      - '.github/ci_tests.py'
-      - '.github/workflows/portable.yml'
-      - '.github/workflows/coverage.yml'
-      - '.gitattributes'
-      - 'pyproject.toml'
-      - 'requirements-dev.txt'
-      - 'tests/conftest.py'
-      - 'tests/fixtures/**'
-      - 'mod_runtime/**'
-      - 'tests/mod_runtime/**'
-      - 'hook_manager/api/**'
-      - 'hook_manager/manager.py'
-      - 'hook_manager/menu.py'
-      - 'examples/**'
-      - 'notices/mod-runtime/**'
-      - 'LICENCE'
-      - 'launcher/sandbox.py'
-      - 'launcher/compiled_mod.py'
-      - 'launcher/compilation_cache.py'
-      - 'launcher/bundled_dependencies.py'
-      - 'launcher/load_timing.py'
-      - 'launcher/runner_host.py'
-      - 'launcher/mod_contract.py'
-      - 'launcher/mod_api.py'
-      - 'launcher/source_mod.py'
-      - '!**/*.md'
-  pull_request:
-    paths: *paths
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read

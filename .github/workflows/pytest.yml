@@ -2,42 +2,7 @@
 name: Test Windows runtime
 
 on:
-  push:
-    branches: [main]
-    paths: &paths
-      - '.github/workflows/pytest.yml'
-      - '.github/workflows/coverage.yml'
-      - '.github/ci_coverage.py'
-      - '.gitattributes'
-      - 'pyproject.toml'
-      - 'requirements-dev.txt'
-      - 'tests/conftest.py'
-      - 'tests/fixtures/**'
-      - 'launcher/**'
-      - 'hook_manager/**'
-      - 'mod_runtime/**'
-      - 'tests/launcher/conftest.py'
-      - 'tests/launcher/test_embedded_entry.py'
-      - 'tests/launcher/test_native_lifecycle.py'
-      - 'tests/hook_manager/test_native_bridge.py'
-      - 'tests/mod_runtime/test_bundle.py'
-      - 'tests/launcher/fixtures/**'
-      - 'tests/hook_manager/fixtures/**'
-      - 'tests/mod_runtime/fixtures/**'
-      - 'examples/**'
-      - 'notices/**'
-      - 'LICENCE'
-      - 'ATTRIBUTION.txt'
-      - 'pylock*.toml'
-      - 'bundled_packages.toml'
-      - '!**/*.md'
-  pull_request:
-    paths: *paths
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
@@ -152,7 +117,7 @@ jobs:
           python -m pip install -r "$RUNNER_TEMP/coverage-requirement.txt"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: test-data-*
+          pattern: test-data-windows-*
           path: .cache/ci-input
           merge-multiple: false
       - name: Combine complete platform reports
@@ -161,7 +126,7 @@ jobs:
         if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/windows/coverage.xml') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: python-coverage
+          name: python-coverage-acceptance-windows
           path: |
             .cache/ci-coverage/windows/coverage.xml
             .cache/ci-coverage/windows/htmlcov/

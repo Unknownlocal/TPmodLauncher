@@ -3,7 +3,7 @@ name: Report test coverage
 
 on:
   workflow_run:
-    workflows: [Test launcher, Test hook manager, Test mod runtime, Test CI helpers, Test Windows runtime]
+    workflows: [Test suite]
     types: [completed]
 
 permissions:
@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   coverage:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -26,7 +27,7 @@ jobs:
           pattern: python-coverage*
           path: ${{ runner.temp }}/pytest-coverage
           merge-multiple: false
-      - name: Summarize platform coverage
+      - name: Summarize suite and platform coverage
         shell: python {0}
         env:
           REPORT_DIRECTORY: ${{ runner.temp }}/pytest-coverage
@@ -39,12 +40,17 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
 
-          platforms = {
-              "python-coverage": "Windows x64",
-              "python-coverage-linux": "Linux x64",
+          reports = {
+              f"python-coverage-{suite}-{platform}": (label, platform_label)
+              for suite, label in (
+                  ("launcher", "Launcher"),
+                  ("hook_manager", "Hook manager"),
+                  ("mod_runtime", "Mod runtime"),
+                  ("ci", "CI helpers"),
+              )
+              for platform, platform_label in (("windows", "Windows x64"), ("linux", "Linux x64"))
           }
-          if os.environ["TEST_RUN_WORKFLOW"] == "Test Windows runtime":
-              del platforms["python-coverage-linux"]
+          reports["python-coverage-acceptance-windows"] = ("Runtime acceptance", "Windows x64")
           directory = Path(os.environ["REPORT_DIRECTORY"])
           conclusion = os.environ["TEST_RUN_CONCLUSION"]
           summary = [
@@ -56,8 +62,8 @@ jobs:
               "",
               f"Tested commit: `{os.environ['TEST_RUN_SHA']}`; test result: **{conclusion}**.",
               "",
-              "| Platform | Lines | Branches |",
-              "| --- | --- | --- |",
+              "| Suite | Platform | Lines | Branches |",
+              "| --- | --- | --- | --- |",
           ]
           errors = []
 
@@ -68,13 +74,12 @@ jobs:
                   raise ValueError("invalid coverage counts")
               return f"{covered / total:.2%} ({covered}/{total})" if total else "N/A (0/0)"
 
-          for artifact, label in platforms.items():
+          for artifact, (suite, platform) in reports.items():
               report = directory / artifact / "coverage.xml"
+              label = f"{suite} / {platform}"
               if not report.is_file():
-                  summary.append(f"| {label} | Report unavailable | Report unavailable |")
-                  # A failed/cancelled test run may never reach coverage collection.
-                  if conclusion == "success":
-                      errors.append(f"Missing coverage report for {label}")
+                  summary.append(f"| {suite} | {platform} | Report unavailable | Report unavailable |")
+                  errors.append(f"Missing coverage report for {label}")
                   continue
               try:
                   root = ET.parse(report).getroot()
@@ -83,13 +88,13 @@ jobs:
                   lines, branches = metric(root, "lines"), metric(root, "branches")
               except (OSError, ET.ParseError, KeyError, ValueError):
                   errors.append(f"Invalid coverage report for {label}")
-                  summary.append(f"| {label} | Invalid report | Invalid report |")
+                  summary.append(f"| {suite} | {platform} | Invalid report | Invalid report |")
               else:
-                  summary.append(f"| {label} | {lines} | {branches} |")
+                  summary.append(f"| {suite} | {platform} | {lines} | {branches} |")
 
           summary += [
               "",
-              "Each row describes one platform's test selection; percentages are not added or averaged.",
+              "Each row describes one suite and platform's test selection; percentages are not added or averaged.",
               "Coverage measures the pytest process; isolated embedded processes are not instrumented.",
               "There is no fixed minimum coverage percentage. Review gaps alongside test behaviour.",
           ]

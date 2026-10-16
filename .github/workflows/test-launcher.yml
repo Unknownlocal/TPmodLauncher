@@ -2,36 +2,7 @@
 name: Test launcher
 
 on:
-  push:
-    branches: [main]
-    paths: &paths
-      - '.github/workflows/test-launcher.yml'
-      - '.github/ci_tests.py'
-      - '.github/workflows/portable.yml'
-      - '.github/workflows/coverage.yml'
-      - '.gitattributes'
-      - 'pyproject.toml'
-      - 'requirements-dev.txt'
-      - 'tests/conftest.py'
-      - 'tests/fixtures/**'
-      - 'launcher/**'
-      - 'hook_manager/**'
-      - 'mod_runtime/**'
-      - 'tests/launcher/**'
-      - 'examples/**'
-      - 'notices/**'
-      - 'LICENCE'
-      - 'ATTRIBUTION.txt'
-      - 'pylock*.toml'
-      - 'bundled_packages.toml'
-      - '!**/*.md'
-  pull_request:
-    paths: *paths
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read

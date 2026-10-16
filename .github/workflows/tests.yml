@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test suite
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - '.github/**'
+      - '.gitattributes'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - 'tests/**'
+      - 'launcher/**'
+      - 'hook_manager/**'
+      - 'mod_runtime/**'
+      - 'examples/**'
+      - 'notices/**'
+      - 'LICENCE'
+      - 'ATTRIBUTION.txt'
+      - 'pylock*.toml'
+      - 'bundled_packages.toml'
+      - '!**/*.md'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    uses: ./.github/workflows/test-launcher.yml
+
+  hook-manager:
+    uses: ./.github/workflows/test-hook-manager.yml
+
+  mod-runtime:
+    uses: ./.github/workflows/test-mod-runtime.yml
+
+  ci:
+    uses: ./.github/workflows/test-ci.yml
+
+  windows-runtime:
+    uses: ./.github/workflows/pytest.yml
+
+  complete:
+    name: Test suite complete
+    needs: [launcher, hook-manager, mod-runtime, ci, windows-runtime]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every test workflow to succeed
+        shell: python {0}
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          import json
+          import os
+
+          results = json.loads(os.environ["JOB_RESULTS"])
+          failed = [f"{name}: {job['result']}" for name, job in results.items() if job["result"] != "success"]
+          if failed:
+              raise SystemExit("Required test workflows did not succeed: " + "; ".join(failed))
+          print("Every required test workflow succeeded.")

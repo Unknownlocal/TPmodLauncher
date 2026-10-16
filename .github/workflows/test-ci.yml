@@ -2,22 +2,7 @@
 name: Test CI helpers
 
 on:
-  push:
-    branches: [main]
-    paths: &paths
-      - '.gitattributes'
-      - 'pyproject.toml'
-      - 'requirements-dev.txt'
-      - '.github/**'
-      - 'tests/**'
-      - '!**/*.md'
-  pull_request:
-    paths: *paths
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
