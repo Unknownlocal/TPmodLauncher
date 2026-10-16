@@ -9,6 +9,7 @@ import time
 import pytest
 from wasmtime import wat2wasm
 
+from launcher import sandbox as implementation
 from launcher.sandbox import Limits, Operation, Sandbox, SandboxError
 
 FIXTURES = Path(__file__).with_name("fixtures") / "sandbox"
@@ -40,6 +41,110 @@ def test_instances_have_private_memory_and_copied_grants(guest):
         assert second.call("counter") == 2
     with pytest.raises(SandboxError, match="closed"):
         first.call("counter")
+
+
+def test_phase_shares_fuel_across_exported_calls(guest):
+    cleaned, completed = [], []
+    with Sandbox(guest, grants(), cleanup=lambda: cleaned.append(True)) as sandbox:
+        with pytest.raises(SandboxError, match="fuel"):
+            with sandbox.phase(fuel=30, seconds=2):
+                for _ in range(100):
+                    completed.append(sandbox.call("counter"))
+        assert 0 < len(completed) < 100 and sandbox.closed
+    assert cleaned == [True]
+
+
+def test_phase_allowance_does_not_extend_later_callback_fuel(guest):
+    with Sandbox(guest, grants(), limits=Limits(fuel=1, initialization_fuel=1000)) as sandbox:
+        with sandbox.phase(fuel=1000, seconds=2):
+            assert sandbox.call("counter") == 1
+        with pytest.raises(SandboxError, match="fuel"):
+            sandbox.call("counter")
+        assert sandbox.closed
+
+
+def test_phase_shares_host_call_budget(guest):
+    calls = []
+    with Sandbox(guest, grants(lambda value: calls.append(value) or value), limits=Limits(host_calls=1)) as sandbox:
+        with pytest.raises(SandboxError, match="Host operation budget"):
+            with sandbox.phase(fuel=10000, seconds=2):
+                sandbox.call("apply", 1)
+                sandbox.call("apply", 2)
+        assert calls == [1] and sandbox.closed
+
+
+@pytest.mark.parametrize("last_call", [False, True])
+def test_phase_deadline_counts_host_work_between_calls(guest, monkeypatch, last_call):
+    with Sandbox(guest, grants()) as sandbox:
+        now = [time.monotonic()]
+        monkeypatch.setattr(implementation.time, "monotonic", lambda: now[0])
+        with pytest.raises(SandboxError, match="deadline"):
+            with sandbox.phase(fuel=10000, seconds=2):
+                sandbox.call("counter")
+                now[0] += 3
+                if last_call:
+                    sandbox.call("counter")
+        assert sandbox.closed
+
+
+def test_phase_epoch_stops_guest_with_plentiful_fuel(guest):
+    with Sandbox(guest, grants()) as sandbox:
+        with pytest.raises(SandboxError, match="interrupt|deadline"):
+            with sandbox.phase(fuel=2**62, seconds=0.1):
+                sandbox.call("loop")
+        assert sandbox.closed
+
+
+def test_phase_restores_normal_callback_deadline(guest):
+    def slow(value):
+        time.sleep(0.04)
+        return value
+    with Sandbox(guest, grants(slow), limits=Limits(seconds=0.01)) as sandbox:
+        with sandbox.phase(fuel=10000, seconds=2):
+            assert sandbox.call("apply", 3) == 3
+        with pytest.raises(SandboxError, match="deadline|interrupt"):
+            sandbox.call("apply", 3)
+        assert sandbox.closed
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt("cancelled"), ValueError("host preparation failed")])
+def test_host_failure_in_phase_cleans_once(guest, error):
+    cleaned = []
+    with Sandbox(guest, grants(), cleanup=lambda: cleaned.append(True)) as sandbox:
+        with pytest.raises(type(error), match=str(error)):
+            with sandbox.phase(fuel=10000, seconds=2):
+                raise error
+        assert sandbox.closed
+    assert cleaned == [True]
+
+
+def test_long_host_failure_keeps_bounded_context_and_cause(guest):
+    def fail(value):
+        raise ValueError("owned context: " + "x" * 1000 + " actual failure cause")
+    with Sandbox(guest, grants(fail)) as sandbox:
+        with pytest.raises(SandboxError) as failed:
+            sandbox.call("apply", 3)
+        text = str(failed.value)
+        assert len(text) <= 512 and text.startswith("owned context:") and text.endswith("actual failure cause")
+        assert sandbox.closed
+
+
+def test_nested_phases_are_rejected(guest):
+    with Sandbox(guest, grants()) as sandbox:
+        with pytest.raises(SandboxError, match="Nested sandbox phases"):
+            with sandbox.phase(fuel=10000, seconds=2):
+                with sandbox.phase(fuel=10000, seconds=2):
+                    pytest.fail("A nested phase cannot reset the aggregate budget")
+        assert sandbox.closed
+
+
+@pytest.mark.parametrize("kwargs", [{"fuel": True, "seconds": 1}, {"fuel": 0, "seconds": 1}, {"fuel": 1000, "seconds": float("nan")}])
+def test_invalid_phase_budgets_fail_before_changing_instance(guest, kwargs):
+    with Sandbox(guest, grants()) as sandbox:
+        with pytest.raises(ValueError):
+            with sandbox.phase(**kwargs):
+                pytest.fail("Invalid budget")
+        assert sandbox.call("counter") == 1
 
 
 @pytest.mark.parametrize(

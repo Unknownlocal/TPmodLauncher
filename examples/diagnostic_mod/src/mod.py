@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""An author example: sandboxed Python using generated WIT bindings and the standard library."""
+"""Sandboxed Python using the runner's wit_world API and the standard library."""
 
 import json
 import wit_world

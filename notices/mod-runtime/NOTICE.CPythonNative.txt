@@ -1,0 +1,1094 @@
+Modules/_elementtree.c
+
+/*--------------------------------------------------------------------
+ * Licensed to PSF under a Contributor Agreement.
+ * See https://www.python.org/psf/license for licensing details.
+ *
+ * _elementtree - C accelerator for xml.etree.ElementTree
+ * Copyright (c) 1999-2009 by Secret Labs AB.  All rights reserved.
+ * Copyright (c) 1999-2009 by Fredrik Lundh.
+ *
+ * info@pythonware.com
+ * http://www.pythonware.com
+ *--------------------------------------------------------------------
+ */
+
+Modules/_localemodule.c
+
+/***********************************************************
+Copyright (C) 1997, 2002, 2003, 2007, 2008 Martin von Loewis
+
+Permission to use, copy, modify, and distribute this software and its
+documentation for any purpose and without fee is hereby granted,
+provided that the above copyright notice appear in all copies.
+
+This software comes with no warranty. Use at your own risk.
+
+******************************************************************/
+
+Modules/_randommodule.c
+
+/* Random objects */
+
+/* ------------------------------------------------------------------
+   The code in this module was based on a download from:
+      http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/MT2002/emt19937ar.html
+
+   It was modified in 2002 by Raymond Hettinger as follows:
+
+    * the principal computational lines untouched.
+
+    * renamed genrand_res53() to random_random() and wrapped
+      in python calling/return code.
+
+    * genrand_uint32() and the helper functions, init_genrand()
+      and init_by_array(), were declared static, wrapped in
+      Python calling/return code.  also, their global data
+      references were replaced with structure references.
+
+    * unused functions from the original were deleted.
+      new, original C python code was added to implement the
+      Random() interface.
+
+   The following are the verbatim comments from the original code:
+
+   A C-program for MT19937, with initialization improved 2002/1/26.
+   Coded by Takuji Nishimura and Makoto Matsumoto.
+
+   Before using, initialize the state by using init_genrand(seed)
+   or init_by_array(init_key, key_length).
+
+   Copyright (C) 1997 - 2002, Makoto Matsumoto and Takuji Nishimura,
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+     1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+     2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+
+     3. The names of its contributors may not be used to endorse or promote
+    products derived from this software without specific prior written
+    permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+   Any feedback is very welcome.
+   http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/emt.html
+   email: m-mat @ math.sci.hiroshima-u.ac.jp (remove space)
+*/
+
+/* ---------------------------------------------------------------*/
+
+Modules/_sqlite/connection.c
+
+/* connection.c - the connection type
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/connection.h
+
+/* connection.h - definitions for the connection type
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/cursor.c
+
+/* cursor.c - the cursor type
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/cursor.h
+
+/* cursor.h - definitions for the cursor type
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/microprotocols.c
+
+/* microprotocols.c - minimalist and non-validating protocols implementation
+ *
+ * Copyright (C) 2003-2004 Federico Di Gregorio <fog@debian.org>
+ *
+ * This file is part of psycopg and was adapted for pysqlite. Federico Di
+ * Gregorio gave the permission to use it within pysqlite under the following
+ * license:
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/microprotocols.h
+
+/* microprotocols.c - definitions for minimalist and non-validating protocols
+ *
+ * Copyright (C) 2003-2004 Federico Di Gregorio <fog@debian.org>
+ *
+ * This file is part of psycopg and was adapted for pysqlite. Federico Di
+ * Gregorio gave the permission to use it within pysqlite under the following
+ * license:
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/module.c
+
+/* module.c - the module itself
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/module.h
+
+/* module.h - definitions for the module
+ *
+ * Copyright (C) 2004-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/prepare_protocol.c
+
+/* prepare_protocol.c - the protocol for preparing values for SQLite
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/prepare_protocol.h
+
+/* prepare_protocol.h - the protocol for preparing values for SQLite
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/row.c
+
+/* row.c - an enhanced tuple for database rows
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/row.h
+
+/* row.h - an enhanced tuple for database rows
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/statement.c
+
+/* statement.c - the statement type
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/statement.h
+
+/* statement.h - definitions for the statement type
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/util.c
+
+/* util.c - various utility functions
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sqlite/util.h
+
+/* util.h - various utility functions
+ *
+ * Copyright (C) 2005-2010 Gerhard Häring <gh@ghaering.de>
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+Modules/_sre/sre.c
+
+/*
+ * Secret Labs' Regular Expression Engine
+ *
+ * regular expression matching engine
+ *
+ * partial history:
+ * 1999-10-24 fl   created (based on existing template matcher code)
+ * 2000-03-06 fl   first alpha, sort of
+ * 2000-08-01 fl   fixes for 1.6b1
+ * 2000-08-07 fl   use PyOS_CheckStack() if available
+ * 2000-09-20 fl   added expand method
+ * 2001-03-20 fl   lots of fixes for 2.1b2
+ * 2001-04-15 fl   export copyright as Python attribute, not global
+ * 2001-04-28 fl   added __copy__ methods (work in progress)
+ * 2001-05-14 fl   fixes for 1.5.2 compatibility
+ * 2001-07-01 fl   added BIGCHARSET support (from Martin von Loewis)
+ * 2001-10-18 fl   fixed group reset issue (from Matthew Mueller)
+ * 2001-10-20 fl   added split primitive; re-enable unicode for 1.6/2.0/2.1
+ * 2001-10-21 fl   added sub/subn primitive
+ * 2001-10-24 fl   added finditer primitive (for 2.2 only)
+ * 2001-12-07 fl   fixed memory leak in sub/subn (Guido van Rossum)
+ * 2002-11-09 fl   fixed empty sub/subn return type
+ * 2003-04-18 mvl  fully support 4-byte codes
+ * 2003-10-17 gn   implemented non recursive scheme
+ * 2013-02-04 mrab added fullmatch primitive
+ *
+ * Copyright (c) 1997-2001 by Secret Labs AB.  All rights reserved.
+ *
+ * This version of the SRE library can be redistributed under CNRI's
+ * Python 1.6 license.  For any other use, please contact Secret Labs
+ * AB (info@pythonware.com).
+ *
+ * Portions of this engine have been developed in cooperation with
+ * CNRI.  Hewlett-Packard provided funding for 1.6 integration and
+ * other compatibility work.
+ */
+
+Modules/_sre/sre.h
+
+/*
+ * Secret Labs' Regular Expression Engine
+ *
+ * regular expression matching engine
+ *
+ * Copyright (c) 1997-2001 by Secret Labs AB.  All rights reserved.
+ *
+ * See the sre.c file for information on usage and redistribution.
+ */
+
+Modules/_sre/sre_constants.h
+Modules/_sre/sre_targets.h
+
+/*
+ * Secret Labs' Regular Expression Engine
+ *
+ * regular expression matching engine
+ *
+ * Auto-generated by Tools/build/generate_sre_constants.py from
+ * Lib/re/_constants.py.
+ *
+ * Copyright (c) 1997-2001 by Secret Labs AB.  All rights reserved.
+ *
+ * See the sre.c file for information on usage and redistribution.
+ */
+
+Modules/_sre/sre_lib.h
+
+/*
+ * Secret Labs' Regular Expression Engine
+ *
+ * regular expression matching engine
+ *
+ * Copyright (c) 1997-2001 by Secret Labs AB.  All rights reserved.
+ *
+ * See the sre.c file for information on usage and redistribution.
+ */
+
+/* String matching engine */
+
+/* This file is included three times, with different character settings */
+
+Modules/addrinfo.h
+
+/*
+ * Copyright (C) 1995, 1996, 1997, 1998, and 1999 WIDE Project.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+Modules/blake2module.c
+
+/*
+ * Written in 2013 by Dmitry Chestnykh <dmitry@codingrobots.com>
+ * Modified for CPython by Christian Heimes <christian@python.org>
+ * Updated to use HACL* by Jonathan Protzenko <jonathan@protzenko.fr>
+ *
+ * To the extent possible under law, the author have dedicated all
+ * copyright and related and neighboring rights to this software to
+ * the public domain worldwide. This software is distributed without
+ * any warranty. http://creativecommons.org/publicdomain/zero/1.0/
+ */
+
+Modules/getaddrinfo.c
+
+/*
+ * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+/*
+ * "#ifdef FAITH" part is local hack for supporting IPv4-v6 translator.
+ *
+ * Issues to be discussed:
+ * - Thread safe-ness must be checked.
+ * - Return values.  There are nonstandard return values defined and used
+ *   in the source code.  This is because RFC2133 is silent about which error
+ *   code must be returned for which situation.
+ * - PF_UNSPEC case would be handled in getipnodebyname() with the AI_ALL flag.
+ */
+
+Modules/getnameinfo.c
+
+/*
+ * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+/*
+ * Issues to be discussed:
+ * - Thread safe-ness must be checked
+ * - Return values.  There seems to be no standard for return value (RFC2133)
+ *   but INRIA implementation returns EAI_xxx defined for getaddrinfo().
+ */
+
+Modules/md5module.c
+
+/* MD5 module */
+
+/* This module provides an interface to the MD5 algorithm */
+
+/* See below for information about the original code this module was
+   based upon. Additional work performed by:
+
+   Andrew Kuchling (amk@amk.ca)
+   Greg Stein (gstein@lyra.org)
+   Trevor Perrin (trevp@trevp.net)
+
+   Copyright (C) 2005-2007   Gregory P. Smith (greg@krypto.org)
+   Licensed to PSF under a Contributor Agreement.
+
+*/
+
+/* MD5 objects */
+
+Modules/sha1module.c
+
+/* SHA1 module */
+
+/* This module provides an interface to the SHA1 algorithm */
+
+/* See below for information about the original code this module was
+   based upon. Additional work performed by:
+
+   Andrew Kuchling (amk@amk.ca)
+   Greg Stein (gstein@lyra.org)
+   Trevor Perrin (trevp@trevp.net)
+
+   Copyright (C) 2005-2007   Gregory P. Smith (greg@krypto.org)
+   Licensed to PSF under a Contributor Agreement.
+
+*/
+
+/* SHA1 objects */
+
+Modules/sha2module.c
+
+/* SHA2 module */
+
+/* This provides an interface to NIST's SHA2 224, 256, 384, & 512 Algorithms */
+
+/* See below for information about the original code this module was
+   based upon. Additional work performed by:
+
+   Andrew Kuchling (amk@amk.ca)
+   Greg Stein (gstein@lyra.org)
+   Trevor Perrin (trevp@trevp.net)
+   Jonathan Protzenko (jonathan@protzenko.fr)
+
+   Copyright (C) 2005-2007   Gregory P. Smith (greg@krypto.org)
+   Licensed to PSF under a Contributor Agreement.
+
+*/
+
+/* SHA objects */
+
+Modules/sha3module.c
+
+/* SHA3 module
+ *
+ * This module provides an interface to the SHA3 algorithm
+ *
+ * See below for information about the original code this module was
+ * based upon. Additional work performed by:
+ *
+ *  Andrew Kuchling (amk@amk.ca)
+ *  Greg Stein (gstein@lyra.org)
+ *  Trevor Perrin (trevp@trevp.net)
+ *  Gregory P. Smith (greg@krypto.org)
+ *
+ * Copyright (C) 2012-2022  Christian Heimes (christian@python.org)
+ * Licensed to PSF under a Contributor Agreement.
+ *
+ */
+
+Objects/unicodeobject.c
+
+/*
+
+Unicode implementation based on original code by Fredrik Lundh,
+modified by Marc-Andre Lemburg <mal@lemburg.com>.
+
+Major speed upgrades to the method implementations at the Reykjavik
+NeedForSpeed sprint, by Fredrik Lundh and Andrew Dalke.
+
+Copyright (c) Corporation for National Research Initiatives.
+
+--------------------------------------------------------------------
+The original string type implementation is:
+
+  Copyright (c) 1999 by Secret Labs AB
+  Copyright (c) 1999 by Fredrik Lundh
+
+By obtaining, using, and/or copying this software and/or its
+associated documentation, you agree that you have read, understood,
+and will comply with the following terms and conditions:
+
+Permission to use, copy, modify, and distribute this software and its
+associated documentation for any purpose and without fee is hereby
+granted, provided that the above copyright notice appears in all
+copies, and that both that copyright notice and this permission notice
+appear in supporting documentation, and that the name of Secret Labs
+AB or the author not be used in advertising or publicity pertaining to
+distribution of the software without specific, written prior
+permission.
+
+SECRET LABS AB AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO
+THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS.  IN NO EVENT SHALL SECRET LABS AB OR THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------
+
+*/
+
+Python/dtoa.c
+
+/****************************************************************
+ *
+ * The author of this software is David M. Gay.
+ *
+ * Copyright (c) 1991, 2000, 2001 by Lucent Technologies.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose without fee is hereby granted, provided that this entire notice
+ * is included in all copies of any software which is or includes a copy
+ * or modification of this software and in all copies of the supporting
+ * documentation for such software.
+ *
+ * THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTY.  IN PARTICULAR, NEITHER THE AUTHOR NOR LUCENT MAKES ANY
+ * REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
+ * OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
+ *
+ ***************************************************************/
+
+/****************************************************************
+ * This is dtoa.c by David M. Gay, downloaded from
+ * http://www.netlib.org/fp/dtoa.c on April 15, 2009 and modified for
+ * inclusion into the Python core by Mark E. T. Dickinson and Eric V. Smith.
+ *
+ * Please remember to check http://www.netlib.org/fp regularly (and especially
+ * before any Python release) for bugfixes and updates.
+ *
+ * The major modifications from Gay's original code are as follows:
+ *
+ *  0. The original code has been specialized to Python's needs by removing
+ *     many of the #ifdef'd sections.  In particular, code to support VAX and
+ *     IBM floating-point formats, hex NaNs, hex floats, locale-aware
+ *     treatment of the decimal point, and setting of the inexact flag have
+ *     been removed.
+ *
+ *  1. We use PyMem_Malloc and PyMem_Free in place of malloc and free.
+ *
+ *  2. The public functions strtod, dtoa and freedtoa all now have
+ *     a _Py_dg_ prefix.
+ *
+ *  3. Instead of assuming that PyMem_Malloc always succeeds, we thread
+ *     PyMem_Malloc failures through the code.  The functions
+ *
+ *       Balloc, multadd, s2b, i2b, mult, pow5mult, lshift, diff, d2b
+ *
+ *     of return type *Bigint all return NULL to indicate a malloc failure.
+ *     Similarly, rv_alloc and nrv_alloc (return type char *) return NULL on
+ *     failure.  bigcomp now has return type int (it used to be void) and
+ *     returns -1 on failure and 0 otherwise.  _Py_dg_dtoa returns NULL
+ *     on failure.  _Py_dg_strtod indicates failure due to malloc failure
+ *     by returning -1.0, setting errno=ENOMEM and *se to s00.
+ *
+ *  4. The static variable dtoa_result has been removed.  Callers of
+ *     _Py_dg_dtoa are expected to call _Py_dg_freedtoa to free
+ *     the memory allocated by _Py_dg_dtoa.
+ *
+ *  5. The code has been reformatted to better fit with Python's
+ *     C style guide (PEP 7).
+ *
+ *  6. A bug in the memory allocation has been fixed: to avoid FREEing memory
+ *     that hasn't been MALLOC'ed, private_mem should only be used when k <=
+ *     Kmax.
+ *
+ *  7. _Py_dg_strtod has been modified so that it doesn't accept strings with
+ *     leading whitespace.
+ *
+ *  8. A corner case where _Py_dg_dtoa didn't strip trailing zeros has been
+ *     fixed. (bugs.python.org/issue40780)
+ *
+ ***************************************************************/
+
+/* Please send bug reports for the original dtoa.c code to David M. Gay (dmg
+ * at acm dot org, with " at " changed at "@" and " dot " changed to ".").
+ * Please report bugs for this modified version using the Python issue tracker
+ * as detailed at (https://devguide.python.org/triage/issue-tracker/). */
+
+/* On a machine with IEEE extended-precision registers, it is
+ * necessary to specify double-precision (53-bit) rounding precision
+ * before invoking strtod or dtoa.  If the machine uses (the equivalent
+ * of) Intel 80x87 arithmetic, the call
+ *      _control87(PC_53, MCW_PC);
+ * does this with many compilers.  Whether this or another call is
+ * appropriate depends on the compiler; for this to work, it may be
+ * necessary to #include "float.h" or another system-dependent header
+ * file.
+ */
+
+/* strtod for IEEE-, VAX-, and IBM-arithmetic machines.
+ *
+ * This strtod returns a nearest machine number to the input decimal
+ * string (or sets errno to ERANGE).  With IEEE arithmetic, ties are
+ * broken by the IEEE round-even rule.  Otherwise ties are broken by
+ * biased rounding (add half and chop).
+ *
+ * Inspired loosely by William D. Clinger's paper "How to Read Floating
+ * Point Numbers Accurately" [Proc. ACM SIGPLAN '90, pp. 92-101].
+ *
+ * Modifications:
+ *
+ *      1. We only require IEEE, IBM, or VAX double-precision
+ *              arithmetic (not IEEE double-extended).
+ *      2. We get by with floating-point arithmetic in a case that
+ *              Clinger missed -- when we're computing d * 10^n
+ *              for a small integer d and the integer n is not too
+ *              much larger than 22 (the maximum integer k for which
+ *              we can represent 10^k exactly), we may be able to
+ *              compute (d*10^k) * 10^(e-k) with just one roundoff.
+ *      3. Rather than a bit-at-a-time adjustment of the binary
+ *              result in the hard case, we use floating-point
+ *              arithmetic to determine the adjustment to within
+ *              one bit; only in really hard cases do we need to
+ *              compute a second residual.
+ *      4. Because of 3., we don't need a large table of powers of 10
+ *              for ten-to-e (just some small tables, e.g. of 10^k
+ *              for 0 <= k <= 22).
+ */
+
+/* Linking of Python's #defines to Gay's #defines starts here. */
+
+Python/dynamic_annotations.c
+
+/* Copyright (c) 2008-2009, Google Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * ---
+ * Author: Kostya Serebryany
+ */
+
+Python/getopt.c
+
+/*---------------------------------------------------------------------------*
+ * <RCS keywords>
+ *
+ * C++ Library
+ *
+ * Copyright 1992-1994, David Gottner
+ *
+ *                    All Rights Reserved
+ *
+ * Permission to use, copy, modify, and distribute this software and its
+ * documentation for any purpose and without fee is hereby granted,
+ * provided that the above copyright notice, this permission notice and
+ * the following disclaimer notice appear unmodified in all copies.
+ *
+ * I DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDING ALL
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS.  IN NO EVENT SHALL I
+ * BE LIABLE FOR ANY SPECIAL, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY
+ * DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA, OR PROFITS, WHETHER
+ * IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+ * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *---------------------------------------------------------------------------*/
+
+/* Modified to support --help and --version, as well as /? on Windows
+ * by Georg Brandl. */
+
+Python/hashtable.c
+
+/* The implementation of the hash table (_Py_hashtable_t) is based on the
+   cfuhash project:
+   http://sourceforge.net/projects/libcfu/
+
+   Copyright of cfuhash:
+   ----------------------------------
+   Creation date: 2005-06-24 21:22:40
+   Authors: Don
+   Change log:
+
+   Copyright (c) 2005 Don Owens
+   All rights reserved.
+
+   This code is released under the BSD license:
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+     * Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
+
+     * Neither the name of the author nor the names of its
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+   FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+   COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+   STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+   ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+   OF THE POSSIBILITY OF SUCH DAMAGE.
+   ----------------------------------
+*/
+
+Python/qsbr.c
+
+/*
+ * Implementation of safe memory reclamation scheme using
+ * quiescent states.
+ *
+ * This is derived from the "GUS" safe memory reclamation technique
+ * in FreeBSD written by Jeffrey Roberson. It is heavily modified. Any bugs
+ * in this code are likely due to the modifications.
+ *
+ * The original copyright is preserved below.
+ *
+ * Copyright (c) 2019,2020 Jeffrey Roberson <jeff@FreeBSD.org>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice unmodified, this list of conditions, and the following
+ *    disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+

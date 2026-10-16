@@ -50,6 +50,14 @@ limits or expose the dictionary to the component.
 
 ## Limits and failure
 
+`Sandbox.phase(fuel=..., seconds=...)` lets trusted infrastructure share one fuel
+allowance, absolute deadline and host-call count across multiple exports. Work
+between calls counts against that deadline; post-return work uses the same fuel.
+Phase failures close the sandbox, and subsequent ordinary calls again use their
+usual per-call limits. This supports source transfer/import without resetting
+the allowance for every chunk. Mods cannot select budgets through their manifest
+or enter this host context. Long bounded diagnostics preserve the final trap cause.
+
 Default limits supplied by trusted infrastructure:
 
 | Resource | Bound |

@@ -19,6 +19,15 @@ import pytest
 
 from launcher import bundled_dependencies as dependencies
 from launcher import prepare_release as release
+from mod_runtime import RunnerBundle
+from mod_runtime.bundle import DIRECTORY
+
+
+@pytest.fixture(scope="session")
+def runner_bundle(tmp_path_factory):
+    """Build the fixed trusted runner once for runtime and session integration checks."""
+    from mod_runtime.build import build
+    return build(tmp_path_factory.mktemp("runner-build") / "bundle")
 
 
 @pytest.fixture
@@ -178,7 +187,10 @@ def embedded_project(tmp_path_factory):
         root / "hook_manager",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
+    shutil.copytree(source / "mod_runtime", root / "mod_runtime", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(source / "examples", root / "examples", ignore=shutil.ignore_patterns("__pycache__", "*.wasm"))
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
+    RunnerBundle(source / DIRECTORY).copy_to(root / DIRECTORY)
     return root
 
 
@@ -239,7 +251,7 @@ def native_project(request, tmp_path_factory):
     )
     package.rename(root / release.package_directory(inventory))
     source = Path(__file__).resolve().parents[1]
-    for name in ("launcher", "hook_manager"):
+    for name in ("launcher", "hook_manager", "mod_runtime"):
         shutil.copytree(
             source / name, root / name, ignore=shutil.ignore_patterns("__pycache__")
         )

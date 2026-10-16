@@ -28,7 +28,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--check-only",
         action="store_true",
-        help="check bundled Frida and Wasmtime without starting the game",
+        help="check bundled dependencies and the Python runner without starting the game",
     )
     parser.add_argument(
         "--restart-grace",
@@ -60,14 +60,26 @@ def main(argv=None) -> int:
     except _dependencies.DependencyError as error:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
         return 1
+    try:
+        # Source locations are trusted only after the dependency setup is verified.
+        _dependencies.load_source_packages(root)
+        from mod_runtime import ABI_VERSION, RunnerBundle
+        from mod_runtime.bundle import DIRECTORY
+
+        runner_bundle = RunnerBundle(root / DIRECTORY)
+    except (OSError, ValueError, RuntimeError, ImportError) as error:
+        print(
+            f"Python runner verification failed: {error}. Restore the complete launcher release.",
+            file=sys.stderr,
+        )
+        return 1
     if arguments.check_only:
         print(
-            f"Bundled dependencies ready: Frida {version('frida')}; Wasmtime {version('wasmtime')}"
+            f"Bundled dependencies ready: Frida {version('frida')}; Wasmtime {version('wasmtime')}; Python runner {ABI_VERSION}"
         )
         return 0
     try:
         # Only the launcher's own packages gain import paths; data-pack Python is never imported.
-        _dependencies.load_source_packages(root)
         from launcher import game_bridge as bridge, process_lifecycle as lifecycle
         from launcher.pack_mods import PackMods
         from launcher.compilation_cache import CompilationCache
@@ -91,6 +103,7 @@ def main(argv=None) -> int:
                 set_loading=bridge.set_loading,
                 background=True,
                 cache=cache,
+                runner_bundle=runner_bundle,
             ),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.

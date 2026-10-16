@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -550,6 +551,107 @@ def test_pack_mods_follow_session_identity_and_close_on_every_removal(
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == (
         1 if transition == "shutdown" else 2
     )
+
+
+@pytest.mark.parametrize("transition", ["detached", "missing", "exec", "pid-reuse", "shutdown"])
+def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_bundle, transition):
+    device, controller, messages, now = rig
+    game = Path(controller.game).parent
+    for name in ("first", "second"):
+        source_mod(game / "data" / name, f"owned.{name}")
+    controller.mods_factory = lambda report, bridge: PackMods(game, report, runner_bundle=runner_bundle)
+    def send(pid, session, name):
+        pack = dict(state="ready", series="formula", id=name, root=str((game / "data" / name).resolve()))
+        controller.events.put(("bridge", (pid, session, {"type": "send", "payload": {"event": "pack", "pack": pack}})))
+    def drain(scope):
+        deadline = time.monotonic() + 30
+        while scope.loading is not None:
+            assert time.monotonic() < deadline
+            controller.poll()
+            threading.Event().wait(0.002)
+    controller.start()
+    try:
+        first = controller.sessions[10]
+        send(10, first, "first")
+        controller.poll()
+        initial = controller.pack_mods[10]
+        drain(initial)
+        old_mod = initial.mods["owned.first"]
+        send(10, first, "second")
+        controller.poll()
+        assert list(initial.mods) == ["owned.first"]
+        current_scope, current_mod = initial, old_mod
+        if transition != "shutdown":
+            pid = 10
+            if transition in ("detached", "missing"):
+                del device.processes[10]
+                if transition == "detached":
+                    first.handlers["detached"]("process-replaced")
+                now[0] = 1.0
+                controller.poll()
+                pid = 20
+            elif transition == "pid-reuse":
+                first.is_detached = True
+            child = device.child(pid, controller.game)
+            if transition == "exec":
+                child.origin = "exec"
+            controller.poll()
+            assert initial.closed and old_mod.sandbox.closed
+            replacement = controller.sessions[pid]
+            send(10, first, "first")  # A stale source pack cannot reattach to the new session.
+            send(pid, replacement, "second")
+            controller.poll()
+            current_scope = controller.pack_mods[pid]
+            drain(current_scope)
+            assert list(current_scope.mods) == ["owned.second"]
+            current_mod = current_scope.mods["owned.second"]
+    finally:
+        controller.close()
+    assert current_scope.closed and current_mod.sandbox.closed
+    assert not controller.pack_mods and not controller.cleanup_failed
+    assert sum("CODE MOD ACTIVE:" in line for line in messages) == (1 if transition == "shutdown" else 2)
+
+
+def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch):
+    from mod_runtime import preparation
+    device, controller, messages, _ = rig
+    game = Path(controller.game).parent
+    mod = source_mod(game / "data/owned pack", "owned.pending")
+    entered, release = threading.Event(), threading.Event()
+    results = []
+    original = preparation._prepare
+    def blocked(*args):
+        result = original(*args)
+        results.append(result)
+        entered.set()
+        assert release.wait(10)
+        return result
+    monkeypatch.setattr(preparation, "_prepare", blocked)
+    controller.mods_factory = lambda report, bridge: PackMods(game, report, runner_bundle=runner_bundle)
+    controller.start()
+    scope = None
+    try:
+        first = controller.sessions[10]
+        pack = dict(state="ready", series="formula", id=mod.parent.name, root=str(mod.parent.resolve()))
+        controller.events.put(("bridge", (10, first, {"type": "send", "payload": {"event": "pack", "pack": pack}})))
+        controller.poll()
+        scope = controller.pack_mods[10]
+        assert entered.wait(30)
+        device.child(20, controller.game)
+        controller.poll()
+        assert 20 in controller.sessions and ("resume", 20) in device.calls
+        first.is_detached = True
+        first.handlers["detached"]("process-terminated")
+        controller.poll()
+        assert scope.closed and 10 not in controller.pack_mods and not results[0].compiled.closed
+    finally:
+        release.set()
+        controller.close()
+        if scope is not None:
+            scope.executor.shutdown(wait=True)
+    assert results[0].snapshot is None and results[0].compiled.closed
+    assert not any("CODE MOD ACTIVE:" in line or "CODE MOD REPORT:" in line for line in messages)
+    assert not controller.cleanup_failed
 
 
 def test_controller_handles_child_and_exit_while_a_compiler_is_running(

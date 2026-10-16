@@ -14,6 +14,42 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.mark.embedded
+def test_normal_entry_loads_source_examples_without_build_tools(embedded_project, tmp_path):
+    root = embedded_project
+    probe = root / "launcher/entry_runner_probe.py"
+    shutil.copyfile(FIXTURES / probe.name, probe)
+    try:
+        result = subprocess.run(
+            [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(probe)],
+            cwd=tmp_path, capture_output=True, text=True, timeout=90,
+        )
+        assert result.returncode == 0 and "Normal entry loaded source examples" in result.stdout, result.stderr
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.embedded
+@pytest.mark.parametrize("target", ["runner.wasm", "bundle.json", "notices/LICENSE.PythonGuest.txt"])
+def test_embedded_entry_reports_runner_damage_without_repair(embedded_project, target):
+    root = embedded_project
+    payload = root / "libs/mod-runners" / target
+    original = payload.read_bytes()
+    before = set(root.iterdir())
+    try:
+        payload.write_bytes(b"damaged runner")
+        result = subprocess.run(
+            [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B",
+             str(root / "launcher/entry.py"), "--check-only"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 1 and "Python runner verification failed" in result.stderr
+        assert "Restore the complete launcher release" in result.stderr and "Traceback" not in result.stderr
+        assert payload.read_bytes() == b"damaged runner" and set(root.iterdir()) == before
+    finally:
+        payload.write_bytes(original)
+
+
+@pytest.mark.embedded
 def test_relocated_release_imports_dependencies_without_installation(
     embedded_project, tmp_path
 ):

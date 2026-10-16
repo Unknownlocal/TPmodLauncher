@@ -40,6 +40,21 @@ _spec = importlib.util.spec_from_file_location(
 dependencies = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dependencies)
 
+_RUNNER_SOURCE = Path(__file__).resolve().parents[1] / "mod_runtime/bundle.py"
+
+
+def runner_artifacts():
+    """Load the artifact reader only for releases, including under python -I.
+
+    Exported Frida rebuild tools import this module without the launcher runtime.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "_tpm_runner_artifacts", _RUNNER_SOURCE
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def read_settings(root: Path) -> dict:
     # root is the project folder; interpreter and build-tool settings belong in pyproject.toml.
@@ -724,6 +739,8 @@ def prepare_reduced_release(
         )
     sources.verify(source_output, build_output)
     settings = read_settings(root)
+    artifacts = runner_artifacts()
+    runner = artifacts.RunnerBundle(root / artifacts.DIRECTORY)
     # Keep the launcher's other locked dependencies when replacing only its Frida build.
     companions = [
         (package, companion)
@@ -799,15 +816,16 @@ def prepare_reduced_release(
         (stage / "pylock.toml").write_text(lock, encoding="utf-8")
         prepare_runtime(stage, settings["runtime"], archive)
         prepare_packages(stage, refresh_manifest=True)
+        runner.copy_to(stage / artifacts.DIRECTORY)
         # Retain the signed build record alongside existing licences and the usable launcher source.
-        for directory in ("launcher", "hook_manager", "notices"):
+        for directory in ("launcher", "hook_manager", "mod_runtime", "notices", "examples"):
             shutil.copytree(
                 root / directory,
                 stage / directory,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
                 copy_function=shutil.copyfile,
             )
-        for name in ("LICENCE", "README.md"):
+        for name in ("LICENCE", "ATTRIBUTION.txt", "README.md"):
             shutil.copyfile(root / name, stage / name)
         (stage / "build-details.json").write_bytes(details)
         source_destination = stage / "source"
@@ -943,6 +961,8 @@ def main(argv=None) -> int:
                 "Reduced provenance options require --frida-build"
             )
         settings = read_settings(root)
+        artifacts = runner_artifacts()
+        artifacts.RunnerBundle(root / artifacts.DIRECTORY)
         runtime = settings["runtime"]
         packages = read_lock(root, runtime, arguments.lockfile)
         archive = authenticate_runtime(root, runtime)

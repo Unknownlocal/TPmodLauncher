@@ -12,7 +12,7 @@ markers = [
 # Measure Python source in the test process; embedded test processes stay isolated.
 [tool.coverage.run]
 branch = true
-source = ["launcher", "hook_manager"]
+source = ["launcher", "hook_manager", "mod_runtime"]
 relative_files = true
 
 # Launcher build settings; package pins live in the standard pylock.toml.

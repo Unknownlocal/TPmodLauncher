@@ -3,20 +3,33 @@
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 from time import perf_counter
+import tomllib
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
 from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod
+from launcher.source_mod import SourceMod
 from hook_manager.menu import MenuRequests
+from mod_runtime.bundle import RunnerBundle
+from mod_runtime.preparation import SourcePreparation
+from mod_runtime.source import SourceManifest, read_manifest
 
-# Bound discovery and the number of components admitted by one game process.
+# Bound discovery and the number of mods admitted by one game process.
 MAX_PACK_ENTRIES = 4096
 MAX_MODS = 32
+
+
+@dataclass
+class _Candidate:
+    root: Path
+    manifest: Manifest | SourceManifest
+    timings: dict
 
 
 def _prepare(manifest, timings, cache=None):
@@ -46,6 +59,7 @@ class PackMods:
         set_loading=None,
         background=False,
         cache=None,
+        runner_bundle=None,
     ):
         # game_root and report come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
@@ -60,6 +74,9 @@ class PackMods:
         self.set_loading = set_loading
         self.background = background
         self.cache = cache
+        if runner_bundle is not None and type(runner_bundle) is not RunnerBundle:
+            raise ManifestError("Expected a verified runner bundle")
+        self.runner_bundle = runner_bundle
         self.executor = None
         self.pending = None
         self.loading = None
@@ -141,6 +158,27 @@ class PackMods:
                 )
             )
 
+    def _manifest(self, path):
+        if self.runner_bundle is None:
+            manifest = Manifest.read(path)
+            return manifest.root, manifest
+        root, content = read_manifest(path)
+        schema = tomllib.loads(content.decode("utf-8")).get("schema")
+        if type(schema) is not int or schema not in (1, 2):
+            raise ManifestError("Unsupported mod manifest schema")
+        if schema == 2:
+            manifest = SourceManifest.parse(content)
+        else:
+            manifest = Manifest.parse(root, content)
+            if manifest.runtime == "python":
+                raise ManifestError("Python source loading requires manifest schema 2")
+        return root, manifest
+
+    def _executor(self):
+        if self.executor is None:
+            self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mod-compiler")
+        return self.executor
+
     def load(self, pack):
         """Start one immutable pack; normal launches advance preparations through poll()."""
         if self.started or self.closed:
@@ -162,7 +200,7 @@ class PackMods:
             raise
 
     def _load(self, pack):
-        """Keep guest calls serial while yielding during optional background compilation."""
+        """Keep guest calls serial while yielding during worker preparation."""
         started = perf_counter()
         load_timings = {}
         try:
@@ -180,20 +218,19 @@ class PackMods:
             return
         self.total = len(candidates)
         self._progress()
-        # Each immutable manifest owns its timings, including copies with duplicate IDs.
-        manifests = {}
+        candidates_read = []
         for path in candidates:
             timings = {}
             try:
                 with measure(timings, "manifest"):
-                    manifest = Manifest.read(path)
+                    root, manifest = self._manifest(path)
                     # Recheck after resolution in case a parent changed during discovery.
-                    if manifest.root.parent != folder:
+                    if root.parent != folder:
                         raise ManifestError(
                             "Code mod is not a direct child of the selected pack"
                         )
-                manifests[manifest] = timings
-            except ManifestError as error:
+                candidates_read.append(_Candidate(root, manifest, timings))
+            except (OSError, ValueError, RuntimeError) as error:
                 self.failed += 1
                 self._log(
                     "REJECTED",
@@ -201,9 +238,9 @@ class PackMods:
                     detail=str(error)[:512],
                     phase_seconds=timings,
                 )
-        counts = Counter(manifest.id for manifest in manifests)
-        for manifest in sorted(manifests, key=lambda item: (item.id, item.root.name)):
-            timings = manifests[manifest]
+        counts = Counter(item.manifest.id for item in candidates_read)
+        for candidate in sorted(candidates_read, key=lambda item: (item.manifest.id, item.root.name)):
+            manifest, timings = candidate.manifest, candidate.timings
             # Decide duplicate identity before initializing either copy; never pick a winner.
             if counts[manifest.id] > 1:
                 self.failed += 1
@@ -211,19 +248,27 @@ class PackMods:
                 self._log(
                     "REJECTED",
                     id=manifest.id,
-                    folder=manifest.root.name,
+                    folder=candidate.root.name,
                     detail="Duplicate mod ID",
                     phase_seconds=timings,
                 )
                 continue
             prepared = None
+            source_result = None
             try:
-                if self.background:
-                    if self.executor is None:
-                        self.executor = ThreadPoolExecutor(
-                            max_workers=1, thread_name_prefix="mod-compiler"
-                        )
-                    self.pending = self.executor.submit(
+                if type(manifest) is SourceManifest:
+                    # Generator closure exits this context and cancels/disposes the job.
+                    with SourcePreparation(self._executor(), self.runner_bundle, candidate.root,
+                                           cache=self.cache, expected_manifest=manifest) as job:
+                        with measure(timings, "source_prepare"):
+                            while source_result is None:
+                                source_result = job.take()
+                                if source_result is None:
+                                    yield
+                    timings.update(source_result.timings)
+                    prepared = source_result.compiled
+                elif self.background:
+                    self.pending = self._executor().submit(
                         _prepare, manifest, timings, self.cache
                     )
                     while not self.pending.done():
@@ -235,14 +280,15 @@ class PackMods:
                     prepared = _prepare(manifest, timings, self.cache)
                 if prepared is not None and prepared.cache_status is not None:
                     self._log("CACHE", id=manifest.id, **prepared.cache_status)
-                mod = Mod(
-                    manifest,
-                    report=self._diagnostic,
-                    menu=self.menu.add if self.set_menu is not None else None,
-                    cleanup=lambda owner=manifest.id: self._remove_menu(owner),
-                    timings=timings,
-                    prepared=prepared,
-                )
+                options = dict(report=self._diagnostic,
+                               menu=self.menu.add if self.set_menu is not None else None,
+                               cleanup=lambda owner=manifest.id: self._remove_menu(owner),
+                               timings=timings, prepared=prepared)
+                if source_result is not None:
+                    with measure(timings, "source_load"):
+                        mod = SourceMod(self.runner_bundle, source_result.snapshot, **options)
+                else:
+                    mod = Mod(manifest, **options)
                 # Retain ownership before activation so interruption can still close this instance.
                 self.mods[manifest.id] = mod
                 with measure(timings, "activate"):
@@ -267,13 +313,15 @@ class PackMods:
                 self._log(
                     "REJECTED",
                     id=manifest.id,
-                    folder=manifest.root.name,
+                    folder=candidate.root.name,
                     detail=str(error)[:512],
                 )
             else:
                 self._log("ACTIVE", id=manifest.id, version=manifest.version)
             finally:
-                if prepared is not None:
+                if source_result is not None:
+                    source_result.close()
+                elif prepared is not None:
                     prepared.close()  # An adopted result has already transferred its resources.
                 # Emit once per attempted mod, after guest execution and cleanup have returned.
                 self._log(

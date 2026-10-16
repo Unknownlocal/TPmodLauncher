@@ -40,5 +40,43 @@ Both package locks pin the official Windows x64 wheel's SHA-256. This is an
 integrity check, not publisher authentication; PyPI supplies no attestation
 for that wheel. Guest-building tools are not runtime dependencies.
 
+Prebuilt Python runner inputs (private ABI 0.1.0):
+componentize-py 0.25.1, https://github.com/bytecodealliance/componentize-py/tree/v0.25.1
+notices/mod-runtime/LICENSE.ComponentizePy.txt is the unchanged LICENSE from
+the installed pinned componentize-py wheel. The compiler is a developer tool;
+generated runners incorporate its Python/Wasm runtime support.
+Guest CPython source: https://github.com/dicej/cpython/tree/v3.14.0-wasi-sdk-30
+notices/mod-runtime/LICENSE.PythonGuest.txt preserves that source's LICENSE.
+The toolchain's guest Python 3.14 is separate from the launcher interpreter.
+The distributed interpreter uses that upstream WASI-enabled fork, compiled to
+WebAssembly and preinitialized with the fixed runner and frozen Python sources.
+Its WASI imports use denial stubs. This repository makes no additional CPython
+source changes. This summary also accompanies the runner as NOTICE.PythonChanges.txt.
+WASI SDK 33 source pins:
+https://github.com/WebAssembly/wasi-libc/tree/161b3195fc2558d2b1ba3eb9ffae3b2b47407623
+https://github.com/llvm/llvm-project/tree/4434dabb69916856b824f68a64b029c67175e532
+notices/mod-runtime/LICENSE.WasiLibc.txt and LICENSE.LLVM.txt preserve their
+upstream overview and LLVM licence respectively. The companion WASI libc,
+cloudlibc, musl, allocator, libc++, libc++abi and compiler-rt licence files retain
+the component-specific terms referenced by those overview files.
+
+Guest CPython's original third-party inventory is retained as
+notices/mod-runtime/LICENSE.PythonThirdParty.rst, alongside Expat, zlib, HACL,
+libmpdec and SQLite licence/copyright notices for its native dependencies.
+NOTICE.CPythonNative.txt, NOTICE.HaclHeaders.txt and NOTICE.WasiLibcSources.txt
+retain upstream in-file notices with their source paths.
+
+Guest runtime support also incorporates Rust standard-library and runtime crate
+code. notices/mod-runtime/COPYRIGHT.RustStd.html retains the complete original
+Rust 1.98.1 library copyright inventory; LICENSE.Rust.txt retains its MIT licence.
+Official source: https://github.com/rust-lang/rust/tree/1.98.1
+Separate upstream licence texts cover anyhow, once_cell, num-bigint/num-integer/
+num-traits, PyO3/PyO3-FFI, libc, portable-atomic, wit-bindgen, wit-dylib-ffi and
+Unicode data. The fixed notice inventory is listed in mod_runtime/bundle.py and
+recorded, with hashes, in every distributed runner's bundle.json. Complete
+upstream files are preserved unchanged; upstream-source NOTICE files retain the applicable
+upstream licence/copyright blocks. The runner builder is a developer dependency;
+player startup uses only the prebuilt artifact and its retained sources/notices.
+
 The source repository excludes the game executable, extracted game bytecode,
 any data-pack content, runtime binaries and dependency wheels.

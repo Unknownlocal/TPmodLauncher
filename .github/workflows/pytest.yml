@@ -15,97 +15,230 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  portable:
+    name: ${{ matrix.platform.id }} / ${{ matrix.suite }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-latest
+        platform:
+          - id: windows
+            runner: windows-latest
             python: .venv/Scripts/python.exe
             architecture: x64
-            embedded: '1'
-            coverage: python-coverage
-          - runner: ubuntu-24.04
+          - id: linux
+            runner: ubuntu-24.04
             python: .venv/bin/python
             architecture: x64
-            embedded: '0'
-            coverage: python-coverage-linux
-          - runner: macos-15-intel
+          - id: macos-x86_64
+            runner: macos-15-intel
             python: .venv/bin/python
             architecture: x64
-            embedded: '0'
-            coverage: python-coverage-macos-x86_64
-          - runner: macos-15
+          - id: macos-arm64
+            runner: macos-15
             python: .venv/bin/python
             architecture: arm64
-            embedded: '0'
-            coverage: python-coverage-macos-arm64
-    runs-on: ${{ matrix.runner }}
+        suite: [host, runner, api, pack]
+    runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 20
     env:
-      TPM_REQUIRE_EMBEDDED_TESTS: ${{ matrix.embedded }}
-      TPM_REQUIRE_NATIVE_TESTS: ${{ matrix.embedded }}
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
     defaults:
       run:
         shell: bash
     steps:
-      # Pin reviewed upstream action commits rather than mutable release tags.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-          architecture: ${{ matrix.architecture }}
+          architecture: ${{ matrix.platform.architecture }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: Create the developer test environment
         run: |
           python -m venv .venv
-          "${{ matrix.python }}" -m pip install -r requirements-dev.txt
-      - name: Verify and prepare the official Windows dependencies for routine CI
-        if: runner.os == 'Windows'
+          "${{ matrix.platform.python }}" -m pip install -r requirements-dev.txt
+      - name: Run the selected portable suite
         run: |
-          # The locally built reduced wheel is tested separately; do not compile it on every push.
-          "${{ matrix.python }}" -I launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
-      - name: Check bundled Frida and Wasmtime without installing packages
-        if: runner.os == 'Windows'
-        run: |
-          libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
-      - name: Initialize coverage data
-        id: coverage
-        run: '"${{ matrix.python }}" -m coverage erase'
-      # Each group gets its own process and log. exec lets the runner signal pytest
-      # directly; !cancelled() runs remaining groups after failures, never cancellation.
-      - name: Run launcher behavioral tests
-        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
-        run: |
-          exec "${{ matrix.python }}" -B -m pytest tests/launcher -v -m "not embedded and not native and not frida_build" -p pytest_cov --cov --cov-append --cov-report=
-      - name: Run hook-manager behavioral tests
-        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
-        run: |
-          exec "${{ matrix.python }}" -B -m pytest tests/hook_manager -v -m "not embedded and not native and not frida_build" -p pytest_cov --cov --cov-append --cov-report=
-      - name: Run Windows native acceptance tests
-        if: ${{ !cancelled() && steps.coverage.outcome == 'success' && runner.os == 'Windows' }}
-        run: |
-          # Linux native acceptance runs after compilation in reduced-frida.yml.
-          exec "${{ matrix.python }}" -B -m pytest tests -v -m "native and not frida_build" -p pytest_cov --cov --cov-append --cov-report=
-      - name: Run Windows embedded-runtime tests
-        if: ${{ !cancelled() && steps.coverage.outcome == 'success' && runner.os == 'Windows' }}
-        run: |
-          exec "${{ matrix.python }}" -B -m pytest tests -v -m "embedded and not native and not frida_build" -p pytest_cov --cov --cov-append --cov-report=
-      - name: Generate accumulated coverage reports
-        if: ${{ !cancelled() && hashFiles('.coverage') != '' }}
-        run: |
-          "${{ matrix.python }}" -m coverage report --show-missing
-          "${{ matrix.python }}" -m coverage xml
-          "${{ matrix.python }}" -m coverage html
-      - name: Upload coverage reports
-        # Preserve reports from failing tests, but skip if pytest produced none.
-        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
+          exec "${{ matrix.platform.python }}" -B .github/ci_tests.py --suite "${{ matrix.suite }}" -v --junitxml=junit.xml -p pytest_cov --cov --cov-report=
+      - name: Preserve test results and coverage, including failed runs
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.coverage }}
+          name: test-data-${{ matrix.platform.id }}-${{ matrix.suite }}
+          include-hidden-files: true
           path: |
-            coverage.xml
-            htmlcov/
+            .coverage
+            junit.xml
+          if-no-files-found: warn
+
+  windows-bundle:
+    name: Prepare Windows player bundle
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Create the developer build environment
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+      - name: Prepare and verify the official Windows dependency profile
+        run: |
+          .venv/Scripts/python.exe -B -m mod_runtime.build --output libs/mod-runners
+          .venv/Scripts/python.exe -I launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
+          libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
+      - name: Share the verified bundle within this workflow run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-player-bundle
+          retention-days: 1
+          include-hidden-files: true
+          path: |
+            libs/python-3.13.16-embed-amd64
+            libs/vendor
+            libs/mod-runners
+            bundled_packages.toml
           if-no-files-found: error
+
+  windows-acceptance:
+    name: windows / ${{ matrix.suite }}
+    needs: windows-bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: embedded
+            selection: embedded and not native and not frida_build
+          - suite: native
+            selection: native and not frida_build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      TPM_REQUIRE_EMBEDDED_TESTS: '1'
+      TPM_REQUIRE_NATIVE_TESTS: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Create the developer test environment
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-player-bundle
+      - name: Verify the downloaded player bundle
+        run: libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
+      - name: Run player acceptance
+        run: |
+          exec .venv/Scripts/python.exe -B -m pytest tests -v -m "${{ matrix.selection }}" --junitxml=junit.xml -p pytest_cov --cov --cov-report=
+      - name: Preserve acceptance results and coverage, including failed runs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-data-windows-${{ matrix.suite }}
+          include-hidden-files: true
+          path: |
+            .coverage
+            junit.xml
+          if-no-files-found: warn
+
+  coverage:
+    name: Combine platform coverage
+    needs: [portable, windows-acceptance]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Combination runs in the unprivileged test workflow; the reporting workflow reads XML only.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install the pinned coverage tool
+        shell: bash
+        run: |
+          python -c 'from pathlib import Path; print(next(line for line in Path("requirements-dev.txt").read_text().splitlines() if line.startswith("coverage==")))' > "$RUNNER_TEMP/coverage-requirement.txt"
+          python -m pip install -r "$RUNNER_TEMP/coverage-requirement.txt"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: test-data-*
+          path: .cache/ci-input
+          merge-multiple: false
+      - name: Combine complete platform reports
+        run: python -B .github/ci_coverage.py --input .cache/ci-input --output .cache/ci-coverage
+      - name: Upload Windows coverage
+        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/windows/coverage.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-coverage
+          path: |
+            .cache/ci-coverage/windows/coverage.xml
+            .cache/ci-coverage/windows/htmlcov/
+          if-no-files-found: error
+      - name: Upload Linux coverage
+        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/linux/coverage.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-coverage-linux
+          path: |
+            .cache/ci-coverage/linux/coverage.xml
+            .cache/ci-coverage/linux/htmlcov/
+          if-no-files-found: error
+      - name: Upload macOS Intel coverage
+        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/macos-x86_64/coverage.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-coverage-macos-x86_64
+          path: |
+            .cache/ci-coverage/macos-x86_64/coverage.xml
+            .cache/ci-coverage/macos-x86_64/htmlcov/
+          if-no-files-found: error
+      - name: Upload macOS ARM coverage
+        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/macos-arm64/coverage.xml') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-coverage-macos-arm64
+          path: |
+            .cache/ci-coverage/macos-arm64/coverage.xml
+            .cache/ci-coverage/macos-arm64/htmlcov/
+          if-no-files-found: error
+
+  complete:
+    name: Tests complete
+    needs: [portable, windows-bundle, windows-acceptance, coverage]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every test and reporting job to succeed
+        shell: python {0}
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          import json
+          import os
+
+          results = json.loads(os.environ["JOB_RESULTS"])
+          failed = [f"{name}: {job['result']}" for name, job in results.items() if job["result"] != "success"]
+          if failed:
+              raise SystemExit("Required jobs did not succeed: " + "; ".join(failed))
+          print("Every required test and coverage job succeeded.")
