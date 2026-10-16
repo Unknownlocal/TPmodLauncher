@@ -156,8 +156,9 @@ class PackMods:
         if status.get("generation") != self.themes_generation or status.get("state") != "failed":
             return
         self.applied_themes = None
+        owners = {record["owner"] for record in self.themes.records}
         for owner, mod in list(self.mods.items()):
-            if "ui-theme" in mod.manifest.capabilities:
+            if owner in owners:
                 self.mods.pop(owner).close()
                 self.failed += 1
                 self._log("REJECTED", id=owner, detail=status.get("detail", "Themes unavailable"))
@@ -170,8 +171,9 @@ class PackMods:
             return
         if status.get("state") == "failed":
             self.applied_settings = None
+            owners = {record["owner"] for record in self.settings.records}
             for owner, mod in list(self.mods.items()):
-                if "ui-settings" in mod.manifest.capabilities:
+                if owner in owners:
                     self.mods.pop(owner).close()
                     self.failed += 1
                     self._log("REJECTED", id=owner, detail=status.get("detail", "Settings unavailable"))
@@ -411,7 +413,6 @@ class PackMods:
                         self._flush_menu()
                 if "ui-settings" in manifest.capabilities:
                     self._flush_settings()
-                if "ui-theme" in manifest.capabilities:
                     self._flush_themes()
             except Exception as error:
                 self.failed += 1
@@ -421,7 +422,7 @@ class PackMods:
                 if failed is not None:
                     failed.close()
                 for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),
-                                          ("ui-theme", self._flush_themes)):
+                                          ("ui-settings", self._flush_themes)):
                     if capability in manifest.capabilities:
                         try:
                             flush()

@@ -79,9 +79,10 @@ def test_ui_settings_permissions_require_api_030_while_existing_source_api_stays
     assert SourceManifest.parse(MANIFEST).api == "0.2.0"
 
 
-def test_unreleased_theme_capability_is_not_a_ui_settings_alias():
+@pytest.mark.parametrize("capability", ["theme-settings", "ui-theme"])
+def test_unreleased_theme_capability_is_not_a_ui_settings_alias(capability):
     retired = MANIFEST.replace(b'api = "0.2.0"', b'api = "0.3.0"').replace(
-        b'["diagnostics"]', b'["theme-settings"]',
+        b'["diagnostics"]', f'["{capability}"]'.encode(),
     )
     with pytest.raises(SourceError, match="capability"):
         SourceManifest.parse(retired)

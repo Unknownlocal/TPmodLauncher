@@ -88,7 +88,7 @@ message and do not invoke `on_event()`.
 | `wit_world.report(message)` | `report: func(message: string)` | `diagnostics` |
 | `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0` |
 | `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0` |
-| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-theme`, API `0.3.0` |
+| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-settings`, API `0.3.0` |
 | `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0` |
 
 `report` logs the supplied message with the host-owned mod ID. Non-printable

@@ -20,9 +20,9 @@ Further colour edits also take effect after restarting, matching the game's
 built-in themes. Selecting a built-in pack restores its usual behaviour on the
 next launch. Without this mod, the game falls back to Default Blue.
 
-Theme numbering and coupling are defined by this example. Shared UI settings
-remain independent of palette registration, which requires the separate
-`ui-theme` permission. No colour picker is included yet.
+Theme numbering and coupling are defined by this example. The `ui-settings`
+permission covers both the editor and palette registration through separate
+operations. No colour picker is included yet.
 
 The palette covers all 59 named colour entries in the inspected game's `UITheme`,
 grouped into 52 distinct default colours. Typography settings, caches and computed

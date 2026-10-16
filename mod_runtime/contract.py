@@ -19,7 +19,7 @@ HOST_OPERATIONS = MappingProxyType({
     "add-menu-button": HostOperation("main-menu", ("string", "string", "string")),
     "register-settings": HostOperation("ui-settings", ("string",), "string"),
     "save-settings": HostOperation("ui-settings", ("string",), "string"),
-    "register-theme": HostOperation("ui-theme", ("string",)),
+    "register-theme": HostOperation("ui-settings", ("string",)),
 })
 
 # Source manifests select an exact public version, independently of the runner ABI.

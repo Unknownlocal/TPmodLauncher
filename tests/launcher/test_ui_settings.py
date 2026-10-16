@@ -159,7 +159,8 @@ def test_settings_directory_cannot_be_used_as_a_file(store):
     assert store.definition is None
 
 
-def test_source_ui_settings_requires_a_trusted_provider_before_guest_initialization():
+@pytest.mark.parametrize("missing", ["settings", "theme"])
+def test_source_ui_settings_requires_a_trusted_provider_before_guest_initialization(missing):
     from launcher.mod_contract import ManifestError
     from launcher.source_mod import SourceMod
     from mod_runtime.source import SourceManifest, SourceSnapshot
@@ -174,8 +175,9 @@ capabilities = ["ui-settings"]
 ''')
     snapshot = SourceSnapshot(manifest, (("mod.py", "raise AssertionError('must not execute')"),), 0)
     cleaned = []
-    with pytest.raises(ManifestError, match="trusted settings provider"):
-        SourceMod(None, snapshot, cleanup=lambda: cleaned.append(True))
+    providers = {} if missing == "settings" else {"settings": lambda *args: "{}"}
+    with pytest.raises(ManifestError, match=f"trusted {missing} provider"):
+        SourceMod(None, snapshot, cleanup=lambda: cleaned.append(True), **providers)
     assert cleaned == [True]
 
 

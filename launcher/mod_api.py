@@ -8,7 +8,7 @@ API_VERSION = "0.3.0"
 CAPABILITIES = {
     "0.1.0": {"diagnostics"},
     "0.2.0": {"diagnostics", "main-menu"},
-    API_VERSION: {"diagnostics", "main-menu", "ui-settings", "ui-theme"},
+    API_VERSION: {"diagnostics", "main-menu", "ui-settings"},
 }
 
 # Each export maps to (parameter types, return type); None means no return value.

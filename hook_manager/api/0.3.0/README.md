@@ -81,7 +81,7 @@ not register a palette or change game colours; palette application is separate.
 
 ## Register a UI palette
 
-The separate `ui-theme` permission enables `wit_world.register_theme(definition)`
+The `ui-settings` permission also enables `wit_world.register_theme(definition)`
 (`register-theme: func(definition: string)` in WIT). The JSON string is bounded to
 4,096 UTF-8 bytes and has exactly `label` and `colours` members. `label` follows
 the settings label rules. `colours` maps all 59 named colour roles in the example's
@@ -108,4 +108,4 @@ this palette contract.
 
 Cleanup removes only owned choices, colour aliases and lookup wrappers, including
 aliases captured by modules imported later. Saved settings and the user's native
-theme choice remain on disk. API 0.2.0 cannot request `ui-theme`.
+theme choice remain on disk. API 0.2.0 cannot request `ui-settings`.

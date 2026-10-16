@@ -17,8 +17,8 @@ world code-mod {
     @unstable(feature = ui-settings)
     import save-settings: func(values: string) -> string;
 
-    /// Register or replace this mod's complete restart-only UI palette. Requires ui-theme.
-    @unstable(feature = ui-theme)
+    /// Register or replace this mod's complete restart-only UI palette. Requires ui-settings.
+    @unstable(feature = ui-settings)
     import register-theme: func(definition: string);
 
     export activate: func();

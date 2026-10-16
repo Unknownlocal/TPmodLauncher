@@ -36,7 +36,7 @@ class WitWorld:
 '''
 
 
-@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"ui-theme"}, {"diagnostics", "main-menu", "ui-settings", "ui-theme"}], ids=["empty", "diagnostics", "menu", "settings", "theme", "combined"])
+@pytest.mark.parametrize("capabilities", [set(), {"diagnostics"}, {"main-menu"}, {"ui-settings"}, {"diagnostics", "main-menu", "ui-settings"}], ids=["empty", "diagnostics", "menu", "settings", "combined"])
 @pytest.mark.parametrize("operation", CALLS)
 @pytest.mark.parametrize("phase", ["load", "activate", "event"])
 def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilities, operation, phase):
@@ -96,7 +96,7 @@ def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle, op
     assert calls == [operation, operation]
 
 
-@pytest.mark.parametrize("capabilities", [{"invented"}, {"diagnostics", "invented"}, ["diagnostics"], "diagnostics", {True}])
+@pytest.mark.parametrize("capabilities", [{"invented"}, {"ui-theme"}, {"diagnostics", "invented"}, ["diagnostics"], "diagnostics", {True}])
 def test_unknown_or_implicit_permissions_are_rejected(capabilities):
     with pytest.raises(SandboxError, match="capabilit"):
         bind_operations(capabilities, {})

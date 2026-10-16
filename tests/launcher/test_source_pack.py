@@ -13,6 +13,7 @@ import pytest
 
 from hook_manager.menu import MenuAdapter
 from hook_manager.settings import SettingsAdapter
+from hook_manager.themes import THEME_ROLES
 from launcher.pack_mods import PackMods
 from launcher.sandbox import SandboxError
 from mod_runtime import preparation
@@ -296,6 +297,55 @@ def test_settings_notification_failure_keeps_save_and_removes_only_its_tab(
         assert list(scope.mods) == ["owned.other"]
         assert adapter.records == [] and adapter.pending is None
         assert json.loads((theme / "settings.json").read_text())["values"] == values
+
+
+@pytest.mark.parametrize("failure", ["themes", "settings"])
+def test_deferred_ui_failure_preserves_other_operation_owners(pack, source_mod, runner_bundle, failure):
+    game, folder, startup = pack
+    palette = {"label": "Palette Only", "colours": {
+        role: "#00000080" if role == "OVERLAY" else "#112233" for role in sorted(THEME_ROLES)
+    }}
+    source_mod(folder, "owned.palette", capabilities=("ui-settings",), api="0.3.0", code=f'''import wit_world
+class WitWorld(wit_world.WitWorld):
+    def activate(self):
+        wit_world.register_theme({json.dumps(json.dumps(palette))})
+    def on_event(self, name, payload):
+        return payload
+''')
+    definition = {"schema": 1, "label": "Widget", "fields": [
+        {"id": "accent", "label": "Accent", "color": "#112233"},
+    ]}
+    source_mod(folder, "owned.settings", capabilities=("ui-settings",), api="0.3.0", code=f'''import wit_world
+class WitWorld(wit_world.WitWorld):
+    def activate(self):
+        wit_world.register_settings({json.dumps(json.dumps(definition))})
+    def on_event(self, name, payload):
+        return payload
+''')
+    registries = {"themes": [], "settings": []}
+    def publish(area, rows):
+        registries[area].append(rows)
+        return {area: {"state": "pending" if rows else "idle", "generation": len(registries[area])}}
+    with closing(PackMods(
+        game, lambda line: None, runner_bundle=runner_bundle,
+        set_themes=lambda rows: publish("themes", rows),
+        set_settings=lambda rows, result=None: publish("settings", rows),
+    )) as scope:
+        scope.load(startup)
+        finish(scope)
+        assert list(scope.mods) == ["owned.palette", "owned.settings"]
+        assert all(mod.manifest.capabilities == frozenset({"ui-settings"}) for mod in scope.mods.values())
+        handler = getattr(scope, f"{failure}_status")
+        generation = getattr(scope, f"{failure}_generation")
+        handler({"state": "failed", "generation": generation - 1})
+        assert len(scope.mods) == 2
+        handler({"state": "failed", "generation": generation})
+        survivor = "owned.settings" if failure == "themes" else "owned.palette"
+        assert list(scope.mods) == [survivor]
+        surviving_area = "settings" if failure == "themes" else "themes"
+        assert [row["owner"] for row in getattr(scope, surviving_area).records] == [survivor]
+        assert scope.mods[survivor].event("probe", {"ok": True}) == {"ok": True}
+        assert getattr(scope, failure).records == registries[failure][-1] == []
 
 
 def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):

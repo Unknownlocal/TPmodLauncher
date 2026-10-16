@@ -61,7 +61,7 @@ All seven fields are required; additional fields are rejected.
 | `api` | Exact source API version `0.2.0` or `0.3.0`. |
 | `runtime` | `python`. |
 | `entry` | Dotted module name under `src/`, at most 128 characters; `mod` loads `src/mod.py`. |
-| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, and (API `0.3.0` only) `ui-settings` and `ui-theme`. An empty list is valid. |
+| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, and (API `0.3.0` only) `ui-settings`. An empty list is valid. |
 
 Implement the `wit_world` API provided by the runner:
 
@@ -98,7 +98,7 @@ under the `ui-settings` permission. These stage labelled colour fields and own
 the mod's local `settings.json`; see the [UI settings contract](hook_manager/api/0.3.0/README.md).
 The native editor supplies hex inputs, live swatches, Save and Reset to Defaults
 under a mod-owned Options tab. Successful native saves deliver the
-`ui-settings.changed` event to the owner. The separate `ui-theme` permission
+`ui-settings.changed` event to the owner. The same `ui-settings` permission
 provides `register_theme(definition)` for named palettes in the existing Color
 Pack dropdown. Choices and saved palette edits take effect after restarting.
 

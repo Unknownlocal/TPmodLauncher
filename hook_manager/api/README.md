@@ -9,7 +9,7 @@ are bounded JSON strings validated by the external launcher.
 | --- | --- |
 | [0.1.0/mod.wit](0.1.0/mod.wit) | Retained diagnostics-only contract with `report(message)`. |
 | [0.2.0/mod.wit](0.2.0/mod.wit) | `report(message)` and `add-menu-button(id, label, message)`, selected by WIT feature annotations. |
-| [0.3.0/mod.wit](0.3.0/mod.wit) | Adds UI settings and separately granted palette registration; see the [UI settings and theme contract](0.3.0/README.md). |
+| [0.3.0/mod.wit](0.3.0/mod.wit) | Adds settings and palette operations under `ui-settings`; see the [UI settings contract](0.3.0/README.md). |
 
 `launcher/mod_api.py` records accepted versions, capabilities and lifecycle
 signatures. Schema 1 Wasm admission checks component imports against manifest
