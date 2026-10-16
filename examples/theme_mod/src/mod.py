@@ -4,7 +4,7 @@
 import json
 import wit_world
 
-from palette import COLOR_GROUPS, COLOR_LABEL_PREFIX, PALETTE_SCHEMA
+from palette import COLOR_GROUPS, PALETTE_SCHEMA
 
 
 class WitWorld(wit_world.WitWorld):
@@ -13,9 +13,9 @@ class WitWorld(wit_world.WitWorld):
             "schema": PALETTE_SCHEMA,
             "label": "Theme",
             "fields": [
-                {"id": f"colour_{number}", "label": f"{COLOR_LABEL_PREFIX} {number}",
+                {"id": f"colour_{number}", "label": " / ".join(role.replace("_", " ").title() for role in roles),
                  "color": "#" + "".join(f"{channel:02X}" for channel in default)}
-                for number, default, _ in COLOR_GROUPS
+                for number, default, roles in COLOR_GROUPS
             ],
         }, separators=(",", ":")))
         self.publish(values)

@@ -23,6 +23,9 @@ atomic replacement of the fixed `settings.json` file. Persistent values outlive
 the guest instance; tab registrations remain owned by its session.
 
 `hook_manager/settings.py` owns the native Options editor and unsaved drafts.
+Hex inputs accept an optional leading `#`; the editor normalizes saves to
+uppercase `#RRGGBB` or `#RRGGBBAA`. Host API declarations and saved documents
+continue to use the prefixed format.
 Save requests cross the bridge to `launcher/pack_mods.py`, which validates the
 owner and generation, persists the values and acknowledges success or failure.
 A successful native save then delivers `ui-settings.changed` to its owner.

@@ -15,7 +15,8 @@ The native theme adapter keeps the running session's palette fixed until restart
 
 The launcher owns `settings.json` inside the installed mod folder. The shared
 native Options adapter owns hex inputs, live swatches, draft state, validation
-and Save/Reset actions. The example supplies only field declarations and palette
+and Save/Reset actions. Inputs accept hex digits with or without a leading `#`;
+saved values use uppercase hex with `#`. The example supplies field declarations and palette
 data through the [implemented settings API](../../hook_manager/README.md#ui-settings-and-palettes).
 
 ## Palette mapping
@@ -23,7 +24,10 @@ data through the [implemented settings API](../../hook_manager/README.md#ui-sett
 `src/palette.py` maps all 59 named `UITheme` colour roles to 52 editable groups.
 Each `COLOR_GROUPS` record contains a stable number, a default RGB or RGBA tuple
 and the native roles coupled to that colour. Editor fields use `colour_<number>`
-IDs and Custom Theme Colour labels. Palette expansion copies a group's value to
+IDs and role-name labels such as **Text / Selection Text** for group 18.
+Labels replace underscores with spaces, capitalize each word and join coupled
+roles with ` / `. Display labels do not change saved IDs or the palette schema.
+Palette expansion copies a group's value to
 every role in that record; equal edited values never merge groups.
 
 | Colour number | Coupled native roles |

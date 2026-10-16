@@ -53,6 +53,10 @@ def _settings_hex(value, length=None):
             and (length is None or len(value) == length))
 
 
+def _settings_input_hex(value):
+    return "#" + value.removeprefix("#").upper()
+
+
 class SettingsEditor:
     """One options screen owns its unsaved drafts and text focus across tab switches."""
 
@@ -70,7 +74,7 @@ class SettingsEditor:
             previous = {field["id"]: field["value"] for field in self.records.get(owner, {}).get("fields", [])}
             draft = self.drafts.get(owner, {})
             drafts[owner] = {field["id"]: (
-                draft[field["id"]] if field["id"] in draft and draft[field["id"]] != previous.get(field["id"])
+                draft[field["id"]] if field["id"] in draft and _settings_input_hex(draft[field["id"]]) != previous.get(field["id"])
                 else field["value"]
             ) for field in record["fields"]}
         self.records, self.drafts = records, drafts
@@ -87,14 +91,14 @@ class SettingsEditor:
             self.owner = owner
 
     def valid(self):
-        return all(_settings_hex(self.drafts[self.owner][field["id"]], len(field["default"]))
+        return all(_settings_hex(_settings_input_hex(self.drafts[self.owner][field["id"]]), len(field["default"]))
                    for field in self.records[self.owner]["fields"])
 
     def save(self):
         if self.adapter.pending is None and self.valid():
             self.adapter.queue_save(self.owner, {
                 "schema": self.records[self.owner]["schema"],
-                "values": {key: value.upper() for key, value in self.drafts[self.owner].items()},
+                "values": {key: _settings_input_hex(value) for key, value in self.drafts[self.owner].items()},
             })
 
     def reset(self):
@@ -249,7 +253,8 @@ class SettingsEditor:
                 if not row.colliderect(viewport):
                     continue
                 value = self.drafts[self.owner][field["id"]]
-                valid = _settings_hex(value, len(field["default"]))
+                colour = _settings_input_hex(value)
+                valid = _settings_hex(colour, len(field["default"]))
                 swatch = pg.Rect(row.right - gap - swatch_size, row.y + (row_h - swatch_size) // 2,
                                  swatch_size, swatch_size)
                 entry = pg.Rect(swatch.x - gap - input_w, row.y + 3, input_w, row_h - 6)
@@ -275,7 +280,7 @@ class SettingsEditor:
                         pg.draw.rect(surface, color, pg.Rect(swatch.x + x, swatch.y + y,
                                                            min(tile, swatch.w - x), min(tile, swatch.h - y)))
                 if valid:
-                    color = tuple(int(value[start:start + 2], 16) for start in range(1, len(value), 2))
+                    color = tuple(int(colour[start:start + 2], 16) for start in range(1, len(colour), 2))
                     paint = pg.Surface(swatch.size, pg.SRCALPHA)
                     paint.fill(color)
                     surface.blit(paint, swatch)
@@ -300,9 +305,9 @@ class SettingsEditor:
         pg.draw.rect(surface, chrome[theme.NEUTRAL_BUTTON], back, border_radius=4)
         text = screen.small.render("Back", True, theme.TEXT)
         surface.blit(text, text.get_rect(center=back.center))
-        message = self.adapter.messages.get(self.owner, "Edit hex colours, then Save.")
+        message = self.adapter.messages.get(self.owner, "Edit hex colours, then Save. # is optional.")
         if not self.valid():
-            message = "Use #RRGGBB, or #RRGGBBAA for colours with transparency."
+            message = "Use 6 hex digits (8 for transparency). # is optional."
         text = screen.fit_text(message, screen.small, max(1, body.w))
         surface.blit(screen.small.render(text, True, theme.TEXT_MUTED), (body.x, viewport.bottom + gap // 2))
         hint = screen.fit_text("Tab: next colour   Ctrl+A: select all   Enter: Save   Ctrl+R: reset", screen.small, max(1, body.w))

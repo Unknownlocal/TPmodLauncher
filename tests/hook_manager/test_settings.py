@@ -81,6 +81,42 @@ def test_hex_editing_validation_alpha_reset_and_save_ack(native_settings, monkey
     assert adapter.pending is None  # Reset is staged until Save.
 
 
+@pytest.mark.parametrize("index,text,expected", [
+    (0, "abcdef", "#ABCDEF"), (0, "#abcdef", "#ABCDEF"),
+    (1, "12345680", "#12345680"), (1, "#12345680", "#12345680"),
+    (0, "12345680", None), (1, "123456", None), (0, "##123456", None), (0, "12GG56", None),
+])
+def test_hex_input_optional_prefix_retains_rgb_and_alpha_validation(
+    native_settings, monkeypatch, index, text, expected,
+):
+    module, adapter = native_settings, SettingsAdapter()
+    screen, editor = open_editor(adapter, module, monkeypatch)
+    editor.focus_row(index, screen, module.pygame)
+    screen.handle_event(SimpleNamespace(type=module.pygame.TEXTINPUT, text=text))
+    assert editor.valid() == (expected is not None)
+    screen.handle_event(key(module.pygame, module.pygame.K_RETURN))
+    if expected is None:
+        assert adapter.pending is None
+    else:
+        assert adapter.pending["values"][f"colour_{index + 1}"] == expected
+
+
+def test_saved_unprefixed_draft_does_not_hide_later_committed_values(native_settings, monkeypatch):
+    module, adapter = native_settings, SettingsAdapter()
+    screen, editor = open_editor(adapter, module, monkeypatch)
+    screen.handle_event(key(module.pygame, module.pygame.K_TAB))
+    screen.handle_event(SimpleNamespace(type=module.pygame.TEXTINPUT, text="ABCDEF"))
+    editor.save()
+    updated = record(count=52)
+    updated["fields"][0]["value"] = "#ABCDEF"
+    adapter.update([updated], {"id": 1, "owner": editor.owner, "success": True})
+    screen.draw(None)
+    updated["fields"][0]["value"] = "#445566"
+    adapter.update([updated])
+    screen.draw(None)
+    assert editor.drafts[editor.owner]["colour_1"] == "#445566"
+
+
 def test_selection_arrows_collapse_to_boundaries_and_edits_clear_saved_status(native_settings, monkeypatch):
     module, adapter = native_settings, SettingsAdapter()
     screen, editor = open_editor(adapter, module, monkeypatch)
@@ -135,12 +171,12 @@ def test_pointer_focus_reset_and_save_use_canvas_coordinates(native_settings, mo
 def test_failed_save_ack_preserves_drafts_and_unrelated_registry_updates(native_settings, monkeypatch):
     module, adapter = native_settings, SettingsAdapter()
     screen, editor = open_editor(adapter, module, monkeypatch)
-    editor.drafts[editor.owner]["colour_1"] = "#445566"
+    editor.drafts[editor.owner]["colour_1"] = "445566"
     editor.save()
     adapter.update([record(count=52), record("owned.second", "Other")],
                    {"id": 1, "owner": "owned.settings", "success": False})
     screen.draw("surface")
-    assert editor.drafts[editor.owner]["colour_1"] == "#445566"
+    assert editor.drafts[editor.owner]["colour_1"] == "445566"
     assert adapter.pending is None
     assert "Try again" in adapter.messages[editor.owner]
 

@@ -2,13 +2,12 @@
 """Fixed colour groups for the custom-theme example's first palette schema.
 
 Each record is (stable number, default RGB/RGBA, native theme roles).
-Display records as ``Custom Theme Colour <number>``. Roles are internal metadata.
+Display title-cased role names with underscores replaced by spaces, joined by `` / ``.
 The numbers are explicit identities for future saved settings, not row indexes.
 Never regroup records by their edited colours or renumber existing groups.
 """
 
 PALETTE_SCHEMA = 1
-COLOR_LABEL_PREFIX = "Custom Theme Colour"
 
 # Grouped by identical defaults in UITheme from the installed game inspected on
 # 2026-10-16. Initial numbering follows each colour's first declaration in UITheme.

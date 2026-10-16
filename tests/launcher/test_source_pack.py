@@ -3,6 +3,7 @@
 
 from contextlib import closing
 import json
+import runpy
 import shutil
 from pathlib import Path
 import threading
@@ -194,6 +195,15 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     game, folder, startup = pack
     theme = folder / "theme example"
     shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
+    # A saved document from the numbered-label editor keeps the same schema and IDs.
+    palette = runpy.run_path(str(theme / "src/palette.py"))
+    saved = {"schema": palette["PALETTE_SCHEMA"], "values": {
+        f"colour_{n}": "#" + "".join(f"{channel:02X}" for channel in colour)
+        for n, colour, _ in palette["COLOR_GROUPS"]
+    }}
+    saved["values"]["colour_18"] = "#123456"
+    (theme / "settings.json").write_text(json.dumps(saved))
+    previous_settings = (theme / "settings.json").read_bytes()
     source_mod(folder, "owned.other")
     adapter, messages, palettes = SettingsAdapter(), [], []
     native_originals = native_settings.ORIGINAL_METHODS.copy()
@@ -206,9 +216,17 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         finish(scope)
         assert list(scope.mods) == ["example.theme", "owned.other"]
         fields = scope.settings.records[0]["fields"]
-        assert len(fields) == 52 and fields[0]["label"] == "Custom Theme Colour 1"
+        assert len(fields) == 52 and fields[0]["label"] == "Background"
+        assert fields[10]["label"] == "Primary / Selection Border"
+        assert fields[17]["label"] == "Text / Selection Text"
+        assert fields[19]["label"] == "Text Dim / Disabled Text"
+        assert fields[43]["label"] == "Market Card Alt / Table Row Alt"
+        assert fields[51]["label"] == "Overlay"
+        assert [field["id"] for field in fields] == [f"colour_{n}" for n in range(1, 53)]
         assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
-        assert not (theme / "settings.json").exists()
+        assert (theme / "settings.json").read_bytes() == previous_settings
+        assert fields[17]["value"] == "#123456"
+        assert palettes[-1][0]["colours"]["TEXT"] == palettes[-1][0]["colours"]["SELECTION_TEXT"] == "#123456"
         assert palettes[-1][0]["label"] == "Custom Theme"
         assert len(palettes[-1][0]["colours"]) == 59
         values = {field["id"]: field["value"] for field in fields}

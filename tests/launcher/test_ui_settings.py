@@ -273,9 +273,9 @@ def test_tab_count_and_label_conflicts_are_bounded(tmp_path):
 def test_full_example_palette_fits_interface_and_retains_all_52_rows(store):
     palette = runpy.run_path(str(Path(__file__).resolve().parents[2] / "examples/theme_mod/src/palette.py"))
     definition = {"schema": palette["PALETTE_SCHEMA"], "label": "Theme", "fields": [
-        {"id": f"colour_{number}", "label": f"Custom Theme Colour {number}",
+        {"id": f"colour_{number}", "label": " / ".join(role.replace("_", " ").title() for role in roles),
          "color": "#" + "".join(f"{channel:02X}" for channel in default)}
-        for number, default, _ in palette["COLOR_GROUPS"]
+        for number, default, roles in palette["COLOR_GROUPS"]
     ]}
     text = json.dumps(definition, separators=(",", ":"))
     assert len(text.encode()) <= settings.MAX_SETTINGS_BYTES
