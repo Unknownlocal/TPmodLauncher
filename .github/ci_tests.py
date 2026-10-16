@@ -10,41 +10,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PORTABLE = "not embedded and not native and not frida_build"
 SUITES = {
-    "host": {
-        "tests/launcher/test_bundled_dependencies.py",
-        "tests/launcher/test_compilation_cache.py",
-        "tests/launcher/test_sandbox.py",
-        "tests/launcher/test_release_preparation.py",
-        "tests/launcher/test_frida_build.py",
-        "tests/launcher/test_frida_sources.py",
-        "tests/launcher/test_frida_macos_packaging.py",
-    },
-    "runner": {
-        "tests/mod_runtime/test_bundle.py",
-        "tests/mod_runtime/test_source.py",
-        "tests/mod_runtime/test_runtime.py",
-        "tests/mod_runtime/test_preparation.py",
-    },
-    "api": {
-        "tests/mod_runtime/test_host.py",
-        "tests/mod_runtime/test_mod_adapter.py",
-        "tests/launcher/test_mod_contract.py",
-    },
-    "pack": {
-        "tests/launcher/test_pack_mods.py",
-        "tests/launcher/test_source_pack.py",
-        "tests/launcher/test_menu_mod.py",
-        "tests/launcher/test_process_lifecycle.py",
-        "tests/launcher/test_runner_release.py",
-    },
+    "launcher": "tests/launcher/",
+    "hook_manager": "tests/hook_manager/",
+    "mod_runtime": "tests/mod_runtime/",
+    "ci": "tests/ci/",
 }
 
 
 def suite_for(path, root):
     relative = Path(path).relative_to(root).as_posix()
-    matches = [suite for suite, files in SUITES.items() if relative in files]
-    if relative.startswith(("tests/hook_manager/", "tests/ci/")):
-        matches.append("host")
+    matches = [suite for suite, prefix in SUITES.items() if relative.startswith(prefix)]
     if len(matches) != 1:
         raise pytest.UsageError(
             f"Portable test module {relative!r} must have exactly one CI suite; "

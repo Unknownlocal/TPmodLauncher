@@ -1,100 +1,81 @@
 # Mod runtime architecture
 
-`mod_runtime` owns trusted Python-in-Wasm runner artifacts independently of game
-process management and native hooks. Package, artifact and source-reader imports
-use only standard-library code. Runtime and preparation modules explicitly load
-the sandbox/compiler; the componentizer remains restricted to the developer build
-command.
+`mod_runtime` owns the trusted Python-in-Wasm runner and source loading. It is
+separate from game-process control and native hooks. One prebuilt artifact serves
+individual mod instances, each with its own interpreter state, Store and grants.
+The external launcher owns those instances; author source is never imported into
+the host interpreter or game.
 
-`bundle.py` defines the private ABI, verifies the complete bounded artifact
-inventory, and returns newly checked portable bytes for one `runner.wasm`.
-The installed bundle lives under `libs/mod-runners`; source and upstream notice
-files accompany the artifact. Normal launcher entry verifies it during both
-`--check-only` and game launch before passing it to pack loading. The receipt
-provides integrity checks; publisher authentication comes from the distribution
-containing that receipt.
+## Artifact and private contract
 
-`build.py` builds only the fixed trusted `guest.py` against the versioned
-`runner.wit`, using pinned componentize-py in temporary staging. The runner
-imports the complete typed host interface. The builder checks its ABI without
-executing it and publishes into a fresh directory, with the receipt written last.
+`bundle.py` defines the private ABI and verifies the exact bounded inventory of
+runner Wasm, trusted source and upstream notices. Installed artifacts live under
+`libs/mod-runners`. Every component read rechecks its bytes, and release copying
+uses the previously accepted receipt, publishing that receipt last into a fresh
+directory. The receipt detects mismatches against its inventory; trust in that
+inventory comes from the launcher distribution.
 
-`contract.py` records each host operation's required capability and scalar
-signature. `launcher/runner_host.py` uses this registry to bind a separate
-operation table for each mod before sandbox instantiation. Granted operations
-require trusted providers; ungranted operations receive rejection callbacks.
-The existing sandbox enforces import signatures, execution limits and cleanup.
-Permission denial disables the affected instance before its provider executes,
-including calls made during component initialization or source loading.
+`build.py` freezes the fixed `guest.py` against `0.1.0/runner.wit` with the pinned
+developer componentizer. It checks the resulting interface and publishes a fresh
+bundle. Artifact and source-reader imports require only the standard library;
+execution modules load the sandbox/compiler explicitly. Player startup needs no
+componentizer or per-mod component build.
 
-`guest.py` provides an in-memory source importer and a separate author-facing
-`wit_world` facade exposing the author base class, diagnostics and menu operations.
-The frozen guest includes `json`, `math`, `os` and their runtime dependencies;
-mods supply Python source, without generated bindings or third-party packages.
-Source loading and lifecycle calls form a private runtime protocol. The launcher
-retains process/session ownership and sandbox admission; `hook_manager` retains
-native integration.
-Transferred source accumulates as chunks and is joined once before imports.
-A guest audit hook declines reads of virtual source filenames so CPython can
-report syntax errors from its tokenizer buffers without filesystem access.
+`contract.py` records the scalar signature and required capability of each host
+operation. `launcher/runner_host.py` binds a private table for each mod: granted
+operations use trusted providers, while ungranted operations reject calls before
+a provider runs. The sandbox checks signatures and enforces execution limits,
+including operations invoked during initialization or source import.
 
-`source.py` validates schema 2 source-only manifests and creates immutable,
-ordered copies of UTF-8 Python files under `src/`. File, byte, entry, path and
-depth limits bound preparation. Portable module names, explicit packages and
-case checks prevent ambiguous inputs. `_source_files.py` pins ordinary ancestor
-directories and rejects linked, reparse, shared and special-file inputs. POSIX
-reads use directory-relative descriptors; Windows uses read-sharing handles to
-prevent replacement during reads. Source remains inert text on the host.
-`_source_policy.py` shares portable path rules and source byte/file limits
-between the host and the frozen runner. The guest captures reserved module roots
-from its own standard library and preloaded modules before author loading, then
-rejects collisions during source transfer. Host snapshots do not decide runtime
-module-name admission.
+## Source admission
 
-`runtime.py` owns a verified runner and one validated source snapshot through
-transfer, import, explicit activation, string events and cleanup. A trusted
-sandbox phase shares one fuel allowance, deadline and host-call count across
-transfer and import; UTF-8 chunks and aggregate byte/file/call bounds limit input
-work. Interpreter initialization has 20 million fuel units and five seconds;
-source transfer/import shares 256 million fuel units and five seconds. Activation
-and each event have five million fuel units and one second. The sandbox allows
-64 host calls per phase and 64 MiB guest linear memory per instance. One built
-runner artifact serves separate instances and Python state for individual mods.
-Optional compiler results are adopted only after their portable bytes match the
-verified bundle.
-Cleanup ownership begins before admission and follows the sandbox until closure.
-Its read-only sandbox property exposes the execution boundary to trusted adapters.
-`launcher/source_mod.py` applies the launcher's shared mod lifecycle and bounded
-JSON event contract to this runner. Both mod paths use the same host-operation
-factory for diagnostic identity, printable messages and menu ownership; the
-runner's own binding registry continues to enforce source-mod permissions.
+`source.py` parses schema 2, API 0.2.0 manifests and snapshots UTF-8 Python files
+under `src/` as immutable, ordered text. File, byte, entry, path and depth limits
+bound the work. Portable names, explicit package initializers and case checks
+reject ambiguous layouts. `_source_files.py` pins ordinary ancestor directories
+and rejects linked, reparse, hardlinked and special-file inputs. POSIX reads are
+directory-relative; Windows handles prevent write/delete replacement during reads.
 
-`preparation.py` runs bounded source snapshotting, runner-byte verification and
-native compilation on a caller-owned thread executor. Each job owns a future and
-cancellation signal; nonblocking `take()` transfers a completed snapshot,
-compiler result and worker-local timings to the controller once. `close()` cancels
-queued work or disposes an abandoned result when running work returns. Reads and
-native compilation are not forcibly interrupted. The controller retains executor
-lifetime and admission bounds; workers create no Store or game registrations.
-Bundle bootstrap and source-mod admission retain their own integrity reads.
-An optional admitted manifest is compared with the worker snapshot before native
-compilation, preventing identity or permission changes during preparation.
+`_source_policy.py` shares portable path rules and byte/file limits between the
+host and guest. The host validates source layout without importing it. The guest
+captures its own standard-library and preloaded module roots before author
+loading, then rejects reserved-name collisions during transfer.
 
-Normal launcher sessions in `launcher/pack_mods.py` use the pinned manifest reader
-to dispatch supported schemas and reject duplicate IDs before guest execution.
-They load schema 2, API 0.2.0 Python sources through SourcePreparation/SourceMod
-and retain explicit schema 1 Wasm support. Source manifests name a dotted entry
-module under `src/`; authors supply the manifest and source. Python components
-in schema 1 are rejected in this mode. Internal component-only sessions retain
-the original Manifest.read admission behavior. Preparation jobs belong to the
-session's loading generator; closing it cancels or disposes unfinished work.
-Activation, progress, native menu readiness and cleanup use the existing
-controller and bridge protocols.
+## Guest loading and execution
 
-Bootstrap registers this package alongside launcher and hook_manager without
-adding game directories to Python's search path. The release workflow builds the
-fixed runner with the pinned developer componentizer. Release preparation verifies
-and copies the complete runner bundle, trusted package sources and upstream
-notices into staging. The player loads that prebuilt runner without a componentizer
-or per-mod Wasm build. The runner's exact inventory remains separate from the
-bundled Python dependency inventory.
+`guest.py` serves author modules from guest memory through an in-memory importer.
+Its frozen standard-library profile includes `json`, `math`, `os` and their
+runtime dependencies. The public `wit_world` facade exposes the author base class,
+diagnostics and menu operations; source-transfer and loading exports remain a
+private host protocol.
+
+`runtime.py` owns one verified bundle and source snapshot through transfer, import,
+explicit activation, string events and cleanup. UTF-8 chunks are accumulated and
+joined before import. Aggregate byte, file and transfer-call checks bound the
+input; a sandbox phase shares fuel, elapsed time and host-call count across
+transfer and import. Interpreter initialization has its startup allowance, while
+activation and events keep the ordinary callback budgets.
+
+Optional compiler results are adopted only when their portable bytes match the
+verified runner. Cleanup ownership starts before admission and passes to the
+sandbox until closure. `launcher/source_mod.py` adds the shared launcher lifecycle,
+bounded JSON validation and host-owned diagnostic/menu identity to this runtime.
+
+## Worker and session ownership
+
+`preparation.py` snapshots source, rechecks admitted metadata, verifies runner
+bytes and compiles on a caller-owned executor. Workers create no Store or game
+registration. Each job owns its cancellation signal and result until the
+controller takes it once. Cancellation prevents queued work or disposes a late
+result; active ordinary-file reads and native compilation finish before cleanup.
+The controller owns executor lifetime and admission bounds.
+
+`launcher/pack_mods.py` dispatches schema 2 Python source and explicit schema 1
+Wasm components after duplicate-ID checks. It owns preparation jobs with the
+session's loading scope and uses the existing progress, menu-readiness and
+cleanup protocols. Source loading never falls back to author-supplied Wasm.
+
+Normal entry verifies the complete installed runner before creating sessions.
+Release preparation verifies and copies that bundle with trusted package sources
+and upstream notices. Its exact inventory remains separate from the bundled
+interpreter/dependency inventory.

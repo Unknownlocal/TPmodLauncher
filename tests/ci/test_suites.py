@@ -20,9 +20,10 @@ spec.loader.exec_module(ci)
 @pytest.mark.parametrize(
     ("path", "suite"),
     [
-        ("tests/launcher/test_mod_contract.py", "api"),
-        ("tests/hook_manager/test_menu.py", "host"),
-        ("tests/ci/test_suites.py", "host"),
+        ("tests/launcher/test_new_feature.py", "launcher"),
+        ("tests/hook_manager/test_menu.py", "hook_manager"),
+        ("tests/mod_runtime/test_source.py", "mod_runtime"),
+        ("tests/ci/test_suites.py", "ci"),
     ],
 )
 def test_portable_modules_have_one_owner(tmp_path, path, suite):
@@ -31,12 +32,12 @@ def test_portable_modules_have_one_owner(tmp_path, path, suite):
 
 def test_unassigned_module_fails(tmp_path):
     with pytest.raises(pytest.UsageError, match="exactly one CI suite"):
-        ci.suite_for(tmp_path / "tests/launcher/test_new_feature.py", tmp_path)
+        ci.suite_for(tmp_path / "tests/new_area/test_feature.py", tmp_path)
 
 
 def test_overlapping_ownership_fails(tmp_path, monkeypatch):
-    duplicate = "tests/launcher/test_pack_mods.py"
-    monkeypatch.setitem(ci.SUITES, "host", ci.SUITES["host"] | {duplicate})
+    duplicate = "tests/mod_runtime/test_source.py"
+    monkeypatch.setitem(ci.SUITES, "launcher", "tests/")
     with pytest.raises(pytest.UsageError, match="exactly one CI suite"):
         ci.suite_for(tmp_path / duplicate, tmp_path)
 
@@ -44,8 +45,8 @@ def test_overlapping_ownership_fails(tmp_path, monkeypatch):
 @pytest.mark.parametrize("suite", [*ci.SUITES, "check"])
 def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
     original = [
-        SimpleNamespace(path=tmp_path / next(iter(paths)))
-        for paths in ci.SUITES.values()
+        SimpleNamespace(path=tmp_path / prefix / "test_fixture.py")
+        for prefix in ci.SUITES.values()
     ]
     deselections = []
     config = SimpleNamespace(
@@ -66,7 +67,7 @@ def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
 def test_empty_suite_fails(tmp_path):
     config = SimpleNamespace(pluginmanager=SimpleNamespace(getplugin=lambda _: None))
     with pytest.raises(pytest.UsageError, match="is empty"):
-        ci.SuiteSelection("runner", tmp_path).pytest_collection_modifyitems(config, [])
+        ci.SuiteSelection("mod_runtime", tmp_path).pytest_collection_modifyitems(config, [])
 
 
 def test_main_always_applies_portable_markers_and_check_only_collects(monkeypatch):
@@ -101,7 +102,7 @@ spec.loader.exec_module(ci)
 root = pathlib.Path(sys.argv[2])
 raise SystemExit(ci.pytest.main(
     [str(root / 'tests'), '-q', '-m', ci.PORTABLE],
-    plugins=[ci.SuiteSelection('host', root)],
+    plugins=[ci.SuiteSelection('hook_manager', root)],
 ))
 """
     result = subprocess.run(

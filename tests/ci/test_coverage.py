@@ -33,72 +33,62 @@ def fragments(tmp_path, monkeypatch, helper):
         encoding="utf-8",
     )
     input_dir = tmp_path / "inputs"
-    for platform, suites in helper.SUITES.items():
-        for index, suite in enumerate(suites):
-            directory = input_dir / f"test-data-{platform}-{suite}"
-            directory.mkdir(parents=True)
-            measured = Coverage(data_file=str(directory / ".coverage"))
-            measured.start()
-            namespace = {}
-            exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
-            # Windows gets both branches across separate jobs. Other platforms
-            # only get the true branch, proving platform data is not merged.
-            namespace["choose"](platform != "windows" or index != 1)
-            measured.stop()
-            measured.save()
-            if platform == "windows":
-                # Real Windows coverage uses relative backslash paths. Rewrite
-                # a measured fragment's path to exercise cross-OS combination.
-                original = CoverageData(basename=str(directory / ".coverage"))
-                original.read()
-                arcs = {name.replace("/", "\\"): original.arcs(name) for name in original.measured_files()}
-                original.erase()
-                original.add_arcs(arcs)
-                original.write()
+    for index, suite in enumerate(helper.SUITES):
+        directory = input_dir / f"test-data-windows-{suite}"
+        directory.mkdir(parents=True)
+        measured = Coverage(data_file=str(directory / ".coverage"))
+        measured.start()
+        namespace = {}
+        exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+        namespace["choose"](index == 0)
+        measured.stop()
+        measured.save()
+        # Real Windows fragments use backslashes; aggregation runs on Linux.
+        original = CoverageData(basename=str(directory / ".coverage"))
+        original.read()
+        arcs = {name.replace("/", "\\"): original.arcs(name) for name in original.measured_files()}
+        original.erase()
+        original.add_arcs(arcs)
+        original.write()
     return input_dir, tmp_path / "reports"
 
 
-def test_combines_disjoint_branches_without_merging_platforms(helper, fragments):
+def test_combines_both_acceptance_jobs_and_preserves_raw_fragments(helper, fragments):
     input_dir, output = fragments
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 0
-    counts = {}
-    for platform in helper.SUITES:
-        report = ET.parse(output / platform / "coverage.xml").getroot()
-        counts[platform] = (int(report.attrib["lines-covered"]), int(report.attrib["branches-covered"]))
-        assert (output / platform / "htmlcov" / "index.html").is_file()
-    assert counts["windows"] == (4, 2)
-    assert counts["linux"] == (3, 1)
+    report = ET.parse(output / "windows/coverage.xml").getroot()
+    assert (int(report.attrib["lines-covered"]), int(report.attrib["branches-covered"])) == (4, 2)
+    assert (output / "windows/htmlcov/index.html").is_file()
     assert all(path.is_file() for path in input_dir.glob("*/.coverage"))
 
 
-def test_missing_fragment_rejects_only_its_platform_and_clears_old_report(helper, fragments, capsys):
+def test_missing_fragment_rejects_partial_coverage_and_clears_old_report(helper, fragments, capsys):
     input_dir, output = fragments
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 0
     (input_dir / "test-data-windows-native" / ".coverage").unlink()
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 1
     assert "windows: missing coverage fragments:" in capsys.readouterr().err
     assert not (output / "windows").exists()
-    assert (output / "linux" / "coverage.xml").is_file()
 
 
 def test_corrupt_fragment_does_not_produce_partial_platform_report(helper, fragments, capsys):
     input_dir, output = fragments
-    (input_dir / "test-data-linux-runner" / ".coverage").write_bytes(b"broken sqlite")
+    (input_dir / "test-data-windows-native" / ".coverage").write_bytes(b"broken sqlite")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 1
         gc.collect()
     assert not [warning for warning in caught if issubclass(warning.category, ResourceWarning)]
-    assert "linux: cannot combine coverage:" in capsys.readouterr().err
-    assert not (output / "linux").exists()
-    assert (output / "windows" / "coverage.xml").is_file()
+    assert "windows: cannot combine coverage:" in capsys.readouterr().err
+    assert not (output / "windows").exists()
 
 
-def test_missing_input_directory_reports_each_platform(helper, tmp_path, capsys):
+def test_missing_input_directory_reports_both_required_fragments(helper, tmp_path, capsys):
     output = tmp_path / "reports"
     assert helper.main(["--input", str(tmp_path / "missing"), "--output", str(output)]) == 1
     errors = capsys.readouterr().err
-    assert all(f"{platform}: missing coverage fragments:" in errors for platform in helper.SUITES)
+    assert "windows: missing coverage fragments:" in errors
+    assert all(f"test-data-windows-{suite}" in errors for suite in ("embedded", "native"))
     assert not output.exists()
 
 
@@ -110,8 +100,8 @@ def test_report_cleanup_rejects_links_to_outside_directories(helper, tmp_path, c
     outside.mkdir()
     sentinel = outside / "keep.txt"
     sentinel.write_text("preserve", encoding="utf-8")
-    (output / "linux").symlink_to(outside, target_is_directory=True)
+    (output / "windows").symlink_to(outside, target_is_directory=True)
     assert helper.main(["--input", str(tmp_path / "missing"), "--output", str(output)]) == 1
-    assert "linux: cannot clear previous report: unsafe report directory:" in capsys.readouterr().err
+    assert "windows: cannot clear previous report: unsafe report directory:" in capsys.readouterr().err
     assert sentinel.read_text(encoding="utf-8") == "preserve"
-    assert (output / "linux").is_symlink()
+    assert (output / "windows").is_symlink()

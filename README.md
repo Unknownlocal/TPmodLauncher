@@ -92,8 +92,8 @@ the mod, and labels must be unique across registered and existing native items.
 Clicking a button displays its confirmation for 2.5 seconds through the game's
 native menu.
 
-`on_event(name, payload)` accepts and returns JSON strings. The host validates
-plain JSON values, with a depth limit of 8, a 1,024-node budget and a 4,096-byte
+`on_event(name, payload)` receives a named event and a JSON payload string, and
+returns a JSON response string. The host validates plain JSON values, with a depth limit of 8, a 1,024-node budget and a 4,096-byte
 UTF-8 limit per interface string. General gameplay event delivery is not
 implemented; menu clicks display their declared confirmation message.
 
@@ -152,81 +152,43 @@ filesystem, network or process environment.
 
 ## Architectural overview
 
-### Launch and process ownership
+The launcher runs outside the game. It owns mod discovery, compilation and
+sandboxed execution; a trusted bridge supplies the in-game adapters.
+
+| Area | Responsibility |
+| --- | --- |
+| [launcher](launcher/README.md) | Verified startup, game-process tracking, pack loading, compilation cache, mod lifetimes and release preparation. |
+| [hook_manager](hook_manager/README.md) | Main-thread game integration, owned hooks, pack discovery, native menu adaptation and the current mod API. |
+| [mod_runtime](mod_runtime/README.md) | The prebuilt Python runner, source validation, worker preparation and per-mod execution state. |
+| [tests](tests/README.md) | Behavioral checks, real Wasm execution, owned native helper processes, bundled-runtime probes and CI coverage. |
 
 `launcher/entry.py` verifies the bundled interpreter, dependency inventory and
-trusted Python runner under `libs/mod-runners`, then validates Steam's command
-against the installed `TeamPrincipal.exe`. `--check-only` verifies dependencies
-and the runner without starting the game. `process_lifecycle.py` holds a
-controller lock, starts the game through Frida and tracks child processes, exits,
-replacement, exec transitions and PID reuse. Each tracked game session owns its
-bridge and mod instances.
+trusted runner before accepting Steam's game command. The controller holds one
+launcher lock, tracks game children and replacement processes, and creates a
+bridge and mod scope for each session.
 
-### Game bridge and native adapters
+The bridge enters the game's CPython 3.13 runtime on its main thread with the GIL
+held. Fixed launcher-owned sources provide pack discovery and native menu
+adapters. Status, loading and declarative menu records cross this boundary;
+author Python executes inside Wasmtime in the external launcher.
 
-`launcher/game_bridge.py` loads the trusted `hook_manager/bridge.js` transport.
-The transport enters CPython 3.13 at a main-thread boundary with the GIL held;
-`bootstrap.py` creates an owned manager from fixed launcher sources.
-`manager.py` provides deferred module observation, hook ownership and restoration.
-`pack_discovery.py` reads the game's selected startup Formula pack and retains
-one snapshot per process.
+The pack loader validates manifests and duplicate IDs before execution. A worker
+snapshots Python source and compiles verified runner bytes, or prepares an
+explicit Wasm component. The controller adopts the result and creates fresh
+permissions, a Store and guest state. Wasmtime's local compilation cache can
+reuse compiled code under `bin/wasmtime-cache`; input verification and fresh
+instance ownership still apply on every load.
 
-The bridge carries bounded status, shutdown, menu and loading requests.
-`hook_manager/menu.py` installs declarative menu rows using the game's renderer
-and input handling, publishes loading status and guards season actions during
-startup. Registration ownership and generation counters support cleanup and
-reject stale acknowledgements.
+One prebuilt runner artifact serves separate Python instances for individual
+mods. The runner imports source from guest memory and exposes diagnostics and
+menu declarations through granted host functions. The sandbox enforces signatures,
+fuel, deadlines, host-call counts and guest linear-memory limits. Loading progress
+and native registration acknowledgements control startup readiness. Session
+closure cancels unfinished preparation, closes mods in reverse activation order,
+removes their menu registrations and restores owned hooks.
 
-### Discovery, compilation and execution
-
-`launcher/pack_mods.py` scans the selected pack's direct children, validates all
-manifests, rejects duplicate IDs and loads the remaining mods independently.
-Normal launcher entry supplies the verified runner for schema 2 Python source
-admission and explicit schema 1 Wasm compatibility. Source snapshots must match
-admitted metadata; source preparation is cancelled when its session closes.
-Both profiles use the same progress, native readiness and session ownership.
-`mod_contract.py` binds manifest permissions to trusted host handlers;
-`mod_api.py` and the versioned WIT files define accepted imports and lifecycle
-signatures.
-
-`compiled_mod.py` validates and compiles portable components on a background
-worker. `compilation_cache.py` configures Wasmtime's persistent cache under
-`bin/wasmtime-cache`, checking local ownership and access before use and falling
-back to compilation without caching when those checks fail. Every load still
-validates current inputs and creates fresh grants, a Store and guest state.
-
-`sandbox.py` owns each component's runtime resources, enforces signatures and
-execution limits, and serializes guest calls on the controller thread. Mod
-components execute in Wasmtime in the external launcher process. Menu
-declarations cross to the trusted native adapter after activation. Session
-closure releases mods in reverse activation order and restores owned hooks.
-`load_timing.py` records discovery and per-mod loading phases in the launcher log.
-
-### Build and packaging
-
-`mod_runtime` defines the private Python-runner ABI and a separate developer
-builder/verifier for a single prebuilt runner. Its typed host-operation registry
-supports per-mod grants through `launcher/runner_host.py`, which binds trusted
-providers or rejection callbacks before sandbox instantiation. The installed
-bundle retains its source, upstream notice texts and a bounded integrity
-inventory. One fixed runner artifact supplies a separate instance for each mod;
-source enters guest memory and executes there without per-mod component builds.
-`mod_runtime/source.py` validates source manifests and snapshots bounded Python
-source as inert text, using pinned directory handles and ordinary-file checks.
-`mod_runtime/runtime.py` transfers snapshots into the trusted runner, shares
-bounded fuel and time across source initialization, and owns lifecycle cleanup.
-Activation and event calls retain the sandbox's ordinary per-call limits.
-`launcher/source_mod.py` adapts this runner to the existing mod lifecycle, JSON
-event validation and host-owned diagnostic/menu identity.
-`mod_runtime/preparation.py` snapshots source and compiles verified runner bytes
-on a caller-owned worker, with controller adoption and cancellation cleanup.
-
-The release workflow builds the fixed trusted runner once using the pinned
-developer componentizer. `build_frida.py` produces the reduced native transport;
-`frida_sources.py` exports and restores matching build sources.
-`prepare_release.py` assembles runtime dependencies and copies the verified
-runner, trusted sources and notices into release staging. Dependency files are
-inventoried in `bundled_packages.toml`; the runner carries its own exact inventory.
-The test tree separates launcher, runtime and hook-manager behaviour, with owned
-fixtures for component execution, native bridge sessions and packaged-runtime
-probes.
+Release tooling builds the fixed runner with the pinned developer componentizer,
+prepares the bundled interpreter and dependencies, and retains trusted sources
+and upstream notices. Dependencies use `bundled_packages.toml`; the runner has
+its own exact file inventory. Players use the prepared artifacts without a
+componentizer or per-mod Wasm build.

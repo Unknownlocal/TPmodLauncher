@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test hook manager
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - '.github/workflows/test-hook-manager.yml'
+      - '.github/ci_tests.py'
+      - '.github/workflows/portable.yml'
+      - '.github/workflows/coverage.yml'
+      - '.gitattributes'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - 'tests/conftest.py'
+      - 'tests/fixtures/**'
+      - 'hook_manager/**'
+      - 'tests/hook_manager/**'
+      - '!**/*.md'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/portable.yml
+    with:
+      suite: hook_manager

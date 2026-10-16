@@ -1,10 +1,38 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Test Python and Windows runtime
+name: Test Windows runtime
 
 on:
   push:
     branches: [main]
+    paths: &paths
+      - '.github/workflows/pytest.yml'
+      - '.github/workflows/coverage.yml'
+      - '.github/ci_coverage.py'
+      - '.gitattributes'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - 'tests/conftest.py'
+      - 'tests/fixtures/**'
+      - 'launcher/**'
+      - 'hook_manager/**'
+      - 'mod_runtime/**'
+      - 'tests/launcher/conftest.py'
+      - 'tests/launcher/test_embedded_entry.py'
+      - 'tests/launcher/test_native_lifecycle.py'
+      - 'tests/hook_manager/test_native_bridge.py'
+      - 'tests/mod_runtime/test_bundle.py'
+      - 'tests/launcher/fixtures/**'
+      - 'tests/hook_manager/fixtures/**'
+      - 'tests/mod_runtime/fixtures/**'
+      - 'examples/**'
+      - 'notices/**'
+      - 'LICENCE'
+      - 'ATTRIBUTION.txt'
+      - 'pylock*.toml'
+      - 'bundled_packages.toml'
+      - '!**/*.md'
   pull_request:
+    paths: *paths
   workflow_dispatch:
 
 concurrency:
@@ -15,54 +43,6 @@ permissions:
   contents: read
 
 jobs:
-  portable:
-    name: ${{ matrix.platform.id }} / ${{ matrix.suite }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - id: windows
-            runner: windows-latest
-            python: .venv/Scripts/python.exe
-            architecture: x64
-          - id: linux
-            runner: ubuntu-24.04
-            python: .venv/bin/python
-            architecture: x64
-        suite: [host, runner, api, pack]
-    runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 20
-    env:
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.13'
-          architecture: ${{ matrix.platform.architecture }}
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Create the developer test environment
-        run: |
-          python -m venv .venv
-          "${{ matrix.platform.python }}" -m pip install -r requirements-dev.txt
-      - name: Run the selected portable suite
-        run: |
-          exec "${{ matrix.platform.python }}" -B .github/ci_tests.py --suite "${{ matrix.suite }}" -v --junitxml=junit.xml -p pytest_cov --cov --cov-report=
-      - name: Preserve test results and coverage, including failed runs
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: test-data-${{ matrix.platform.id }}-${{ matrix.suite }}
-          include-hidden-files: true
-          path: |
-            .coverage
-            junit.xml
-          if-no-files-found: warn
-
   windows-bundle:
     name: Prepare Windows player bundle
     runs-on: windows-latest
@@ -152,8 +132,8 @@ jobs:
           if-no-files-found: warn
 
   coverage:
-    name: Combine platform coverage
-    needs: [portable, windows-acceptance]
+    name: Combine Windows acceptance coverage
+    needs: windows-acceptance
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -186,19 +166,10 @@ jobs:
             .cache/ci-coverage/windows/coverage.xml
             .cache/ci-coverage/windows/htmlcov/
           if-no-files-found: error
-      - name: Upload Linux coverage
-        if: ${{ !cancelled() && hashFiles('.cache/ci-coverage/linux/coverage.xml') != '' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: python-coverage-linux
-          path: |
-            .cache/ci-coverage/linux/coverage.xml
-            .cache/ci-coverage/linux/htmlcov/
-          if-no-files-found: error
 
   complete:
-    name: Tests complete
-    needs: [portable, windows-bundle, windows-acceptance, coverage]
+    name: Windows runtime complete
+    needs: [windows-bundle, windows-acceptance, coverage]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

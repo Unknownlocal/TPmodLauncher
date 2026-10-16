@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test CI helpers
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - '.gitattributes'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - '.github/**'
+      - 'tests/**'
+      - '!**/*.md'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/portable.yml
+    with:
+      suite: ci
