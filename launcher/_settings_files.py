@@ -2,6 +2,7 @@
 """Read and atomically replace settings.json relative to a pinned directory handle."""
 
 import os
+import re
 import stat
 import uuid
 
@@ -19,12 +20,13 @@ class _WindowsFiles:
     https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
     """
 
-    def __init__(self):
+    def __init__(self, filename=SETTINGS_FILE):
         import ctypes as c
         from ctypes import wintypes as w
         import msvcrt
 
         self.c, self.w, self.msvcrt = c, w, msvcrt
+        self.filename = filename
 
         class UnicodeString(c.Structure):
             _fields_ = [("length", w.USHORT), ("maximum", w.USHORT), ("buffer", w.LPWSTR)]
@@ -85,9 +87,9 @@ class _WindowsFiles:
 
         class Rename(c.Structure):
             _fields_ = [("replace", w.BOOLEAN), ("root", w.HANDLE),
-                        ("length", w.ULONG), ("name", w.WCHAR * len(SETTINGS_FILE))]
+                        ("length", w.ULONG), ("name", w.WCHAR * len(self.filename))]
 
-        data = Rename(True, self.msvcrt.get_osfhandle(parent), len(SETTINGS_FILE) * 2, SETTINGS_FILE)
+        data = Rename(True, self.msvcrt.get_osfhandle(parent), len(self.filename) * 2, self.filename)
         status = self.IoStatus()
         self._check(self.set_information(self.msvcrt.get_osfhandle(descriptor), c.byref(status),
                                         c.byref(data), c.sizeof(data), 10))
@@ -98,11 +100,20 @@ class _WindowsFiles:
                                         self.c.byref(data), self.c.sizeof(data), 13))
 
 
-def read(root, parent, maximum):
+def _filename(value):
+    # Callers choose a fixed host-owned leaf (settings.json or catalogue.json),
+    # never a mod-supplied path. ASCII also keeps Windows UTF-16 lengths simple.
+    if type(value) is not str or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", value):
+        raise ValueError("Expected a short host-owned file name")
+    return value
+
+
+def read(root, parent, maximum, *, filename=SETTINGS_FILE):
+    filename = _filename(filename)
     if os.name != "nt":
-        return disk.read_file(root / SETTINGS_FILE, parent, maximum)
-    native = _WindowsFiles()
-    with os.fdopen(native.open(parent, SETTINGS_FILE), "rb") as stream:
+        return disk.read_file(root / filename, parent, maximum)
+    native = _WindowsFiles(filename)
+    with os.fdopen(native.open(parent, filename), "rb") as stream:
         info = os.fstat(stream.fileno())
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                 or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
@@ -115,11 +126,14 @@ def read(root, parent, maximum):
         return data
 
 
-def write(parent, data):
+def write(parent, data, *, filename=SETTINGS_FILE):
     """Publish a complete UTF-8 document, retaining the previous file on failure."""
+    filename = _filename(filename)
+    # Keep the legacy temporary prefix for both consumers. The destination is
+    # replaced relative to the pinned parent, after the complete document flushes.
     temporary = ".settings-" + uuid.uuid4().hex + ".tmp"
     if os.name == "nt":
-        native = _WindowsFiles()
+        native = _WindowsFiles(filename)
         with os.fdopen(native.open(parent, temporary, create=True), "wb") as stream:
             try:
                 stream.write(data)
@@ -137,7 +151,7 @@ def write(parent, data):
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, SETTINGS_FILE, src_dir_fd=parent, dst_dir_fd=parent)
+            os.replace(temporary, filename, src_dir_fd=parent, dst_dir_fd=parent)
         finally:
             try:
                 os.unlink(temporary, dir_fd=parent)
