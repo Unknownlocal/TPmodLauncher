@@ -26,6 +26,13 @@ targets and signatures. The manager observes normal imports, installs wrappers
 when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
+`profiling_discovery.py` inventories trusted CPython code roots and looks up
+already-loaded functions by code-object identity. It reads raw module/class
+namespaces without evaluating properties or custom descriptors, and bounds code
+and namespace traversal. Ownership must be verified by the supplying provider;
+names and filenames are not proof. The helper installs no hooks, grants no
+measurement readiness and is not yet loaded by the game bridge.
+
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
 waits for the normal menu import before adapting native rendering and input.

@@ -297,3 +297,82 @@ def test_identical_bundle_skips_discovery_and_persistence_preserving_cursor(tmp_
     monkeypatch.setattr(cache, "save", lambda: pytest.fail("Unchanged bundle persisted again"))
     assert catalogue.replace(GAME, units) == keys
     assert query(catalogue, cursor=token)["ok"]
+
+
+def test_compiled_sources_register_without_source_text_or_executing_code(tmp_path):
+    root = compile("def update(): return 'PRIVATE_CONSTANT'\nraise RuntimeError('never run')", "C:/private/game.py", "exec")
+    unit = profiling.CompiledSource("physics", "Formula/physics.py", root)
+    catalogue = profiling.Catalogue("process-1", cache=profiling.MetadataCache(tmp_path))
+    (key,) = catalogue.replace(GAME, [unit], identity=b"verified-game-artifacts")
+    record = rows(catalogue)[0]
+    assert record["qualified_name"] == "update" and record["source"] == "Formula/physics.py"
+    assert record["availability"] == "not_loaded" and record["metrics"] == []
+    persisted = (tmp_path / "catalogue.json").read_text(encoding="utf-8")
+    assert "PRIVATE_CONSTANT" not in persisted and "private" not in persisted
+    fresh = profiling.Catalogue("process-2", cache=profiling.MetadataCache(tmp_path))
+    assert fresh.replace(GAME, [unit], identity=b"verified-game-artifacts") == (key,)
+    assert fresh.bindings == {}
+
+
+def test_compiled_cache_hit_never_reconstructs_code_or_compiles_source(tmp_path, monkeypatch):
+    unit = profiling.CompiledSource("physics", "physics.py", compile("def update(): pass", "<trusted>", "exec"))
+    first = profiling.Catalogue("process-1", cache=profiling.MetadataCache(tmp_path))
+    keys = first.replace(GAME, [unit])
+    monkeypatch.setattr(profiling, "_discover", lambda *a: pytest.fail("Compiled input must not compile source"))
+    monkeypatch.setattr(profiling.marshal, "loads", lambda *a, **k: pytest.fail("Cache must not deserialize code"))
+    fresh = profiling.Catalogue("process-2", cache=profiling.MetadataCache(tmp_path))
+    assert fresh.replace(GAME, [unit]) == keys
+    assert len(fresh.cache.entries) == 1
+
+
+def test_compiled_fingerprint_distinguishes_shared_and_separate_equal_code(tmp_path):
+    root = compile("def update(): pass", "<trusted>", "exec")
+    child = root.co_consts[0]
+    shared = root.replace(co_consts=(child, child))
+    separate = root.replace(co_consts=(child, child.replace()))
+    assert profiling.marshal.dumps(shared, 2) == profiling.marshal.dumps(separate, 2)
+    catalogue = profiling.Catalogue("process-1", cache=profiling.MetadataCache(tmp_path))
+    first = catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", shared)])
+    second = catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", separate)])
+    assert len(first) == 1 and len(second) == 2 and not set(first) & set(second)
+    fresh = profiling.Catalogue("process-2", cache=profiling.MetadataCache(tmp_path))
+    assert fresh.replace(GAME, [profiling.CompiledSource("physics", "physics.py", separate)]) == second
+
+
+def test_changed_compiled_code_and_artifact_identity_invalidate_live_state():
+    catalogue = profiling.Catalogue("process-1")
+    unit = profiling.CompiledSource("physics", "physics.py", compile("def update(): return 1", "<trusted>", "exec"))
+    (old,) = catalogue.replace(GAME, [unit], identity=b"kernel-v1")
+    catalogue.bind(old, object(), runtime_kind="game-python", metrics=["calls"])
+    (changed,) = catalogue.replace(GAME, [unit], identity=b"kernel-v2")
+    assert changed != old and not catalogue.bindings
+    newer = profiling.CompiledSource("physics", "physics.py", compile("def update(): return 2", "<trusted>", "exec"))
+    assert catalogue.replace(GAME, [newer], identity=b"kernel-v2") != (changed,)
+
+
+def test_compiled_identity_survives_loading_specialization_and_code_references():
+    root = compile("def update(value): return value + 1", "<trusted>", "exec")
+    unit = profiling.CompiledSource("physics", "physics.py", root)
+    catalogue = profiling.Catalogue("process-1")
+    (key,) = catalogue.replace(GAME, [unit])
+    namespace = {}
+    exec(root, namespace)
+    for value in range(10000):
+        namespace["update"](value)
+    retained_code = namespace["update"].__code__
+    token = object()
+    catalogue.bind(key, token, runtime_kind="game-python", metrics=["calls"])
+    assert catalogue.replace(GAME, [unit]) == (key,)
+    assert catalogue.bindings[key] is token
+    assert retained_code is root.co_consts[0]
+
+
+def test_invalid_or_oversized_compiled_input_leaves_admitted_bundle_unchanged():
+    catalogue = profiling.Catalogue("process-1", limits=profiling.Limits(source_bytes=200))
+    (key,) = catalogue.replace(GAME, [source("def update(): pass")])
+    with pytest.raises(ValueError):
+        catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", b"not a code object")])
+    large = compile("value=" + repr("x"*400), "<trusted>", "exec")
+    with pytest.raises(profiling.CatalogueError):
+        catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", large)])
+    assert list(catalogue.rows) == [key]

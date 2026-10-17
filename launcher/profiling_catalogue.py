@@ -10,8 +10,8 @@ from collections import OrderedDict
 from contextlib import ExitStack
 from dataclasses import dataclass
 import hashlib
-import inspect
 import json
+import marshal
 from pathlib import PurePosixPath
 import sys
 import time
@@ -19,6 +19,7 @@ from types import CodeType
 import uuid
 
 from hook_manager.manager import data_copy, identifier, HookError
+from hook_manager.profiling_discovery import code_inventory, DiscoveryError
 from launcher import _settings_files as files
 from mod_runtime import _source_files as disk
 from mod_runtime.source import SourceSnapshot
@@ -78,6 +79,25 @@ class Source:
     content: bytes
 
 
+@dataclass(frozen=True)
+class CompiledSource:
+    """Supply compiled Python code for function discovery when source is unavailable.
+
+    ``module`` is the dotted module name used by catalogue selectors. ``path``
+    is its relative or virtual source location shown in profiling results.
+    ``code`` is a code-object root whose nested constants contain the functions
+    to discover, usually the module's compiled code.
+
+    ``Catalogue.replace`` inventories function names, locations and kinds, then
+    fingerprints the code and inventory to identify changes between registrations.
+    Live function binding happens separately. The caller supplies code from an
+    already verified game or mod artifact.
+    """
+    module: str
+    path: str
+    code: CodeType
+
+
 def _text(value):
     if type(value) is not str or not value or len(value.encode("utf-8")) > 512:
         raise ValueError("Expected nonempty metadata within 512 UTF-8 bytes")
@@ -97,25 +117,17 @@ def _owner(value):
 def _discover(content, maximum):
     # Compilation creates inert code objects; never execute/import author source.
     root = compile(content, "<profiling-discovery>", "exec", dont_inherit=True, optimize=0)
-    # Constant-index paths distinguish code objects with identical names/lines,
-    # such as two lambdas on one line. They are independent of live addresses.
-    stack, result = [(root, "0")], []
-    while stack:
-        code, discriminator = stack.pop()
-        # Module/class bodies also contain nested code, but are not function rows.
-        if code.co_flags & inspect.CO_NEWLOCALS:
-            kind = "coroutine" if code.co_flags & inspect.CO_COROUTINE else "function"
-            if code.co_flags & (inspect.CO_GENERATOR | inspect.CO_ASYNC_GENERATOR):
-                kind = "generator"
-            # Cache descriptor layout: qualified name, first line, code path, kind.
-            result.append([_text(code.co_qualname), code.co_firstlineno, discriminator, kind])
-            if len(result) > maximum:
-                raise CatalogueError("resource_limit", "Too many discovered functions")
-        # Reverse pushes preserve constant order when this LIFO stack is read.
-        for index, child in reversed(tuple(enumerate(code.co_consts))):
-            if type(child) is CodeType:
-                stack.append((child, discriminator + "." + str(index)))
-    return result
+    return _discover_code(root, maximum)
+
+
+def _discover_code(root, maximum):
+    try:
+        rows, _ = code_inventory((root,), maximum_functions=maximum)
+    except DiscoveryError as error:
+        raise CatalogueError("resource_limit", str(error)) from error
+    for name, _, discriminator, _ in rows:
+        _text(name); _text(discriminator)
+    return rows
 
 
 class MetadataCache:
@@ -126,9 +138,9 @@ class MetadataCache:
     """
     MAX_BYTES = 4 * 1024 * 1024
     MAX_ENTRIES = 128
-    # Compiler layout can change between Python versions. Bump discovery-1 when
+    # Compiler layout can change between Python versions. Bump discovery-2 when
     # our descriptor interpretation changes, even if the source bytes do not.
-    BACKEND = f"code-discovery-1:{sys.implementation.name}:{sys.version_info.major}.{sys.version_info.minor}"
+    BACKEND = f"code-discovery-2:{sys.implementation.name}:{sys.version_info.major}.{sys.version_info.minor}"
 
     def __init__(self, directory):
         self.directory = directory
@@ -165,10 +177,13 @@ class MetadataCache:
             self.entries.clear()
             self.failure = str(error)[:256]
 
-    def discover(self, content, maximum):
-        key = hashlib.sha256(content).hexdigest()
+    def discover(self, content, maximum, *, descriptors=None):
+        # The formats have separate key spaces. Compiled bytes are only used as
+        # fingerprint input; cached data is never deserialized into code objects.
+        key = _hash(["source" if descriptors is None else "code",
+                     hashlib.sha256(content).hexdigest(), descriptors])
         if key not in self.entries:
-            self.entries[key] = _discover(content, maximum)
+            self.entries[key] = _discover(content, maximum) if descriptors is None else descriptors
             while len(self.entries) > self.MAX_ENTRIES:
                 self.entries.popitem(last=False)
             rows = self.entries[key]
@@ -244,8 +259,18 @@ class Catalogue:
         total, units, names = 0, [], set()
         # Validate/fingerprint the entire bundle before touching the live registry.
         for unit in sources:
-            if type(unit) is not Source or type(unit.content) is not bytes:
-                raise ValueError("Expected admitted source bytes")
+            descriptors = None
+            if type(unit) is Source and type(unit.content) is bytes:
+                content = unit.content
+            elif type(unit) is CompiledSource and type(unit.code) is CodeType:
+                # Marshal is write-only here: input code came from a trusted
+                # runtime provider, not a cache or a mod-supplied .pyc file.
+                # Version 2 avoids reference-count-dependent flags, so loading
+                # functions or retaining code references cannot change identity.
+                descriptors = _discover_code(unit.code, self.limits.functions)
+                content = marshal.dumps(unit.code, 2)
+            else:
+                raise ValueError("Expected admitted source bytes or a trusted code object")
             _text(unit.module); _text(unit.path)
             if not all(part.isidentifier() for part in unit.module.split(".")):
                 raise ValueError("Expected a Python module name")
@@ -255,13 +280,18 @@ class Catalogue:
             if unit.module in names:
                 raise ValueError("Duplicate module")
             names.add(unit.module)
-            total += len(unit.content)
+            total += len(content)
             if total > self.limits.source_bytes:
                 raise CatalogueError("resource_limit", "Source byte limit")
-            units.append((unit, hashlib.sha256(unit.content).hexdigest()))
+            source_hash = hashlib.sha256(content).hexdigest()
+            if type(unit) is CompiledSource:
+                # Format 2 also omits code sharing. Include inventory paths so
+                # shared and separate equal code cannot collide in the cache.
+                source_hash = _hash(["code", source_hash, descriptors])
+            units.append((unit, content, source_hash, descriptors))
         # Sort source identities so caller enumeration order cannot change IDs.
         # identity also invalidates them for manifest/native dependency changes.
-        artifact = _hash([hashlib.sha256(identity).hexdigest(), sorted((u.module, u.path, h) for u, h in units)])
+        artifact = _hash([hashlib.sha256(identity).hexdigest(), sorted((u.module, u.path, h) for u, _, h, _ in units)])
         old = {key: value for key, value in self.rows.items() if _owner(value["owner"]) == owner_key}
         if old and all(row["artifact_checksum"] == artifact for row in old.values()):
             # Source equality preserves bindings and cursors; runtime replacement
@@ -270,9 +300,11 @@ class Catalogue:
         replacement = {}
         # Build a candidate off to the side. Parse/limit failures leave the
         # previous admitted bundle and its live bindings intact.
-        for unit, source_hash in units:
-            descriptors = (self.cache.discover(unit.content, self.limits.functions) if self.cache
-                           else _discover(unit.content, self.limits.functions))
+        for unit, content, source_hash, descriptors in units:
+            if self.cache:
+                descriptors = self.cache.discover(content, self.limits.functions, descriptors=descriptors)
+            elif descriptors is None:
+                descriptors = _discover(content, self.limits.functions)
             for name, line, discriminator, kind in descriptors:
                 function_id = _hash([owner_key, artifact, unit.module, unit.path, source_hash, discriminator])
                 replacement[function_id] = {

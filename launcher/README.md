@@ -52,15 +52,19 @@ loader logs those timings and cache status.
 ## Profiling catalogue
 
 `profiling_catalogue.py` provides an internal, data-only catalogue for the planned
-diagnostics profiling API. Trusted providers register admitted source bundles or
-Python source snapshots. Discovery compiles but never executes/imports source;
+diagnostics profiling API. Trusted providers register admitted source bundles,
+Python source snapshots or `CompiledSource` code objects. Discovery compiles but never executes/imports source;
 content fingerprints and a bounded JSON cache reuse metadata across sessions.
+Compiled code is fingerprinted with write-only serialization; the cache stores
+descriptors, never executable bytecode. Providers must verify artifact ownership
+and supply display locations rather than trusting code filenames.
 Owners and live bindings are rebuilt separately. Binding changes invalidate
 catalogue cursors, and queries use exact selectors and bounded UTF-8 pages.
 
 The service installs no hooks and is not yet wired to pack loading, the game
-bridge, WIT or the runner facade. Compiled game/native and guest-runtime discovery
-providers remain later integration work. Source grammar follows the host Python
+bridge, WIT or the runner facade. The compiled-code inventory and safe namespace
+lookup helper are available, but runtime providers and native/guest collection
+remain later integration work. Source grammar follows the host Python
 version; unsupported source discovery must not be treated as complete coverage.
 The metadata cache reuses the pinned-directory atomic JSON writer; the fixed
 host-owned cache leaf is separate from mod settings.
