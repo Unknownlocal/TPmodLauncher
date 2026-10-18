@@ -382,7 +382,7 @@ def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bun
     assert hub.MENU_ITEMS == ["Career", "Load", "Exit"]
 
 
-def test_closing_source_preparation_discards_late_result_without_activation(pack, source_mod, runner_bundle, monkeypatch):
+def test_closing_source_preparation_discards_late_result_without_activation(pack, source_mod, runner_bundle, monkeypatch, disposable_source_compiler):
     game, folder, record = pack
     source_mod(folder, "owned.cancelled")
     entered, release = threading.Event(), threading.Event()

@@ -24,6 +24,8 @@ Preparation tests use synchronized worker gates to exercise queued and running
 cancellation, abandoned results and controller-thread adoption. Pack/session
 tests combine controlled process and bridge events with real components to check
 load order, duplicate IDs, progress, readiness, replacements and cleanup.
+Cancellation gates use disposable compiler results when no guest is admitted;
+real native preparation and controller adoption retain an integration check.
 
 ## Fixtures and execution boundaries
 

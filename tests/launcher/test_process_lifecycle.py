@@ -598,7 +598,7 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == 2
 
 
-def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch):
+def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch, disposable_source_compiler):
     from mod_runtime import preparation
     device, controller, messages, _ = rig
     game = Path(controller.game).parent

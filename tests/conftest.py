@@ -56,6 +56,22 @@ def cached_python_components(request, monkeypatch):
 
 
 @pytest.fixture
+def disposable_source_compiler(monkeypatch):
+    """Model compiler-result ownership in gated cancellation tests, without JIT work.
+
+    These tests never admit the result to a Store. Real compilation and adoption
+    are exercised separately by the preparation integration test.
+    """
+    from mod_runtime import preparation
+    class DisposableCompilation:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+        def close(self):
+            self.closed = True
+    monkeypatch.setattr(preparation, "CompiledMod", DisposableCompilation)
+
+
+@pytest.fixture
 def native_menu(monkeypatch):
     """Provide the small native menu interface used by owned adapter and mod tests."""
     hub = ModuleType("ui.screens.hub_screen")

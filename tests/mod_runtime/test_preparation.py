@@ -152,7 +152,7 @@ def test_cancel_during_read_skips_subsequent_compilation(runner_bundle, source_f
     assert isinstance(future.exception(), CancelledError)
 
 
-def test_cancel_during_native_compile_closes_result_at_checkpoint(runner_bundle, source_folder, monkeypatch):
+def test_cancel_during_compilation_closes_result_at_checkpoint(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     results = []
     original = preparation.CompiledMod
@@ -174,7 +174,7 @@ def test_cancel_during_native_compile_closes_result_at_checkpoint(runner_bundle,
     assert isinstance(future.exception(), CancelledError) and results[0].closed
 
 
-def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, source_folder, monkeypatch):
+def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     results = []
     original = preparation._prepare
@@ -197,7 +197,7 @@ def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, sourc
     assert results[0].snapshot is None and results[0].compiled.closed
 
 
-def test_abandoning_ready_result_releases_native_resources_and_snapshot(runner_bundle, source_folder):
+def test_abandoning_ready_result_releases_native_resources_and_snapshot(runner_bundle, source_folder, disposable_source_compiler):
     with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
         completed(job)
         result = job._future.result()
@@ -232,7 +232,7 @@ def test_worker_errors_propagate_on_take_and_are_safe_to_abandon(runner_bundle, 
             job.take()
 
 
-def test_failure_after_compilation_releases_compiler_even_for_base_exception(runner_bundle, source_folder, monkeypatch):
+def test_failure_after_compilation_releases_compiler_even_for_base_exception(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
     results = []
     original = preparation.CompiledMod
     def record(*args, **kwargs):
@@ -264,7 +264,7 @@ def test_changed_runner_is_rejected_when_prepared_result_is_adopted(runner_bundl
             assert result.compiled.closed and cleaned == [True]
 
 
-def test_take_and_close_require_controller_thread_without_losing_ownership(runner_bundle, source_folder):
+def test_take_and_close_require_controller_thread_without_losing_ownership(runner_bundle, source_folder, disposable_source_compiler):
     with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
         completed(job)
         for action in (job.take, job.close):
@@ -282,7 +282,7 @@ def test_executor_rejection_starts_no_preparation(source_folder):
         SourcePreparation(executor, None, source_folder)
 
 
-def test_relative_folder_is_bound_before_queued_worker_starts(runner_bundle, source_folder, tmp_path, monkeypatch):
+def test_relative_folder_is_bound_before_queued_worker_starts(runner_bundle, source_folder, tmp_path, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     def occupy():
         entered.set()
@@ -304,7 +304,7 @@ def test_relative_folder_is_bound_before_queued_worker_starts(runner_bundle, sou
             release.set()
 
 
-def test_cancelled_job_does_not_close_executor_or_replace_later_snapshot(runner_bundle, source_folder, monkeypatch):
+def test_cancelled_job_does_not_close_executor_or_replace_later_snapshot(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     original = SourceSnapshot.read
     reads = []
