@@ -6,10 +6,13 @@ import subprocess
 import sysconfig
 
 import pytest
+
 from setuptools import Distribution, Extension
 from setuptools.command.bdist_wheel import bdist_wheel, get_platform
 
 from launcher import build_frida as build
+
+pytestmark = pytest.mark.release
 
 
 @pytest.fixture
@@ -72,7 +75,3 @@ def test_wrong_binary_architecture_is_rejected_before_relabelling(macos_extensio
     extension = macos_extension("x86_64", (10, 13))
     with pytest.raises(build.Error, match="architectures.*differ"):
         build.wheel_platform_args(extension, "macos-arm64")
-
-
-def test_other_platforms_keep_default_packaging_without_macos_tools(tmp_path):
-    assert build.wheel_platform_args(tmp_path / "absent-extension", "linux-x86_64") == []

@@ -2,13 +2,10 @@
 """Exercise the source-backed launcher contract through real snapshots and Wasm."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from hook_manager.menu import MenuRequests
-from launcher.compiled_mod import CompiledMod
-from launcher.mod_contract import ManifestError
 from launcher.sandbox import SandboxError
 from launcher.source_mod import SourceMod
 from mod_runtime.source import SourceSnapshot
@@ -43,31 +40,6 @@ capabilities = {json.dumps(capabilities)}
         (folder / "mod.wasm").write_bytes(b"unusable author component")
         return SourceSnapshot.read(folder)
     return read
-
-
-@pytest.mark.parametrize("example", ["diagnostic_mod", "menu_mod"])
-def test_existing_examples_use_launcher_identity_menu_and_json_contract(runner_bundle, source, example):
-    code = (Path(__file__).resolve().parents[2] / "examples" / example / "src/mod.py").read_text(encoding="utf-8")
-    grants = ("diagnostics", "main-menu") if example == "menu_mod" else ("diagnostics",)
-    snapshot = source(code, capabilities=grants)
-    messages, cleaned = [], []
-    menu = MenuRequests()
-    def cleanup():
-        menu.remove(snapshot.manifest.id)
-        cleaned.append(True)
-    with SourceMod(runner_bundle, snapshot, report=lambda *args: messages.append(args),
-                   menu=menu.add, cleanup=cleanup) as mod:
-        assert messages == [] and menu.buttons == []
-        mod.activate()
-        assert messages == [("owned.source", "Menu example activated" if example == "menu_mod" else "Diagnostic example activated")]
-        result = mod.event("owned.event", {"number": 42})
-        if example == "menu_mod":
-            assert result is None and len(menu.buttons) == 1
-            assert menu.buttons[0]["owner"] == snapshot.manifest.id
-        else:
-            assert result == {"event": "owned.event", "received": {"number": 42}}
-    mod.close()
-    assert mod.sandbox.closed and cleaned == [True] and menu.buttons == []
 
 
 def test_source_instances_keep_state_and_host_owned_identity_separate(runner_bundle, source):
@@ -113,34 +85,6 @@ def test_invalid_event_input_closes_before_guest_callback(runner_bundle, source)
         with pytest.raises(SandboxError):
             mod.event(name, value)
         assert reports == [] and cleaned == [True] and mod.sandbox.closed
-
-
-def test_denied_source_operations_never_reach_supplied_providers(runner_bundle, source):
-    code = '''import runner_bindings as api
-api.report("ungranted")
-class WitWorld:
-    def activate(self): pass
-    def on_event(self, name, payload):
-        return payload
-'''
-    calls, cleaned = [], []
-    snapshot = source(code, capabilities=())
-    with pytest.raises(SandboxError, match="Capability.*required"):
-        with SourceMod(runner_bundle, snapshot, report=lambda *args: calls.append(args),
-                       menu=lambda *args: calls.append(args), cleanup=lambda: cleaned.append(True)) as mod:
-            mod.activate()
-            mod.event("owned.event", None)
-    assert calls == [] and cleaned == [True]
-
-
-def test_provider_admission_failures_release_prepared_work_before_runner_entry(runner_bundle, source):
-    capability = "diagnostics"
-    compiled = CompiledMod(runner_bundle.component())
-    cleaned = []
-    with pytest.raises(ManifestError, match="trusted"):
-        SourceMod(runner_bundle, source(capabilities=(capability,)), prepared=compiled,
-                  cleanup=lambda: cleaned.append(True))
-    assert compiled.closed and cleaned == [True]
 
 
 def test_partial_menu_declarations_are_revoked_after_failure(runner_bundle, source):

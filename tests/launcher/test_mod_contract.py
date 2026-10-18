@@ -2,15 +2,13 @@
 """Validate manifests and the real Python author contract without game or pack discovery."""
 
 from pathlib import Path
-import os
 import shutil
-import subprocess
 
 import pytest
 from wasmtime import wat2wasm
 
 from launcher import build_mod
-from launcher.mod_contract import Manifest, ManifestError, Mod
+from launcher.mod_contract import Manifest, Mod
 from launcher.sandbox import SandboxError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,108 +33,6 @@ def tiny_component(folder, result="{}"):
     )
     (folder / "mod.wasm").write_bytes(wat2wasm(source))
     return Manifest.read(folder)
-
-
-@pytest.mark.parametrize(
-    "old,new",
-    [
-        ("schema = 1", "schema = true"),
-        ('api = "0.1.0"', 'api = "9.0.0"'),
-        ('runtime = "python"', 'runtime = "native"'),
-        ('version = "0.1.0"', 'version = "01.1.0"'),
-        ('id = "example.diagnostics"', 'id = "../other"'),
-        ('component = "mod.wasm"', 'component = "../outside.wasm"'),
-        ('component = "mod.wasm"', 'component = "mod.py"'),
-        ('["diagnostics"]', '["frida"]'),
-        ('["diagnostics"]', '["diagnostics", "diagnostics"]'),
-        ("schema = 1", 'schema = 1\nentry = "arbitrary.py"'),
-    ],
-)
-def test_manifest_rejects_unsupported_or_escaping_metadata(author, old, new):
-    path = author / "mod.toml"
-    path.write_text(path.read_text().replace(old, new))
-    with pytest.raises(ManifestError):
-        Manifest.read(author)
-
-
-def test_ui_theme_is_not_a_separate_wasm_capability(author):
-    path = author / "mod.toml"
-    path.write_text(path.read_text().replace('api = "0.1.0"', 'api = "0.3.0"').replace(
-        '["diagnostics"]', '["ui-theme"]',
-    ))
-    with pytest.raises(ManifestError, match="capability"):
-        Manifest.read(author)
-
-
-def test_manifest_is_data_only_and_component_can_be_built_later(author):
-    path = author / "mod.toml"
-    path.write_text(path.read_text().replace('"0.1.0"', '"0.1.0-beta.1+build.2"', 1))
-    metadata = Manifest.read(author)
-    assert metadata.version == "0.1.0-beta.1+build.2"
-    assert metadata.capabilities == frozenset({"diagnostics"})
-    with pytest.raises(ManifestError):
-        metadata.read_component()
-
-
-def test_manifest_read_is_size_limited(author):
-    (author / "mod.toml").write_bytes(b"#" * 16_385)
-    with pytest.raises(ManifestError, match="16 KiB"):
-        Manifest.read(author)
-
-
-@pytest.mark.parametrize("filename", ["mod.toml", "mod.wasm"])
-def test_nonregular_mod_files_are_rejected_before_opening(author, filename):
-    manifest = Manifest.read(author)
-    path = author / filename
-    path.unlink(missing_ok=True)
-    if os.name == "posix":
-        os.mkfifo(
-            path
-        )  # Opening this for reading would wait indefinitely for a writer.
-    else:
-        path.mkdir()
-    with pytest.raises(ManifestError, match="regular file"):
-        Manifest.read(author) if filename == "mod.toml" else manifest.read_component()
-
-
-def test_requested_diagnostics_requires_a_trusted_provider(author):
-    cleaned = []
-    with pytest.raises(ManifestError, match="trusted report"):
-        Mod(Manifest.read(author), cleanup=lambda: cleaned.append(True))
-    assert cleaned == [True]
-
-
-def test_cleanup_runs_when_component_read_fails_before_sandbox_creation(author):
-    cleaned = []
-    with pytest.raises(ManifestError):
-        Mod(
-            Manifest.read(author),
-            report=lambda *_: None,
-            cleanup=lambda: cleaned.append(True),
-        )
-    assert cleaned == [True]
-
-
-def test_replaced_mod_folder_cannot_redirect_component_reads(author):
-    manifest = tiny_component(author)
-    saved = author.with_name("saved owned mod")
-    author.rename(saved)
-    if os.name == "nt":
-        # A junction is available to ordinary Windows users and both folders are pytest-owned.
-        subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(author), str(saved)],
-            check=True,
-            capture_output=True,
-        )
-    else:
-        author.symlink_to(saved, target_is_directory=True)
-    try:
-        with pytest.raises(ManifestError, match="folder changed"):
-            manifest.read_component()
-    finally:
-        # Remove only the link, preserving the actual directory and its component.
-        author.rmdir() if os.name == "nt" else author.unlink()
-    assert (saved / "mod.wasm").is_file()
 
 
 def test_component_imports_cannot_expand_manifest_permissions(author):

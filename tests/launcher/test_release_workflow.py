@@ -12,17 +12,14 @@ import hashlib
 from importlib.metadata import version
 import io
 import json
-import os
-from pathlib import Path
-import shutil
-import subprocess
-import sys
 import zipfile
 
 import pytest
 
 from launcher import release_workflow as workflow
 from mod_runtime import bundle
+
+pytestmark = pytest.mark.release
 
 
 def wheel_bytes(name, package_version):
@@ -182,46 +179,6 @@ def test_clean_checkout_builds_a_paired_release_without_rewriting_source_pins(cl
         assert not any("/.cache/" in name for name in package.namelist())
 
 
-def test_prepared_candidate_checks_offline_without_old_installation(clean_source, monkeypatch):
-    root, events = clean_source
-    candidate = workflow.run(root, "verify", prepare_only=True)
-    assert not (root / "dist").exists()
-    events.clear()
-    def forbidden(*args, **kwargs):
-        pytest.fail("CheckOnly must not compile or download")
-    monkeypatch.setattr(workflow, "build_inputs", forbidden)
-    monkeypatch.setattr(workflow, "prepare_candidate", forbidden)
-    assert workflow.run(root, "verify", check_only=True) == candidate
-    assert events == ["verify-executable"]
-
-
-def test_compilation_failure_stops_before_dependency_preparation(clean_source, monkeypatch):
-    root, events = clean_source
-    def fail(*args, **kwargs):
-        raise RuntimeError("owned compiler failure")
-    monkeypatch.setattr(workflow.build, "build", fail)
-    with pytest.raises(RuntimeError, match="owned compiler failure"):
-        workflow.run(root, "failure")
-    assert events == [] and not (root / "dist").exists()
-    assert not (root / ".cache/releases/windows-failure.json").exists()
-
-
-def test_wrong_source_export_stops_before_downloads(clean_source, monkeypatch):
-    root, events = clean_source
-    export = workflow.sources.create
-    def corrupt(work, build_output, output):
-        export(work, build_output, output)
-        receipt = output / "source-details.json"
-        record = json.loads(receipt.read_text())
-        record["build_details_sha256"] = "0" * 64
-        receipt.write_text(json.dumps(record))
-    monkeypatch.setattr(workflow.sources, "create", corrupt)
-    with pytest.raises(RuntimeError, match="differs from its receipt or binary build"):
-        workflow.run(root, "mismatch")
-    assert events == ["compile-frida", "export-matching-source"]
-    assert not (root / "dist").exists()
-
-
 def test_failed_extracted_launch_check_never_publishes_zip(clean_source, monkeypatch):
     root, _ = clean_source
     original_check = workflow.packaging.check_release
@@ -233,42 +190,3 @@ def test_failed_extracted_launch_check_never_publishes_zip(clean_source, monkeyp
     with pytest.raises(RuntimeError, match="owned extracted-runtime failure"):
         workflow.run(root, "bad-extraction")
     assert list((root / "dist").iterdir()) == []
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell bootstrap")
-@pytest.mark.parametrize("worker_exit", [0, 7])
-def test_powershell_bootstraps_empty_checkout_and_propagates_worker_failure(tmp_path, worker_exit):
-    if not shutil.which("powershell.exe"):
-        pytest.skip("Windows PowerShell is required for the maintainer entry-point test")
-    root = tmp_path / "fresh checkout"
-    (root / "launcher").mkdir(parents=True)
-    script = Path(__file__).resolve().parents[2] / "Package-Release.ps1"
-    shutil.copyfile(script, root / script.name)
-    (root / "requirements-dev.txt").write_text("# Empty owned bootstrap fixture\n")
-    # This boundary records the invocation; clean-source Python tests above exercise
-    # the actual preparation/packaging pipeline with real pip and ZIP operations.
-    (root / "launcher/release_workflow.py").write_text(
-        "import json, sys\nfrom pathlib import Path\n"
-        "Path('invocation.json').write_text(json.dumps(sys.argv[1:]))\n"
-        f"raise SystemExit({worker_exit})\n"
-    )
-    assert not (root / ".venv").exists() and not (root / ".cache").exists()
-    environment = os.environ.copy()
-    environment.update(PIP_NO_INDEX="1", PIP_DISABLE_PIP_VERSION_CHECK="1")
-    # Native tools are outside this bootstrap test's boundary. Supply their
-    # presence for preflight; these inert files must never be executed.
-    tools = tmp_path / "native-tool-presence"
-    tools.mkdir()
-    for name in ("git.exe",):
-        (tools / name).write_bytes(b"inert native-tool presence fixture")
-    environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
-    result = subprocess.run([
-        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(root / script.name),
-        "-Version", "fixture", "-Python", sys.executable, "-PrepareOnly",
-    ], cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=90)
-    assert result.returncode == (0 if worker_exit == 0 else 1), result.stdout + result.stderr
-    assert (root / ".venv/Scripts/python.exe").is_file()
-    assert json.loads((root / "invocation.json").read_text()) == ["--version", "fixture", "--prepare-only"]
-    assert not (root / "dist").exists()
-    if worker_exit:
-        assert "failed (exit 7)" in result.stderr

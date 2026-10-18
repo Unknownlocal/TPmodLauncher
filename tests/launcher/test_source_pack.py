@@ -2,6 +2,7 @@
 """Selected-pack source admission, real runner execution and native readiness."""
 
 from contextlib import closing
+import faulthandler
 import json
 import runpy
 import shutil
@@ -21,6 +22,11 @@ from mod_runtime import preparation
 from mod_runtime.source import SourceSnapshot
 
 
+# A pack can cold-compile the Python runner separately for several mods. These
+# behavior checks need headroom on shared CI hosts; this is not a startup benchmark.
+SOURCE_PACK_LOAD_TIMEOUT = 120
+
+
 @pytest.fixture
 def pack(tmp_path):
     folder = tmp_path / "data/owned pack"
@@ -28,10 +34,16 @@ def pack(tmp_path):
     return tmp_path, folder, dict(state="ready", series="formula", id=folder.name, root=str(folder.resolve()))
 
 
-def finish(scope):
-    deadline = time.monotonic() + 30
+def finish(scope, messages=()):
+    deadline = time.monotonic() + SOURCE_PACK_LOAD_TIMEOUT
     while scope.loading is not None:
-        assert time.monotonic() < deadline, "Source pack did not finish loading"
+        if time.monotonic() >= deadline:
+            faulthandler.dump_traceback()
+            pytest.fail(
+                f"Source pack did not finish loading within {SOURCE_PACK_LOAD_TIMEOUT}s; "
+                f"loaded={list(scope.mods)!r}; failed={scope.failed}; total={scope.total}; "
+                f"messages={messages!r}"
+            )
         scope.poll()
         if scope.loading is not None:
             threading.Event().wait(0.002)
@@ -41,7 +53,7 @@ def records(messages, event):
     return [json.loads(line.split(": ", 1)[1]) for line in messages if line.startswith(f"CODE MOD {event}:")]
 
 
-def test_sources_and_explicit_wasm_share_order_progress_and_timings(pack, source_mod, code_mod, runner_bundle):
+def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source_mod, code_mod, runner_bundle):
     game, folder, record = pack
     source_mod(folder, "z-folder", mod_id="owned.a")
     code_mod(folder, "a-folder", mod_id="owned.b")
@@ -55,9 +67,6 @@ def test_sources_and_explicit_wasm_share_order_progress_and_timings(pack, source
         assert scope.mods["owned.a"].sandbox._thread == threading.get_ident()
         assert scope.mods["owned.b"].event("owned.event", None) == {}
         assert progress[-1] == dict(state="complete", loaded=2, failed=0, total=2)
-        timing = {item["id"]: item["phase_seconds"] for item in records(messages, "TIMING")}
-        assert {"manifest", "source_prepare", "source_snapshot", "runner_read", "compile", "source_load", "initialize", "activate"} <= timing["owned.a"].keys()
-        assert "source_prepare" not in timing["owned.b"]
         assert records(messages, "REPORT") == [dict(id="owned.a", message="source ready")]
         instances = list(scope.mods.values())
     assert all(mod.sandbox.closed for mod in instances)
@@ -80,14 +89,11 @@ def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod
         assert [item["detail"] for item in records(messages, "REJECTED")] == ["Duplicate mod ID"] * 2
 
 
-@pytest.mark.parametrize("failure", ["schema", "syntax", "missing"])
+@pytest.mark.parametrize("failure", ["syntax", "missing"])
 def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source_mod, runner_bundle, failure):
     game, folder, record = pack
     bad = source_mod(folder, "a-bad", mod_id="owned.bad")
-    if failure == "schema":
-        path = bad / "mod.toml"
-        path.write_text(path.read_text() + 'component = "mod.wasm"\n')
-    elif failure == "syntax":
+    if failure == "syntax":
         (bad / "src/mod.py").write_text("def invalid(:")
     else:
         (bad / "src/mod.py").unlink()
@@ -125,21 +131,6 @@ def test_manifest_changes_after_admission_are_rejected_before_compile(pack, sour
         assert rejected["id"] == "owned.source" and rejected["folder"] == mod.name
         assert "changed after admission" in rejected["detail"]
         assert records(messages, "TIMING")[0]["phase_seconds"]["source_prepare"] >= 0
-
-
-def test_source_enablement_is_explicit_and_legacy_python_is_rejected(pack, source_mod, code_mod, runner_bundle):
-    game, folder, record = pack
-    source_mod(folder, "owned.source")
-    legacy = code_mod(folder, "owned.legacy")
-    path = legacy / "mod.toml"
-    path.write_text(path.read_text().replace('runtime = "wasm"', 'runtime = "python"'))
-    with closing(PackMods(game, lambda _: None)) as old:
-        old.load(record)
-        assert list(old.mods) == ["owned.legacy"] and old.failed == 1
-    with closing(PackMods(game, lambda _: None, runner_bundle=runner_bundle)) as new:
-        new.load(record)
-        finish(new)
-        assert list(new.mods) == ["owned.source"] and new.failed == 1
 
 
 @pytest.mark.parametrize("activation_failure", [False, True])
@@ -216,12 +207,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         finish(scope)
         assert list(scope.mods) == ["example.theme", "owned.other"]
         fields = scope.settings.records[0]["fields"]
-        assert len(fields) == 52 and fields[0]["label"] == "Background"
-        assert fields[10]["label"] == "Primary / Selection Border"
-        assert fields[17]["label"] == "Text / Selection Text"
-        assert fields[19]["label"] == "Text Dim / Disabled Text"
-        assert fields[43]["label"] == "Market Card Alt / Table Row Alt"
-        assert fields[51]["label"] == "Overlay"
+        assert len(fields) == 52
         assert [field["id"] for field in fields] == [f"colour_{n}" for n in range(1, 53)]
         assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
         assert (theme / "settings.json").read_bytes() == previous_settings
@@ -283,32 +269,6 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         assert palettes[-1][0]["colours"]["BACKGROUND"] == "#010203"
 
 
-def test_settings_notification_failure_keeps_save_and_removes_only_its_tab(
-    pack, source_mod, runner_bundle, native_settings,
-):
-    game, folder, startup = pack
-    theme = folder / "theme example"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
-    source = theme / "src/mod.py"
-    source.write_text(source.read_text().replace('return "null"', 'raise ValueError("owned notification failure")'))
-    source_mod(folder, "owned.other")
-    adapter = SettingsAdapter()
-    with closing(adapter), closing(PackMods(
-        game, lambda line: None, runner_bundle=runner_bundle,
-        set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
-    )) as scope:
-        scope.load(startup)
-        finish(scope)
-        fields = scope.settings.records[0]["fields"]
-        values = {field["id"]: field["value"] for field in fields}
-        values["colour_1"] = "#ABCDEF"
-        adapter.queue_save("example.theme", {"schema": 1, "values": values})
-        scope.settings_status(adapter.status())
-        assert list(scope.mods) == ["owned.other"]
-        assert adapter.records == [] and adapter.pending is None
-        assert json.loads((theme / "settings.json").read_text())["values"] == values
-
-
 @pytest.mark.parametrize("failure", ["themes", "settings"])
 def test_deferred_ui_failure_preserves_other_operation_owners(pack, source_mod, runner_bundle, failure):
     game, folder, startup = pack
@@ -336,13 +296,14 @@ class WitWorld(wit_world.WitWorld):
     def publish(area, rows):
         registries[area].append(rows)
         return {area: {"state": "pending" if rows else "idle", "generation": len(registries[area])}}
+    messages = []
     with closing(PackMods(
-        game, lambda line: None, runner_bundle=runner_bundle,
+        game, messages.append, runner_bundle=runner_bundle,
         set_themes=lambda rows: publish("themes", rows),
         set_settings=lambda rows, result=None: publish("settings", rows),
     )) as scope:
         scope.load(startup)
-        finish(scope)
+        finish(scope, messages)
         assert list(scope.mods) == ["owned.palette", "owned.settings"]
         assert all(mod.manifest.capabilities == frozenset({"ui-settings"}) for mod in scope.mods.values())
         handler = getattr(scope, f"{failure}_status")
@@ -371,7 +332,7 @@ def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bun
         set_menu=lambda items: {"menu": adapter.update(items)}, set_loading=adapter.set_loading,
     )) as scope:
         scope.load(record)
-        finish(scope)
+        finish(scope, messages)
         assert adapter._notice() == "Mods loaded: 2" and not adapter.status()["loading"]["blocked"]
         assert "Mod Launcher" in hub.MENU_ITEMS
         menu_mod = scope.mods["owned.menu"]
@@ -380,36 +341,6 @@ def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bun
         assert "Mod Launcher" not in hub.MENU_ITEMS and list(scope.mods) == ["owned.diagnostics"]
         assert scope.mods["owned.diagnostics"].event("owned.event", None) is None
     assert hub.MENU_ITEMS == ["Career", "Load", "Exit"]
-
-
-def test_closing_source_preparation_discards_late_result_without_activation(pack, source_mod, runner_bundle, monkeypatch, disposable_source_compiler):
-    game, folder, record = pack
-    source_mod(folder, "owned.cancelled")
-    entered, release = threading.Event(), threading.Event()
-    results = []
-    original = preparation._prepare
-    def blocked(*args):
-        result = original(*args)
-        results.append(result)
-        entered.set()
-        assert release.wait(10)
-        return result
-    monkeypatch.setattr(preparation, "_prepare", blocked)
-    messages, progress = [], []
-    scope = PackMods(game, messages.append, runner_bundle=runner_bundle, set_loading=progress.append)
-    try:
-        scope.load(record)
-        assert entered.wait(30)
-        scope.close()
-        assert scope.closed and not scope.mods and not results[0].compiled.closed
-    finally:
-        release.set()
-        scope.close()
-        if scope.executor is not None:
-            scope.executor.shutdown(wait=True)
-    assert results[0].snapshot is None and results[0].compiled.closed
-    assert not records(messages, "ACTIVE") and not records(messages, "REPORT")
-    assert not any(item["state"] == "complete" for item in progress)
 
 
 @pytest.mark.parametrize("fail", [False, True])

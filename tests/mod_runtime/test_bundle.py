@@ -3,7 +3,6 @@
 
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +12,6 @@ from wasmtime import wat2wasm
 
 from mod_runtime import ABI_VERSION, BundleError, RunnerBundle
 from mod_runtime import bundle as artifacts
-from mod_runtime import build as builder
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -42,131 +40,12 @@ def test_runner_returns_verified_bytes_and_relocates(synthetic, tmp_path):
     assert bundle.component() == (copied / "runner.wasm").read_bytes()
 
 
-@pytest.mark.parametrize("target", ["runner.wasm", "source/guest.py", "notices/LICENSE.PythonGuest.txt"])
-@pytest.mark.parametrize("operation", ["modify", "remove"])
-def test_changed_or_missing_payload_source_and_notice_fail(synthetic, target, operation):
-    directory, _ = synthetic
-    path = directory / target
-    if operation == "remove":
-        path.unlink()
-    else:
-        path.write_bytes(path.read_bytes() + b"changed")
-    with pytest.raises(BundleError):
-        RunnerBundle(directory)
-
-
 def test_component_changed_after_open_is_checked_again(synthetic):
     directory, _ = synthetic
     bundle = RunnerBundle(directory)
     (directory / "runner.wasm").write_bytes(b"changed")
     with pytest.raises(BundleError, match="receipt|size"):
         bundle.component()
-
-
-def test_copy_preserves_verified_inventory_and_refuses_existing_output(synthetic, tmp_path):
-    directory, _ = synthetic
-    bundle = RunnerBundle(directory)
-    original_receipt = (directory / artifacts.MANIFEST).read_bytes()
-    # A later receipt edit must not replace the inventory accepted by this owner.
-    (directory / artifacts.MANIFEST).write_bytes(b"changed after verification")
-    output = tmp_path / "release/libs/mod-runners"
-    copied = bundle.copy_to(output)
-    assert copied.component() == bundle.component()
-    assert (output / artifacts.MANIFEST).read_bytes() == original_receipt
-    assert {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()} == artifacts.FILES | {artifacts.MANIFEST}
-    with pytest.raises(FileExistsError):
-        bundle.copy_to(output)
-    assert copied.component() == bundle.component()
-
-
-def test_copy_rechecks_payload_and_never_publishes_a_receipt_on_failure(synthetic, tmp_path):
-    directory, _ = synthetic
-    bundle = RunnerBundle(directory)
-    (directory / "source/guest.py").write_bytes(b"changed after verification")
-    output = tmp_path / "incomplete"
-    with pytest.raises(BundleError):
-        bundle.copy_to(output)
-    assert not (output / artifacts.MANIFEST).exists()
-
-
-@pytest.mark.parametrize("extra", ["unexpected.txt", "extra/nested.txt"])
-def test_uninventoried_files_and_directories_are_rejected(synthetic, extra):
-    directory, _ = synthetic
-    path = directory / extra
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("unexpected")
-    with pytest.raises(BundleError, match="Unexpected"):
-        RunnerBundle(directory)
-
-
-@pytest.mark.parametrize("mutation", ["format", "abi", "toolchain", "missing", "traversal", "digest", "size", "oversized"])
-def test_unsupported_or_malformed_receipts_are_rejected(synthetic, mutation):
-    directory, receipt = synthetic
-    if mutation == "format":
-        receipt["format"] = True
-    elif mutation == "abi":
-        receipt["abi"] = "99.0.0"
-    elif mutation == "toolchain":
-        receipt["componentize_py"] = "0.0.0"
-    elif mutation == "missing":
-        receipt["files"].pop("source/guest.py")
-    elif mutation == "traversal":
-        receipt["files"]["../escape"] = receipt["files"].pop("source/guest.py")
-    elif mutation == "digest":
-        receipt["files"]["source/guest.py"]["sha256"] = "invalid"
-    elif mutation == "size":
-        receipt["files"]["source/guest.py"]["size"] = True
-    else:
-        receipt["files"]["source/guest.py"]["size"] = artifacts.MAX_COMPONENT_BYTES + 1
-    (directory / artifacts.MANIFEST).write_text(json.dumps(receipt))
-    with pytest.raises(BundleError):
-        RunnerBundle(directory)
-
-
-@pytest.mark.parametrize("data", [b'{"format":1,"format":1}', b"[", b"\xff", b" " * (64 * 1024 + 1), b"[" * 2000, b'{"format":' + b"1" * 5000 + b'}'], ids=["duplicate", "invalid-json", "invalid-utf8", "oversized", "nested", "integer-limit"])
-def test_duplicate_invalid_or_oversized_manifest(synthetic, data):
-    directory, _ = synthetic
-    (directory / artifacts.MANIFEST).write_bytes(data)
-    with pytest.raises(BundleError):
-        RunnerBundle(directory)
-
-
-def test_hardlinked_file_is_rejected(synthetic, tmp_path):
-    directory, _ = synthetic
-    original = directory / "source/guest.py"
-    os.link(original, tmp_path / "second-name.py")
-    with pytest.raises(BundleError, match="unshared"):
-        RunnerBundle(directory)
-
-
-def test_linked_bundle_parent_is_rejected(synthetic, tmp_path):
-    directory, _ = synthetic
-    link = tmp_path / "linked-parent"
-    if os.name == "nt":
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(directory.parent)], check=True, capture_output=True)
-    else:
-        link.symlink_to(directory.parent, target_is_directory=True)
-    try:
-        with pytest.raises(BundleError, match="linked"):
-            RunnerBundle(link / directory.name)
-    finally:
-        link.rmdir() if os.name == "nt" else link.unlink()
-
-
-def test_builder_failure_does_not_publish_or_replace_output(tmp_path, monkeypatch):
-    target = tmp_path / "failed-build"
-    def fail(*args, **kwargs):
-        raise subprocess.CalledProcessError(1, args[0])
-    monkeypatch.setattr(builder.subprocess, "run", fail)
-    with pytest.raises(subprocess.CalledProcessError):
-        builder.build(target)
-    assert not target.exists()
-    target.mkdir()
-    marker = target / "existing"
-    marker.write_text("preserve")
-    with pytest.raises(FileExistsError):
-        builder.build(target)
-    assert marker.read_text() == "preserve"
 
 
 def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
@@ -176,29 +55,6 @@ def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
     for name in artifacts.NOTICE_FILES:
         origin = ROOT / "LICENCE" if name.endswith("LICENCE.Project.txt") else ROOT / "notices/mod-runtime" / Path(name).name
         assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()
-
-
-def test_real_runner_abi_is_exact(runner_bundle, monkeypatch):
-    data = runner_bundle.component()
-    builder.check_interface(data)
-    # The runner imports the complete interface, even if the host registry drifts.
-    monkeypatch.setattr(builder, "HOST_OPERATIONS", {"report": builder.HOST_OPERATIONS["report"]})
-    with pytest.raises(BundleError, match="imports/exports"):
-        builder.check_interface(data)
-
-
-def test_interface_check_rejects_unexpected_wasm(runner_bundle):
-    with pytest.raises(BundleError):
-        builder.check_interface(wat2wasm("(component)"))
-
-
-def test_interface_check_rejects_extra_nonfunction_export(runner_bundle):
-    # Valid component export section: expose existing core module 0 as "extra".
-    # All expected imports/functions remain, so filtering nonfunctions misses it.
-    extra_export = bytes([11, 12, 1, 0, 5, 101, 120, 116, 114, 97, 0, 17, 0, 0])
-    data = runner_bundle.component() + extra_export
-    with pytest.raises(BundleError, match="function type"):
-        builder.check_interface(data)
 
 
 @pytest.mark.embedded

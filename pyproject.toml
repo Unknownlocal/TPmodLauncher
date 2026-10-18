@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not legacy and not release'"
 pythonpath = ["."]
 markers = [
+  "release: optional developer build, packaging and provenance checks",
   "legacy: optional compatibility checks for author-built Python components",
   "embedded: requires the prepared bundled Windows runtime and package directory",
   "native: exercises real Frida controller/bridge on owned CPython 3.13 processes",

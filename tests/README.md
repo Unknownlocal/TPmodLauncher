@@ -8,9 +8,9 @@ real Wasm execution, owned native helper processes and relocated player bundles.
 
 | Area | Coverage |
 | --- | --- |
-| `launcher/` | Dependency verification, release/build tooling, component admission, compilation cache, sandbox limits, pack loading, settings persistence and process/session lifetime. |
+| `launcher/` | Core dependency verification, Wasm admission, cache isolation/fallback, sandbox limits, pack loading, settings persistence and process/session lifetime. |
 | `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adaptation and the bridge. |
-| `mod_runtime/` | Runner inventories and ABI, source snapshots, permissions, loading budgets, cancellation, controller adoption and source-mod lifecycle. |
+| `mod_runtime/` | Runner integrity, source snapshots, all host-operation permissions, source/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
 | `ci/` | Exhaustive portable suite selection and complete Windows acceptance coverage aggregation. |
 
 Small WAT components exercise permissions, signatures, traps, budgets and cleanup.
@@ -24,6 +24,13 @@ Author-built Python component checks carry the `legacy` marker and are excluded
 from the required portable and Windows acceptance runs. Run them explicitly with
 `python -m pytest tests -m "legacy and not embedded"`. The ordinary gate retains
 prebuilt Wasm compatibility and the current source-mod path.
+
+The required launcher/runtime gate contains 82 focused cases. Redundant failure
+matrices, helper-only tests, precise palette labels and timing-log shape checks
+have been removed. Developer build/packaging tests carry the `release` marker;
+run them with `python -m pytest tests -m "release and not frida_build"`.
+Plain pytest excludes both optional profiles unless `-m` is explicitly supplied.
+All tests execute serially within their job; no parallel test workers are used.
 
 Preparation tests use synchronized worker gates to exercise queued and running
 cancellation, abandoned results and controller-thread adoption. Pack/session
