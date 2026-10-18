@@ -14,6 +14,8 @@ class PayloadMeasure:
     utf8_bytes: int
 
     def check(self):
+        # These limits apply to one validator invocation envelope. The complete
+        # regulations.json file has its own 1 MiB limit in schema.MAX_FILE_BYTES.
         if self.nodes > 1024:
             raise ValueError("Regulation payload exceeds its node limit")
         if self.depth > 8:

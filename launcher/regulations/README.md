@@ -83,8 +83,9 @@ rejected; native fields retain the game's last-value-wins behavior.
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session, and 128 scripts per owner.
 Known policy data is checked against a minimum invocation envelope for the
-4,096-byte/1,024-node/eight-container-level limits. This is a lower-bound check:
-actual context and upcoming-policy envelopes still need dispatch-time checks.
+4,096-byte/1,024-node/eight-container-level limits. These apply to each validator
+invocation payload; the complete `regulations.json` file has the separate 1 MiB
+limit described above (tentative). 
 
 Preparation is atomic. `owners`, `native_document`, `document` and `revisions`
 return independent data. `document` is a candidate merged view for future binding
