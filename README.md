@@ -7,23 +7,43 @@ Mainly a learning exercise in Frida, architecting a design and trying to optimis
 - [Licence](LICENCE)
 - [Attribution](ATTRIBUTION.txt)
 
-## Run the launcher
+## Install and run the launcher (Windows)
 
 Keep `modLauncher` directly beside `TeamPrincipal.exe` in the game's installation
 folder. Use the prepared launcher bundle, including its `libs` directory and
 `bundled_packages.toml`. The launcher uses its bundled Windows x64 Python runtime
-and dependencies.
+and dependencies. You do not need to install Python, pip or any Python packages.
+Download the prepared release ZIP; the repository's source-only download does
+not contain the runtime.
 
-In Steam, open the game's **Properties > General > Launch Options** and enter:
+Close the game. In Steam, choose **Manage > Browse local files**, then extract
+the ZIP there. The resulting layout must be `TeamPrincipal.exe` beside
+`modLauncher/`, not an extra folder containing `modLauncher/`.
+
+The packaged ZIP includes `modLauncher/SteamLaunchOptions.cmd`. After extracting
+it, double-click the helper to display the exact launch line for your installation,
+then copy that line into Steam's **Properties > General > Launch Options**.
+The helper uses the bundled interpreter and prints the line without changing
+Steam settings or starting the game. Run it again if you move the game folder.
+The helper is generated during packaging and is absent from the source checkout.
+
+If your copy has no helper, enter the line manually in Steam's **Properties >
+General > Launch Options**:
 
 ```text
-"<game-root>\modLauncher\libs\python-3.13.16-embed-amd64\python.exe" -B "<game-root>\modLauncher\launcher\entry.py" -- %command%
+"C:\Program Files (x86)\Steam\steamapps\common\Team Principal A Racing Manager\modLauncher\libs\python-3.13.16-embed-amd64\python.exe" -B "modLauncher\launcher\entry.py" -- %command%
 ```
 
-Replace both occurrences of `<game-root>` with the full installation path of
-Team Principal: A Racing Manager. Keep the quotes, `--` and `%command%` as shown,
-then start the game through Steam. Steam supplies the installed executable and
-its arguments after `--`.
+If the game is installed elsewhere, adjust only the absolute path to `python.exe`.
+Keep the script path relative as `modLauncher\launcher\entry.py` to keep the line
+short enough for Steam's launch options. Keep the quotes, `--` and `%command%`
+as shown, then start the game through Steam. Steam supplies the installed
+executable and its arguments after `--`.
+
+To return to ordinary game startup, clear Steam's Launch Options. For an update,
+close the game and launcher, replace the old `modLauncher` folder with the new
+complete folder, and regenerate the launch line. Installed mods live separately
+inside your data packs.
 
 Select the Formula data pack containing your installed code mods. The launcher
 loads that process's startup pack and stays running while it tracks the game and
@@ -33,6 +53,38 @@ Loading results and mod diagnostics appear in `modLauncher/logs/launcher.log`,
 which is replaced at each launcher run. The native menu shows loading progress
 and keeps season actions unavailable until code loading and menu registration
 have settled.
+
+### Linux through Proton/Wine (experimental, untested)
+
+Use the same Windows release bundle. The intended approach is to run its bundled
+Windows Python and the game within the same Proton/Wine environment; no native
+Linux Python runtime is included or required by that approach. Game compatibility
+under Proton does not confirm launcher compatibility: Frida injection, child
+tracking and mod loading have not been tested there.
+
+The line above and the copy helper target Windows Steam. Linux Steam uses different
+paths and a Proton command wrapper; do not assume that copying the Windows line
+unchanged will work. A verified Proton launch recipe is not yet available.
+
+### Package a Windows release
+
+From the repository root, run:
+
+```powershell
+.\Package-Release.ps1 -Version 0.1.0
+```
+
+The script sets up the developer environment, fetches and builds the pinned
+Frida sources, exports the matching source archive, builds the trusted runner,
+prepares the bundled Python and dependencies, and verifies the extracted ZIP.
+It writes the ZIP and SHA-256 checksum into `dist/`. Existing versioned outputs
+are preserved.
+
+No existing cache or launcher installation is needed. Use `-PrepareOnly` to build
+and verify a candidate without a ZIP, or `-CheckOnly` to recheck the last prepared
+candidate for that version without setup or downloads.
+Developer prerequisites, WSL usage and optional overrides are in the
+[packaging guide](launcher/PACKAGING.md).
 
 ## Instructions for modders
 
@@ -274,5 +326,8 @@ removes their native UI registrations and restores owned hooks.
 Release tooling builds the fixed runner with the pinned developer componentizer,
 prepares the bundled interpreter and dependencies, and retains trusted sources
 and upstream notices. Dependencies use `bundled_packages.toml`; the runner has
-its own exact file inventory. Players use the prepared artifacts without a
+its own exact file inventory. Packaging selects those prepared files, original
+launcher sources and matching Frida build/source materials, generates the Steam
+launch-options helper, and verifies the extracted Windows bundle before writing
+the release ZIP and checksum. Players use the prepared artifacts without a
 componentizer or per-mod Wasm build.

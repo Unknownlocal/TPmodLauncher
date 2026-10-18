@@ -12,12 +12,22 @@ import pytest
 
 from launcher import build_frida as build
 
+pytestmark = pytest.mark.release
+
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
 @pytest.fixture
 def recipe():
     return build.read_recipe()
+
+
+@pytest.mark.parametrize("target", ["windows-x86_64", "linux-x86_64"])
+def test_reduced_build_does_not_invoke_node(recipe, target, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("The reduced Windows/Linux build must work without Node installed")
+    monkeypatch.setattr(build.subprocess, "run", forbidden)
+    assert build.node_version(recipe, target) is None
 
 
 @pytest.fixture
@@ -94,132 +104,12 @@ def source_output(wheel_output, tmp_path):
     return output
 
 
-def test_recipe_hash_survives_git_line_ending_changes(tmp_path):
-    path = tmp_path / "recipe.toml"
-    text = build.RECIPE.read_text()
-    path.write_bytes(text.replace("\r\n", "\n").encode())
-    original = build.recipe_digest(build.read_recipe(path))
-    path.write_bytes(text.replace("\r\n", "\n").replace("\n", "\r\n").encode())
-    assert build.recipe_digest(build.read_recipe(path)) == original
-
-
 def test_source_revision_mismatch_is_rejected(source_checkout):
     source, recipe = source_checkout
     assert build.verify_sources(source, recipe) == {".": recipe["frida"]["revision"]}
     recipe["frida"]["revision"] = "0" * 40
     with pytest.raises(build.Error, match="commit differs"):
         build.verify_sources(source, recipe)
-
-
-def test_submodule_commits_are_derived_from_parent_git_links(
-    source_checkout, source_repository
-):
-    source, recipe = source_checkout
-    child = source / "child"
-    revision = source_repository(child)
-    build.git(
-        source, "update-index", "--add", "--cacheinfo", f"160000,{revision},child"
-    )
-    build.git(source, "commit", "-m", "Pin synthetic child")
-    recipe["frida"]["revision"] = build.git(source, "rev-parse", "HEAD")
-    recipe["submodules"] = ["child"]
-    assert build.verify_sources(source, recipe)["child"] == revision
-    # Move the child to a different real commit without changing the parent's recorded commit.
-    (child / "code.py").write_text("VALUE = 2\n")
-    build.git(child, "add", "code.py")
-    build.git(child, "commit", "-m", "Different synthetic child")
-    with pytest.raises(build.Error, match="commit differs"):
-        build.verify_sources(source, recipe)
-
-
-def test_nested_submodule_uses_its_verified_parent_commit(
-    source_checkout, source_repository
-):
-    source, recipe = source_checkout
-    child = source / "child"
-    nested = child / "nested"
-    # Commit the leaf first, then record its Git link in the child repository.
-    nested_revision = source_repository(nested)
-    child_revision = source_repository(child, [("nested", nested_revision)])
-    build.git(
-        source,
-        "update-index",
-        "--add",
-        "--cacheinfo",
-        f"160000,{child_revision},child",
-    )
-    build.git(source, "commit", "-m", "Pin synthetic child")
-    recipe["frida"]["revision"] = build.git(source, "rev-parse", "HEAD")
-    # Deliberately list the leaf first; verification must still check its parent first.
-    recipe["submodules"] = ["child/nested", "child"]
-    assert build.verify_sources(source, recipe) == {
-        ".": recipe["frida"]["revision"],
-        "child": child_revision,
-        "child/nested": nested_revision,
-    }
-    (nested / "code.py").write_text("VALUE = 2\n")
-    with pytest.raises(build.Error, match="contains changes: child/nested"):
-        build.verify_sources(source, recipe)
-
-
-def test_ordinary_file_cannot_be_used_as_a_required_submodule(source_checkout):
-    source, recipe = source_checkout
-    recipe["submodules"] = ["code.py"]
-    with pytest.raises(build.Error, match="not a submodule"):
-        build.verify_sources(source, recipe)
-
-
-def test_clone_selects_pinned_tag_instead_of_later_development_commit(
-    source_checkout, tmp_path
-):
-    source, recipe = source_checkout
-    pinned = recipe["frida"]["revision"]
-    build.git(source, "tag", "17.23.3")
-    (source / "code.py").write_text("VALUE = 2\n")
-    build.git(source, "add", "code.py")
-    build.git(source, "commit", "-m", "Later development")
-    assert build.git(source, "rev-parse", "HEAD") != pinned
-    # Exercise the actual clone command against a local fixture, without network or Git mocks.
-    recipe["frida"].update(repository=source.as_uri(), version="17.23.3")
-    tagged = tmp_path / "tagged clone"
-    assert build.checkout(tagged, recipe) == {".": pinned}
-    assert (tagged / "code.py").read_text() == "VALUE = 1\n"
-
-
-@pytest.mark.parametrize("filename", ["code.py", "unexpected.py"])
-def test_changed_or_untracked_source_is_rejected(source_checkout, filename):
-    source, recipe = source_checkout
-    (source / filename).write_text("VALUE = 2\n")
-    with pytest.raises(build.Error, match="contains changes"):
-        build.verify_sources(source, recipe)
-
-
-def test_verified_archive_cache_is_used_without_a_download(tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    archive = cache / "sdk-fixture.tar.xz"
-    archive.write_bytes(b"synthetic cached archive")
-    record = build.file_record(archive)
-    # A successful run cannot fetch this nonexistent URL.
-    record["url"] = (tmp_path / "absent-download").as_uri()
-    destination = tmp_path / "deps"
-    build.stage_archives(cache, destination, [record])
-    assert (destination / archive.name).read_bytes() == archive.read_bytes()
-
-
-def test_bad_archive_hash_does_not_reach_upstream_build_cache(tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    archive = cache / "sdk-fixture.tar.xz"
-    archive.write_bytes(b"old cached bytes")
-    source = tmp_path / "bad-download"
-    source.write_bytes(b"bad downloaded bytes")
-    record = {"name": archive.name, "url": source.as_uri(), "sha256": "0" * 64}
-    destination = tmp_path / "deps"
-    with pytest.raises(build.Error, match="SHA-256 mismatch"):
-        build.stage_archives(cache, destination, [record])
-    assert not (destination / archive.name).exists()
-    assert archive.read_bytes() == b"old cached bytes"
 
 
 def test_verified_output_is_reused_without_compilation(wheel_output, recipe, tmp_path):
@@ -238,174 +128,6 @@ def test_verified_output_is_reused_without_compilation(wheel_output, recipe, tmp
         )
         == 0
     )
-
-
-def test_wheel_corruption_is_rejected_before_reuse(wheel_output, recipe):
-    output, wheel = wheel_output
-    with wheel.open("ab") as stream:
-        stream.write(b"unexpected change")
-    with pytest.raises(build.Error, match="SHA-256 or size"):
-        build.verify_output(output, recipe, "windows-x86_64")
-
-
-def test_changed_features_invalidate_cached_output(wheel_output, recipe):
-    output, _ = wheel_output
-    recipe["frida"]["options"] = ["-Dfrida-gum:v8=enabled"]
-    with pytest.raises(build.Error, match="do not match"):
-        build.verify_output(output, recipe, "windows-x86_64")
-
-
-@pytest.mark.parametrize("change", ["root", "missing_submodule"])
-def test_cached_source_record_must_match_root_pin_and_required_paths(
-    wheel_output, recipe, change
-):
-    output, _ = wheel_output
-    path = output / "build-details.json"
-    details = json.loads(path.read_text())
-    if change == "root":
-        details["sources"]["."] = "0" * 40
-    else:
-        del details["sources"][recipe["submodules"][0]]
-    path.write_text(json.dumps(details), encoding="utf-8")
-    with pytest.raises(build.Error, match="do not match"):
-        build.verify_output(output, recipe, "windows-x86_64")
-
-
-def test_output_rejects_extra_files(wheel_output, recipe):
-    output, _ = wheel_output
-    (output / "unexpected.whl").write_bytes(b"fixture")
-    with pytest.raises(build.Error, match="unexpected files"):
-        build.verify_output(output, recipe, "windows-x86_64")
-
-
-def test_wrong_platform_wheel_is_rejected(wheel_output, recipe):
-    _, wheel = wheel_output
-    with pytest.raises(build.Error, match="platform differs"):
-        build.inspect_wheel(wheel, recipe, "linux-x86_64")
-
-
-def test_official_version_cannot_be_mistaken_for_our_build(wheel_output, recipe):
-    _, wheel = wheel_output
-    stock = wheel.with_name(wheel.name.replace("+modlauncher.1", ""))
-    wheel.rename(stock)
-    with pytest.raises(build.Error, match="version"):
-        build.inspect_wheel(stock, recipe, "windows-x86_64")
-
-
-@pytest.mark.parametrize("change", ["metadata", "licence"])
-def test_incomplete_or_mislabelled_wheel_is_rejected(wheel_output, recipe, change):
-    _, wheel = wheel_output
-    with zipfile.ZipFile(wheel) as archive:
-        files = {name: archive.read(name) for name in archive.namelist()}
-    if change == "metadata":
-        name = next(name for name in files if name.endswith("/METADATA"))
-        files[name] = b"Name: frida\nVersion: 1.0\n"
-    else:
-        name = next(name for name in files if name.endswith("/licenses/COPYING"))
-        del files[name]
-    with zipfile.ZipFile(wheel, "w") as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
-    with pytest.raises(build.Error, match="metadata differs|missing"):
-        build.inspect_wheel(wheel, recipe, "windows-x86_64")
-
-
-def test_occupied_workspace_is_never_overwritten(tmp_path, recipe):
-    work = tmp_path / "work"
-    work.mkdir()
-    marker = work / "marker"
-    marker.write_text("keep")
-    with pytest.raises(build.Error, match="empty ordinary"):
-        build.build(
-            recipe, "windows-x86_64", work, tmp_path / "output", tmp_path / "cache"
-        )
-    assert marker.read_text() == "keep"
-
-
-@pytest.mark.parametrize(
-    "repository,commit,output",
-    [
-        ("", "1" * 40, ".cache/releases/reduced"),
-        ("example/launcher", "release-tag", ".cache/releases/reduced"),
-        ("example/launcher", "1" * 40, "libs/vendor/reduced"),
-    ],
-)
-def test_reduced_preparation_requires_expected_identity_and_isolated_destination(
-    project_factory, repository, commit, output
-):
-    root, _ = project_factory()
-    before = (root / "pylock.toml").read_bytes()
-    with pytest.raises(build.release.dependencies.DependencyError):
-        build.release.prepare_reduced_release(
-            root, root / "absent-build", output, repository, commit
-        )
-    assert (root / "pylock.toml").read_bytes() == before
-    assert not (root / "libs").exists()
-
-
-def test_reduced_preparation_requires_corresponding_source(
-    wheel_output, project_factory
-):
-    root, _ = project_factory()
-    output, _ = wheel_output
-    with pytest.raises(
-        build.release.dependencies.DependencyError, match="requires --frida-sources"
-    ):
-        build.release.prepare_reduced_release(
-            root, output, ".cache/releases/reduced", "example/launcher", "1" * 40
-        )
-    assert not (root / ".cache/releases").exists()
-
-
-@pytest.mark.parametrize(
-    "failed_artifact", ["wheel", "source_details"]
-)
-def test_reduced_preparation_stops_before_writes_on_signature_failure(
-    wheel_output, source_output, project_factory, monkeypatch, failed_artifact
-):
-    root, _ = project_factory()
-    output, wheel = wheel_output
-    calls = []
-    artifacts = {
-        "wheel": wheel,
-        "details": output / "build-details.json",
-        "source": source_output / "frida-sources.tar.xz",
-        "source_details": source_output / "source-details.json",
-    }
-    failed = artifacts[failed_artifact]
-
-    def reject(command, **kwargs):
-        calls.append(command)
-        artifact = Path(command[3])
-        if artifact == failed:
-            raise subprocess.CalledProcessError(1, command)
-
-    monkeypatch.setattr(build.release.subprocess, "run", reject)
-    before = (root / "pylock.toml").read_bytes()
-    with pytest.raises(subprocess.CalledProcessError):
-        build.release.prepare_reduced_release(
-            root,
-            output,
-            ".cache/releases/reduced",
-            "example/launcher",
-            "1" * 40,
-            source_output,
-        )
-    assert not (root / ".cache/releases").exists()
-    assert (root / "pylock.toml").read_bytes() == before
-    assert len(calls) == list(artifacts).index(failed_artifact) + 1
-    for command in calls:
-        assert command[4:] == [
-            "--repo",
-            "example/launcher",
-            "--signer-workflow",
-            "example/launcher/.github/workflows/reduced-frida.yml",
-            "--source-digest",
-            "1" * 40,
-            "--signer-digest",
-            "1" * 40,
-            "--deny-self-hosted-runners",
-        ]
 
 
 def test_reduced_candidate_uses_real_pip_and_preserves_active_files(

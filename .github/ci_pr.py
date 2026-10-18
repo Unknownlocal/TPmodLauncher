@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Claim one manual CI attempt per PR head commit and publish its result.
 
+Also publish a separate informational check linking to the manual entry point.
 Only trusted main-branch jobs execute this helper with a write token. Jobs
 executing PR code receive read-only tokens and check out the resolved SHA.
 """
@@ -56,6 +57,35 @@ def positive_number(value):
 
 def run_url(api, run_id):
     return f"https://github.com/{api.repository}/actions/runs/{positive_number(run_id)}"
+
+
+def instructions(api, number):
+    number = positive_number(number)
+    pr = api.request("GET", f"/pulls/{number}")
+    if pr["state"] != "open" or pr["base"]["ref"] != "main":
+        raise ValueError("CI instructions require an open pull request targeting main")
+    sha = sha_value(pr["head"]["sha"])
+    url = f"https://github.com/{api.repository}/actions/workflows/tests.yml"
+    summary = (
+        f"[Open Test suite to run CI for PR #{number}]({url}).\n\n"
+        "1. Click **Run workflow**.\n"
+        "2. Select **main** in the branch dropdown.\n"
+        f"3. Enter **{number}** as the PR number, then click **Run workflow**.\n\n"
+        "Repository write access is required. Tests run only when requested. "
+        "Each commit gets one attempt; a failed or cancelled attempt requires a new commit.\n\n"
+        "This check provides instructions only. The separate `manual-ci` status "
+        "must pass before merging."
+    )
+    api.request("POST", "/check-runs", {
+        "name": "Run Tests",
+        "head_sha": sha,
+        "details_url": url,
+        "external_id": f"manual-ci-instructions-pr-{number}",
+        "status": "completed",
+        "conclusion": "neutral",
+        "output": {"title": f"Run Tests for PR #{number}", "summary": summary},
+    })
+    return summary
 
 
 def require_first_attempt(ref, attempt):
@@ -135,12 +165,14 @@ def publish(api, sha, run_id, result):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("claim", "publish"))
+    parser.add_argument("operation", choices=("claim", "publish", "instructions"))
     arguments = parser.parse_args(argv)
     require_first_attempt(os.environ["GITHUB_REF"], os.environ["GITHUB_RUN_ATTEMPT"])
     api = GitHub(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
     run_id = os.environ["GITHUB_RUN_ID"]
-    if arguments.operation == "claim":
+    if arguments.operation == "instructions":
+        summary = instructions(api, os.environ["PR_NUMBER"])
+    elif arguments.operation == "claim":
         record = claim(api, os.environ["PR_NUMBER"], run_id, os.environ["GITHUB_SHA"])
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
             output.write(f"sha={record['sha']}\npr={record['pr']}\n")

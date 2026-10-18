@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Manual test instructions
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  instructions:
+    name: Link to Run workflow
+    if: ${{ github.event.pull_request.state == 'open' && github.run_attempt == '1' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    steps:
+      # Read only the trusted base-branch helper. Never check out or execute PR code.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Add instructions and a direct workflow link to the PR checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 -B .github/ci_pr.py instructions

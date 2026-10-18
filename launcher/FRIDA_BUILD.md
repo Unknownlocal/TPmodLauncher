@@ -35,7 +35,10 @@ flag or user-installed dependencies.
 
 - A developer Python 3.12 or newer and the project's local venv, populated from
   `requirements-dev.txt`. The bundled embeddable runtime lacks development headers.
-- Git, Node.js 18 or newer and npm available on PATH.
+- Git available on PATH.
+- macOS: Node.js 18 or newer and npm on PATH for the Darwin JavaScript agents.
+  The reduced Windows/Linux profiles disable the optional Node-dependent
+  backends and bindings, so they do not require Node.js or npm.
 - Windows: Visual Studio C/C++ tools and Windows SDK, including x86 tools.
 - Linux x64: GCC/G++ and 32-bit development support (`gcc-multilib`, `g++-multilib`
   on Ubuntu). This recipe targets glibc Linux; it does not establish musl support.

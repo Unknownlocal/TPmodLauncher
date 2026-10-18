@@ -261,6 +261,7 @@ def test_bundled_sandbox_executes_and_disables_an_owned_component(
 
 
 @pytest.mark.embedded
+@pytest.mark.legacy
 def test_bundled_python_runs_the_author_contract(
     embedded_project, built_python_mod, tmp_path
 ):

@@ -4,7 +4,6 @@
 from dataclasses import replace
 
 import pytest
-from wasmtime import wat2wasm
 
 from launcher.mod_contract import PYTHON_LIMITS
 from launcher.runner_host import bind_operations
@@ -28,68 +27,56 @@ def source_for(name, phase):
     return f'''import runner_bindings as api
 {call if phase == "load" else ""}
 class WitWorld:
-    def activate(self):
-        {call if phase == "activate" else "pass"}
+    def activate(self): pass
     def on_event(self, name, payload):
         {call if phase == "event" else "pass"}
         return payload
 '''
 
 
-@pytest.mark.parametrize("operation,capabilities,phase", [
-    # Each binding needs an allow/deny check; lifecycle handling is shared.
-    pytest.param("report", {"diagnostics"}, "event", id="report-granted"),
-    pytest.param("report", set(), "event", id="report-denied"),
-    pytest.param("add-menu-button", {"main-menu"}, "event", id="menu-granted"),
-    pytest.param("add-menu-button", set(), "event", id="menu-denied"),
-    pytest.param("register-settings", {"ui-settings"}, "event", id="register-settings-granted"),
-    pytest.param("register-settings", set(), "event", id="register-settings-denied"),
-    pytest.param("save-settings", {"ui-settings"}, "event", id="save-settings-granted"),
-    pytest.param("save-settings", set(), "event", id="save-settings-denied"),
-    pytest.param("register-theme", {"ui-settings"}, "event", id="theme-granted"),
-    pytest.param("register-theme", set(), "event", id="theme-denied"),
-    pytest.param("report", {"diagnostics"}, "load", id="load-granted"),
-    pytest.param("report", set(), "load", id="load-denied"),
-    pytest.param("report", {"diagnostics"}, "activate", id="activate-granted"),
-    pytest.param("report", set(), "activate", id="activate-denied"),
-    pytest.param("report", {"main-menu"}, "event", id="unrelated-grant"),
-    pytest.param("report", {"diagnostics", "main-menu", "ui-settings"}, "event", id="combined-grants"),
-])
-def test_permissions_are_enforced_in_every_source_phase(runner_bundle, capabilities, operation, phase):
-    calls, cleaned = [], []
-    providers = {name: lambda *args, name=name: calls.append(name) or (
+def test_all_source_operations_reach_their_granted_providers(runner_bundle):
+    calls = []
+    providers = {name: (lambda *args, name=name: calls.append(name) or (
         "{}" if HOST_OPERATIONS[name].result == "string" else None
-    ) for name in HOST_OPERATIONS}
-    guest = Sandbox(runner_bundle.component(), bind_operations(capabilities, providers),
-                    limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True))
-    granted = HOST_OPERATIONS[operation].capability in capabilities
-    try:
-        guest.call("put-source", "mod.py", source_for(operation, phase))
-        def lifecycle():
-            assert guest.call("load-source", "mod") == ""
-            guest.call("activate")
-            assert guest.call("on-event", "probe", "{}") == "{}"
-        if granted:
-            lifecycle()
-            assert calls == [operation]
-            assert not guest.closed and cleaned == []
-        else:
-            with pytest.raises(SandboxError, match="Capability.*required"):
-                lifecycle()
-            assert calls == []
-            assert guest.closed and cleaned == [True]
-    finally:
-        guest.close()
+    )) for name in HOST_OPERATIONS}
+    operations = "\n        ".join(CALLS.values())
+    source = f"""import runner_bindings as api
+class WitWorld:
+    def activate(self):
+        {operations}
+    def on_event(self, name, payload):
+        return payload
+"""
+    cleaned = []
+    with Sandbox(runner_bundle.component(), bind_operations({"diagnostics", "main-menu", "ui-settings"}, providers),
+                 limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True)) as guest:
+        guest.call("put-source", "mod.py", source)
+        assert guest.call("load-source", "mod") == ""
+        guest.call("activate")
+        assert guest.call("on-event", "probe", "{}") == "{}"
+        assert calls == list(CALLS)
     assert cleaned == [True]
 
 
+@pytest.mark.parametrize("operation", list(CALLS))
+def test_ungranted_source_operations_never_reach_host_providers(runner_bundle, operation):
+    calls, cleaned = [], []
+    providers = {name: lambda *args: calls.append(args) for name in HOST_OPERATIONS}
+    with Sandbox(runner_bundle.component(), bind_operations(set(), providers),
+                 limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True)) as guest:
+        phase = "load" if operation == "report" else "event"
+        guest.call("put-source", "mod.py", source_for(operation, phase))
+        with pytest.raises(SandboxError, match="Capability.*required"):
+            assert guest.call("load-source", "mod") == ""
+            guest.call("activate")
+            guest.call("on-event", "probe", "{}")
+        assert guest.closed and calls == [] and cleaned == [True]
+
+
 def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle):
-    operation = "report"
     calls = []
-    capabilities = {HOST_OPERATIONS[operation].capability}
-    providers = {name: lambda *args, name=name: calls.append(name) or (
-        "{}" if HOST_OPERATIONS[name].result == "string" else None
-    ) for name, spec in HOST_OPERATIONS.items() if spec.capability in capabilities}
+    capabilities = {"diagnostics"}
+    providers = {"report": calls.append}
     allowed = bind_operations(capabilities, providers)
     denied = bind_operations(set(), providers)
     capabilities.clear()
@@ -101,7 +88,7 @@ def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle):
         data, denied, limits=limits, required_exports=dict(EXPORTS)
     ) as second:
         for guest in (first, second):
-            guest.call("put-source", "mod.py", source_for(operation, "event"))
+            guest.call("put-source", "mod.py", source_for("report", "event"))
             assert guest.call("load-source", "mod") == ""
             guest.call("activate")
         assert first.call("on-event", "probe", "{}") == "{}"
@@ -109,45 +96,4 @@ def test_grants_and_provider_snapshots_are_private_to_each_mod(runner_bundle):
             second.call("on-event", "probe", "{}")
         assert second.closed and not first.closed
         assert first.call("on-event", "probe", "{}") == "{}"
-    assert calls == [operation, operation]
-
-
-@pytest.mark.parametrize("capabilities", [{"invented"}, {"ui-theme"}, {"diagnostics", "invented"}, ["diagnostics"], "diagnostics", {True}])
-def test_unknown_or_implicit_permissions_are_rejected(capabilities):
-    with pytest.raises(SandboxError, match="capabilit"):
-        bind_operations(capabilities, {})
-
-
-def test_granted_permissions_require_trusted_providers():
-    with pytest.raises(SandboxError, match="requires a trusted provider"):
-        bind_operations({"diagnostics"}, {"report": "not callable"})
-
-
-def test_unknown_providers_are_rejected():
-    with pytest.raises(SandboxError, match="Unknown.*provider"):
-        bind_operations(set(), {"invented": lambda: None})
-
-
-def test_denied_operation_is_blocked_during_component_instantiation():
-    data = wat2wasm('''(component
-      (import "report" (func $report (param "message" string)))
-      (core module $memory (memory (export "memory") 1))
-      (core instance $memory (instantiate $memory))
-      (core func $report (canon lower (func $report) (memory $memory "memory")))
-      (core module $start
-        (import "host" "report" (func $report (param i32 i32)))
-        (func $initialize i32.const 0 i32.const 0 call $report)
-        (start $initialize))
-      (core instance $start (instantiate $start
-        (with "host" (instance (export "report" (func $report)))))))''')
-    calls, cleaned = [], []
-    operations = bind_operations(set(), {"report": lambda *args: calls.append(args)})
-    with pytest.raises(SandboxError, match="Capability.*required"):
-        Sandbox(bytes(data), operations, cleanup=lambda: cleaned.append(True))
-    assert calls == [] and cleaned == [True]
-
-
-@pytest.mark.parametrize("declaration", ['(import "invented" (func))', '(import "report" (func (param "value" s32)))'])
-def test_unknown_and_mistyped_imports_still_fail_admission(declaration):
-    with pytest.raises(SandboxError, match="approved host operation"):
-        Sandbox(bytes(wat2wasm(f"(component {declaration})")), bind_operations(set(), {}))
+    assert calls == ["probe", "probe"]

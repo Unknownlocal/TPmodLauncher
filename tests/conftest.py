@@ -25,9 +25,64 @@ from mod_runtime.bundle import DIRECTORY
 
 @pytest.fixture(scope="session")
 def runner_bundle(tmp_path_factory):
-    """Build the fixed trusted runner once for runtime and session integration checks."""
+    """Use this workflow's verified artifact; local runs build once per session."""
+    shared = os.environ.get("TPM_TEST_RUNNER_BUNDLE")
+    if shared:
+        bundle = RunnerBundle(shared)
+        package = Path(__file__).resolve().parents[1] / "mod_runtime"
+        from mod_runtime.bundle import ABI_VERSION
+        sources = {"source/guest.py": package / "guest.py",
+                   "source/_source_policy.py": package / "_source_policy.py",
+                   "source/runner.wit": package / ABI_VERSION / "runner.wit"}
+        for name, current in sources.items():
+            if bundle._file(name) != current.read_bytes():
+                pytest.fail(f"Shared runner sources differ from the tested checkout: {name}")
+        return bundle
+    if os.environ.get("TPM_REQUIRE_SHARED_RUNNER") == "1":
+        pytest.fail("CI requires TPM_TEST_RUNNER_BUNDLE; do not rebuild the runner in test jobs")
     from mod_runtime.build import build
     return build(tmp_path_factory.mktemp("runner-build") / "bundle")
+
+
+@pytest.fixture(scope="session")
+def python_compilation_cache(tmp_path_factory):
+    """Reuse native code within this test process, never guest state or grants."""
+    from launcher.compilation_cache import CompilationCache
+    return CompilationCache(tmp_path_factory.mktemp("python-native-cache"))
+
+
+@pytest.fixture(autouse=True)
+def cached_python_components(request, monkeypatch):
+    """Give Python integration tests the same cache used by normal launcher entry.
+
+    Keep the real class and a fresh Engine/Component for every construction.
+    Explicit cache instances (including cache-policy tests) retain their own setup.
+    """
+    if not {"runner_bundle", "built_python_mod", "built_menu_mod"}.intersection(request.fixturenames):
+        return
+    shared_cache = request.getfixturevalue("python_compilation_cache")
+    from launcher.compiled_mod import CompiledMod
+    original = CompiledMod.__init__
+    def cached(instance, data, timings=None, *, cache=None):
+        return original(instance, data, timings,
+                        cache=shared_cache if cache is None else cache)
+    monkeypatch.setattr(CompiledMod, "__init__", cached)
+
+
+@pytest.fixture
+def disposable_source_compiler(monkeypatch):
+    """Model compiler-result ownership in gated cancellation tests, without JIT work.
+
+    These tests never admit the result to a Store. Real compilation and adoption
+    are exercised separately by the preparation integration test.
+    """
+    from mod_runtime import preparation
+    class DisposableCompilation:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+        def close(self):
+            self.closed = True
+    monkeypatch.setattr(preparation, "CompiledMod", DisposableCompilation)
 
 
 @pytest.fixture

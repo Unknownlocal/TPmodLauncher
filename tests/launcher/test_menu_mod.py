@@ -16,6 +16,9 @@ from launcher.pack_mods import PackMods
 from launcher.sandbox import SandboxError
 
 
+pytestmark = pytest.mark.legacy
+
+
 # These components include a Python runtime; cold native compilation on CI can
 # take longer than the small WAT fixtures. This is a behavior test, not a benchmark.
 PYTHON_COMPILE_TIMEOUT = 30

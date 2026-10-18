@@ -94,3 +94,30 @@ and copies accepted runner bytes, sources and notices into fresh release staging
 It prepares dependency generations and their inventory for the bundled
 interpreter. Exported Frida rebuild tools remain independent of the launcher
 runtime; runner loading is confined to release operations that need it.
+
+`package_release.py` assembles a verified player ZIP and checksum from prepared
+inputs on Windows or WSL. It verifies the pinned cached Python archive, selected
+dependency inventory, runner and matching Windows Frida build/source receipts.
+An explicit file selection includes trusted sources, upstream notices and Frida
+source/relinking materials while excluding development and session data.
+The command performs no downloads or builds.
+
+Packaging generates `SteamLaunchOptions.cmd` and `VERSION.txt` inside the ZIP's
+single `modLauncher/` directory. Before writing final output, it extracts the
+archive, compares every file with the selected inputs and runs the extracted
+entry point's native-import/runner checks. WSL invokes that same Windows
+interpreter through interop. Failed checks leave no final archive; existing
+versioned outputs are preserved.
+
+`steam_launch_options.py` reads the installed dependency manifest to locate the
+bundled interpreter and prints Steam's launch line. The generated command helper
+invokes it without a system-Python fallback. Its interpreter path is absolute;
+the entry-point path is relative to the game root. Neither helper changes Steam
+settings or starts the game. [PACKAGING.md](PACKAGING.md) holds the packaging
+commands and preparation requirements.
+
+Maintainers run `Package-Release.ps1 -Version <version>` from the repository root.
+It coordinates developer setup and `release_workflow.py`: pinned Frida source
+fetching and compilation, matching source export, isolated runner/dependency
+preparation, and ZIP assembly. No pre-existing binary cache is required; the
+checkout's selected dependencies and active runtime are preserved.
