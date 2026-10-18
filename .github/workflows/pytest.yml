@@ -74,6 +74,8 @@ jobs:
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
       TPM_REQUIRE_EMBEDDED_TESTS: '1'
       TPM_REQUIRE_NATIVE_TESTS: '1'
+      TPM_REQUIRE_PROFILE_NATIVE_TESTS: '1'
+      MODLAUNCHER_PROFILE_NATIVE: .cache/race-collector
     defaults:
       run:
         shell: bash
@@ -100,6 +102,10 @@ jobs:
           name: windows-player-bundle
       - name: Verify the downloaded player bundle
         run: libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
+      - name: Build the internal native collector for acceptance
+        if: ${{ matrix.suite == 'native' }}
+        run: |
+          .venv/Scripts/python.exe hook_manager/native/setup.py build_ext --build-lib .cache/race-collector --build-temp .cache/race-collector-objects
       - name: Run player acceptance
         run: |
           exec .venv/Scripts/python.exe -B -m pytest tests -v -m "${{ matrix.selection }}" --junitxml=junit.xml -p pytest_cov --cov --cov-report=

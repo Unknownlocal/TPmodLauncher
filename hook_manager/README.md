@@ -33,6 +33,14 @@ and namespace traversal. Ownership must be verified by the supplying provider;
 names and filenames are not proof. The helper installs no hooks, grants no
 measurement readiness and is not yet loaded by the game bridge.
 
+`profiling_collector.py` owns the optional [native race collector](native/README.md).
+It collects exact invocation counts and elapsed slices for a frozen set of
+synchronous code objects on one enrolled thread, with lap, finishing and pause
+checkpoints. Native callbacks use preallocated storage; Python owns monitoring
+registration and teardown. Trusted live binding, actual race adapters, guest
+collection, shared requests and public API integration remain separate work.
+The bridge does not load or activate this collector yet.
+
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
 waits for the normal menu import before adapting native rendering and input.
