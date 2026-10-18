@@ -26,6 +26,17 @@ targets and signatures. The manager observes normal imports, installs wrappers
 when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
+[`callables/`](callables/README.md) adds a private synchronous guard layer using
+the same import watcher and restoration journal. Trusted adapters approve code-fingerprinted native targets,
+provide read-only projections and structural denial contracts, and register owned
+bindings. One wrapper multiplexes all owners of a target. Native refusals survive
+query extensions; identified validator failures latch only that owner unavailable
+and retain guards until explicit removal. Main-thread binding changes are rejected
+during active operations; polling defers pending installation until idle. Trusted
+native workers require enrollment and an operation scope.
+Decorator chains are verified and called intact. No manifest capability or guest
+operation exposes registration or native calls.
+
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
 waits for the normal menu import before adapting native rendering and input.

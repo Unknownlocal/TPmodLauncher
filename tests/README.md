@@ -10,6 +10,7 @@ real Wasm execution, owned native helper processes and relocated player bundles.
 | --- | --- |
 | `launcher/` | Dependency verification, component admission, compilation cache, sandbox limits, pack loading, settings persistence and process/session lifetime; optional build and release validation. |
 | `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adapters and the bridge. |
+| `callables/` | Private callable targets, return contracts, owner isolation, validation, worker/shutdown coordination, sandbox isolation. |
 | `mod_runtime/` | Runner integrity and ABI, source snapshots, host-operation permissions, loading/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
 | `ci/` | Portable suite ownership, manual CI claims/statuses, completion gates and coverage combination/reporting. |
 
@@ -18,6 +19,11 @@ Python source examples execute through the trusted runner. Author-built Python
 components have separate compatibility fixtures. Source-adapter checks reuse
 the launcher's JSON and resource-ownership contracts; lower-level contract tests
 cover their detailed validation rules.
+
+Callable tests keep one representative per distinct validation or lifecycle
+behaviour. Existing hook-manager tests own ordinary descriptor/import mechanics.
+The real guest check owns private-module and endpoint absence; runtime tests own
+generic source-load failure cleanup.
 
 Preparation tests use synchronized worker gates to exercise queued/running
 cancellation and abandoned results. Disposable compiler results isolate ownership
@@ -84,7 +90,7 @@ Marker retention underpins this policy. Only the original run can publish the
 PR-code jobs have read-only tokens and no inherited secrets. The tested revision
 is the PR head, without a synthetic merge with `main`.
 
-Each accepted run calls reusable launcher, hook-manager, mod-runtime, CI-helper
+Each accepted run calls reusable launcher, hook-manager, private-callable, mod-runtime, CI-helper
 and Windows acceptance workflows. Portable suites have separate Windows/Linux
 jobs. [The selector](../.github/ci_tests.py) collects all portable modules to
 validate exactly one directory-based owner, then executes the selected area.
@@ -99,7 +105,7 @@ index. Pip downloads and built wheels are cached per PR, platform, Python versio
 and dependency inputs, with matching earlier caches available for restoration.
 
 `runner-bundle.yml` builds and verifies one portable Python runner from the tested
-commit. Launcher/runtime jobs on both platforms and Windows bundle preparation
+commit. Launcher/runtime/callable jobs on both platforms and Windows bundle preparation
 consume that artifact. The runner fixture verifies its receipt and compares the
 guest, source-policy and WIT bytes against the checkout. With
 `TPM_TEST_RUNNER_BUNDLE` and `TPM_REQUIRE_SHARED_RUNNER=1`, missing or mismatched
@@ -120,14 +126,15 @@ workflows to succeed. A separate trusted job publishes that result as `manual-ci
 
 Portable and Windows acceptance jobs retain JUnit results and raw coverage.
 Portable jobs generate XML/HTML for their selected component; CI-helper coverage
-measures `.github`. Windows acceptance combines its two required fragments,
+measures `.github`. Callable coverage measures `hook_manager.callables`; the
+parent hook-manager report measures its top-level modules. Windows acceptance combines its two required fragments,
 rejecting missing or corrupt data. Coverage measures the pytest process;
 isolated embedded children remain uninstrumented. `pyproject.toml` configures
 line and branch measurement.
 
 After a successful Test suite run, the reporting workflow downloads only that
 run's XML and parses it without checking out or executing tested code. It expects
-four portable areas on both platforms plus Windows acceptance. Suite/platform
+five portable areas on both platforms plus Windows acceptance. Suite/platform
 percentages remain separate, and reports are never combined across runs or
 commits. The summary distinguishes the workflow-definition commit from the
 tested PR head recorded by the claim/status jobs.

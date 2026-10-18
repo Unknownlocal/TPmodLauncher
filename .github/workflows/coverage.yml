@@ -45,6 +45,7 @@ jobs:
               for suite, label in (
                   ("launcher", "Launcher"),
                   ("hook_manager", "Hook manager"),
+                  ("callables", "Private callable adapters"),
                   ("mod_runtime", "Mod runtime"),
                   ("ci", "CI helpers"),
               )

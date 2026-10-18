@@ -24,14 +24,14 @@ def run_workflow_script(filename):
 def reports(tmp_path, monkeypatch):
     names = [
         f"python-coverage-{suite}-{platform}"
-        for suite in ("launcher", "hook_manager", "mod_runtime", "ci")
+        for suite in ("launcher", "hook_manager", "callables", "mod_runtime", "ci")
         for platform in ("windows", "linux")
     ] + ["python-coverage-acceptance-windows"]
     for covered, name in enumerate(names, start=1):
         directory = tmp_path / name
         directory.mkdir()
         (directory / "coverage.xml").write_text(
-            f'<coverage lines-covered="{covered}" lines-valid="10" '
+            f'<coverage lines-covered="{covered}" lines-valid="20" '
             'branches-covered="1" branches-valid="2"/>', encoding="utf-8"
         )
     for name, value in {
@@ -51,12 +51,13 @@ def test_reports_every_suite_and_platform_separately(reports):
     run_workflow_script("coverage.yml")
     summary = (directory / "summary.md").read_text(encoding="utf-8")
     rows = [line for line in summary.splitlines() if "x64 |" in line]
-    assert len(rows) == len(names) == 9
+    assert len(rows) == len(names) == 11
     for covered, row in enumerate(rows, start=1):
-        assert f"{covered / 10:.2%} ({covered}/10)" in row
+        assert f"{covered / 20:.2%} ({covered}/20)" in row
         assert "50.00% (1/2)" in row
     assert "| Launcher | Windows x64 |" in rows[0]
     assert "| Launcher | Linux x64 |" in rows[1]
+    assert "| Private callable adapters | Windows x64 |" in rows[4]
     assert "| Runtime acceptance | Windows x64 |" in rows[-1]
     assert "abc123" in summary
     assert "/actions/runs/123" in summary
@@ -97,11 +98,15 @@ def test_empty_coverage_denominators_are_reported_without_division_by_zero(repor
     ).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("suite", ["dependencies", "runner", "launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"])
-@pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("suite,result", [
+    ("callables", "success"),
+    ("callables", "failure"),
+    ("runner", "cancelled"),
+    ("windows-runtime", "skipped"),
+])
 def test_parent_completion_requires_preparation_and_every_suite_to_succeed(monkeypatch, suite, result):
     results = {name: {"result": "success"} for name in (
-        "dependencies", "runner", "launcher", "hook-manager", "mod-runtime", "ci", "windows-runtime"
+        "dependencies", "runner", "launcher", "hook-manager", "callables", "mod-runtime", "ci", "windows-runtime"
     )}
     results[suite]["result"] = result
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))

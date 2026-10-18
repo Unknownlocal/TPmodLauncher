@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MPL-2.0
+# The parent report includes unexecuted files but excludes the separately owned package.
+[tool.coverage.run]
+branch = true
+relative_files = true
+omit = ["*/hook_manager/callables/*"]

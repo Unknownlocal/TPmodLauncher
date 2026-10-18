@@ -79,6 +79,13 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.sha }}
 
+  callables:
+    needs: [resolve, dependencies, runner]
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-callables.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
   ci:
     needs: [resolve, dependencies]
     if: ${{ github.run_attempt == '1' }}
@@ -117,7 +124,7 @@ jobs:
 
   complete:
     name: Test suite complete
-    needs: [resolve, dependencies, runner, launcher, hook-manager, mod-runtime, ci, windows-runtime]
+    needs: [resolve, dependencies, runner, launcher, hook-manager, callables, mod-runtime, ci, windows-runtime]
     if: ${{ always() && needs.resolve.result == 'success' && github.run_attempt == '1' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

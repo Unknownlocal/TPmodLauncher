@@ -22,6 +22,7 @@ spec.loader.exec_module(ci)
     [
         ("tests/launcher/test_new_feature.py", "launcher"),
         ("tests/hook_manager/test_menu.py", "hook_manager"),
+        ("tests/callables/test_validation.py", "callables"),
         ("tests/mod_runtime/test_source.py", "mod_runtime"),
         ("tests/ci/test_suites.py", "ci"),
     ],
@@ -77,6 +78,21 @@ def test_main_always_applies_portable_markers_and_check_only_collects(monkeypatc
     args, plugins = calls.pop()
     assert args == [str(ci.ROOT / "tests"), "-q", "--collect-only", "-m", ci.PORTABLE]
     assert plugins[0].suite == "check"
+
+
+def test_callable_coverage_is_separate_from_parent_hook_manager(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ci.pytest, "main", lambda args, plugins: calls.append(args) or 0)
+    assert ci.main(["--suite", "callables", "--coverage", "-p", "pytest_cov"]) == 0
+    assert "--cov=hook_manager.callables" in calls[0]
+    assert "--cov=hook_manager" not in calls[0]
+    assert ci.main(["--suite", "hook_manager", "--coverage", "-p", "pytest_cov"]) == 0
+    assert "--cov=hook_manager" in calls[1]
+    config_file = next(arg.removeprefix("--cov-config=") for arg in calls[1] if arg.startswith("--cov-config="))
+    from coverage import Coverage
+    config = Coverage(config_file=config_file)
+    assert config.get_option("run:omit") == ["*/hook_manager/callables/*"]
+    assert config.get_option("run:branch") and config.get_option("run:relative_files")
 
 
 def test_real_collection_filters_acceptance_before_assigning_suites(tmp_path):
