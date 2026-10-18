@@ -61,11 +61,47 @@ class FakeGitHub:
             if self.status_failure:
                 raise http_error(503)
             return data
+        if method == "POST" and path == "/check-runs":
+            return data
         raise AssertionError(f"Unexpected request: {method} {path}")
 
 
 def states(api):
     return [data["state"] for method, path, data in api.calls if path.startswith("/statuses/")]
+
+
+def test_instructions_link_fork_pr_head_to_workflow_without_claiming_or_passing_ci():
+    api = FakeGitHub()
+    summary = ci.instructions(api, "7")
+    check = next(data for _, path, data in api.calls if path == "/check-runs")
+    assert check["head_sha"] == SHA
+    assert check["details_url"] == "https://github.com/owner/repo/actions/workflows/tests.yml"
+    assert check["conclusion"] == "neutral"
+    assert check["name"] != ci.CONTEXT
+    assert "**main**" in summary and "**7** as the PR number" in summary
+    assert check["output"]["summary"] == summary
+    assert states(api) == []
+    assert api.ref is None
+
+
+def test_instructions_cannot_replace_a_claimed_commits_result():
+    api = FakeGitHub()
+    ci.claim(api, 7, 42, WORKFLOW_SHA)
+    ci.publish(api, SHA, 42, "success")
+    original = len(api.calls)
+    ci.instructions(api, 7)
+    assert states(api) == ["pending", "success"]
+    assert [path for method, path, _ in api.calls[original:] if method == "POST"] == ["/check-runs"]
+    assert ci.marker(api, SHA)["run_id"] == 42
+
+
+@pytest.mark.parametrize("state,base", [("closed", "main"), ("open", "other")])
+def test_instructions_reject_ineligible_prs_without_writing_checks(state, base):
+    api = FakeGitHub()
+    api.pr.update(state=state, base={"ref": base})
+    with pytest.raises(ValueError, match="open pull request targeting main"):
+        ci.instructions(api, 7)
+    assert not any(method == "POST" for method, _, _ in api.calls)
 
 
 def test_fork_pr_claims_exact_head_and_links_pending_status_to_original_run():

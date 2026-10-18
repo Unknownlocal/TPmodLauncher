@@ -53,6 +53,14 @@ PR number. This works for branches in this repository and in forks. PRs targetin
 `main` require the `manual-ci` commit status; new commits need their own passing
 result. Pushes and PR events do not automatically start the test suite.
 
+PRs also receive a **Run Tests** informational check. Its Details
+link opens the Test suite workflow page, and its summary gives the exact PR
+number and instructions to select main and click Run workflow. This is a link
+to GitHub's workflow form, not a button that dispatches tests from the PR.
+`manual-ci-instructions.yml` runs only trusted base-branch code with check-write
+permission, including for fork PRs. Its neutral check neither consumes a CI
+attempt nor satisfies or changes the separate required `manual-ci` status.
+
 The trusted workflow resolves the PR's exact head SHA, then atomically creates
 an annotated `ci-tested/<SHA>` tag to claim its only CI attempt. The tag records
 the PR, workflow commit and run ID. Protected marker tags cannot be updated or
