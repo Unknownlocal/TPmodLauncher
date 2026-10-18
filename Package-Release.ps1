@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: MPL-2.0
 <#
 .SYNOPSIS
-Prepare and package the Windows player release with one command.
+Prepare and package a Windows or Linux/Proton player release on Windows.
 .EXAMPLE
 .\Package-Release.ps1 -Version 0.1.0
 .EXAMPLE
 .\Package-Release.ps1 -Version 0.1.0 -CheckOnly
+.EXAMPLE
+.\Package-Release.ps1 -Version 0.1.0 -Platform linux
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$')]
     [string]$Version,
+    [ValidateSet('windows', 'linux')]
+    [string]$Platform = 'windows',
     [switch]$CheckOnly,
     [switch]$PrepareOnly,
     [string]$Python,
@@ -61,9 +65,11 @@ try {
         }
     }
     $developer = Assert-WorkspacePath (Join-Path $repoRoot '.venv\Scripts\python.exe')
-    $archive = Assert-WorkspacePath (Join-Path $repoRoot "dist\modLauncher-$Version-windows-x64.zip")
+    $Platform = $Platform.ToLowerInvariant()
+    $platformSuffix = if ($Platform -eq 'linux') { 'linux-proton-x64' } else { 'windows-x64' }
+    $archive = Assert-WorkspacePath (Join-Path $repoRoot "dist\modLauncher-$Version-$platformSuffix.zip")
     if (-not $CheckOnly -and ((Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath "$archive.sha256"))) {
-        throw "Version $Version already exists in dist. Choose a new version or move the existing output."
+        throw "Version $Version for $Platform already exists in dist. Choose a new version or move that platform's existing output."
     }
 
     if (-not (Test-Path -LiteralPath $developer -PathType Leaf)) {
@@ -89,12 +95,12 @@ try {
         Invoke-Step 'Install pinned developer tools' $developer @('-B', '-m', 'pip', 'install', '-r', 'requirements-dev.txt')
     }
 
-    $workflowArguments = @('-B', 'launcher/release_workflow.py', '--version', $Version)
+    $workflowArguments = @('-B', 'launcher/release_workflow.py', '--version', $Version, '--platform', $Platform)
     if ($FridaBuild) { $workflowArguments += @('--frida-build', $FridaBuild) }
     if ($FridaSources) { $workflowArguments += @('--frida-sources', $FridaSources) }
     if ($CheckOnly) { $workflowArguments += '--check-only' }
     if ($PrepareOnly) { $workflowArguments += '--prepare-only' }
-    Invoke-Step 'Build, prepare and verify the Windows release' $developer $workflowArguments
+    Invoke-Step "Build, prepare and verify the $Platform release" $developer $workflowArguments
 } catch {
     [Console]::Error.WriteLine("Release failed: $($_.Exception.Message)")
     exit 1

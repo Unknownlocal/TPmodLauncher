@@ -93,3 +93,55 @@ def test_failed_extracted_verification_produces_no_archive(inputs):
     with pytest.raises(subprocess.CalledProcessError):
         packaging.package_release(root, "bad", manifest, materials, checker=fail)
     assert list((root / "dist").iterdir()) == []
+
+
+@pytest.mark.parametrize("platforms", [("windows", "linux"), ("linux", "windows")])
+def test_same_version_can_ship_for_both_platforms_without_overwriting(inputs, platforms):
+    root, manifest, materials = inputs
+    archives = {}
+    for platform in platforms:
+        archive = packaging.package_release(root, "0.1.0", manifest, materials,
+                                            platform=platform, checker=lambda _: None)
+        suffix = "linux-proton-x64" if platform == "linux" else "windows-x64"
+        assert archive.name == f"modLauncher-0.1.0-{suffix}.zip"
+        with zipfile.ZipFile(archive) as package:
+            assert package.read("modLauncher/VERSION.txt") == b"0.1.0\n"
+            assert "modLauncher/SteamLaunchOptions.sh" in package.namelist()
+        archives[platform] = archive, archive.read_bytes(), archive.with_suffix(".zip.sha256").read_bytes()
+    for platform, (archive, data, checksum) in archives.items():
+        with pytest.raises(packaging.paths.DependencyError, match="already exists"):
+            packaging.package_release(root, "0.1.0", manifest, materials,
+                                      platform=platform, checker=lambda _: pytest.fail("Duplicate checked too late"))
+        assert archive.read_bytes() == data
+        assert archive.with_suffix(".zip.sha256").read_bytes() == checksum
+        assert checksum.decode() == f"{hashlib.sha256(data).hexdigest()}  {archive.name}\n"
+
+
+def test_linux_checksum_collision_does_not_block_windows(inputs):
+    root, manifest, materials = inputs
+    output = root / "dist"
+    output.mkdir()
+    checksum = output / "modLauncher-0.1.0-linux-proton-x64.zip.sha256"
+    checksum.write_text("Preserve existing checksum\n")
+    with pytest.raises(packaging.paths.DependencyError, match="already exists"):
+        packaging.package_release(root, "0.1.0", manifest, materials, platform="linux")
+    packaging.package_release(root, "0.1.0", manifest, materials, checker=lambda _: None)
+    assert checksum.read_text() == "Preserve existing checksum\n"
+
+
+def test_cli_selects_linux_output(inputs, monkeypatch):
+    root, manifest, materials = inputs
+    monkeypatch.setattr(packaging, "ROOT", root)
+    monkeypatch.setattr(packaging, "resolve_inputs", lambda *args: {"build": str(root), "sources": str(root)})
+    monkeypatch.setattr(packaging, "verify_inputs", lambda *args: (manifest, materials))
+    monkeypatch.setattr(packaging, "check_release", lambda _: None)
+    assert packaging.main(["--version", "0.1.0", "--platform", "linux"]) == 0
+    assert (root / "dist/modLauncher-0.1.0-linux-proton-x64.zip").is_file()
+    assert not (root / "dist/modLauncher-0.1.0-windows-x64.zip").exists()
+
+
+def test_invalid_platform_is_rejected_before_output_creation(inputs):
+    root, manifest, materials = inputs
+    with pytest.raises(packaging.paths.DependencyError, match="Platform must be"):
+        packaging.package_release(root, "0.1.0", manifest, materials, platform="../other")
+    assert not (root / "dist").exists()

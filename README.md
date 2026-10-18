@@ -87,18 +87,32 @@ and testing against it was eating into my CI budget more than I thought. Please 
 submit any errors you have here, with as much detail as possible. I will try and look into
 them, but I cannot guarantee anything for the reasons mentioned above.
 
-### Package a Windows release
+### Package a Windows or Linux/Proton release
 
 From the repository root, run:
 
 ```powershell
 .\Package-Release.ps1 -Version 0.1.0
+# For Linux/Proton users, from the same Windows machine:
+.\Package-Release.ps1 -Version 0.1.0 -Platform linux
 ```
 
 The script sets up the developer environment, downloads and builds the pinned
 Frida sources, exports their source archive, builds the trusted runner, prepares
 bundled Python and dependencies, and checks the extracted ZIP. It writes the ZIP
-and SHA-256 checksum to `dist/`, keeping existing versioned outputs.
+and SHA-256 checksum to `dist/`, keeping existing versioned outputs. Platform
+names distinguish the archives: `modLauncher-0.1.0-windows-x64.zip` and
+`modLauncher-0.1.0-linux-proton-x64.zip` can coexist without a version bump.
+Both contain the bundled Windows runtime; Linux users run it through Proton/Wine.
+
+To package already prepared files only, without builds or downloads:
+
+```powershell
+.\.venv\Scripts\python.exe -B launcher/package_release.py --version 0.1.0 --platform linux
+```
+
+Use `--platform windows` for the Windows archive (the default). Repeating the
+same version and platform preserves existing output and reports a collision.
 
 No cache or launcher installation is needed. Use `-PrepareOnly` to build and check
 a candidate without a ZIP. Use `-CheckOnly` to recheck that version's last prepared

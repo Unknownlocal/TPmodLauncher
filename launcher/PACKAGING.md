@@ -1,4 +1,4 @@
-# Create the Windows player bundle
+# Create Windows and Linux/Proton player bundles
 
 From the repository root, run:
 
@@ -6,9 +6,19 @@ From the repository root, run:
 .\Package-Release.ps1 -Version 0.1.0
 ```
 
-This is the maintainer entry point. Players use the resulting ZIP and do not
-install Python or developer tools. It produces one Windows x64 bundle;
-Proton/Wine use remains experimental and untested.
+This is the maintainer entry point, run on Windows. Players use the resulting ZIP
+and do not install Python or developer tools. Windows is the default player
+platform. To package the same version for Linux/Proton, use:
+
+```powershell
+.\Package-Release.ps1 -Version 0.1.0 -Platform linux
+```
+
+The two platforms have separate archive names, checksums and candidate records.
+Windows `0.1.0` and Linux `0.1.0` can coexist; only a duplicate of the same
+version and platform is refused. Both bundles contain Windows x64 Python and
+libraries, plus both launch helpers. The Linux package uses Proton/Wine;
+actual Proton/Wine gameplay remains experimental and untested.
 
 The workflow works from a source-only checkout. It performs these steps:
 
@@ -77,6 +87,20 @@ candidate. Neither override is needed for a clean checkout.
 `launcher/package_release.py` remains the lower-level offline archive tool;
 normal release preparation uses `Package-Release.ps1` and `release_workflow.py`.
 
+To package already prepared files only, without builds or downloads, run from
+the repository root on Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -B launcher/package_release.py --version 0.1.0 --platform windows
+.\.venv\Scripts\python.exe -B launcher/package_release.py --version 0.1.0 --platform linux
+```
+
+`--platform` defaults to `windows`. The existing version's Windows ZIP does not
+block the Linux command. If that platform's ZIP or checksum already exists,
+move its existing output before repackaging that same version and platform.
+`-Platform linux` also selects Linux's candidate for `-PrepareOnly` and
+`-CheckOnly`; the default selects Windows's candidate.
+
 ## WSL
 
 Run the same Windows script through WSL's Windows interop; a separate Linux
@@ -97,6 +121,13 @@ The command produces:
 ```text
 dist/modLauncher-0.1.0-windows-x64.zip
 dist/modLauncher-0.1.0-windows-x64.zip.sha256
+```
+
+With `-Platform linux` (or `--platform linux` for the offline tool), it produces:
+
+```text
+dist/modLauncher-0.1.0-linux-proton-x64.zip
+dist/modLauncher-0.1.0-linux-proton-x64.zip.sha256
 ```
 
 The packager generates `SteamLaunchOptions.cmd` for Windows and

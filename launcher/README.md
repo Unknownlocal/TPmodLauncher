@@ -96,7 +96,9 @@ interpreter. Exported Frida rebuild tools remain independent of the launcher
 runtime; runner loading is confined to release operations that need it.
 
 `package_release.py` assembles a verified player ZIP and checksum from prepared
-inputs on Windows or WSL. It verifies the pinned cached Python archive, selected
+inputs on Windows or WSL. `--platform windows` (the default) and `--platform linux`
+select separate Windows and Linux/Proton archive names, allowing both to use the
+same release version. Both use the prepared Windows runtime. It verifies the pinned cached Python archive, selected
 dependency inventory, runner and matching Windows Frida build/source receipts.
 An explicit file selection includes trusted sources, upstream notices and Frida
 source/relinking materials while excluding development and session data.
@@ -130,3 +132,5 @@ It coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency
 preparation, and ZIP assembly. No pre-existing binary cache is required; the
 checkout's selected dependencies and active runtime are preserved.
+`-Platform linux` selects the Linux/Proton archive and a separate candidate
+record; `-PrepareOnly` and `-CheckOnly` apply to the selected platform.

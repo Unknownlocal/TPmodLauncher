@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Assemble a Windows player ZIP from prepared inputs, on Windows or WSL.
+"""Assemble a Windows or Linux/Proton player ZIP from prepared Windows inputs.
 
 This command is offline. It verifies and packages existing artifacts; it never
 downloads dependencies, builds Frida, starts the game or publishes a release.
@@ -33,6 +33,16 @@ paths = release.dependencies
 SOURCE_DIRECTORIES = ("launcher", "hook_manager", "mod_runtime", "examples")
 SOURCE_SUFFIXES = {".py", ".js", ".md", ".toml", ".wit", ".sh"}
 ROOT_FILES = ("README.md", "LICENCE", "ATTRIBUTION.txt", "bundled_packages.toml")
+PLATFORM_SUFFIXES = {"windows": "windows-x64", "linux": "linux-proton-x64"}
+
+
+def archive_name(version, platform="windows"):
+    """Identify a release by both version and player platform."""
+    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
+        raise paths.DependencyError("Version must contain 1-64 letters, digits, dots, underscores or hyphens")
+    if platform not in PLATFORM_SUFFIXES:
+        raise paths.DependencyError("Platform must be windows or linux (Proton/Wine)")
+    return f"modLauncher-{version}-{PLATFORM_SUFFIXES[platform]}.zip"
 
 
 def resolve_inputs(root, build_output=None, source_output=None):
@@ -213,16 +223,15 @@ def write_zip(destination, files, generated):
                         shutil.copyfileobj(source, target, 1024 * 1024)
 
 
-def package_release(root, version, manifest, materials, *, checker=None, output_root=None):
+def package_release(root, version, manifest, materials, *, platform="windows", checker=None, output_root=None):
     """Publish a fresh local ZIP/checksum only after extracting and checking it."""
-    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
-        raise paths.DependencyError("Version must contain 1-64 letters, digits, dots, underscores or hyphens")
+    filename = archive_name(version, platform)
     output = paths.local_path(output_root or root, "dist")
     output.mkdir(exist_ok=True)
-    destination = output / f"modLauncher-{version}-windows-x64.zip"
+    destination = output / filename
     checksum = destination.with_suffix(".zip.sha256")
     if destination.exists() or checksum.exists():
-        raise paths.DependencyError("This version already exists in dist; use a new version or move the old artifacts")
+        raise paths.DependencyError(f"Version {version} for {platform} already exists in dist; use a new version or move that platform's old artifacts")
     files = collect_files(root, manifest, materials)
     generated = {"SteamLaunchOptions.cmd": helper_bytes(manifest["runtime"]),
                  "SteamLaunchOptions.sh": linux_helper_bytes(),
@@ -264,6 +273,8 @@ def package_release(root, version, manifest, materials, *, checker=None, output_
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="release label, e.g. 0.1.0")
+    parser.add_argument("--platform", choices=PLATFORM_SUFFIXES, default="windows",
+                        help="player platform (default: windows); linux uses Proton/Wine with the same bundled Windows runtime")
     parser.add_argument("--frida-build", type=Path, help="override automatic pinned Windows build discovery")
     parser.add_argument("--frida-sources", type=Path, help="override automatic matching source discovery")
     parser.add_argument("--resolve-inputs", action="store_true", help="print discovered input paths as JSON without preparing or packaging")
@@ -283,7 +294,7 @@ def main(argv=None):
             check_release(ROOT)
             print("Packaging inputs ready; no release ZIP created.")
         else:
-            destination = package_release(ROOT, arguments.version, manifest, materials)
+            destination = package_release(ROOT, arguments.version, manifest, materials, platform=arguments.platform)
             print(f"ZIP and SHA-256 ready: {destination}")
         print("Archive checks do not replace the existing Frida distribution review or confirm Proton/Wine compatibility.")
         return 0

@@ -115,7 +115,7 @@ def clean_source(tmp_path, monkeypatch):
     def authenticate_runtime(root, settings):
         events.append("authenticate-runtime")
         target = root / ".cache/downloads/runtime.zip"
-        target.parent.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(runtime_data)
         return target
 
@@ -190,3 +190,31 @@ def test_failed_extracted_launch_check_never_publishes_zip(clean_source, monkeyp
     with pytest.raises(RuntimeError, match="owned extracted-runtime failure"):
         workflow.run(root, "bad-extraction")
     assert list((root / "dist").iterdir()) == []
+
+
+def test_platforms_keep_separate_outputs_candidates_and_check_only_records(clean_source, monkeypatch):
+    root, events = clean_source
+    windows = workflow.run(root, "0.1.0")
+    windows_data = windows.read_bytes()
+    windows_record = root / ".cache/releases/windows-0.1.0.json"
+    windows_receipt = windows_record.read_bytes()
+    record = json.loads(windows_receipt)
+    # Reuse the paired native inputs, as both player platforms use Windows Python.
+    monkeypatch.setattr(workflow, "ROOT", root)
+    assert workflow.main(["--version", "0.1.0", "--platform", "linux",
+                          "--frida-build", record["build"], "--frida-sources", record["sources"]]) == 0
+    linux = root / "dist/modLauncher-0.1.0-linux-proton-x64.zip"
+    linux_record = root / ".cache/releases/linux-0.1.0.json"
+    assert linux.is_file() and linux.with_suffix(".zip.sha256").is_file()
+    assert windows.read_bytes() == windows_data and windows_record.read_bytes() == windows_receipt
+    assert events.count("compile-frida") == 1
+    linux_receipt = json.loads(linux_record.read_bytes())
+    assert linux_receipt["candidate"] != record["candidate"]
+    before_checks = events.copy()
+    assert workflow.run(root, "0.1.0", check_only=True) == root / record["candidate"]
+    assert workflow.run(root, "0.1.0", platform="linux", check_only=True) == root / linux_receipt["candidate"]
+    assert events[len(before_checks):] == ["verify-executable", "verify-executable"]
+    for platform in ("windows", "linux"):
+        with pytest.raises(workflow.paths.DependencyError, match="already exists"):
+            workflow.run(root, "0.1.0", platform=platform)
+    assert events[len(before_checks):] == ["verify-executable", "verify-executable"]

@@ -10,7 +10,6 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -140,15 +139,14 @@ def candidate_materials(candidate, build_output, source_output):
     return manifest, materials
 
 
-def run(root, version, *, check_only=False, prepare_only=False, build_output=None, source_output=None):
-    if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
-        raise paths.DependencyError("Invalid release version")
+def run(root, version, *, platform="windows", check_only=False, prepare_only=False, build_output=None, source_output=None):
+    filename = packaging.archive_name(version, platform)
     if bool(build_output) != bool(source_output):
         raise paths.DependencyError("Supply both Frida overrides, or neither to build automatically")
-    receipt = paths.local_path(root, f".cache/releases/windows-{version}.json")
+    receipt = paths.local_path(root, f".cache/releases/{platform}-{version}.json")
     if check_only:
         if not receipt.is_file():
-            raise paths.DependencyError("No prepared candidate exists for this version. Run without -CheckOnly first.")
+            raise paths.DependencyError(f"No prepared candidate exists for {platform} version {version}. Run without -CheckOnly first.")
         record = json.loads(receipt.read_text(encoding="utf-8"))
         relative = record["candidate"]
         if not relative.startswith(".cache/releases/"):
@@ -158,13 +156,13 @@ def run(root, version, *, check_only=False, prepare_only=False, build_output=Non
         packaging.check_release(candidate)
         print("Prepared release verified; no setup, downloads or archive created.")
         return candidate
-    archive = paths.local_path(root, f"dist/modLauncher-{version}-windows-x64.zip")
+    archive = paths.local_path(root, "dist/" + filename)
     if archive.exists() or archive.with_suffix(".zip.sha256").exists():
-        raise paths.DependencyError("This release version already exists in dist")
+        raise paths.DependencyError(f"This release version for {platform} already exists in dist")
     if build_output is None:
         build_output, source_output = build_inputs(root, version)
     print("Prepare the isolated runtime, dependencies and trusted runner", flush=True)
-    candidate = paths.local_path(root, f".cache/releases/windows-{version}-{uuid.uuid4().hex[:8]}")
+    candidate = paths.local_path(root, f".cache/releases/{platform}-{version}-{uuid.uuid4().hex[:8]}")
     prepare_candidate(root, candidate, build_output, source_output)
     manifest, materials = candidate_materials(candidate, build_output, source_output)
     packaging.check_release(candidate)
@@ -176,7 +174,7 @@ def run(root, version, *, check_only=False, prepare_only=False, build_output=Non
     if prepare_only:
         print(f"Release candidate ready: {candidate}; no ZIP created.")
         return candidate
-    result = packaging.package_release(candidate, version, manifest, materials, output_root=root)
+    result = packaging.package_release(candidate, version, manifest, materials, platform=platform, output_root=root)
     print(f"ZIP and SHA-256 ready: {result}")
     return result
 
@@ -184,6 +182,8 @@ def run(root, version, *, check_only=False, prepare_only=False, build_output=Non
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--platform", choices=packaging.PLATFORM_SUFFIXES, default="windows",
+                        help="player platform; linux packages the Windows runtime for Proton/Wine")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check-only", action="store_true")
     action.add_argument("--prepare-only", action="store_true", help="build and verify a candidate without making a ZIP")
@@ -191,7 +191,7 @@ def main(argv=None):
     parser.add_argument("--frida-sources", type=Path)
     args = parser.parse_args(argv)
     try:
-        run(ROOT, args.version, check_only=args.check_only, prepare_only=args.prepare_only,
+        run(ROOT, args.version, platform=args.platform, check_only=args.check_only, prepare_only=args.prepare_only,
             build_output=args.frida_build.absolute() if args.frida_build else None,
             source_output=args.frida_sources.absolute() if args.frida_sources else None)
         return 0
