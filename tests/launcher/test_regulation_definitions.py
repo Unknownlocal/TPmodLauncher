@@ -2,6 +2,7 @@
 """Private definition admission with inert owned source and native-style JSON."""
 
 from copy import deepcopy
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -102,6 +103,13 @@ def test_category_cannot_replace_native_fallback_or_foreign_definition():
     data["mod_extensions"]["example.rules"]["categories"][0]["key"] = "another.mod.policy"
     with pytest.raises(ValueError, match="namespace"):
         prepare(data)
+    # Overlapping manifest namespaces can each claim this key locally; the
+    # session must reject the second owner even after both models convert.
+    data["mod_extensions"] = {
+        "example.rules": {"schema": 1, "categories": [category("example.rules.child.policy")]},
+        "example.rules.child": {"schema": 1, "categories": [category("example.rules.child.policy")]}}
+    with pytest.raises(ValueError, match="collides"):
+        prepare(data, {"example.rules": source(), "example.rules.child": source("example.rules.child")})
 
 
 @pytest.mark.parametrize("fault", ["option_ids", "neighbours"])
@@ -132,6 +140,8 @@ def test_validators_have_owned_source_and_only_semantic_contexts(fault):
 
 def test_native_option_data_uses_trusted_defaults_without_rewriting_native_fields():
     data = document()
+    # An unreferenced native category need not satisfy extension option schema.
+    data["categories"].append({"key": "unused", "opaque": {"no_options": True}})
     section = data["mod_extensions"]["example.rules"]
     section["option_data"] = {"fallback": {"open": {"custom": 9}}}
     section["validators"][0]["rule"] = "fallback"
@@ -144,10 +154,18 @@ def test_native_option_data_uses_trusted_defaults_without_rewriting_native_field
         prepare(data, native_categories=[fallback])
 
 
-def test_scripted_changes_cannot_override_native_category_policy():
+@pytest.mark.parametrize("fault", ["native_target", "native_id", "duplicate_target"])
+def test_scripted_changes_preserve_ownership_and_session_reservations(fault):
     data = document()
-    data["mod_extensions"]["example.rules"]["scripted_changes"][0]["key"] = "native"
-    with pytest.raises(ValueError, match="owned custom category"):
+    scripts = data["mod_extensions"]["example.rules"]["scripted_changes"]
+    if fault == "native_target":
+        scripts[0]["key"] = "native"
+    elif fault == "native_id":
+        data["change_control"]["scripted_changes"] = [
+            {"id": "example.rules:0", "key": "native", "effective_season": 2028}]
+    else:
+        scripts.append({**scripts[0], "id": "another"})
+    with pytest.raises(ValueError, match="owned custom category|Duplicate scripted change"):
         prepare(data)
 
 
@@ -160,6 +178,50 @@ def test_statically_oversized_policy_data_is_rejected(limit):
     data["mod_extensions"]["example.rules"]["categories"][0]["options"][0]["parameters"] = payload
     with pytest.raises(ValueError, match="bytes|node limit|container depth"):
         prepare(data)
+
+
+@pytest.mark.parametrize("limit", ["bytes", "nodes", "depth"])
+def test_owner_metadata_is_budgeted_with_the_cached_minimum_envelope(limit):
+    data = document()
+    option = data["categories"][0]["options"][0]
+    if limit == "bytes":
+        option["parameters"] = {"left": "\u00e9" * 900}
+        allowed, excess = {"right": "\u00e9" * 950}, {"right": "\u00e9" * 1100}
+    elif limit == "nodes":
+        option["parameters"] = {"items": [0] * 400}
+        allowed, excess = {"items": [0] * 600}, {"items": [0] * 700}
+    else:
+        allowed = {"a": {"b": {"c": {"d": {}}}}}
+        excess = {"a": {"b": {"c": {"d": {"e": {}}}}}}
+    section = data["mod_extensions"]["example.rules"]
+    section["option_data"]["native"]["open"] = allowed
+    assert prepare(data).owners
+    section["option_data"]["native"]["open"] = excess
+    with pytest.raises(ValueError, match="bytes|node limit|container depth"):
+        prepare(data)
+
+
+def test_shared_native_and_source_inputs_keep_owner_data_and_revision_bytes_independent():
+    data = document()
+    first = source(text='# quoted " caf\u00e9\n')
+    manifest = SourceManifest("second.rules", "2.0.0", "0.4.0", "rules", frozenset({"regulations"}))
+    second = SourceSnapshot(manifest, first.files, first.total_bytes)
+    sources = {"example.rules": first, "second.rules": second}
+    data["mod_extensions"]["second.rules"] = {"schema": 1,
+        "option_data": {"native": {"open": {"owner": "second"}}},
+        "validators": [{"id": "check", "rule": "native", "scope": "personnel.contract", "handler": "rules.validate"}]}
+    result = prepare(data, sources)
+    # Independently encode the original complete revision format. Shared cached
+    # pieces must produce exactly these bytes, including owner-local metadata.
+    for owner, declarations in result.owners.items():
+        revision = [owner, declarations, {"native": data["categories"][0]},
+                    sources[owner].manifest.version, sources[owner].files]
+        expected = hashlib.sha256(json.dumps(revision, sort_keys=True, ensure_ascii=True,
+                                            separators=(",", ":")).encode()).hexdigest()
+        assert result.revisions[owner] == expected
+    data["mod_extensions"]["second.rules"]["option_data"]["native"]["open"] = {"text": "x" * 4096}
+    with pytest.raises(ValueError, match="second.rules.*bytes"):
+        prepare(data, sources)
 
 
 @pytest.mark.parametrize("resource", ["categories", "validators"])

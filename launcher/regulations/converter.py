@@ -2,13 +2,14 @@
 """Select regulation data explicitly and prepare model state atomically."""
 
 from copy import deepcopy
-import hashlib
-import json
 
 from launcher.json_ingest import JsonObject, decode
 from mod_runtime.source import SourceSnapshot
 from . import schema
 from .owner_converter import convert_owner
+from .preparation_index import PreparationIndex
+from .revisions import finalize
+from .session import RegulationSession
 
 _MISSING = object()
 
@@ -60,21 +61,6 @@ def _script_reservations(native):
     return identities, targets
 
 
-def _revision(owner, data, source, native):
-    """Cover declarations, exact code and referenced native/fallback metadata.
-
-    Effective/adopted policy adds its own revision in later lifecycle integration;
-    unrelated native categories need not invalidate this owner.
-    """
-    keys = data["option_data"].keys() | {row["rule"] for row in data["validators"]}
-    catalogue = {key: native[key] for key in keys if key in native}
-    # Hash source text as well as the version: authors may change code without
-    # changing their version. Sorted object keys make JSON field order irrelevant.
-    content = [owner, data, catalogue, source.manifest.version, source.files]
-    return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=True,
-                                     separators=(",", ":")).encode()).hexdigest()
-
-
 def convert(content, enabled_sources, *, scopes, native_categories=()):
     """Return prepared native/owner/revision state, or discard all of it.
 
@@ -94,29 +80,23 @@ def convert(content, enabled_sources, *, scopes, native_categories=()):
         sections = raw.member("mod_extensions", JsonObject()) if sources else JsonObject()
         if type(sections) is not JsonObject:
             raise ValueError("Enabled regulation extensions need an object envelope")
-        owners, total_categories, total_validators = {}, 0, 0
-        # These reservations belong only to this preparation attempt. Owners
-        # share collision checks, but a failure discards all provisional state.
-        reserved = set(base)
+        # Each attempt owns its lazy derived-data cache and provisional session.
+        # Neither survives a failed conversion or a later pack reload.
+        index = PreparationIndex()
         script_ids, script_targets = _script_reservations(native)
+        session = RegulationSession(base, script_ids, script_targets)
         # Stable order gives deterministic owner processing and merged output.
         for owner, source in sorted(sources.items()):
             section = sections.member(owner, _MISSING)
             if section is _MISSING:
                 # Omission is allowed; an explicit null still enters validation.
                 continue
-            model = convert_owner(owner, section, source, base, scopes, reserved, script_ids, script_targets)
-            owners[owner] = model
-            total_categories += len(model.categories)
-            total_validators += len(model.validators)
-        if total_categories > 128 or total_validators > 256:
-            # Per-owner limits alone would allow splitting excess declarations
-            # across several admitted mods.
-            raise ValueError("Regulation session quota exceeded")
+            model = convert_owner(owner, section, source, base, scopes, index)
+            session.add(owner, model)
+        owners = session.finish()
+        # Only accepted owners reach revision finalization. All hashes are ready
+        # before the aggregate model can take ownership of prepared state.
+        revisions = finalize(owners, sources, base)
+        return native, owners, revisions
     except (ValueError, TypeError, KeyError, RecursionError) as error:
         raise ValueError(f"Cannot prepare regulation definitions: {error}") from error
-    # Finalize only after every enabled section and session quota has passed.
-    # The borrowed declaration view is serialized here, never exposed externally.
-    revisions = {owner: _revision(owner, model.declarations(), sources[owner], base)
-                 for owner, model in owners.items()}
-    return native, owners, revisions

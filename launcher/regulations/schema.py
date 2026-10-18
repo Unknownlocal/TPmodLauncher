@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Validate declaration structure, never condition meanings or native bindings."""
 
-import json
 import re
 
 from mod_runtime._source_policy import module_part
@@ -87,7 +86,7 @@ def option_keys(category):
     return {name(option["key"]) for option in category["options"]}
 
 
-def validator(value, source, accessible, scopes):
+def validator(value, owned_paths, accessible, scopes):
     """Check a semantic rule/context and an owned source reference, without binding."""
     fields(value, ("id", "rule", "scope", "handler"))
     name(value["id"])
@@ -106,23 +105,22 @@ def validator(value, source, accessible, scopes):
     # The final segment names a function; preceding segments name an owner-local
     # module/package path. This lookup never resolves a module in the host process.
     module = "/".join(parts[:-1])
-    owned = {path for path, _ in source.files}
-    if module + ".py" not in owned and module + "/__init__.py" not in owned:
+    if module + ".py" not in owned_paths and module + "/__init__.py" not in owned_paths:
         raise ValueError("Handler module is absent from its owner's source snapshot")
     # Function existence/signature, imports and execution are deliberately left
     # to sandbox binding. Source text is never imported or evaluated by this host.
 
 
-def script(owner, value, categories, index):
+def script(owner, value, options_by_category, index):
     fields(value, ("key", "new_regulation", "effective_season"), ("id",))
     key = value["key"]
-    if type(key) is not str or key not in categories:
+    if type(key) is not str or key not in options_by_category:
         raise ValueError("Scripted change must target an owned custom category")
     # Native policy validation consumes an option object, not the prototype's
     # shorthand string. Keep that format so later governance sees the same data.
     fields(value["new_regulation"], ("key",))
     option = value["new_regulation"]["key"]
-    if type(option) is not str or option not in option_keys(categories[key]):
+    if type(option) is not str or option not in options_by_category[key]:
         raise ValueError("Scripted change targets an unknown option")
     season = value["effective_season"]
     if type(season) is not int or season < 1:
@@ -131,26 +129,3 @@ def script(owner, value, categories, index):
     # checking, so two owners can each use an author-local ID such as "first".
     identity = name(value["id"]) if "id" in value else str(index)
     return {**value, "id": owner + ":" + identity}
-
-
-def payload_budget(value):
-    """Reject statically impossible policy data; full contexts are checked later."""
-    nodes = 0
-
-    def visit(item, depth=0):
-        nonlocal nodes
-        nodes += 1
-        if nodes > 1024:
-            raise ValueError("Regulation payload exceeds its node limit")
-        # Count values (including the root) as nodes, and only containers toward
-        # depth. Object keys contribute to UTF-8 size in the serialization below.
-        if type(item) in (dict, list):
-            depth += 1
-            if depth > 8:
-                raise ValueError("Regulation payload exceeds its container depth")
-            for child in item.values() if type(item) is dict else item:
-                visit(child, depth)
-
-    visit(value)
-    if len(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 4096:
-        raise ValueError("Regulation payload exceeds 4096 UTF-8 bytes")

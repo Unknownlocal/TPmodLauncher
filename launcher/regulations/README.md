@@ -32,8 +32,27 @@ The owner model holds categories, option data, validators and scripts; outward
 views remain independent dictionaries for later binding/publication.
 
 Conversion is explicit launcher code. JSON cannot choose a model, import a host
-class or call the private callable engine. Index/measurement/digest reuse and
-further session/finalization restructuring belong to the next refactor pass.
+class or call the private callable engine.
+
+Preparation has three stages: convert owner declarations, admit them through
+`RegulationSession` for shared collision/quota checks, then finalize revisions.
+`PreparationIndex` lazily reuses option-key sets, owned source paths and minimum
+option-envelope measurements within that attempt. Owner references use a layered
+lookup of native and owned categories rather than copying the native catalogue.
+Unreferenced native definitions remain outside extension-specific validation.
+
+Minimum envelopes include empty owner metadata. `payload.py` checks each owner's
+actual metadata by replacing that placeholder with its measured node count,
+container depth and UTF-8 length. A shared native measurement never implies that
+another owner's metadata fits. Full runtime context/upcoming-policy checks still
+belong to dispatch integration.
+
+Revision finalization streams the existing canonical JSON representation into
+SHA-256. It reuses encoded native categories and any shared immutable source-file
+tuples, retaining identical digest values. Substituting component digests would
+change that representation; this refactor retains the existing format. Unique
+source buffers are not cached, and shared buffers are released after their last
+owner. All preparation caches are local and discarded on completion or failure.
 
 The optional root `mod_extensions` object is keyed by manifest ID. Each enabled
 section requires integer `schema: 1` and permits `categories`, `option_data`,
