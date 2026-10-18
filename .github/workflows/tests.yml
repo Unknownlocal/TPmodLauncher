@@ -50,8 +50,16 @@ jobs:
       ref: ${{ needs.resolve.outputs.sha }}
       pr_number: ${{ needs.resolve.outputs.pr }}
 
-  launcher:
+  runner:
     needs: [resolve, dependencies]
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/runner-bundle.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+      wheelhouse_artifact: dev-dependencies-linux
+
+  launcher:
+    needs: [resolve, dependencies, runner]
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-launcher.yml
     with:
@@ -65,7 +73,7 @@ jobs:
       ref: ${{ needs.resolve.outputs.sha }}
 
   mod-runtime:
-    needs: [resolve, dependencies]
+    needs: [resolve, dependencies, runner]
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-mod-runtime.yml
     with:
@@ -79,7 +87,7 @@ jobs:
       ref: ${{ needs.resolve.outputs.sha }}
 
   windows-runtime:
-    needs: [resolve, dependencies]
+    needs: [resolve, dependencies, runner]
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/pytest.yml
     with:
@@ -109,7 +117,7 @@ jobs:
 
   complete:
     name: Test suite complete
-    needs: [resolve, dependencies, launcher, hook-manager, mod-runtime, ci, windows-runtime]
+    needs: [resolve, dependencies, runner, launcher, hook-manager, mod-runtime, ci, windows-runtime]
     if: ${{ always() && needs.resolve.result == 'success' && github.run_attempt == '1' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

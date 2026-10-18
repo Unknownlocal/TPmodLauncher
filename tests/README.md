@@ -42,7 +42,7 @@ real native preparation and controller adoption retain an integration check.
 ## Fixtures and execution boundaries
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
-runtime copies, a session-scoped trusted runner build and an owned native-menu
+runtime copies, a session-scoped verified runner and an owned native-menu
 interface. `launcher/conftest.py` adds local Git source repositories, Wasmtime
 components and independent legacy Python component fixtures. Fixtures keep game
 files and external services outside test ownership.
@@ -105,6 +105,15 @@ workflow supplies separate Windows and Linux jobs for each area.
 jobs download that run's wheels and install them into separate environments
 without consulting a package index. Windows acceptance also shares one verified
 player bundle between its embedded and native jobs.
+
+`runner-bundle.yml` builds and verifies the portable Python runner once per
+workflow, from the exact tested commit. Launcher/runtime jobs on both platforms
+and Windows packaging download that same artifact. Reduced-Frida runs use the
+same build-once workflow. CI sets `TPM_TEST_RUNNER_BUNDLE` and
+`TPM_REQUIRE_SHARED_RUNNER=1`: tests verify its receipt and compare the guest,
+policy and WIT sources with their checkout, and fail rather than rebuilding a
+missing or mismatched runner. Local pytest builds once per session when no
+shared bundle is supplied.
 
 Pip's download and built-wheel cache is preserved between commits on each PR,
 separately for Windows/Linux and the Python version. Dependency changes create a

@@ -25,7 +25,21 @@ from mod_runtime.bundle import DIRECTORY
 
 @pytest.fixture(scope="session")
 def runner_bundle(tmp_path_factory):
-    """Build the fixed trusted runner once for runtime and session integration checks."""
+    """Use this workflow's verified artifact; local runs build once per session."""
+    shared = os.environ.get("TPM_TEST_RUNNER_BUNDLE")
+    if shared:
+        bundle = RunnerBundle(shared)
+        package = Path(__file__).resolve().parents[1] / "mod_runtime"
+        from mod_runtime.bundle import ABI_VERSION
+        sources = {"source/guest.py": package / "guest.py",
+                   "source/_source_policy.py": package / "_source_policy.py",
+                   "source/runner.wit": package / ABI_VERSION / "runner.wit"}
+        for name, current in sources.items():
+            if bundle._file(name) != current.read_bytes():
+                pytest.fail(f"Shared runner sources differ from the tested checkout: {name}")
+        return bundle
+    if os.environ.get("TPM_REQUIRE_SHARED_RUNNER") == "1":
+        pytest.fail("CI requires TPM_TEST_RUNNER_BUNDLE; do not rebuild the runner in test jobs")
     from mod_runtime.build import build
     return build(tmp_path_factory.mktemp("runner-build") / "bundle")
 

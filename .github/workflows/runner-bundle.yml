@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Build portable Python runner
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      wheelhouse_artifact:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Download prepared Linux wheels
+        if: ${{ inputs.wheelhouse_artifact != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.wheelhouse_artifact }}
+          path: wheelhouse
+      - name: Select the pinned runner build tools
+        shell: python {0}
+        run: |
+          from pathlib import Path
+
+          tools = [line for line in Path('requirements-dev.txt').read_text().splitlines()
+                   if line.startswith(('componentize-py==', 'wasmtime=='))]
+          if len(tools) != 2:
+              raise SystemExit('Expected pinned componentize-py and Wasmtime requirements')
+          Path('runner-requirements.txt').write_text('\n'.join(tools) + '\n')
+      - name: Prepare the runner build environment
+        env:
+          PREPARED_WHEELS: ${{ inputs.wheelhouse_artifact }}
+        run: |
+          python -m venv .venv
+          if [ -n "$PREPARED_WHEELS" ]; then
+            .venv/bin/python -m pip install --no-index --find-links wheelhouse -r runner-requirements.txt
+          else
+            .venv/bin/python -m pip install -r runner-requirements.txt
+          fi
+      - name: Build and verify the runner once for this workflow
+        run: .venv/bin/python -B -m mod_runtime.build --output libs/mod-runners
+      - name: Share the portable runner with every test and packaging job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trusted-python-runner
+          path: libs/mod-runners/
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error

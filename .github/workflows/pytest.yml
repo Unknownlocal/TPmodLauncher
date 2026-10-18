@@ -38,9 +38,13 @@ jobs:
         run: |
           python -m venv .venv
           .venv/Scripts/python.exe -m pip install --no-index --find-links wheelhouse -r requirements-dev.txt
+      - name: Download this workflow's portable runner
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: trusted-python-runner
+          path: libs/mod-runners
       - name: Prepare and verify the official Windows dependency profile
         run: |
-          .venv/Scripts/python.exe -B -m mod_runtime.build --output libs/mod-runners
           .venv/Scripts/python.exe -I launcher/prepare_release.py --lockfile pylock.stock.toml --refresh-manifest
           libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
       - name: Share the verified bundle within this workflow run
@@ -74,6 +78,8 @@ jobs:
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
       TPM_REQUIRE_EMBEDDED_TESTS: '1'
       TPM_REQUIRE_NATIVE_TESTS: '1'
+      TPM_TEST_RUNNER_BUNDLE: ${{ github.workspace }}/libs/mod-runners
+      TPM_REQUIRE_SHARED_RUNNER: '1'
     defaults:
       run:
         shell: bash
