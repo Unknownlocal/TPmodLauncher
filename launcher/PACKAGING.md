@@ -99,13 +99,22 @@ dist/modLauncher-0.1.0-windows-x64.zip
 dist/modLauncher-0.1.0-windows-x64.zip.sha256
 ```
 
-The packager generates `SteamLaunchOptions.cmd` inside the ZIP's single
-`modLauncher/` folder. It does not create that file in the source checkout.
-That helper prints a launch line based on the installed
-folder and manifest-selected interpreter, and waits for the user to copy it. It
+The packager generates `SteamLaunchOptions.cmd` for Windows and
+`SteamLaunchOptions.sh` for Linux inside the ZIP's single `modLauncher/` folder.
+Those entry files are not created in the source checkout. Both helpers always
+display their platform's launch line and report clipboard-copy success or failure.
+The Windows helper uses the bundled interpreter and PowerShell's `Set-Clipboard`.
+The Linux helper uses Bash and optional `wl-copy`, `xclip` or `xsel`; it requires
+no Linux Python. Shell scripts are stored with LF line endings and executable
+permissions in the ZIP. Each helper
 does not edit Steam, launch the game, install Python or use a system interpreter.
 The Python executable path is absolute; the script path stays relative as
 `modLauncher\launcher\entry.py` to keep the Steam launch line short.
+The Linux line instead invokes `launcher/launch_proton.sh` before `%command%`.
+That wrapper preserves Steam's Proton/runtime command prefix, replaces only the
+verified installed game target, and runs the Windows entry adapter through the
+bundled Python. The adapter supplies the installed Wine-mapped game path to the
+existing executable validator; no fixed drive mapping or Proton path is assumed.
 
 To use the existing Python helper before packaging, run this from the repository
 root on Windows, with the prepared runtime present and `modLauncher` installed

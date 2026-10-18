@@ -31,6 +31,7 @@ def inputs(tmp_path):
     for directory in (*packaging.SOURCE_DIRECTORIES, "notices", "libs/mod-runners"):
         (root / directory).mkdir(parents=True)
         (root / directory / "owned.py").write_text("# owned fixture\n")
+    (root / "launcher/owned.sh").write_bytes(b"#!/bin/bash\ntrue\n")
     manifest = packaging.paths.read_manifest(root)
     runtime = root / manifest["runtime"]["directory"]
     runtime.mkdir(parents=True)
@@ -68,6 +69,9 @@ def test_archive_is_relocatable_selected_and_repeatable(inputs):
         assert names == sorted(names)
         assert all(name.startswith("modLauncher/") for name in names)
         assert "modLauncher/SteamLaunchOptions.cmd" in names
+        assert "modLauncher/SteamLaunchOptions.sh" in names
+        assert (package.getinfo("modLauncher/SteamLaunchOptions.sh").external_attr >> 16) & 0o111
+        assert package.read("modLauncher/launcher/owned.sh") == b"#!/bin/bash\ntrue\n"
         assert "modLauncher/VERSION.txt" in names
         assert b"%~dp0libs\\python-3.13.16-embed-amd64\\python.exe" in package.read("modLauncher/SteamLaunchOptions.cmd")
     with pytest.raises(RuntimeError, match="already exists"):

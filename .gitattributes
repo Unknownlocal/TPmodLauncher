@@ -1,6 +1,9 @@
 # Preserve upstream runner licence and attribution bytes on every platform.
 notices/mod-runtime/** -text -whitespace
 
+# Bash helpers must remain runnable after a Windows checkout and ZIP extraction.
+*.sh text eol=lf
+
 # Keep shared runner build inputs identical on Linux and Windows checkouts.
 mod_runtime/guest.py text eol=lf
 mod_runtime/_source_policy.py text eol=lf

@@ -31,7 +31,7 @@ release = build.release
 paths = release.dependencies
 
 SOURCE_DIRECTORIES = ("launcher", "hook_manager", "mod_runtime", "examples")
-SOURCE_SUFFIXES = {".py", ".js", ".md", ".toml", ".wit"}
+SOURCE_SUFFIXES = {".py", ".js", ".md", ".toml", ".wit", ".sh"}
 ROOT_FILES = ("README.md", "LICENCE", "ATTRIBUTION.txt", "bundled_packages.toml")
 
 
@@ -94,6 +94,17 @@ def helper_bytes(runtime):
         'set "result=%errorlevel%"\r\n'
         "pause\r\n"
         "exit /b %result%\r\n"
+    ).encode("ascii")
+
+
+def linux_helper_bytes():
+    """Provide a native Linux helper in the same Windows-runtime ZIP."""
+    return (
+        '#!/usr/bin/env bash\n'
+        '# SPDX-License-Identifier: MPL-2.0\n'
+        'set -euo pipefail\n'
+        'mod_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)\n'
+        'exec bash "$mod_root/launcher/steam_launch_options.sh"\n'
     ).encode("ascii")
 
 
@@ -193,7 +204,7 @@ def write_zip(destination, files, generated):
             info = zipfile.ZipInfo("modLauncher/" + name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
-            info.external_attr = 0o100644 << 16
+            info.external_attr = (0o100755 if name.endswith(".sh") else 0o100644) << 16
             with archive.open(info, "w", force_zip64=True) as target:
                 if name in generated:
                     target.write(generated[name])
@@ -214,6 +225,7 @@ def package_release(root, version, manifest, materials, *, checker=None, output_
         raise paths.DependencyError("This version already exists in dist; use a new version or move the old artifacts")
     files = collect_files(root, manifest, materials)
     generated = {"SteamLaunchOptions.cmd": helper_bytes(manifest["runtime"]),
+                 "SteamLaunchOptions.sh": linux_helper_bytes(),
                  "VERSION.txt": (version + "\n").encode("ascii")}
     # All temporary files belong to this fresh staging folder inside the checked dist directory.
     with tempfile.TemporaryDirectory(prefix=".package-", dir=output) as temporary:

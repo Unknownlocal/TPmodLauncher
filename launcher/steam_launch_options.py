@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Print Steam launch options for this installed bundle without changing Steam."""
+"""Display and copy Steam launch options without changing Steam settings."""
 
+import base64
 import importlib.util
+import os
 from pathlib import Path, PureWindowsPath
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -21,6 +24,27 @@ def launch_line(root, manifest):
     return f'"{PureWindowsPath(interpreter)}" -B "modLauncher\\launcher\\entry.py" -- %command%'
 
 
+def copy_to_clipboard(line):
+    """Copy exactly this Unicode string using Windows' built-in clipboard command."""
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        raise OSError("Windows system directory is unavailable")
+    powershell = Path(system_root) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    # Treat the path and %command% as data, including quotes, $, and non-ASCII
+    # characters. No part of the user's launch line becomes PowerShell code.
+    payload = base64.b64encode(line.encode("utf-16le")).decode("ascii")
+    command = (
+        "$ErrorActionPreference = 'Stop'; "
+        "Set-Clipboard -Value ([Text.Encoding]::Unicode.GetString("
+        f"[Convert]::FromBase64String('{payload}')))"
+    )
+    subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", command],
+        check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     try:
@@ -32,8 +56,15 @@ def main():
             raise ValueError(f"Extract modLauncher directly beside {game.name}, then run this helper again.")
         if not dependencies.local_path(root, manifest["runtime"]["directory"] + "/python.exe").is_file():
             raise ValueError("The bundled Python is missing. Extract the complete release again.")
-        print("Copy the entire line below into Steam > Properties > General > Launch Options:\n")
-        print(launch_line(root, manifest))
+        line = launch_line(root, manifest)
+        print("Steam > Properties > General > Launch Options:\n")
+        print(line)
+        try:
+            copy_to_clipboard(line)
+        except (OSError, subprocess.SubprocessError):
+            print("\nCould not copy to the clipboard. Copy the displayed line manually.")
+        else:
+            print("\nCopied to clipboard. Press Ctrl+V in Steam's Launch Options field.")
         print("\nKeep %command% unchanged. This helper does not change Steam settings or start the game.")
         return 0
     except (OSError, ValueError, RuntimeError) as error:

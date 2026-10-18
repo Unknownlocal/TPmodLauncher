@@ -20,30 +20,32 @@ Close the game. In Steam, choose **Manage > Browse local files**, then extract
 the ZIP there. The resulting layout must be `TeamPrincipal.exe` beside
 `modLauncher/`, not an extra folder containing `modLauncher/`.
 
-The packaged ZIP includes `modLauncher/SteamLaunchOptions.cmd`. After extracting
-it, double-click the helper to display the exact launch line for your installation,
-then copy that line into Steam's **Properties > General > Launch Options**.
-The helper uses the bundled interpreter and prints the line without changing
-Steam settings or starting the game. Run it again if you move the game folder.
-The helper is generated during packaging and is absent from the source checkout.
-
-If your copy has no helper, enter the line manually in Steam's **Properties >
-General > Launch Options**:
+Open the game's **Properties > General > Launch Options** in Steam and enter:
 
 ```text
-"C:\Program Files (x86)\Steam\steamapps\common\Team Principal A Racing Manager\modLauncher\libs\python-3.13.16-embed-amd64\python.exe" -B "modLauncher\launcher\entry.py" -- %command%
+"<GAME_FOLDER>\modLauncher\libs\python-3.13.16-embed-amd64\python.exe" -B "modLauncher\launcher\entry.py" -- %command%
 ```
 
-If the game is installed elsewhere, adjust only the absolute path to `python.exe`.
+Replace `<GAME_FOLDER>` with the full game installation path shown by **Browse
+local files**. You can copy that folder's path from File Explorer's address bar.
+Only the path to `python.exe` needs your installation's absolute path.
 Keep the script path relative as `modLauncher\launcher\entry.py` to keep the line
 short enough for Steam's launch options. Keep the quotes, `--` and `%command%`
 as shown, then start the game through Steam. Steam supplies the installed
 executable and its arguments after `--`.
 
+If you get stuck finding the correct path, the release ZIP includes the optional
+`modLauncher/SteamLaunchOptions.cmd` helper. Double-click it to generate the line
+for your installation and copy it to your clipboard, then press **Ctrl+V** in
+Steam's Launch Options field. It always displays the line for manual copying and
+reports whether clipboard copying succeeded or failed. It uses the bundled
+interpreter and does not change Steam settings or start the game. The `.cmd` file
+is generated during packaging and is absent from the source checkout.
+
 To return to ordinary game startup, clear Steam's Launch Options. For an update,
 close the game and launcher, replace the old `modLauncher` folder with the new
-complete folder, and regenerate the launch line. Installed mods live separately
-inside your data packs.
+complete folder, and update the launch line if the Python path has changed.
+Installed mods live separately inside your data packs.
 
 Select the Formula data pack containing your installed code mods. The launcher
 loads that process's startup pack and stays running while it tracks the game and
@@ -62,9 +64,28 @@ Linux Python runtime is included or required by that approach. Game compatibilit
 under Proton does not confirm launcher compatibility: Frida injection, child
 tracking and mod loading have not been tested there.
 
-The line above and the copy helper target Windows Steam. Linux Steam uses different
-paths and a Proton command wrapper; do not assume that copying the Windows line
-unchanged will work. A verified Proton launch recipe is not yet available.
+For Linux Steam, enter this launch line, replacing `<GAME_FOLDER>` with your
+Linux game installation path:
+
+```text
+bash "<GAME_FOLDER>/modLauncher/launcher/launch_proton.sh" %command%
+```
+
+If you need help generating the line, run the Linux helper from the game folder:
+
+```bash
+bash modLauncher/SteamLaunchOptions.sh
+```
+
+It always displays the correctly quoted line and reports clipboard-copy success
+or failure. It can use `wl-copy`, `xclip` or `xsel` if already installed; otherwise
+copy the displayed line manually. No Linux Python installation is needed.
+
+The wrapper keeps Steam's selected Proton version, compatibility prefix and game
+arguments, and starts the bundled Windows Python inside that environment. Enable
+Proton for this game in Steam. This launch route has fixture tests, but actual
+Proton injection and mod loading remain untested. Plain Wine outside Steam is
+not configured by this helper.
 
 ### Package a Windows release
 

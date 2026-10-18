@@ -102,7 +102,7 @@ An explicit file selection includes trusted sources, upstream notices and Frida
 source/relinking materials while excluding development and session data.
 The command performs no downloads or builds.
 
-Packaging generates `SteamLaunchOptions.cmd` and `VERSION.txt` inside the ZIP's
+Packaging generates `SteamLaunchOptions.cmd`, `SteamLaunchOptions.sh` and `VERSION.txt` inside the ZIP's
 single `modLauncher/` directory. Before writing final output, it extracts the
 archive, compares every file with the selected inputs and runs the extracted
 entry point's native-import/runner checks. WSL invokes that same Windows
@@ -110,11 +110,20 @@ interpreter through interop. Failed checks leave no final archive; existing
 versioned outputs are preserved.
 
 `steam_launch_options.py` reads the installed dependency manifest to locate the
-bundled interpreter and prints Steam's launch line. The generated command helper
+bundled interpreter, displays Steam's launch line and copies it to the clipboard.
+If clipboard access fails, it keeps the line available for manual copying.
+The generated command helper
 invokes it without a system-Python fallback. Its interpreter path is absolute;
 the entry-point path is relative to the game root. Neither helper changes Steam
 settings or starts the game. [PACKAGING.md](PACKAGING.md) holds the packaging
 commands and preparation requirements.
+
+The Linux helper uses Bash and optional desktop clipboard tools without a native
+Python runtime. Its Steam line invokes `launch_proton.sh`, preserving Steam's
+Proton prefix and game arguments while substituting the bundled Windows Python.
+`proton_entry.py` supplies the installed Wine-mapped executable path to the normal
+entry point, retaining its target validation. This route is tested with owned
+process fixtures; actual Proton mod loading remains untested.
 
 Maintainers run `Package-Release.ps1 -Version <version>` from the repository root.
 It coordinates developer setup and `release_workflow.py`: pinned Frida source
