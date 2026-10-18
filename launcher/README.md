@@ -60,11 +60,14 @@ descriptors, never executable bytecode. Providers must verify artifact ownership
 and supply display locations rather than trusting code filenames.
 Owners and live bindings are rebuilt separately. Binding changes invalidate
 catalogue cursors, and queries use exact selectors and bounded UTF-8 pages.
+Trusted admission uses `resolve()` to copy matched metadata, opaque runtime
+binding tokens and unmatched selectors into the runtime's frozen-plan layer.
+String tokens retain their generation when relayed through JSON unchanged.
 
 The service installs no hooks and is not yet wired to pack loading, the game
 bridge, WIT or the runner facade. The compiled-code inventory and safe namespace
-lookup helper are available, but runtime providers and native/guest collection
-remain later integration work. Source grammar follows the host Python
+lookup helper and synchronous binding/plan layer are available; actual loader,
+race-provider and guest-runtime wiring remain integration work. Source grammar follows the host Python
 version; unsupported source discovery must not be treated as complete coverage.
 The metadata cache reuses the pinned-directory atomic JSON writer; the fixed
 host-owned cache leaf is separate from mod settings.

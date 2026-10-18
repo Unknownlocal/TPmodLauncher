@@ -65,6 +65,31 @@ paged transport and its Python object memory exceeds the native arena size.
 
 ## Storage and monitoring ownership
 
+The internal `../profiling_plan.py` layer connects verified runtime-local
+functions to catalogue metadata through opaque binding tokens. One `Bindings`
+registry is shared by providers in an interpreter/process generation, with one
+`Coordinator` for the race/context. The trusted provider relays tokens through
+`Catalogue.bind` and passes fresh `Catalogue.resolve` selections at race entry.
+Only data crosses that boundary; code objects and live functions stay local.
+
+Before starting, consumers reserve identical frozen targets, missing coverage,
+metrics and binding policy; their summary/full delivery preferences may differ.
+Each handle is owner-bound. Releasing one consumer preserves other consumers;
+the last release stops owned instrumentation. Cleanup failure keeps the runtime
+reservation for retry. Selected rebinding/removal stops the whole synchronous
+capture conservatively, reports the old generation and affected window, and
+retains partial results until race end. Providers report namespace replacement;
+checkpoints additionally detect retained functions whose `__code__` changed.
+
+This layer does not install live race hooks or collect guest internals. Its full
+internal snapshot is not a public transport page or summary projection. Admission
+and control run on the registry's owning thread; a simulated worker constructs
+and operates its registry/coordinator on that worker. No per-call work is added
+to the native callbacks. Binding checks scan the selected live references at
+control checkpoints; metadata encoding and attribution occur during admission
+and post-race export. Existing catalogue state is trusted provider input, not a
+public capability to submit arbitrary runtime bindings.
+
 Admission accepts 1..256 unique synchronous code objects. Defaults reserve 64
 windows and 128 active measured frames; maxima are 512 windows and 1,024 frames.
 The finishing window consumes one reserved window. Each function/window row uses
@@ -83,8 +108,8 @@ natively filtered PY_UNWIND. Other tools and `sys.setprofile` remain independent
 See [CPython's monitoring reference](https://docs.python.org/3.13/library/sys.monitoring.html)
 for event and tool ownership semantics. Cleanup disables owned events and restores
 callbacks before freeing the ID. A cleanup failure retains the lease for retry;
-a changed owner is left untouched. One shared-capture coordinator must eventually
-own this physical collector; independent captures currently compete for the ID.
+a changed owner is left untouched. The internal coordinator owns one physical
+collector; direct independent `Capture` instances still compete for the ID.
 
 ## Build and test
 

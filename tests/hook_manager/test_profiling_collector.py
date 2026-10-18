@@ -6,9 +6,6 @@ The optional backend stays outside the bridge and release until live acceptance.
 """
 
 from contextlib import contextmanager
-import importlib
-import os
-from pathlib import Path
 import sys
 import threading
 import time
@@ -198,23 +195,6 @@ def test_active_selected_frame_is_refused_before_claiming_monitoring():
 def test_invalid_code_admission_precedes_backend_loading(codes):
     with pytest.raises(ValueError):
         Capture(codes, backend=object())
-
-
-@pytest.fixture(scope="module")
-def native():
-    directory = os.environ.get("MODLAUNCHER_PROFILE_NATIVE")
-    if not directory:
-        if os.environ.get("TPM_REQUIRE_PROFILE_NATIVE_TESTS") == "1":
-            pytest.fail("Required native collector build was not configured")
-        pytest.skip("Build optional collector and set MODLAUNCHER_PROFILE_NATIVE")
-    directory = str(Path(directory).resolve(strict=True))
-    sys.path.insert(0, directory)
-    try:
-        backend = importlib.import_module("_race_profile")
-    finally:
-        sys.path.remove(directory)
-    assert Path(backend.__file__).parent == Path(directory)
-    return backend
 
 
 @contextmanager

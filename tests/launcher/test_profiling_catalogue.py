@@ -123,6 +123,18 @@ def test_readmission_and_rebinding_keep_source_identity_but_change_live_generati
     assert record["binding_generation"] == "3"
 
 
+def test_string_binding_tokens_preserve_generation_across_transport():
+    catalogue = profiling.Catalogue("process-1")
+    (key,) = catalogue.replace(GAME, [source("def update(): return 1")])
+    token = "0123456789abcdef"*2
+    catalogue.bind(key, token, runtime_kind="game-python", metrics=["calls", "elapsed"])
+    generation = catalogue.generation
+    transported = json.loads(json.dumps(token))
+    assert transported == token and transported is not token
+    catalogue.bind(key, transported, runtime_kind="game-python", metrics=["calls", "elapsed"])
+    assert catalogue.generation == generation and catalogue.rows[key]["binding_generation"] == "1"
+
+
 def test_snapshot_registration_uses_admitted_manifest_and_package_module_names():
     manifest = SourceManifest.parse(b'''schema=2
 id="example.ai"

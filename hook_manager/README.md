@@ -37,8 +37,11 @@ measurement readiness and is not yet loaded by the game bridge.
 It collects exact invocation counts and elapsed slices for a frozen set of
 synchronous code objects on one enrolled thread, with lap, finishing and pause
 checkpoints. Native callbacks use preallocated storage; Python owns monitoring
-registration and teardown. Trusted live binding, actual race adapters, guest
-collection, shared requests and public API integration remain separate work.
+registration and teardown. `profiling_plan.py` retains verified live bindings
+inside their runtime, freezes catalogue ownership/generations and shares one
+compatible capture across owned consumer handles. It attributes internal results
+after race completion and stops partial collection on selected binding loss.
+Actual loader/race adapters, guest collection and public API integration remain.
 The bridge does not load or activate this collector yet.
 
 `pack_discovery.py` observes the game's startup Formula selection and retains one

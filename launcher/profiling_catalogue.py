@@ -356,9 +356,12 @@ class Catalogue:
         if type(metrics) not in (list, tuple) or list(metrics) not in (["calls"], ["calls", "elapsed"]):
             raise ValueError("Expected supported exact metrics")
         row = self.rows[function_id]
-        # Compare token identity, not equality: a new callable can have unchanged
-        # source metadata but must receive a new live binding generation.
-        if self.bindings.get(function_id) is binding and row["runtime_kind"] == runtime_kind and row["metrics"] == list(metrics):
+        # Runtime-issued string tokens survive transport by value. Legacy local
+        # object tokens still use identity, without calling custom equality.
+        previous = self.bindings.get(function_id)
+        same = previous is binding or (type(previous) is str and type(binding) is str and previous == binding)
+        if same and row["runtime_kind"] == runtime_kind and row["metrics"] == list(metrics):
+            # A transport retry changes neither readiness nor query cursors.
             return
         if int(row["binding_generation"]) >= 2**64 - 1:
             raise CatalogueError("resource_limit", "Binding generation exhausted")
@@ -408,6 +411,35 @@ class Catalogue:
                 if all(row[field] == value for field, value in selector.items() if field != "owner"):
                     selected.add(key)
         return tuple(sorted(selected))
+
+    def resolve(self, selectors):
+        """Copy a trusted admission selection, including opaque runtime tokens.
+
+        This is internal plan input, not the public paged query. Tokens must be
+        plain strings issued by the execution runtime; Python functions/code do
+        not cross the process boundary. Unsupported legacy object tokens remain
+        discoverable but cannot be admitted through this data-only path.
+        """
+        if self.closed:
+            raise CatalogueError("not_ready", "Catalogue is closed")
+        selected = self._select(selectors)
+        if len(selected) > 256:
+            # Match the native target quota before producing a candidate plan;
+            # a broad selector must not become an arbitrary truncated capture.
+            raise CatalogueError("resource_limit", "Capture function limit")
+        functions = []
+        for key in selected:
+            record = data_copy(self.rows[key])
+            token = self.bindings.get(key)
+            # Do not serialize legacy Python objects. None leaves metadata
+            # discoverable while runtime admission reports the binding unusable.
+            # Token shape alone grants no authority; the runtime checks identity.
+            record["binding_token"] = token if type(token) is str and len(token) == 32 else None
+            functions.append(record)
+        # Retain unmatched selectors separately: zero matches is missing coverage,
+        # whereas a valid selected function may genuinely execute zero times.
+        return {"process": self.process, "functions": functions,
+                "unmatched": [data_copy(selector) for selector in selectors if not self._select([selector])]}
 
     def query(self, requester, text):
         """Return one bounded JSON page; continuation tokens are single use."""
