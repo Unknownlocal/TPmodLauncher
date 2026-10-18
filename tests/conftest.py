@@ -30,6 +30,31 @@ def runner_bundle(tmp_path_factory):
     return build(tmp_path_factory.mktemp("runner-build") / "bundle")
 
 
+@pytest.fixture(scope="session")
+def python_compilation_cache(tmp_path_factory):
+    """Reuse native code within this test process, never guest state or grants."""
+    from launcher.compilation_cache import CompilationCache
+    return CompilationCache(tmp_path_factory.mktemp("python-native-cache"))
+
+
+@pytest.fixture(autouse=True)
+def cached_python_components(request, monkeypatch):
+    """Give Python integration tests the same cache used by normal launcher entry.
+
+    Keep the real class and a fresh Engine/Component for every construction.
+    Explicit cache instances (including cache-policy tests) retain their own setup.
+    """
+    if not {"runner_bundle", "built_python_mod", "built_menu_mod"}.intersection(request.fixturenames):
+        return
+    shared_cache = request.getfixturevalue("python_compilation_cache")
+    from launcher.compiled_mod import CompiledMod
+    original = CompiledMod.__init__
+    def cached(instance, data, timings=None, *, cache=None):
+        return original(instance, data, timings,
+                        cache=shared_cache if cache is None else cache)
+    monkeypatch.setattr(CompiledMod, "__init__", cached)
+
+
 @pytest.fixture
 def native_menu(monkeypatch):
     """Provide the small native menu interface used by owned adapter and mod tests."""

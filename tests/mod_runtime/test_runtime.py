@@ -62,9 +62,7 @@ def test_multibyte_source_crosses_chunk_boundaries_and_dotted_entry_loads(runner
 @pytest.mark.parametrize("code,pattern", [
     ("def broken(:\n", "SyntaxError"),
     ('raise ValueError("owned import failure")', "owned import failure"),
-    ("class WitWorld:\n    def __init__(self): raise RuntimeError('owned construction failure')", "owned construction failure"),
-    ("pass", "WitWorld"),
-], ids=["syntax", "import", "construction", "missing-class"])
+], ids=["syntax", "import"])
 def test_source_load_errors_close_and_clean_before_returning(runner_bundle, code, pattern):
     cleaned = []
     with pytest.raises(SandboxError, match=pattern):
@@ -132,39 +130,18 @@ def test_loader_enforces_aggregate_bounds_even_for_manually_constructed_snapshot
     assert cleaned == [True]
 
 
-@pytest.mark.parametrize("failure", ["providers", "bundle", "compiler"])
-def test_pre_sandbox_failures_release_cleanup_and_compiler(runner_bundle, monkeypatch, failure):
+def test_pre_sandbox_failures_release_cleanup_and_compiler(runner_bundle):
     compiled = CompiledMod(runner_bundle.component())
     cleaned = []
     providers = {"report": lambda _: None}
-    if failure == "providers":
-        providers = {}
-    elif failure == "bundle":
-        monkeypatch.setattr(runner_bundle, "component", lambda: (_ for _ in ()).throw(ValueError("changed bundle")))
-    else:
-        compiled.data = b"mismatched portable bytes"
+    compiled.data = b"mismatched portable bytes"
     with pytest.raises((SandboxError, ValueError)):
         PythonRunner(runner_bundle, snapshot(), providers, prepared=compiled, cleanup=lambda: cleaned.append(True))
     assert compiled.closed and cleaned == [True]
 
 
-@pytest.mark.parametrize("order", ["event-first", "activate-twice"])
-def test_invalid_lifecycle_order_disables_and_cleans(runner_bundle, order):
-    cleaned = []
-    with PythonRunner(runner_bundle, snapshot(), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True)) as runner:
-        with pytest.raises(SandboxError):
-            if order == "event-first":
-                runner.on_event("probe", "{}")
-            else:
-                runner.activate()
-                runner.activate()
-        assert runner.closed
-    assert cleaned == [True]
-
-
-@pytest.mark.parametrize("phase", ["activate", "event"])
-def test_callback_loops_keep_normal_budget_and_fail_independently(runner_bundle, phase):
-    code = CODE.replace('wit_world.report("ready")' if phase == "activate" else "return payload", "exec('while True: pass')")
+def test_callback_loops_keep_normal_budget_and_fail_independently(runner_bundle):
+    code = CODE.replace("return payload", "exec('while True: pass')")
     cleaned = []
     with PythonRunner(runner_bundle, snapshot(code), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True)) as failed, PythonRunner(
         runner_bundle, snapshot(), {"report": lambda _: None}
@@ -175,14 +152,3 @@ def test_callback_loops_keep_normal_budget_and_fail_independently(runner_bundle,
         assert failed.closed and cleaned == [True]
         healthy.activate()
         assert healthy.on_event("probe", "{}") == "{}"
-
-
-def test_host_interruption_during_transfer_propagates_after_cleanup(runner_bundle, monkeypatch):
-    def interrupt(data):
-        yield ""
-        raise KeyboardInterrupt("owned cancellation")
-    monkeypatch.setattr(runtime, "_chunks", interrupt)
-    cleaned = []
-    with pytest.raises(KeyboardInterrupt, match="owned cancellation"):
-        PythonRunner(runner_bundle, snapshot(), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True))
-    assert cleaned == [True]

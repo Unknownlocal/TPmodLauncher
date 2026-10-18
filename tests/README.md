@@ -33,6 +33,12 @@ interface. `launcher/conftest.py` adds local Git source repositories, Wasmtime
 components and independent legacy Python component fixtures. Fixtures keep game
 files and external services outside test ownership.
 
+Python integration tests share a session-local native compilation cache, as
+normal launcher entry does. Engines, stores, guest state and grants remain fresh
+for every instance. Tests supplying their own cache keep that explicit setup.
+Source-adapter checks exercise representative contract failures; repeated JSON
+and lifecycle variants belong to the shared contract rather than every layer.
+
 Native integration uses real Frida sessions against owned CPython 3.13 helpers
 that model imports, menus and process replacement. Embedded tests relocate a
 prepared Windows bundle and invoke its entry point in subprocesses. The probes
