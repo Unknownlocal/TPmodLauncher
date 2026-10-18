@@ -22,5 +22,5 @@ import observation and restoration journals.
 The independent [`tests/callables/`](../../tests/callables/) suite contains unit,
 real sandbox and native bridge acceptance tests. Its required CI workflow and
 portable coverage reports are separate from the parent hook-manager suite.
-Native acceptance uses owned helper processes through the real game bridge.
-Shared root fixtures prepare the runner and owned native runtime.
+Native callable acceptance has its own Windows matrix job and reduced-Frida
+steps. Shared root fixtures still prepare the runner and owned native runtime.

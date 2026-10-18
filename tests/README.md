@@ -114,21 +114,23 @@ inputs fail instead of triggering a rebuild. Local tests build once on demand
 per pytest session when no shared bundle is supplied.
 
 Windows acceptance prepares one verified player bundle for its independent
-embedded and native jobs. The manual reduced-Frida workflow reuses the runner
+embedded and native jobs. The native job runs `tests/callables/` in a separate
+named step with its own JUnit and coverage artifact, sharing interpreter and
+bundle setup. Its general acceptance step excludes that directory. The manual reduced-Frida workflow reuses the runner
 build workflow and keeps native builds, matching source exports and transport
 acceptance together; release validation also checks the Windows candidate.
 
 ## Completion and coverage
 
 The Windows runtime completion gate requires bundle preparation, both acceptance
-jobs and their coverage aggregation. The parent **Test suite complete** gate
+jobs and aggregation of all three coverage fragments. The parent **Test suite complete** gate
 requires the claim, dependencies, shared runner and all component/acceptance
 workflows to succeed. A separate trusted job publishes that result as `manual-ci`.
 
 Portable and Windows acceptance jobs retain JUnit results and raw coverage.
 Portable jobs generate XML/HTML for their selected component; CI-helper coverage
 measures `.github`. Callable coverage measures `hook_manager.callables`; the
-parent hook-manager report measures its top-level modules. Windows acceptance combines its two required fragments,
+parent hook-manager report measures its top-level modules. Windows acceptance combines its three required fragments,
 rejecting missing or corrupt data. Coverage measures the pytest process;
 isolated embedded children remain uninstrumented. `pyproject.toml` configures
 line and branch measurement.

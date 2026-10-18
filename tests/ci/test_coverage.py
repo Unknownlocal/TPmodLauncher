@@ -53,7 +53,7 @@ def fragments(tmp_path, monkeypatch, helper):
     return input_dir, tmp_path / "reports"
 
 
-def test_combines_both_acceptance_jobs_and_preserves_raw_fragments(helper, fragments):
+def test_combines_all_acceptance_jobs_and_preserves_raw_fragments(helper, fragments):
     input_dir, output = fragments
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 0
     report = ET.parse(output / "windows/coverage.xml").getroot()
@@ -65,7 +65,7 @@ def test_combines_both_acceptance_jobs_and_preserves_raw_fragments(helper, fragm
 def test_missing_fragment_rejects_partial_coverage_and_clears_old_report(helper, fragments, capsys):
     input_dir, output = fragments
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 0
-    (input_dir / "test-data-windows-native" / ".coverage").unlink()
+    (input_dir / "test-data-windows-callables-native" / ".coverage").unlink()
     assert helper.main(["--input", str(input_dir), "--output", str(output)]) == 1
     assert "windows: missing coverage fragments:" in capsys.readouterr().err
     assert not (output / "windows").exists()
@@ -83,12 +83,12 @@ def test_corrupt_fragment_does_not_produce_partial_platform_report(helper, fragm
     assert not (output / "windows").exists()
 
 
-def test_missing_input_directory_reports_both_required_fragments(helper, tmp_path, capsys):
+def test_missing_input_directory_reports_all_required_fragments(helper, tmp_path, capsys):
     output = tmp_path / "reports"
     assert helper.main(["--input", str(tmp_path / "missing"), "--output", str(output)]) == 1
     errors = capsys.readouterr().err
     assert "windows: missing coverage fragments:" in errors
-    assert all(f"test-data-windows-{suite}" in errors for suite in ("embedded", "native"))
+    assert all(f"test-data-windows-{suite}" in errors for suite in ("embedded", "native", "callables-native"))
     assert not output.exists()
 
 

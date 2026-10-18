@@ -69,8 +69,10 @@ jobs:
       matrix:
         include:
           - suite: embedded
+            paths: tests
             selection: embedded and not native and not frida_build and not legacy
           - suite: native
+            paths: tests --ignore=tests/callables
             selection: native and not frida_build and not legacy
     runs-on: windows-latest
     timeout-minutes: 20
@@ -108,7 +110,14 @@ jobs:
         run: libs/python-3.13.16-embed-amd64/python.exe -B launcher/entry.py --check-only
       - name: Run player acceptance
         run: |
-          exec .venv/Scripts/python.exe -B -m pytest tests -v -m "${{ matrix.selection }}" --junitxml=junit.xml -p pytest_cov --cov --cov-report=
+          exec .venv/Scripts/python.exe -B -m pytest ${{ matrix.paths }} -v -m "${{ matrix.selection }}" --junitxml=junit.xml -p pytest_cov --cov --cov-report=
+      - name: Run private callable native acceptance
+        if: matrix.suite == 'native'
+        env:
+          COVERAGE_FILE: callable-results/.coverage
+        run: |
+          mkdir -p callable-results
+          exec .venv/Scripts/python.exe -B -m pytest tests/callables -v -m "native and not frida_build and not legacy" --junitxml=callable-results/junit.xml -p pytest_cov --cov --cov-report=
       - name: Preserve acceptance results and coverage, including failed runs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -118,6 +127,17 @@ jobs:
           path: |
             .coverage
             junit.xml
+          if-no-files-found: warn
+
+      - name: Preserve private callable native results and coverage
+        if: ${{ !cancelled() && matrix.suite == 'native' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-data-windows-callables-native
+          include-hidden-files: true
+          path: |
+            callable-results/.coverage
+            callable-results/junit.xml
           if-no-files-found: warn
 
   coverage:
