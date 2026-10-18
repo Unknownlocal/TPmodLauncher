@@ -4,6 +4,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 pythonpath = ["."]
 markers = [
+  "legacy: optional compatibility checks for author-built Python components",
   "embedded: requires the prepared bundled Windows runtime and package directory",
   "native: exercises real Frida controller/bridge on owned CPython 3.13 processes",
   "frida_build: requires a built reduced Frida wheel for native acceptance",

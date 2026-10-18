@@ -86,13 +86,16 @@ def test_real_collection_filters_acceptance_before_assigning_suites(tmp_path):
         "tests/test_acceptance_only.py": (
             "import pytest\n@pytest.mark.native\ndef test_native(): assert False\n"
         ),
+        "tests/test_legacy_only.py": (
+            "import pytest\n@pytest.mark.legacy\ndef test_legacy(): assert False\n"
+        ),
     }
     for name, source in modules.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
     (tmp_path / "pytest.ini").write_text(
-        "[pytest]\nmarkers = native: native acceptance\n", encoding="utf-8"
+        "[pytest]\nmarkers =\n    native: native acceptance\n    legacy: optional compatibility\n", encoding="utf-8"
     )
     script = """
 import importlib.util, pathlib, sys
@@ -113,4 +116,4 @@ raise SystemExit(ci.pytest.main(
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed, 2 deselected" in result.stdout
+    assert "1 passed, 3 deselected" in result.stdout

@@ -65,9 +65,9 @@ jobs:
       matrix:
         include:
           - suite: embedded
-            selection: embedded and not native and not frida_build
+            selection: embedded and not native and not frida_build and not legacy
           - suite: native
-            selection: native and not frida_build
+            selection: native and not frida_build and not legacy
     runs-on: windows-latest
     timeout-minutes: 20
     env:

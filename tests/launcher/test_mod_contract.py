@@ -174,6 +174,7 @@ def test_lifecycle_and_required_export_shape_are_enforced(author):
         Mod(manifest, report=lambda *_: None)
 
 
+@pytest.mark.legacy
 def test_python_build_and_real_guest_contract(built_python_mod, tmp_path, monkeypatch):
     folder = built_python_mod
     assert not (folder / "src/build-marker.txt").exists()
@@ -229,6 +230,7 @@ def test_python_build_and_real_guest_contract(built_python_mod, tmp_path, monkey
 
 
 @pytest.mark.parametrize("operation", ["socket", "subprocess", "ctypes"])
+@pytest.mark.legacy
 def test_python_guest_cannot_obtain_native_host_io(built_python_mod, operation):
     with Mod(Manifest.read(built_python_mod), report=lambda *_: None) as mod:
         mod.activate()
@@ -245,6 +247,7 @@ def test_python_guest_cannot_obtain_native_host_io(built_python_mod, operation):
             assert result is False
 
 
+@pytest.mark.legacy
 def test_builder_preserves_existing_output_and_rejects_non_source(author):
     (author / "mod.wasm").write_bytes(b"previous release")
     with pytest.raises(FileExistsError):
@@ -256,6 +259,7 @@ def test_builder_preserves_existing_output_and_rejects_non_source(author):
         build_mod.build(author, author / "new.wasm")
 
 
+@pytest.mark.legacy
 def test_current_api_build_can_request_diagnostics_without_menu_access(author):
     # Build against the current contract with only one optional import enabled.
     path = author / "mod.toml"

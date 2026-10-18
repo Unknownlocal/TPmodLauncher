@@ -20,6 +20,11 @@ Source tests cover inert snapshots, portable layouts, file replacement and link
 attempts, and bounded loading into real guest instances. Source-adapter tests
 reuse the launcher JSON contract and owned native UI resources.
 
+Author-built Python component checks carry the `legacy` marker and are excluded
+from the required portable and Windows acceptance runs. Run them explicitly with
+`python -m pytest tests -m "legacy and not embedded"`. The ordinary gate retains
+prebuilt Wasm compatibility and the current source-mod path.
+
 Preparation tests use synchronized worker gates to exercise queued and running
 cancellation, abandoned results and controller-thread adoption. Pack/session
 tests combine controlled process and bridge events with real components to check

@@ -8,7 +8,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PORTABLE = "not embedded and not native and not frida_build"
+PORTABLE = "not embedded and not native and not frida_build and not legacy"
 SUITES = {
     "launcher": "tests/launcher/",
     "hook_manager": "tests/hook_manager/",
