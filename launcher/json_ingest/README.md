@@ -2,9 +2,8 @@
 
 This launcher-owned package decodes bounded UTF-8 bytes into indexed `JsonObject`
 nodes, arrays and scalars. It performs no file I/O, document-schema conversion,
-source admission, native binding or mod-code execution. Document adapters supply
-their own byte/BOM and duplicate policies; regulation integration is a separate
-changeset.
+source admission, native binding or mod-code execution. Regulations is its first
+consumer; other adapters can supply their own byte/BOM and duplicate policies.
 
 `decode(content, max_bytes=..., allow_bom=False)` checks the complete byte length
 before decoding, including any BOM. UTF-8 BOM support is explicit. Malformed
@@ -28,7 +27,7 @@ materialized, allowing excluded subtrees to remain semantically unexamined.
 Parsing itself still consumes the bounded document and uses Python's decoder
 resource limits. Domain depth/node limits belong to the consuming adapter.
 
-Adapters can select last-value-wins materialization for native data and strict
-materialization for enabled extensions, leaving disabled sections unconsumed.
-Existing JSON consumers retain their decoders until separately migrated with
-compatibility checks. No new guest API or capability is exposed.
+The regulations adapter selects native materialization with `duplicates="last"`
+and strict enabled-extension materialization, while leaving disabled sections
+unconsumed. Other JSON consumers retain their existing decoders until migrated
+with their own compatibility checks. No new guest API or capability is exposed.

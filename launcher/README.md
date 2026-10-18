@@ -68,6 +68,15 @@ activation. Startup readiness waits for both preparation outcomes and native
 menu acknowledgement. Session closure releases active mods in reverse order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
 
+[`regulations/`](regulations/README.md) stages enabled-source regulation
+definitions through a private, one-shot pack preparation seam. It preserves
+native fields and keeps condition data opaque. Public capability admission,
+sandbox handler binding and native publication remain gated by later steps.
+
+[`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
+field selection and explicit duplicate policies. Document-specific adapters own
+schema conversion and admission; regulations is the first consumer.
+
 ## Settings and palette ownership
 
 `ui_settings.py` validates labelled colour fields and binds each mod to its fixed

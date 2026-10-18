@@ -95,6 +95,28 @@ class PackMods:
         self.loading = None
         self.total = self.failed = 0
         self.finished = False
+        self._pack_root = None
+        self._regulations_prepared = False
+
+    def prepare_regulations(self, *, scopes, native_categories=()):
+        """Prepare once from admitted active source owners, without publishing rules.
+
+        This trusted integration seam stays inert for current API versions,
+        which cannot request regulations. Later binding/readiness integration
+        must use its result before exposing any owner resources to the game.
+        """
+        from launcher.regulations import RegulationDefinitions
+
+        if self.closed or not self.finished or self._pack_root is None or self._regulations_prepared:
+            raise ValueError("Regulations require a completed pack and one preparation per session")
+        sources = {owner: mod.snapshot for owner, mod in self.mods.items()
+                   if type(mod) is SourceMod and mod._active and not mod.sandbox.closed
+                   and "regulations" in mod.manifest.capabilities}
+        # Freeze preparation even on failure: editing a live pack cannot silently
+        # repair/redefine an enabled rule; recovery needs a fresh admission.
+        self._regulations_prepared = True
+        return RegulationDefinitions.read(self._pack_root, sources, scopes=scopes,
+                                          native_categories=native_categories)
 
     def _flush_menu(self):
         """Send staged declarations outside guest execution, without per-frame callbacks."""
@@ -318,6 +340,7 @@ class PackMods:
             with measure(load_timings, "discovery"):
                 folder = self._folder(pack)
                 candidates = self._candidates(folder)
+                self._pack_root = folder
         except (OSError, ValueError, RuntimeError) as error:
             self._log(
                 "DISCOVERY REJECTED",

@@ -63,6 +63,9 @@ def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source
         scope.load(record)
         finish(scope)
         assert list(scope.mods) == ["owned.a", "owned.b"]
+        # Existing API mods cannot claim regulation ownership; even a missing
+        # regulations.json stays untouched when no eligible owner is enabled.
+        assert scope.prepare_regulations(scopes=set()) is None
         assert scope.mods["owned.a"].event("owned.event", {"ok": True}) == {"ok": True}
         assert scope.mods["owned.a"].sandbox._thread == threading.get_ident()
         assert scope.mods["owned.b"].event("owned.event", None) == {}

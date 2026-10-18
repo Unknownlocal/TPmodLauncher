@@ -38,6 +38,10 @@ class SourceMod(Mod):
             ownership.close()
             raise
         self.manifest = snapshot.manifest
+        # Only regulation owners need retained host text for later handler
+        # binding; other mods do not keep another source snapshot alive.
+        # Never reopen an author's mutable src/ tree after activation.
+        self.snapshot = snapshot if "regulations" in snapshot.manifest.capabilities else None
         self.sandbox = self.runner.sandbox
         self._active = False
 
