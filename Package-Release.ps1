@@ -13,6 +13,7 @@ param(
     [ValidatePattern('^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$')]
     [string]$Version,
     [switch]$CheckOnly,
+    [switch]$PrepareOnly,
     [string]$Python,
     [string]$FridaBuild,
     [string]$FridaSources
@@ -51,6 +52,14 @@ function Invoke-Step([string]$Label, [string]$Executable, [string[]]$ToolArgumen
 
 Push-Location -LiteralPath $repoRoot
 try {
+    if ($CheckOnly -and $PrepareOnly) { throw 'Choose CheckOnly or PrepareOnly, not both.' }
+    if (-not $CheckOnly) {
+        foreach ($tool in @('git.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+                throw "Install $tool before building a release. See launcher/PACKAGING.md for native build prerequisites."
+            }
+        }
+    }
     $developer = Assert-WorkspacePath (Join-Path $repoRoot '.venv\Scripts\python.exe')
     $archive = Assert-WorkspacePath (Join-Path $repoRoot "dist\modLauncher-$Version-windows-x64.zip")
     if (-not $CheckOnly -and ((Test-Path -LiteralPath $archive) -or (Test-Path -LiteralPath "$archive.sha256"))) {
@@ -80,48 +89,12 @@ try {
         Invoke-Step 'Install pinned developer tools' $developer @('-B', '-m', 'pip', 'install', '-r', 'requirements-dev.txt')
     }
 
-    Write-Host "`nFind the pinned Windows Frida build and its matching source export"
-    $resolveArguments = @('-B', 'launcher/package_release.py', '--version', $Version, '--resolve-inputs')
-    if ($FridaBuild) { $resolveArguments += @('--frida-build', $FridaBuild) }
-    if ($FridaSources) { $resolveArguments += @('--frida-sources', $FridaSources) }
-    $resolvedText = & $developer @resolveArguments
-    if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the pinned Frida release inputs.' }
-    $inputs = ($resolvedText -join "`n") | ConvertFrom-Json
-    Write-Host "Build:   $($inputs.build)"
-    Write-Host "Sources: $($inputs.sources)"
-
-    if (-not $CheckOnly) {
-        $wheelCache = Assert-WorkspacePath $inputs.wheel_cache
-        if (-not (Test-Path -LiteralPath $wheelCache)) {
-            New-Item -ItemType Directory -Path (Split-Path -Parent $wheelCache) -Force | Out-Null
-            Copy-Item -LiteralPath $inputs.wheel -Destination $wheelCache
-        }
-
-        # Build into a fresh directory. Keep the previous runner as a reversible backup.
-        $generation = [Guid]::NewGuid().ToString('N')
-        $newRunner = Assert-WorkspacePath (Join-Path $repoRoot ".cache\release-runner-$generation")
-        $oldRunner = Assert-WorkspacePath (Join-Path $repoRoot ".cache\previous-runner-$generation")
-        $installedRunner = Assert-WorkspacePath (Join-Path $repoRoot 'libs\mod-runners')
-        Invoke-Step 'Build the trusted Python runner' $developer @('-B', '-m', 'mod_runtime.build', '--output', $newRunner)
-        New-Item -ItemType Directory -Path (Split-Path -Parent $installedRunner) -Force | Out-Null
-        if (Test-Path -LiteralPath $installedRunner) {
-            Move-Item -LiteralPath $installedRunner -Destination $oldRunner
-        }
-        try {
-            Move-Item -LiteralPath $newRunner -Destination $installedRunner
-        } catch {
-            if ((Test-Path -LiteralPath $oldRunner) -and -not (Test-Path -LiteralPath $installedRunner)) {
-                Move-Item -LiteralPath $oldRunner -Destination $installedRunner
-            }
-            throw
-        }
-        Invoke-Step 'Prepare and authenticate the bundled Python and dependencies' $developer @('-B', 'launcher/prepare_release.py')
-    }
-
-    $packageArguments = @('-B', 'launcher/package_release.py', '--version', $Version,
-        '--frida-build', $inputs.build, '--frida-sources', $inputs.sources)
-    if ($CheckOnly) { $packageArguments += '--check-only' }
-    Invoke-Step 'Verify release inputs and package the Windows bundle' $developer $packageArguments
+    $workflowArguments = @('-B', 'launcher/release_workflow.py', '--version', $Version)
+    if ($FridaBuild) { $workflowArguments += @('--frida-build', $FridaBuild) }
+    if ($FridaSources) { $workflowArguments += @('--frida-sources', $FridaSources) }
+    if ($CheckOnly) { $workflowArguments += '--check-only' }
+    if ($PrepareOnly) { $workflowArguments += '--prepare-only' }
+    Invoke-Step 'Build, prepare and verify the Windows release' $developer $workflowArguments
 } catch {
     [Console]::Error.WriteLine("Release failed: $($_.Exception.Message)")
     exit 1

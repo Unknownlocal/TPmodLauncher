@@ -117,6 +117,7 @@ settings or starts the game. [PACKAGING.md](PACKAGING.md) holds the packaging
 commands and preparation requirements.
 
 Maintainers run `Package-Release.ps1 -Version <version>` from the repository root.
-It coordinates developer setup, pinned artifact discovery, runner and dependency
-preparation, and ZIP assembly; individual Python commands are implementation
-steps behind that entry point.
+It coordinates developer setup and `release_workflow.py`: pinned Frida source
+fetching and compilation, matching source export, isolated runner/dependency
+preparation, and ZIP assembly. No pre-existing binary cache is required; the
+checkout's selected dependencies and active runtime are preserved.

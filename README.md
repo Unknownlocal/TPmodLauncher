@@ -74,12 +74,15 @@ From the repository root, run:
 .\Package-Release.ps1 -Version 0.1.0
 ```
 
-The script sets up the developer environment, finds the pinned Frida build and
-matching source export, builds the trusted runner, prepares the bundled Python
-and dependencies, and verifies the extracted ZIP. It writes the ZIP and SHA-256
-checksum into `dist/`. Existing versioned outputs are preserved.
+The script sets up the developer environment, fetches and builds the pinned
+Frida sources, exports the matching source archive, builds the trusted runner,
+prepares the bundled Python and dependencies, and verifies the extracted ZIP.
+It writes the ZIP and SHA-256 checksum into `dist/`. Existing versioned outputs
+are preserved.
 
-Use `-CheckOnly` to check existing inputs without setup, downloads or a ZIP.
+No existing cache or launcher installation is needed. Use `-PrepareOnly` to build
+and verify a candidate without a ZIP, or `-CheckOnly` to recheck the last prepared
+candidate for that version without setup or downloads.
 Developer prerequisites, WSL usage and optional overrides are in the
 [packaging guide](launcher/PACKAGING.md).
 

@@ -339,6 +339,25 @@ def wheel_platform_args(extension, target):
     return ["--plat-name", prefix[0] + architecture]
 
 
+def node_version(recipe, target):
+    """Require Node only for the upstream targets/features that process JS with npm."""
+    options = dict(argument.removeprefix("-D").split("=", 1)
+                   for argument in recipe["frida"]["options"])
+    needed = target.startswith("macos-") or any(
+        options.get(name, "auto") != "disabled" for name in (
+            "frida_node", "frida-core:barebone_backend", "frida-core:compiler_backend",
+        )
+    )
+    if not needed:
+        return None
+    node = subprocess.run(
+        ["node", "--version"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    if int(node.lstrip("v").split(".")[0]) < 18:
+        raise Error("This Frida target requires Node.js 18 or newer")
+    return node
+
+
 def build(recipe, target, work, output, cache):
     """Compile in a fresh short workspace and publish checked outputs without installing them."""
     if output.exists():
@@ -360,11 +379,7 @@ def build(recipe, target, work, output, cache):
         != recipe["frida"]["setuptools_version"]
     ):
         raise Error("Install the pinned setuptools from requirements-dev.txt")
-    node = subprocess.run(
-        ["node", "--version"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    if int(node.lstrip("v").split(".")[0]) < 18:
-        raise Error("Upstream Frida requires Node.js 18 or newer")
+    node = node_version(recipe, target)
     work.mkdir(parents=True, exist_ok=True)
     source, products = work / "source", work / "build"
     sources = checkout(source, recipe)

@@ -20,6 +20,25 @@ def recipe():
     return build.read_recipe()
 
 
+@pytest.mark.parametrize("target", ["windows-x86_64", "linux-x86_64"])
+def test_reduced_build_does_not_invoke_node(recipe, target, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("The reduced Windows/Linux build must work without Node installed")
+    monkeypatch.setattr(build.subprocess, "run", forbidden)
+    assert build.node_version(recipe, target) is None
+
+
+@pytest.mark.parametrize("target", ["macos-x86_64", "macos-arm64"])
+def test_darwin_agents_still_check_node(recipe, target, monkeypatch):
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "v20.13.1\n", "")
+    monkeypatch.setattr(build.subprocess, "run", run)
+    assert build.node_version(recipe, target) == "v20.13.1"
+    assert calls == [["node", "--version"]]
+
+
 @pytest.fixture
 def wheel_output(tmp_path, recipe):
     """Make a small standard wheel for static verification; no fake binary is executed."""

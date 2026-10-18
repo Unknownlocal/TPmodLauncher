@@ -202,11 +202,11 @@ def write_zip(destination, files, generated):
                         shutil.copyfileobj(source, target, 1024 * 1024)
 
 
-def package_release(root, version, manifest, materials, *, checker=check_release):
+def package_release(root, version, manifest, materials, *, checker=None, output_root=None):
     """Publish a fresh local ZIP/checksum only after extracting and checking it."""
     if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,63}", version):
         raise paths.DependencyError("Version must contain 1-64 letters, digits, dots, underscores or hyphens")
-    output = paths.local_path(root, "dist")
+    output = paths.local_path(output_root or root, "dist")
     output.mkdir(exist_ok=True)
     destination = output / f"modLauncher-{version}-windows-x64.zip"
     checksum = destination.with_suffix(".zip.sha256")
@@ -230,7 +230,7 @@ def package_release(root, version, manifest, materials, *, checker=check_release
         root_copy = extracted / "modLauncher"
         if paths.file_inventory(root_copy) != expected:
             raise paths.DependencyError("Extracted ZIP differs from the selected release files")
-        checker(root_copy)
+        (checker or check_release)(root_copy)
         digest = build.file_record(archive_path)["sha256"]
         # Exclusive creation preserves existing output even if another build raced this one.
         created = []
