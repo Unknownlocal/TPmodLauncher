@@ -33,6 +33,14 @@ and namespace traversal. Ownership must be verified by the supplying provider;
 names and filenames are not proof. The helper installs no hooks, grants no
 measurement readiness and is not yet loaded by the game bridge.
 
+`profiling_provider.py` verifies selected compiled-source identities and matches
+separately loaded code by complete fingerprints and the verified module's actual
+globals. It retains functions in the runtime registry and returns data-only
+readiness updates for the launcher catalogue. Unsupported or ambiguous functions
+remain explicit. Load/rebind verification runs outside the call/lap path; failed
+verification or unload withdraws bindings and stops affected active collection
+before the host receives its update. Trusted loader and bridge wiring still follow.
+
 `profiling_collector.py` owns the optional [native race collector](native/README.md).
 It collects exact invocation counts and elapsed slices for a frozen set of
 synchronous code objects on one enrolled thread, with lap, finishing and pause

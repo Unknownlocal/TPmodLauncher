@@ -11,7 +11,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 import hashlib
 import json
-import marshal
 from pathlib import PurePosixPath
 import sys
 import time
@@ -19,7 +18,9 @@ from types import CodeType
 import uuid
 
 from hook_manager.manager import data_copy, identifier, HookError
-from hook_manager.profiling_discovery import code_inventory, DiscoveryError
+from hook_manager.profiling_discovery import (
+    code_inventory, compiled_function_id, compiled_source_identity, DiscoveryError,
+)
 from launcher import _settings_files as files
 from mod_runtime import _source_files as disk
 from mod_runtime.source import SourceSnapshot
@@ -268,7 +269,7 @@ class Catalogue:
                 # Version 2 avoids reference-count-dependent flags, so loading
                 # functions or retaining code references cannot change identity.
                 descriptors = _discover_code(unit.code, self.limits.functions)
-                content = marshal.dumps(unit.code, 2)
+                content, compiled_hash = compiled_source_identity(unit.code, descriptors)
             else:
                 raise ValueError("Expected admitted source bytes or a trusted code object")
             _text(unit.module); _text(unit.path)
@@ -283,11 +284,8 @@ class Catalogue:
             total += len(content)
             if total > self.limits.source_bytes:
                 raise CatalogueError("resource_limit", "Source byte limit")
-            source_hash = hashlib.sha256(content).hexdigest()
-            if type(unit) is CompiledSource:
-                # Format 2 also omits code sharing. Include inventory paths so
-                # shared and separate equal code cannot collide in the cache.
-                source_hash = _hash(["code", source_hash, descriptors])
+            # Compiled identity already includes both bytes and inventory paths.
+            source_hash = compiled_hash if type(unit) is CompiledSource else hashlib.sha256(content).hexdigest()
             units.append((unit, content, source_hash, descriptors))
         # Sort source identities so caller enumeration order cannot change IDs.
         # identity also invalidates them for manifest/native dependency changes.
@@ -306,7 +304,7 @@ class Catalogue:
             elif descriptors is None:
                 descriptors = _discover(content, self.limits.functions)
             for name, line, discriminator, kind in descriptors:
-                function_id = _hash([owner_key, artifact, unit.module, unit.path, source_hash, discriminator])
+                function_id = compiled_function_id(owner_key, artifact, unit.module, unit.path, source_hash, discriminator)
                 replacement[function_id] = {
                     "function_id": function_id, "owner": dict(owner), "module": unit.module,
                     "qualified_name": name, "artifact_checksum": artifact, "source": unit.path,
@@ -440,6 +438,72 @@ class Catalogue:
         # whereas a valid selected function may genuinely execute zero times.
         return {"process": self.process, "functions": functions,
                 "unmatched": [data_copy(selector) for selector in selectors if not self._select([selector])]}
+
+    def apply_bindings(self, report):
+        """Apply a trusted runtime readiness report with stale-generation checks.
+
+        This is the host half of provider admission, not a mod-callable operation.
+        Validate the entire bounded batch before changing rows/cursors. Retries
+        already describing current state are no-ops, including transported tokens.
+        """
+        if self.closed:
+            raise CatalogueError("not_ready", "Catalogue is closed")
+        if (type(report) is not dict or set(report) != {"process", "runtime", "bindings"}
+                or report["process"] != self.process):
+            raise CatalogueError("stale_catalogue", "Provider report belongs to another process")
+        identifier(report["runtime"])
+        if type(report["bindings"]) is not list or not 1 <= len(report["bindings"]) <= 256:
+            raise CatalogueError("resource_limit", "Provider update count limit")
+        changes, seen = [], set()
+        fields = {"function_id", "artifact_checksum", "expected_generation", "binding_token",
+                  "runtime_kind", "metrics", "availability", "reason"}
+        for value in report["bindings"]:
+            update = data_copy(value)
+            if type(update) is not dict or set(update) != fields:
+                raise ValueError("Invalid provider update fields")
+            key = update["function_id"]
+            if type(key) is not str or key in seen or key not in self.rows:
+                raise CatalogueError("stale_catalogue", "Unknown or duplicate provider function")
+            seen.add(key)
+            row = self.rows[key]
+            if update["artifact_checksum"] != row["artifact_checksum"]:
+                raise CatalogueError("stale_catalogue", "Provider artifact changed")
+            generation = update["expected_generation"]
+            if (type(generation) is not str or not generation.isascii() or not generation.isdecimal()
+                    or str(int(generation)) != generation or not 0 <= int(generation) < 2**64):
+                raise ValueError("Expected canonical provider generation")
+            availability, token = update["availability"], update["binding_token"]
+            _text(update["runtime_kind"])
+            if availability == "ready":
+                if (type(token) is not str or len(token) != 32 or any(c not in "0123456789abcdef" for c in token)
+                        or update["metrics"] != ["calls", "elapsed"] or update["reason"] is not None):
+                    raise ValueError("Expected verified synchronous provider binding")
+                previous = self.bindings.get(key)
+                same = (row["availability"] == "ready" and type(previous) is str and previous == token
+                        and row["runtime_kind"] == update["runtime_kind"] and row["metrics"] == update["metrics"])
+            else:
+                if availability not in ("not_loaded", "unsupported", "unknown") or token is not None or update["metrics"] != []:
+                    raise ValueError("Expected unavailable provider binding")
+                identifier(update["reason"])
+                same = row["availability"] == availability and row["reason"] == update["reason"] and key not in self.bindings
+            # An exact state retry may carry the generation from before its first
+            # application. A different state requires the current generation,
+            # preventing a delayed report from replacing a newer live binding.
+            if not same:
+                if generation != row["binding_generation"]:
+                    raise CatalogueError("stale_catalogue", "Provider binding generation changed")
+                if int(row["binding_generation"]) >= 2**64 - 1:
+                    raise CatalogueError("resource_limit", "Binding generation exhausted")
+                changes.append(update)
+        if self.generation + len(changes) >= 2**64:
+            raise CatalogueError("resource_limit", "Catalogue generation exhausted")
+        for update in changes:
+            key = update["function_id"]
+            if update["availability"] == "ready":
+                self.bind(key, update["binding_token"], runtime_kind=update["runtime_kind"], metrics=update["metrics"])
+            else:
+                self.unbind(key, availability=update["availability"], reason=update["reason"])
+        return {key: self.rows[key]["binding_generation"] for key in sorted(seen)}
 
     def query(self, requester, text):
         """Return one bounded JSON page; continuation tokens are single use."""

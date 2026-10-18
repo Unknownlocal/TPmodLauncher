@@ -2,6 +2,7 @@
 """Exercise inert discovery, source identity, live invalidation and bounded queries."""
 
 import json
+import marshal
 
 import pytest
 
@@ -331,7 +332,7 @@ def test_compiled_cache_hit_never_reconstructs_code_or_compiles_source(tmp_path,
     first = profiling.Catalogue("process-1", cache=profiling.MetadataCache(tmp_path))
     keys = first.replace(GAME, [unit])
     monkeypatch.setattr(profiling, "_discover", lambda *a: pytest.fail("Compiled input must not compile source"))
-    monkeypatch.setattr(profiling.marshal, "loads", lambda *a, **k: pytest.fail("Cache must not deserialize code"))
+    monkeypatch.setattr(marshal, "loads", lambda *a, **k: pytest.fail("Cache must not deserialize code"))
     fresh = profiling.Catalogue("process-2", cache=profiling.MetadataCache(tmp_path))
     assert fresh.replace(GAME, [unit]) == keys
     assert len(fresh.cache.entries) == 1
@@ -342,7 +343,7 @@ def test_compiled_fingerprint_distinguishes_shared_and_separate_equal_code(tmp_p
     child = root.co_consts[0]
     shared = root.replace(co_consts=(child, child))
     separate = root.replace(co_consts=(child, child.replace()))
-    assert profiling.marshal.dumps(shared, 2) == profiling.marshal.dumps(separate, 2)
+    assert marshal.dumps(shared, 2) == marshal.dumps(separate, 2)
     catalogue = profiling.Catalogue("process-1", cache=profiling.MetadataCache(tmp_path))
     first = catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", shared)])
     second = catalogue.replace(GAME, [profiling.CompiledSource("physics", "physics.py", separate)])

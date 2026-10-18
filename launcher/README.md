@@ -63,10 +63,15 @@ catalogue cursors, and queries use exact selectors and bounded UTF-8 pages.
 Trusted admission uses `resolve()` to copy matched metadata, opaque runtime
 binding tokens and unmatched selectors into the runtime's frozen-plan layer.
 String tokens retain their generation when relayed through JSON unchanged.
+`apply_bindings()` accepts trusted runtime-provider readiness batches, validating
+every update before changing catalogue state. Process/artifact/generation checks
+reject stale replacements; exact state retries preserve generations and cursors.
+Compiled catalogue IDs and runtime verification share the same source identity
+calculation, so equal names/locations cannot admit a different function body.
 
 The service installs no hooks and is not yet wired to pack loading, the game
 bridge, WIT or the runner facade. The compiled-code inventory and safe namespace
-lookup helper and synchronous binding/plan layer are available; actual loader,
+lookup helper, verified provider handshake and synchronous binding/plan layer are available; actual loader,
 race-provider and guest-runtime wiring remain integration work. Source grammar follows the host Python
 version; unsupported source discovery must not be treated as complete coverage.
 The metadata cache reuses the pinned-directory atomic JSON writer; the fixed
