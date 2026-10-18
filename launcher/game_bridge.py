@@ -10,6 +10,16 @@ import threading
 import time
 import uuid
 
+# Dependency order is also the execution order in the game's private namespace.
+# Keep this list fixed: packs and source mods cannot contribute host modules.
+# The callable files skip relative imports on that path; the package __init__
+# serves normal host imports and is deliberately absent from this execution list.
+PYTHON_SOURCES = (
+    "manager", "callables/fingerprint", "callables/target",
+    "callables/result_contract", "callables/binding", "callables/adapters",
+    "pack_discovery", "menu", "settings", "themes",
+)
+
 
 class BridgeError(RuntimeError):
     """Raised when the bridge cannot initialise or cleanly stop."""
@@ -187,7 +197,7 @@ def factory(root, frida):
     # Only these trusted infrastructure sources enter the game; packs cannot add entries.
     sources = {
         f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
-        for name in ("manager", "pack_discovery", "menu", "settings", "themes")
+        for name in PYTHON_SOURCES
     }
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")

@@ -34,8 +34,10 @@ query extensions; identified validator failures latch only that owner unavailabl
 and retain guards until explicit removal. Main-thread binding changes are rejected
 during active operations; polling defers pending installation until idle. Trusted
 native workers require enrollment and an operation scope.
-Decorator chains are verified and called intact. No manifest capability or guest
-operation exposes registration or native calls.
+Decorator chains are verified and called intact. The bootstrap owns polling and
+cleanup, retrying shutdown through the bounded bridge request while operations
+finish; no bridge request, manifest capability or guest operation
+exposes registration or native calls.
 
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and

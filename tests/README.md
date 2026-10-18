@@ -10,7 +10,7 @@ real Wasm execution, owned native helper processes and relocated player bundles.
 | --- | --- |
 | `launcher/` | Dependency verification, component admission, compilation cache, sandbox limits, pack loading, settings persistence and process/session lifetime; optional build and release validation. |
 | `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adapters and the bridge. |
-| `callables/` | Private callable targets, return contracts, owner isolation, validation, worker/shutdown coordination, sandbox isolation. |
+| `callables/` | Private callable targets, return contracts, owner isolation, validation, worker/shutdown coordination, sandbox isolation and dedicated native bridge acceptance. |
 | `mod_runtime/` | Runner integrity and ABI, source snapshots, host-operation permissions, loading/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
 | `ci/` | Portable suite ownership, manual CI claims/statuses, completion gates and coverage combination/reporting. |
 
@@ -21,7 +21,8 @@ the launcher's JSON and resource-ownership contracts; lower-level contract tests
 cover their detailed validation rules.
 
 Callable tests keep one representative per distinct validation or lifecycle
-behaviour. Existing hook-manager tests own ordinary descriptor/import mechanics.
+behaviour. Existing hook-manager tests own ordinary descriptor/import mechanics;
+the callable native probe owns flat bootstrap and busy-shutdown restoration.
 The real guest check owns private-module and endpoint absence; runtime tests own
 generic source-load failure cleanup.
 
