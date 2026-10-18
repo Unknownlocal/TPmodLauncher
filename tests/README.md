@@ -1,148 +1,133 @@
 # Test architecture
 
 The pytest suite follows the boundaries between the external launcher, trusted
-in-game adapters and Python runner. It combines focused behavior checks with
+in-game adapters and Python runner. It combines focused behaviour checks with
 real Wasm execution, owned native helper processes and relocated player bundles.
 
 ## Test areas
 
 | Area | Coverage |
 | --- | --- |
-| `launcher/` | Core dependency verification, Wasm admission, cache isolation/fallback, sandbox limits, pack loading, settings persistence and process/session lifetime. |
-| `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adaptation and the bridge. |
-| `mod_runtime/` | Runner integrity, source snapshots, all host-operation permissions, source/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
-| `ci/` | Exhaustive portable suite selection and complete Windows acceptance coverage aggregation. |
+| `launcher/` | Dependency verification, component admission, compilation cache, sandbox limits, pack loading, settings persistence and process/session lifetime; optional build and release validation. |
+| `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adapters and the bridge. |
+| `mod_runtime/` | Runner integrity and ABI, source snapshots, host-operation permissions, loading/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
+| `ci/` | Portable suite ownership, manual CI claims/statuses, completion gates and coverage combination/reporting. |
 
-Small WAT components exercise permissions, signatures, traps, budgets and cleanup.
-Built Python components retain legacy contract coverage. Public Python source examples
-run through the trusted runner, independently of the legacy manifest fixtures.
-Source tests cover inert snapshots, portable layouts, file replacement and link
-attempts, and bounded loading into real guest instances. Source-adapter tests
-reuse the launcher JSON contract and owned native UI resources.
+Small WAT components exercise signatures, permissions, traps, budgets and cleanup.
+Python source examples execute through the trusted runner. Author-built Python
+components have separate compatibility fixtures. Source-adapter checks reuse
+the launcher's JSON and resource-ownership contracts; lower-level contract tests
+cover their detailed validation rules.
 
-Author-built Python component checks carry the `legacy` marker and are excluded
-from the required portable and Windows acceptance runs. Run them explicitly with
-`python -m pytest tests -m "legacy and not embedded"`. The ordinary gate retains
-prebuilt Wasm compatibility and the current source-mod path.
-
-The required launcher/runtime gate contains 82 focused cases. Redundant failure
-matrices, helper-only tests, precise palette labels and timing-log shape checks
-have been removed. Developer build/packaging tests carry the `release` marker;
-run them with `python -m pytest tests -m "release and not frida_build"`.
-Plain pytest excludes both optional profiles unless `-m` is explicitly supplied.
-All tests execute serially within their job; no parallel test workers are used.
-
-Preparation tests use synchronized worker gates to exercise queued and running
-cancellation, abandoned results and controller-thread adoption. Pack/session
-tests combine controlled process and bridge events with real components to check
-load order, duplicate IDs, progress, readiness, replacements and cleanup.
-Cancellation gates use disposable compiler results when no guest is admitted;
-real native preparation and controller adoption retain an integration check.
+Preparation tests use synchronized worker gates to exercise queued/running
+cancellation and abandoned results. Disposable compiler results isolate ownership
+races when no guest is admitted; real compilation and controller-thread adoption
+retain an integration check. Pack/session tests combine controlled process and
+bridge events with real components to check ordering, progress, readiness,
+replacement and cleanup.
 
 ## Fixtures and execution boundaries
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
-runtime copies, a session-scoped verified runner and an owned native-menu
-interface. `launcher/conftest.py` adds local Git source repositories, Wasmtime
-components and independent legacy Python component fixtures. Fixtures keep game
-files and external services outside test ownership.
+runtime copies, a session-scoped runner and owned native menu/settings interfaces.
+`launcher/conftest.py` adds local Git repositories, small Wasm components and
+independent author-built Python component fixtures. Test fixtures own their
+files and helper processes rather than using game data or live game injection.
 
-Python integration tests share a session-local native compilation cache, as
-normal launcher entry does. Engines, stores, guest state and grants remain fresh
-for every instance. Tests supplying their own cache keep that explicit setup.
-Source-adapter checks exercise representative contract failures; repeated JSON
-and lifecycle variants belong to the shared contract rather than every layer.
+Python integration fixtures share a session-local Wasmtime compilation cache.
+Each instance still receives a fresh Engine, Component, Store, guest state and
+grants; tests passing an explicit cache retain that setup. Pytest cases execute
+serially within each job, while separate CI jobs run independently. Background
+preparation and Wasmtime's own compilation workers remain part of the tested
+execution model.
 
 Native integration uses real Frida sessions against owned CPython 3.13 helpers
 that model imports, menus and process replacement. Embedded tests relocate a
-prepared Windows bundle and invoke its entry point in subprocesses. The probes
-check source-only loading, selected-pack integration, verified dependency imports
-and execution without developer build tools.
+prepared Windows bundle and invoke its entry point in subprocesses. These probes
+check source-mod loading, selected-pack integration, dependency imports and
+execution without developer build tools. Required acceptance modes fail when
+their prerequisites are missing; local runs may skip unavailable platform cases.
 
-The `native`, `embedded` and `frida_build` markers separate transport, packaged
-Windows interpreter and reduced-build acceptance from portable tests. Required
-acceptance modes fail when their prerequisites are missing. Filesystem cases
-account for the volume's ability to represent case-colliding names; platform
-specific skips are confined to the unsupported case.
+## Test profiles
 
-## CI and coverage
+[Pytest configuration](../pyproject.toml) defines the selection boundaries:
 
-`tests.yml` is the manual entry point. A maintainer with write access opens
-**Actions > Test suite > Run workflow**, selects **main**, and supplies the open
-PR number. This works for branches in this repository and in forks. PRs targeting
-`main` require the `manual-ci` commit status; new commits need their own passing
-result. Pushes and PR events do not automatically start the test suite.
+| Marker | Boundary |
+| --- | --- |
+| `legacy` | Optional compatibility checks for author-built Python components. |
+| `release` | Optional developer build, packaging and provenance checks. |
+| `native` | Real Frida controller/bridge integration against owned processes. |
+| `embedded` | Acceptance through the prepared Windows interpreter and bundle. |
+| `frida_build` | Acceptance requiring a built reduced Frida wheel. |
 
-PRs also receive a **Run Tests** informational check. Its Details
-link opens the Test suite workflow page, and its summary gives the exact PR
-number and instructions to select main and click Run workflow. This is a link
-to GitHub's workflow form, not a button that dispatches tests from the PR.
-`manual-ci-instructions.yml` runs only trusted base-branch code with check-write
-permission, including for fork PRs. Its neutral check neither consumes a CI
-attempt nor satisfies or changes the separate required `manual-ci` status.
+Default pytest selection excludes `legacy` and `release`; explicit marker
+expressions replace that default. Portable CI additionally excludes `native`,
+`embedded` and `frida_build`. Windows acceptance selects its embedded/native
+profiles separately and excludes `legacy` and `frida_build`. The ordinary checks
+retain Python source mods and mods with prebuilt Wasm components.
 
-The trusted workflow resolves the PR's exact head SHA, then atomically creates
-an annotated `ci-tested/<SHA>` tag to claim its only CI attempt. The tag records
-the PR, workflow commit and run ID. Protected marker tags cannot be updated or
-deleted by collaborators. Duplicate requests and Actions re-runs are refused
-before tests execute, without changing the original commit status. There can
-still be a small rejected workflow run when someone requests a duplicate.
-Failures, cancellations and infrastructure interruptions consume the attempt;
-push a new commit to retry. The owner can bypass merge requirements. Marker tags
-must be retained: deleting one through owner bypass allows that commit to run again.
+## CI orchestration and trust
 
-Every accepted run calls the launcher, hook manager, mod runtime, CI-helper and
-Windows acceptance workflows. Their definitions come from the trusted workflow
-commit on `main`; every source checkout uses the resolved PR head SHA, including
-dependency preparation and coverage combination. Jobs executing PR code have
-read-only tokens and no inherited secrets. Only separate trusted jobs reserve
-the commit and publish `manual-ci`, and only the original run can publish it.
-The tests cover the PR head itself, rather than a synthetic merge with `main`.
-Component workflows are reusable `workflow_call` definitions; the portable
-workflow supplies separate Windows and Linux jobs for each area.
+[`tests.yml`](../.github/workflows/tests.yml) is a manual entry point for an open
+PR targeting `main`, including fork PRs. Workflow definitions come from the
+trusted `main` workflow commit; jobs testing contributor code check out the
+resolved PR head SHA. Push/PR events do not dispatch this suite automatically.
+The separate base-branch instructions workflow supplies a neutral **Run Tests**
+check linking to the dispatch form, without claiming an attempt or changing
+`manual-ci`.
 
-`dev-dependencies.yml` prepares a wheelhouse once per platform. Test and build
-jobs download that run's wheels and install them into separate environments
-without consulting a package index. Windows acceptance also shares one verified
-player bundle between its embedded and native jobs.
+A trusted job atomically creates an annotated `ci-tested/<SHA>` tag to claim one
+attempt for the commit. Duplicate requests and Actions re-runs are refused;
+failures, cancellations and infrastructure interruptions retain the claim.
+Marker retention underpins this policy. Only the original run can publish the
+`manual-ci` result. Claim/status jobs use trusted code and write permissions;
+PR-code jobs have read-only tokens and no inherited secrets. The tested revision
+is the PR head, without a synthetic merge with `main`.
 
-`runner-bundle.yml` builds and verifies the portable Python runner once per
-workflow, from the exact tested commit. Launcher/runtime jobs on both platforms
-and Windows packaging download that same artifact. Reduced-Frida runs use the
-same build-once workflow. CI sets `TPM_TEST_RUNNER_BUNDLE` and
-`TPM_REQUIRE_SHARED_RUNNER=1`: tests verify its receipt and compare the guest,
-policy and WIT sources with their checkout, and fail rather than rebuilding a
-missing or mismatched runner. Local pytest builds once per session when no
-shared bundle is supplied.
+Each accepted run calls reusable launcher, hook-manager, mod-runtime, CI-helper
+and Windows acceptance workflows. Portable suites have separate Windows/Linux
+jobs. [The selector](../.github/ci_tests.py) collects all portable modules to
+validate exactly one directory-based owner, then executes the selected area.
+Unknown or overlapping ownership and empty selected suites fail. Shared fixtures
+and test-module imports still load across areas during collection.
 
-Pip's download and built-wheel cache is preserved between commits on each PR,
-separately for Windows/Linux and the Python version. Dependency changes create a
-new cache key and can restore the PR's earlier cache. A first PR run can also
-reuse the existing matching `setup-python` cache; new saves use a `pr-pip` key
-so routine PR caching stays separate from release-build cache keys.
+## Shared build inputs
 
-Test ownership follows the `tests/launcher`, `tests/hook_manager`,
-`tests/mod_runtime` and `tests/ci` directories. Each portable job collects all
-portable modules to check ownership, then executes its selected area. Unknown
-areas and overlapping ownership fail collection. Collection still loads shared
-fixtures and test-module imports across areas.
+`dev-dependencies.yml` prepares a wheelhouse once per platform. Jobs install
+those same-run wheels into separate environments without consulting a package
+index. Pip downloads and built wheels are cached per PR, platform, Python version
+and dependency inputs, with matching earlier caches available for restoration.
 
-The Windows runtime completion check covers bundle preparation, both acceptance
-jobs and their coverage aggregation. The parent `Test suite complete` check
-requires dependency preparation and all component/acceptance workflows to
-succeed. Each component requires both its Windows and Linux jobs.
-The reduced-Frida workflow remains manual and keeps matching builds, source
-export and candidate transport acceptance together on Windows and Linux.
+`runner-bundle.yml` builds and verifies one portable Python runner from the tested
+commit. Launcher/runtime jobs on both platforms and Windows bundle preparation
+consume that artifact. The runner fixture verifies its receipt and compares the
+guest, source-policy and WIT bytes against the checkout. With
+`TPM_TEST_RUNNER_BUNDLE` and `TPM_REQUIRE_SHARED_RUNNER=1`, missing or mismatched
+inputs fail instead of triggering a rebuild. Local tests build once on demand
+per pytest session when no shared bundle is supplied.
 
-Every test job retains JUnit results and raw coverage. Portable jobs produce
-XML/HTML for their selected component directly; CI-helper coverage measures
-`.github`. Windows acceptance combines its two required fragments into one
-report, rejecting incomplete or corrupt data. Artifact names identify their
-suite and platform within the shared run.
+Windows acceptance prepares one verified player bundle for its independent
+embedded and native jobs. The manual reduced-Frida workflow reuses the runner
+build workflow and keeps native builds, matching source exports and transport
+acceptance together; release validation also checks the Windows candidate.
 
-`pyproject.toml` configures line/branch coverage. Isolated embedded children are
-not instrumented. After a successful `Test suite` run, the separate reporting
-workflow downloads only that run's reports and parses XML without checking out
-or executing tested code. It expects nine reports: four portable areas on both
-platforms and Windows runtime acceptance. Percentages stay separate by suite and
-platform; reports are never combined across runs or commits.
+## Completion and coverage
+
+The Windows runtime completion gate requires bundle preparation, both acceptance
+jobs and their coverage aggregation. The parent **Test suite complete** gate
+requires the claim, dependencies, shared runner and all component/acceptance
+workflows to succeed. A separate trusted job publishes that result as `manual-ci`.
+
+Portable and Windows acceptance jobs retain JUnit results and raw coverage.
+Portable jobs generate XML/HTML for their selected component; CI-helper coverage
+measures `.github`. Windows acceptance combines its two required fragments,
+rejecting missing or corrupt data. Coverage measures the pytest process;
+isolated embedded children remain uninstrumented. `pyproject.toml` configures
+line and branch measurement.
+
+After a successful Test suite run, the reporting workflow downloads only that
+run's XML and parses it without checking out or executing tested code. It expects
+four portable areas on both platforms plus Windows acceptance. Suite/platform
+percentages remain separate, and reports are never combined across runs or
+commits. The summary distinguishes the workflow-definition commit from the
+tested PR head recorded by the claim/status jobs.
