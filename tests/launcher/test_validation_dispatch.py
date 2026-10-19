@@ -9,6 +9,8 @@ import pytest
 
 from launcher.regulations import RegulationDefinitions
 from launcher.regulations.handler_runner import HandlerRunner
+from launcher.regulations.publication import PolicyPublication
+from hook_manager.regulations.protocol import regulation_policy_value
 from launcher.regulations.validation import catalog as catalog_module
 from launcher.regulations.validation import action as action_module
 from launcher.regulations.validation import dispatch as dispatch_module
@@ -37,6 +39,34 @@ def dispatch(mods):
 def selection(index=0):
     return {"rule": "native", "evaluation_season": 2026, "selected": "current",
             "current": [index, 2026], "upcoming": None}
+
+
+def test_policy_pages_require_the_closed_membership_plan_before_publication():
+    owner = "owned.rules"
+    source = SourceSnapshot(SourceManifest(owner, "1", "0.4.0", "rules", frozenset({"regulations"})),
+                            (("rules.py", "# inert"),), 7)
+    catalog = CombinedCatalog(definitions({owner: source}))
+    published = []
+    dispatch = SimpleNamespace(catalog=catalog, generation=0, publish=lambda **data: published.append(data))
+    options = [{"key": "open", "points": [25]}, {"key": "open", "points": [30]}]
+    metrics = [regulation_policy_value("native", option)[1:] for option in options]
+    message = {"id": 1, "epoch": 1, "deadline": 123.0, "generations": {owner: 1},
+               "plan": [["native", "native", 2, sum(row[0] for row in metrics), sum(row[1] for row in metrics)]]}
+    policy = PolicyPublication(dispatch, message)
+    policy.append({**message, "page": 0, "rows": [["native", 0, options[0]]]})
+    with pytest.raises(ValueError, match="Incomplete"):
+        policy.seal(dispatch, message)
+    assert not published
+    policy.append({**message, "page": 1, "rows": [["native", 1, options[1]]]})
+    policy.seal(dispatch, message)
+    assert published[0]["native"]["native"] == [regulation_policy_value("native", option)[0] for option in options]
+    assert published[0]["deadline"] == message["deadline"]
+    policy = PolicyPublication(dispatch, message)
+    with pytest.raises(ValueError, match="reordered"):
+        policy.append({**message, "page": 0, "rows": [["native", 1, options[0]]]})
+    short = {**message, "plan": [["native", "native", 2, 2, 2]]}
+    with pytest.raises(ValueError, match="declared"):
+        PolicyPublication(dispatch, short).append({**short, "page": 0, "rows": [["native", 0, options[0]]]})
 
 
 def test_catalog_borrows_admission_and_projects_shared_effective_native_data_once(monkeypatch):

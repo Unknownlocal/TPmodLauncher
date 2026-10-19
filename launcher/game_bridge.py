@@ -17,7 +17,7 @@ import uuid
 PYTHON_SOURCES = (
     "manager", "callables/fingerprint", "callables/target",
     "callables/result_contract", "callables/binding", "callables/adapters",
-    "regulations/framing", "regulations/channel",
+    "regulations/framing", "regulations/protocol", "regulations/action_transfer", "regulations/channel",
     "pack_discovery", "menu", "settings", "themes",
 )
 

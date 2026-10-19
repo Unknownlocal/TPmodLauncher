@@ -11,7 +11,8 @@ from hook_manager.regulations import RegulationChannel
 channel = RegulationChannel(json.loads(sys.stdin.readline()))
 try:
     print(json.dumps({"connected": True}), flush=True)
-    calls = json.loads(sys.stdin.readline())
-    print(json.dumps(channel("owned.rules", calls, time.monotonic() + .1)), flush=True)
+    tables = json.loads(sys.stdin.readline())
+    channel.publish(native={"native": [{"key": "open"}]})
+    print(json.dumps(channel(tables["contexts"], tables["selections"], tables["calls"], time.monotonic() + .1)), flush=True)
 finally:
     channel.close()

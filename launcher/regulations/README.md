@@ -1,12 +1,12 @@
 # Regulation admission and sandbox handlers
 
-The additive [validation package](validation/README.md) owns the combined host
-catalog and reference-based dispatch. Its controller API is implemented alongside
-the existing socket path; coordinated native transport cutover remains separate.
+The [validation package](validation/README.md) owns the combined host catalog and
+reference-based dispatch. The private v2 socket protocol publishes adopted policy
+and dispatches compact action references through that same retained catalog.
 
 This private package admits regulation definitions and binds owned Python
-handlers inside Wasm. Pack/session lifetime is launcher-owned; native validators
-and rule publication remain separate integration work. Public API 0.4.0 stays unavailable; existing
+handlers inside Wasm. Pack/session lifetime is launcher-owned; actual game
+validation mappings remain separate integration work. Public API 0.4.0 stays unavailable; existing
 public API versions remain unchanged.
 
 `PackMods.prepare_regulations()` is a trusted, one-shot preparation seam after
@@ -115,14 +115,18 @@ limited together to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels.
 Common envelope fields are checked on both sides. Handlers return exactly allow
 or deny with 1 to 160 trimmed printable message characters. Conditions stay mod code.
 
-Up to four invocations share bounded preparation (64M fuel) for decoding,
-checking and copying; this routine invokes no validators. Each prepared slot is
+Policy data is retained in each subscribed Store. Actions carry shared context
+and selection tables, with references to that installed data. Up to four
+invocations share bounded preparation (64M fuel) for checking and copying; this
+routine invokes no validators. Each prepared slot is
 consumed once with its own ordinary 5M fuel and 64 host-call allowance. Preparation
 cannot spend a handler's allowance, and siblings cannot spend one another's.
 One watchdog covers the original absolute 100 ms action deadline across every
-preparation/execution call; selecting a fresh fuel allowance cannot restart it. A full valid
-4-KiB invocation uses single-call preparation if batch headers would overflow;
-there is no truncation or automatic retry. Failure closes the owned runner.
+preparation/execution call; selecting a fresh fuel allowance cannot restart it.
+Full invocation limits are composed from cached record metrics and dynamic
+contexts. There is no full-rule preparation fallback, truncation or retry.
+Failure closes the owned runner. See [validation](validation/README.md) for the
+combined catalog, installation budgets and guest ownership.
 
 This requires a matching private ABI 0.4.0 runner bundle. The author facade and
 host imports are unchanged; dispatch uses no lifecycle events and exposes no
@@ -135,9 +139,29 @@ request queue and an I/O thread. The thread only receives/queues/wakes; `poll()`
 invokes a trusted evaluator on the creating controller thread. The runtime owns
 this server and supplies its endpoint only to trusted native integration.
 
-The native `RegulationChannel` uses session tokens, sequential request IDs and
-one absolute action deadline. Frames are length-prefixed and bounded to 256 KiB
-for up to 32 expanded invocations; this does not increase per-invocation limits.
+The native `RegulationChannel` uses protocol v2, session tokens, sequential request
+IDs, career epochs and acknowledged owner generations. `publish(native=..., custom=...)`
+streams complete adopted memberships for changed rules; `None` retains an already
+installed membership while advancing its generation. Custom memberships contain
+only keys resolved against admitted definitions. Native publications carry
+normalized operational parameters; private overlays never cross this socket.
+Socket data cannot supply executable code or select a native function.
+
+Publication uses `policy-begin` (closed count/byte/node plan), bounded ordered
+`policy-page` rows and `policy-seal`. One original control deadline covers all
+pages and guest commits, with one queued page providing backpressure. Readiness
+is fenced from begin until commit acknowledgement. `reset(epoch)` clears installed
+policy without changing bindings or reviving a failed owner; new publication is
+required before actions resume.
+
+Actions contain shared contexts/selections and owner binding-slot calls. Frames
+remain bounded to 256 KiB. Larger logical actions use ordered base64 fragments,
+up to 8,912,896 decoded bytes/46 parts, parsed once after complete assembly.
+The original absolute 100 ms deadline includes every fragment and participating
+Store. Neither framing nor retained data increases per-invocation limits.
+Legal multi-owner refusal results may also exceed a frame. They use bounded
+`action-result-part` fragments under that same deadline, with a separate limit
+derived from 1,024 maximum-length Unicode refusals and owner/header overhead.
 An identified owner failure remains unavailable without dropping other owners'
 connection. Protocol, disconnect or timeout failure closes the session with no
 retry/reconnect or stale approval reuse. Shutdown stops owned I/O.
@@ -145,14 +169,14 @@ retry/reconnect or stale approval reuse. Shutdown stops owned I/O.
 Fixed client/framing sources are included in the native bridge bootstrap. Its
 private wake callback queues controller work without native RPC or guest entry.
 Actual game validation mappings remain a separate integration. No author method
-or native authority is exposed by this transport. Resident rule-data redesign
-follows the staged split.
+or native authority is exposed by this transport.
 
 ## Pack lifetime and readiness
 
 `RegulationRuntime` binds required owners once and dispatches queued calls on the
 Store's creating controller thread. A connection alone cannot establish readiness:
-only trusted acknowledgement of complete native interception permits publication.
+trusted acknowledgement of complete native interception and committed policy
+are both required. A mapping acknowledgement alone leaves execution owners pending.
 Identified handler failure latches its owner unavailable while other owners can
 still be checked; transport failure makes all required owners unavailable.
 Cleanup does not disable or remove a required declaration.

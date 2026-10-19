@@ -16,7 +16,7 @@ from hook_manager.manager import HookError
 from hook_manager.regulations import RegulationChannel
 from launcher.pack_mods import PackMods
 from mod_runtime.source import SourceManifest
-from regulation_support import call, make_mod, validator
+from regulation_support import context, make_mod, selection, validator
 
 
 def prepare_scope(tmp_path, mods):
@@ -120,13 +120,26 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         assert not runtime.ready  # A transport handshake is not native readiness.
         scope.confirm_regulations()
+        assert not runtime.ready
+        # More than one socket frame of adopted replacements sharing a key.
+        # Membership is input-derived; it is not limited to current/upcoming.
+        choices = [{"key": "open", "padding": "x" * 1024, "marker": index} for index in range(260)]
+        pump(scope, wake, worker.submit(channel.publish, native={"native": choices}))
         assert runtime.ready and progress[-1]["state"] == "complete" and len(menus) == len(menus[0]) == 1
+        catalog = runtime._dispatch.catalog
+        active = catalog.views["b.rules"]
+        pump(scope, wake, worker.submit(channel.publish, native={"native": None}))
+        assert catalog.views["b.rules"] is active
+        pump(scope, wake, worker.submit(channel.reset, 2))
+        assert not runtime.ready and not catalog.views
+        pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        assert runtime.ready and channel.epoch == 2
         reply_sent = threading.Event()
         from launcher.regulations import server as transport
-        write = transport.regulation_write
+        write = transport.regulation_send_action
 
-        def send_reply(connection, value, deadline):
-            write(connection, value, deadline)
+        def send_reply(connection, value, **kwargs):
+            write(connection, value, **kwargs)
             reply_sent.set()
 
         def publish_after_reply(records):
@@ -135,24 +148,31 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
             assert reply_sent.wait(timeout=1)
             menus.append(records)
 
-        monkeypatch.setattr(transport, "regulation_write", send_reply)
+        monkeypatch.setattr(transport, "regulation_send_action", send_reply)
         scope.set_menu = publish_after_reply
-        future = worker.submit(channel, "a.rules", [call()], time.monotonic() + .1)
+        future = worker.submit(channel, [context()], [selection()], {"a.rules": [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
             pump(scope, wake, future)
         assert not channel.closed and not runtime.ready and mods["a.rules"].sandbox.closed
         assert menus[-1] == [] and scope.applied_menu == []
         assert scope.menu.buttons == [] and "a.rules" not in scope.mods
-        future = worker.submit(channel, "b.rules", [call()], time.monotonic() + .1)
-        assert pump(scope, wake, future) == [{"decision": "allow"}]
-        assert threads == [threading.get_ident()] and runtime.status["owners"] == {"a.rules": "unavailable", "b.rules": "bound"}
+        future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
+        assert pump(scope, wake, future) == {"b.rules": [{"decision": "allow"}]}
+        assert threads == [threading.get_ident()] and runtime.status["owners"] == {"a.rules": "unavailable", "b.rules": "active"}
         with pytest.raises(HookError, match="unavailable"):
-            channel("a.rules", [call()], time.monotonic() + .1)
+            channel([context()], [selection()], {"a.rules": [[0, 0, 0]]}, time.monotonic() + .1)
+        channel._generations["b.rules"] -= 1
+        future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
+        with pytest.raises(HookError, match="unavailable"):
+            pump(scope, wake, future)
+        assert threads == [threading.get_ident()]  # Stale generation never enters author code.
 
 
 @pytest.mark.native
 def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(make_mod, tmp_path, native_project):
-    scope, runtime, wake, _, _ = prepare_scope(tmp_path, {"owned.rules": make_mod("def validate(c,r): return {'decision':'allow'}\n")})
+    mods = {owner: make_mod("def validate(c,r): return {'decision':'allow'}\n", owner=owner)
+            for owner in ("a.rules", "b.rules", "c.rules")}
+    scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods)
     helper = Path(__file__).with_name("fixtures") / "regulation_client_probe.py"
     process = subprocess.Popen([str(native_project.client), "-I", "-S", "-B", str(helper), str(Path(__file__).resolve().parents[2])],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
@@ -169,10 +189,17 @@ def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(ma
             process.stdin.flush()
             assert json.loads(reader.submit(process.stdout.readline).result(timeout=5)) == {"connected": True}
             scope.confirm_regulations()
-            process.stdin.write(json.dumps([call()]) + "\n")
+            contexts = [context() for _ in range(72)]
+            for index, ctx in enumerate(contexts):
+                ctx["proposal"] = {"padding": "x" * 3450, "identity": index}
+            tables = {"contexts": contexts, "selections": [selection()],
+                      "calls": {owner: [[0, index, 0] for index in range(offset * 24, (offset + 1) * 24)]
+                                for offset, owner in enumerate(mods)}}
+            assert len(json.dumps(tables, separators=(",", ":")).encode()) > 256 * 1024
+            process.stdin.write(json.dumps(tables) + "\n")
             process.stdin.flush()
             reply = reader.submit(process.stdout.readline)
-            assert json.loads(pump(scope, wake, reply)) == [{"decision": "allow"}]
+            assert json.loads(pump(scope, wake, reply)) == {owner: [{"decision": "allow"}] * 24 for owner in mods}
             assert process.wait(timeout=5) == 0, process.stderr.read()
     finally:
         if process.poll() is None:

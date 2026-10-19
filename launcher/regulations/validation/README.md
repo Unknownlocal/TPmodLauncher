@@ -3,8 +3,8 @@
 This private package prepares rule data and coordinates mod validator execution.
 It uses the resident guest protocol: rule data stays loaded between validation
 calls, while each call receives fresh arguments.
-Existing `RegulationRuntime`/socket callers keep the legacy path until the
-coordinated native transport cutover. It adds no mod-facing methods or imports.
+`RegulationRuntime` connects the private v2 transport to this package. It adds no
+mod-facing methods or imports; the old full-rule execution path has been removed.
 
 | File | Owns |
 | --- | --- |
@@ -67,5 +67,5 @@ failure fences the entire affected cohort. Required owners remain in the model.
 `reset(new_epoch)` clears policy views while preserving bindings and monotonically
 increasing action/record identities. Reset cannot revive a failed Store.
 
-Native transport framing/readiness integration remains the next implementation
-pass. Full production performance and live game mappings remain separate gates.
+Native transport and pack readiness use this package through the runtime. Full
+production performance and live game mappings remain separate acceptance gates.

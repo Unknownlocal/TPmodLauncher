@@ -14,9 +14,6 @@ world code-runner {
     export activate: func();
     export on-event: func(name: string, payload: string) -> string;
     export bind-regulation: func(index: u32, declaration: string) -> string;
-    export prepare-regulation: func(index: u32, context: string, regulation: string) -> string;
-    export prepare-regulations: func(batch: string) -> string;
-    export validate-regulation: func(index: u32) -> string;
 
     // Resident policy/action operations are private, not author capabilities.
     export begin-regulation-policy: func(epoch: u64, generation: u64, manifest-bytes: u32) -> string;

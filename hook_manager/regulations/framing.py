@@ -6,7 +6,7 @@ import select
 import struct
 import time
 
-REGULATION_FRAME_BYTES = 256 * 1024  # Up to 32 expanded 4-KiB calls plus headers.
+REGULATION_FRAME_BYTES = 256 * 1024  # Logical actions may span bounded frames.
 
 
 def _regulation_pairs(pairs):
@@ -22,11 +22,14 @@ def _regulation_constant(value):
     raise ValueError("Invalid regulation frame number")
 
 
-def regulation_encode(value):
-    data = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-    if len(data) > REGULATION_FRAME_BYTES:
+def _regulation_frame(data):
+    if type(data) is not bytes or not 1 <= len(data) <= REGULATION_FRAME_BYTES:
         raise ValueError("Regulation frame exceeds its byte limit")
     return struct.pack("!I", len(data)) + data
+
+
+def regulation_encode(value):
+    return _regulation_frame(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
 
 
 def regulation_decisions(values, count):
@@ -49,6 +52,8 @@ def regulation_decisions(values, count):
 def _regulation_transfer(connection, count, deadline, outgoing=None):
     result, offset = bytearray(), 0
     while offset < count:
+        # Recompute from one absolute deadline: short TCP reads/writes must not
+        # restart the allowance or turn a slow partial transfer into a fresh wait.
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise TimeoutError("Regulation absolute deadline expired")
@@ -71,6 +76,12 @@ def _regulation_transfer(connection, count, deadline, outgoing=None):
 def regulation_write(connection, value, deadline):
     data = regulation_encode(value)
     _regulation_transfer(connection, len(data), deadline, outgoing=data)
+
+
+def regulation_write_encoded(connection, data, deadline):
+    """Write JSON already encoded for logical sizing, without encoding it again."""
+    framed = _regulation_frame(data)
+    _regulation_transfer(connection, len(framed), deadline, outgoing=framed)
 
 
 def regulation_read(connection, deadline):

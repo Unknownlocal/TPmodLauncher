@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Controller-owned publication and dispatch; existing socket callers stay legacy."""
+"""Controller-owned publication and dispatch for the private regulation protocol."""
 
 import math
 import threading
@@ -48,8 +48,10 @@ class ValidationDispatch:
         return all(state == "active" and not self.runners[owner].handler.runner.closed
                    for owner, state in self.states.items())
 
-    def publish(self, *, native=None, custom=None):
+    def publish(self, *, native=None, custom=None, deadline=None):
         self._enter()
+        # Until affected-rule resolution succeeds, publication failure cannot
+        # safely identify a smaller cohort; all required owners remain fenced.
         affected = set(self.runners)
         try:
             started = time.monotonic()
@@ -58,7 +60,10 @@ class ValidationDispatch:
             if any(self.states[owner] == "unavailable" or self.runners[owner].handler.runner.closed for owner in affected):
                 raise RuntimeError("A required resident owner is unavailable")
             self.generation = integer(self.generation + 1, 64, positive=True)
-            deadline = started + 1 + 5 * len(affected)
+            limit = started + 1 + 5 * len(affected)
+            # Native plan/page transfer has already spent part of this budget;
+            # entering guest installation must not grant another full allowance.
+            deadline = limit if deadline is None else min(limit, deadline)
             for owner in affected:
                 self.states[owner] = "dirty"
                 self.runners[owner].required = self.generation
@@ -107,9 +112,9 @@ class ValidationDispatch:
             self.action = integer(self.action + 1, 64, positive=True)
             # Prepare every owner's envelope before any author function runs.
             # One original deadline covers preparation and every participating Store.
+            # Clear the outer failure cohort after preflight. Execution below
+            # closes its particular failed owner instead of every requested one.
             owners, results = set(), {}
-            # Preflight failures above invalidate the requested cohort; execution
-            # failures below identify one owner and leave other Stores available.
             for owner, packet in packets.items():
                 try:
                     results[owner] = self.runners[owner].evaluate(packet, self.action, deadline)
@@ -123,13 +128,14 @@ class ValidationDispatch:
         finally:
             self._busy = False
 
-    def reset(self, epoch):
+    def reset(self, epoch, *, deadline=None):
         self._enter()
         try:
             integer(epoch, 64, positive=True)
             if epoch <= self.epoch:
                 raise ValueError("Resident career epoch must increase")
-            deadline = time.monotonic() + 1 + 5 * len(self.runners)
+            limit = time.monotonic() + 1 + 5 * len(self.runners)
+            deadline = limit if deadline is None else min(limit, deadline)
             for owner, runner in self.runners.items():
                 if self.states[owner] == "unavailable" or runner.handler.runner.closed:
                     raise RuntimeError("Reset cannot revive a failed resident owner")

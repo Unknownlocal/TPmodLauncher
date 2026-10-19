@@ -1,28 +1,26 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Own handler binding, transport and required-owner readiness for one pack."""
+"""Controller-owned binding, policy publication and pack readiness."""
 
 import threading
 
 from launcher.source_mod import SourceMod
+from mod_runtime._regulations.values import integer
 from .handler_runner import HandlerRunner
+from .publication import PolicyPublication
 from .server import RegulationServer
+from .validation.dispatch import ValidationDispatch
 
 
 class RegulationRuntime:
-    """Keep incomplete/unavailable owners required until explicit session closure.
-
-    Binding and a connected channel establish transport readiness only. Step 5
-    must acknowledge complete native interception before confirm_native() allows
-    publication. Neither JSON nor guest responses can supply that acknowledgement.
-    """
-
     def __init__(self, definitions, mods, wake=None):
         self.definitions, self._mods, self._wake = definitions, mods, wake
         self._thread = threading.get_ident()
+        # Keep every admitted owner here even after failure: closing a Store
+        # must make required validation unavailable, not silently disable a rule.
         self._states = dict.fromkeys(definitions.owner_ids, "pending")
-        self._handlers, self._server = {}, None
-        self._native = self.closed = False
-        self._attempted, self._bound = False, False
+        self._handlers, self._server, self._dispatch = {}, None, None
+        self._publication, self._action = None, 0
+        self._native = self.closed = self._attempted = self._bound = False
 
     def _owning_thread(self):
         if threading.get_ident() != self._thread:
@@ -43,8 +41,15 @@ class RegulationRuntime:
             except Exception:
                 self._states[owner] = "unavailable"
                 raise
+        # Definition-only owners remain required by the pack, but need no guest
+        # execution view. The dispatcher claims only owners with bound validators.
+        self._dispatch = ValidationDispatch(self.definitions, {owner: handler for owner, handler in self._handlers.items() if handler.validators})
         if self._states:
-            self._server = RegulationServer(self._states, self._wake)
+            catalog = self._dispatch.catalog
+            metadata = {"epoch": self._dispatch.epoch, "custom": sorted(catalog.custom),
+                        "owners": {owner: {"revision": revision, "rules": sorted({row["rule"] for row in validators})}
+                                   for owner, (revision, validators, _) in catalog.owners.items()}}
+            self._server = RegulationServer(metadata, self._wake)
         self._bound = True
 
     @property
@@ -55,11 +60,16 @@ class RegulationRuntime:
 
     @property
     def ready(self):
-        if self._bound and not self._states:
-            return not self.closed  # No declarations require native publication.
-        return (not self.closed and self._native and self._server is not None
+        if not self._bound or self.closed:
+            return False
+        if not self._states:
+            return True
+        # Bound definition-only owners need no execution policy. For validator
+        # owners, dispatch.ready separately requires an active committed view.
+        # Neither native guard acknowledgement nor a socket handshake proves it.
+        return (self._native and self._publication is None and self._dispatch.ready
                 and self._server.connected.is_set() and not self._server.failed.is_set()
-                and all(state == "bound" and not self._handlers[owner].runner.closed
+                and all(state in ("bound", "active") and not self._handlers[owner].runner.closed
                         for owner, state in self._states.items()))
 
     @property
@@ -67,51 +77,126 @@ class RegulationRuntime:
         return {"ready": self.ready, "owners": dict(self._states)}
 
     def confirm_native(self):
-        """Trusted Step 5 seam, called only after all required native guards bind."""
+        """Trusted mapping acknowledgement; policy publication is a separate fence."""
         self._owning_thread()
-        if self.ready and not self._states:
-            return
-        if (self.closed or self._server is None or not self._server.connected.is_set()
-                or self._server.failed.is_set() or any(state != "bound" for state in self._states.values())):
+        if (self.closed or not self._bound or any(state == "unavailable" for state in self._states.values())
+                or (self._states and (not self._server.connected.is_set() or self._server.failed.is_set()))):
             raise RuntimeError("Incomplete regulation binding cannot become ready")
         self._native = True
-        if not self.ready:
-            self._native = False
-            raise RuntimeError("Regulation handler became unavailable before publication")
 
-    def _unavailable(self, owner):
-        self._states[owner] = "unavailable"
-        handler = self._handlers.get(owner)
-        if handler is not None:
-            handler.runner.close()
+    def _unavailable(self, owners):
+        for owner in owners:
+            self._states[owner] = "unavailable"
+            self._handlers[owner].runner.close()
 
-    def evaluate(self, owner, calls, deadline):
+    def handle(self, message):
+        """Only poll() enters this on the Store-owning thread, never socket I/O."""
         self._owning_thread()
-        if (self.closed or not self._native or self._states.get(owner) != "bound"
-                or self._server is None or self._server.failed.is_set() or not self._server.connected.is_set()):
-            raise RuntimeError("Required regulation owner is unavailable")
+        # Before resolving a valid operation, failure can identify only known
+        # requested owners. Policy resolution below replaces this with the
+        # catalog-derived affected set; execution narrows it to failed Stores.
+        affected = set(message["generations"]) & self._states.keys()
         try:
-            return self._handlers[owner].evaluate(calls, deadline)
+            if self.closed or not self._native:
+                raise RuntimeError("Native regulation guards are not acknowledged")
+            operation = message["op"]
+            if operation != "reset" and message["epoch"] != self._dispatch.epoch:
+                raise ValueError("Foreign regulation career epoch")
+            if operation == "policy-begin":
+                if self._publication is not None:
+                    raise ValueError("Regulation publication already pending")
+                candidate = PolicyPublication(self._dispatch, message)
+                affected = candidate.affected
+                if any(self._states[owner] == "unavailable" or self._handlers[owner].runner.closed for owner in affected):
+                    raise RuntimeError("Required regulation owner is unavailable")
+                self._publication = candidate
+                # Fence the old policy before receiving its replacement pages,
+                # not merely when guest installation eventually starts at seal.
+                for owner in affected:
+                    self._states[owner] = "dirty"
+                return "staging"
+            if operation in ("policy-page", "policy-seal"):
+                if self._publication is None:
+                    raise ValueError("No regulation publication is pending")
+                affected = self._publication.affected
+                if operation == "policy-page":
+                    self._publication.append(message)
+                    return "staging"
+                # Seal returns only after the complete policy is installed and
+                # committed in all affected Stores. Page receipt alone never
+                # changes owner readiness to active.
+                self._publication.seal(self._dispatch, message)
+                for owner in affected:
+                    self._states[owner] = "active"
+                self._publication = None
+                return "active"
+            if self._publication is not None:
+                raise ValueError("Regulation publication has fenced actions")
+            if operation == "reset":
+                # Reset retires the entire career, not just owners named by an
+                # action. Its generation map must describe all execution views.
+                affected = set(self._handlers)
+                expected = {owner: runner.generation for owner, runner in self._dispatch.runners.items()}
+                if message["generations"] != expected:
+                    raise ValueError("Foreign career reset generations")
+                self._dispatch.reset(message["epoch"], deadline=message["deadline"])
+                for owner in self._dispatch.runners:
+                    self._states[owner] = "bound"
+                return "reset"
+            if operation != "action":
+                raise ValueError("Unknown regulation operation")
+            if integer(message["action"], 64, positive=True) <= self._action:
+                raise ValueError("Stale regulation action")
+            self._action = message["action"]
+            owners = message["owners"]
+            if type(owners) is not dict or not owners or owners.keys() != message["generations"].keys():
+                raise ValueError("Invalid regulation action owners")
+            calls = {}
+            for owner, row in owners.items():
+                view = self._dispatch.catalog.views[owner]
+                if (self._states[owner] != "active" or type(row) is not dict or set(row) != {"revision", "calls"}
+                        or row["revision"] != view.revision or message["generations"][owner] != self._dispatch.runners[owner].generation
+                        or type(row["calls"]) is not list or not 1 <= len(row["calls"]) <= 32):
+                    raise ValueError("Stale or foreign regulation owner view")
+                # Wire slots resolve only against admitted ascending IDs. They
+                # cannot supply a Python function, native target or new binding.
+                bindings = tuple(view.validators)
+                calls[owner] = []
+                for call in row["calls"]:
+                    if type(call) is not list or len(call) != 3 or integer(call[0]) >= len(bindings):
+                        raise ValueError("Invalid regulation binding reference")
+                    calls[owner].append([bindings[call[0]], call[1], call[2]])
+            try:
+                return self._dispatch.evaluate(message["contexts"], message["selections"], calls, deadline=message["deadline"])
+            finally:
+                # Dispatch distinguishes a preflight cohort failure from a single
+                # executing owner. Preserve that distinction on the socket.
+                affected = {owner for owner, state in self._dispatch.states.items() if state == "unavailable"}
         except Exception:
-            self._unavailable(owner)
+            self._unavailable(affected)
+            self._publication = None
             raise
 
     def poll(self):
-        """Process queued calls before UI/control work; never enter a guest on I/O."""
         self._owning_thread()
         if self.closed or self._server is None:
             return
-        self._server.poll(self.evaluate)
+        self._server.poll(self.handle, lambda: sorted(owner for owner, state in self._states.items() if state == "unavailable"))
+        if self._server.failed.is_set():
+            self._publication = None  # Release partially received policy on terminal I/O failure.
         for owner, handler in self._handlers.items():
+            # A Store failure is local; a broken authenticated channel prevents
+            # checking any required owner and therefore invalidates all of them.
             if self._server.failed.is_set() or handler.runner.closed:
-                self._unavailable(owner)
+                self._unavailable((owner,))
 
     def close(self):
         self._owning_thread()
         if self.closed:
             return
         self.closed, self._native = True, False
+        self._publication = None
         if self._server is not None:
             self._server.close()
-        # SourceMods retain Store ownership and close them in the pack's reverse
-        # activation order after transport has stopped; this object never races it.
+        # SourceMods own Stores and close them in reverse pack activation order,
+        # after socket I/O has stopped; transport never races guest teardown.

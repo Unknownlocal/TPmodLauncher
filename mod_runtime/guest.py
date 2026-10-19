@@ -19,7 +19,7 @@ import runner_bindings as _bindings
 from _source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_path
 from _regulations.handlers import RegulationHandlers
 from _regulations.resident import RegulationResident
-from _regulations.policy import decode as _decode_regulation, encode as _encode_regulation
+from _regulations.policy import encode as _encode_regulation
 
 
 class AuthorWorld:
@@ -164,32 +164,6 @@ class RunnerBindings(_bindings.RunnerBindings):
             # unsupported WASI file/stat calls. The host revokes a failed owner.
             return (type(error).__name__ + ": " + str(error))[:512]
         return ""
-
-    def prepare_regulation(self, index, context, regulation):
-        if not _activated:
-            raise RuntimeError("Activate before regulation preparation")
-        try:
-            _regulations.prepare(index, _decode_regulation(context), _decode_regulation(regulation))
-        except BaseException as error:
-            return (type(error).__name__ + ": " + str(error))[:512]
-        return ""
-
-    def prepare_regulations(self, batch):
-        if not _activated:
-            raise RuntimeError("Activate before regulation preparation")
-        try:
-            _regulations.prepare_batch(batch)
-        except BaseException as error:
-            return (type(error).__name__ + ": " + str(error))[:512]
-        return ""
-
-    def validate_regulation(self, index):
-        if not _activated:
-            raise RuntimeError("Activate before regulation validation")
-        try:
-            return _encode_regulation(_regulations.evaluate(index))
-        except BaseException:
-            return '{"error":"Regulation handler failed"}'
 
     def begin_regulation_policy(self, epoch, generation, manifest_bytes):
         return _resident_call(_resident.begin_policy, epoch, generation, manifest_bytes)

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Own transport I/O without ever entering a guest from the listener thread."""
 
-import math
 import queue
 import secrets
 import socket
@@ -9,6 +8,8 @@ import threading
 import time
 
 from hook_manager.regulations.framing import regulation_read, regulation_write
+from hook_manager.regulations.protocol import regulation_header
+from hook_manager.regulations.action_transfer import regulation_receive_action, regulation_send_action
 from .transport_request import TransportRequest
 
 
@@ -20,12 +21,14 @@ class RegulationServer:
     Unauthenticated connections receive no owner data and cannot latch owners.
     """
 
-    def __init__(self, owners, wake=None):
-        self._owners, self._wake = frozenset(owners), wake
+    def __init__(self, metadata, wake=None):
+        self._metadata, self._wake = metadata, wake
         self._thread_id = threading.get_ident()
+        # A sender waits for the controller's acknowledgement before the next
+        # page/operation. The queue holds one request, not an accumulating backlog.
         self._requests = queue.Queue(maxsize=1)
         self._stop, self.failed, self.connected = threading.Event(), threading.Event(), threading.Event()
-        self._connection = None
+        self._connection, self._pending_request = None, None
         self._listener = socket.socket()
         try:
             self._listener.bind(("127.0.0.1", 0))
@@ -59,36 +62,61 @@ class RegulationServer:
                     connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     connection.setblocking(False)
                     hello = regulation_read(connection, time.monotonic() + 1)
-                    if (type(hello) is not dict or set(hello) != {"token", "id"}
+                    if (type(hello) is not dict or set(hello) != {"version", "op", "token", "id"}
+                            or type(hello["version"]) is not int or hello["version"] != 2 or hello["op"] != "hello"
                             or type(hello["id"]) is not int or hello["id"] != 0
                             or type(hello["token"]) is not str or len(hello["token"]) != 64
                             or any(char not in "0123456789abcdef" for char in hello["token"])
                             or not secrets.compare_digest(hello["token"], self._token)):
                         continue
+                    # Before authentication a bad connection may be discarded.
+                    # Afterwards this is the one session: faults are terminal,
+                    # so reconnecting cannot restore an earlier ready policy.
                     authenticated = True
                     self.connected.set()
-                    regulation_write(connection, {"token": self._token, "id": 0, "bound": True}, time.monotonic() + 1)
-                    sequence = 0
+                    regulation_write(connection, {**hello, **self._metadata}, time.monotonic() + 1)
+                    sequence, pending = 0, None
                     while not self._stop.is_set():
-                        message = regulation_read(connection, None)
-                        if (type(message) is not dict or set(message) != {"token", "id", "owner", "calls", "deadline"}
-                                or type(message["token"]) is not str or len(message["token"]) != 64
-                                or any(char not in "0123456789abcdef" for char in message["token"])
-                                or not secrets.compare_digest(message["token"], self._token)
-                                or type(message["id"]) is not int or message["id"] != sequence + 1
-                                or type(message["owner"]) is not str or message["owner"] not in self._owners
-                                or type(message["calls"]) is not list or not 1 <= len(message["calls"]) <= 32
-                                or type(message["deadline"]) not in (int, float) or not math.isfinite(message["deadline"])
-                                or not 0 < message["deadline"] - time.monotonic() <= 0.1):
+                        message = regulation_read(connection, None if pending is None else pending["deadline"])
+                        header = regulation_header(message)
+                        if not secrets.compare_digest(message["token"], self._token):
+                            raise ValueError("Foreign regulation session")
+                        # Continuations retain the initial identity and deadline;
+                        # a new operation cannot interleave with a partial policy.
+                        continuation = message["op"] in ("policy-page", "policy-seal")
+                        if continuation:
+                            if pending is None or any(message[key] != value for key, value in pending.items()):
+                                raise ValueError("Foreign regulation publication phase")
+                        elif pending is not None or message["id"] != sequence + 1:
                             raise ValueError("Invalid correlated regulation request")
-                        sequence = message["id"]
+                        if not continuation:
+                            sequence = message["id"]
+                        message = regulation_receive_action(connection, message) if message["op"] == "action-part" else message
                         request = TransportRequest(message)
+                        # Publish before checking stop, as for accepted sockets:
+                        # close() must release even a long control-event wait.
+                        self._pending_request = request
+                        if self._stop.is_set():
+                            return
                         self._requests.put_nowait(request)
                         if self._wake is not None:
                             self._wake()
                         if not request.done.wait(max(0, message["deadline"] - time.monotonic())):
                             raise TimeoutError("Regulation controller missed the action deadline")
-                        regulation_write(connection, request.response, message["deadline"])
+                        if self._stop.is_set():
+                            return
+                        if message["op"] == "action":
+                            regulation_send_action(connection, request.response, reply=True)
+                        else:
+                            regulation_write(connection, request.response, message["deadline"])
+                        if message["op"] == "policy-begin" and "error" not in request.response:
+                            pending = {key: header[key] for key in ("id", "epoch", "deadline", "generations")}
+                        elif message["op"] == "policy-seal" or "error" in request.response:
+                            pending = None
+                        # The next read can wait indefinitely. Retain only small
+                        # correlation state, never the completed action's graph.
+                        self._pending_request = None
+                        del request, message
                 except (ValueError, OSError, RuntimeError, queue.Full):
                     if authenticated:
                         raise
@@ -103,9 +131,10 @@ class RegulationServer:
                 if self._wake is not None:
                     self._wake()
         finally:
+            self._pending_request = None
             self.connected.clear()
 
-    def poll(self, evaluate):
+    def poll(self, handle, unavailable=None):
         if threading.get_ident() != self._thread_id:
             raise RuntimeError("Use regulation transport on its owning controller thread")
         try:
@@ -113,23 +142,33 @@ class RegulationServer:
         except queue.Empty:
             return
         message = request.message
-        response = {key: message[key] for key in ("token", "id", "owner")}
+        # Preserve identity even if the request expired while queued. The check
+        # below then builds a correlated error without invoking its evaluator.
+        response = regulation_header(message, check_deadline=False)
         try:
             if self._stop.is_set() or self.failed.is_set() or time.monotonic() >= message["deadline"]:
                 raise TimeoutError("Expired regulation request")
-            response["decisions"] = evaluate(message["owner"], message["calls"], message["deadline"])
+            response["result"] = handle(message)
             if time.monotonic() >= message["deadline"]:
                 raise TimeoutError("Late regulation evaluation")
         except Exception:
-            response.pop("decisions", None)
+            response.pop("result", None)
             response["error"] = "Validation unavailable"
+            response["unavailable"] = unavailable() if unavailable is not None else sorted(message["generations"])
         finally:
             request.response = response
+            # Release socket I/O before PackMods flushes native UI changes. The
+            # native caller may be waiting for this reply before it can serve UI.
             request.done.set()
 
     def close(self):
         self._stop.set()
         self._listener.close()
+        request = self._pending_request
+        if request is not None:
+            # Socket shutdown cannot wake an Event wait. Release it explicitly
+            # so a long policy deadline cannot hold pack shutdown open.
+            request.done.set()
         connection = self._connection
         if connection is not None:
             try:
@@ -139,3 +178,7 @@ class RegulationServer:
         self._thread.join(timeout=1)
         if self._thread.is_alive():
             raise RuntimeError("Regulation transport did not stop")
+        try:
+            self._requests.get_nowait()  # Retire a queued operation never polled.
+        except queue.Empty:
+            pass

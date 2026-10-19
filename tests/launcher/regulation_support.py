@@ -15,18 +15,13 @@ def context():
             "effective": {"season": 2026, "start_week": 4, "end_week": None}, "proposal": {}}
 
 
-def regulation():
-    return {"schema": 1, "key": "native", "revision": "revision", "evaluation_season": 2026, "selected": "current",
-            "current": {"key": "open", "effective_season": 2026, "parameters": {}, "option_data": {}}, "upcoming": None}
+def selection(index=0):
+    return {"rule": "native", "evaluation_season": 2026, "selected": "current",
+            "current": [index, 2026], "upcoming": None}
 
 
 def validator(identity="check", handler="rules.validate"):
     return {"id": identity, "rule": "native", "scope": "personnel.contract", "handler": handler}
-
-
-def call(identity="check", ctx=None, rule=None):
-    return {"validator": identity, "context": context() if ctx is None else ctx,
-            "regulation": regulation() if rule is None else rule}
 
 
 @pytest.fixture

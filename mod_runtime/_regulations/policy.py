@@ -2,9 +2,6 @@
 """Plain bounded regulation wire values; shared by trusted host and frozen guest."""
 
 import json
-import math
-
-MAX_CALLS = 4  # Bound guest preparation to four independently copied envelopes.
 
 
 def fields(value, names):
@@ -61,14 +58,6 @@ def _text(value):
         raise ValueError("Expected a nonempty regulation field")
 
 
-def _option(value):
-    fields(value, ("key", "effective_season", "parameters", "option_data"))
-    _text(value["key"])
-    _integer(value["effective_season"])
-    if type(value["parameters"]) is not dict or type(value["option_data"]) is not dict:
-        raise ValueError("Expected regulation parameter objects")
-
-
 def context_fields(context):
     """Check the common context once; semantic adapters own proposal fields."""
     fields(context, ("schema", "scope", "operation", "initiator", "clock", "effective", "proposal"))
@@ -88,58 +77,3 @@ def context_fields(context):
         _integer(context["effective"][key], nullable=True)
     if type(context["proposal"]) is not dict:
         raise ValueError("Expected a normalized regulation proposal")
-
-
-def invocation(context, regulation):
-    """Copy and bound the expanded envelope, not its deduplicated batch encoding.
-
-    Common envelope fields are checked here. Scope-specific proposal normalization
-    belongs to the trusted semantic adapter, never the generic runner or a mod.
-    """
-    nodes = 0
-
-    def copy(value, depth=0):
-        nonlocal nodes
-        nodes += 1
-        if nodes > 1024:
-            raise ValueError("Regulation invocation exceeds its node limit")
-        kind = type(value)
-        if kind in (dict, list):
-            if depth >= 8:
-                raise ValueError("Regulation invocation exceeds its container depth")
-            if kind is dict:
-                result = {}
-                # Check keys during copying, avoiding a second traversal and a
-                # separate generator for every object in a nested envelope.
-                for key, item in value.items():
-                    if type(key) is not str:
-                        raise ValueError("Regulation object keys must be strings")
-                    result[key] = copy(item, depth + 1)
-                return result
-            return [copy(item, depth + 1) for item in value]
-        if value is None or kind in (str, bool, int):
-            return value
-        if kind is float and math.isfinite(value):
-            return value
-        raise ValueError("Expected finite plain regulation JSON values")
-
-    result = copy({"context": context, "regulation": regulation})
-    if len(encode(result).encode("utf-8")) > 4096:
-        raise ValueError("Regulation invocation exceeds 4096 UTF-8 bytes")
-    context, regulation = result["context"], result["regulation"]
-    context_fields(context)
-    fields(regulation, ("schema", "key", "revision", "evaluation_season", "selected", "current", "upcoming"))
-    if type(regulation["schema"]) is not int or regulation["schema"] != 1:
-        raise ValueError("Unsupported regulation snapshot schema")
-    _text(regulation["key"])
-    _text(regulation["revision"])
-    _integer(regulation["evaluation_season"])
-    if regulation["evaluation_season"] != context["effective"]["season"]:
-        raise ValueError("Regulation evaluation season differs from the proposal")
-    _option(regulation["current"])
-    if regulation["upcoming"] is not None:
-        _option(regulation["upcoming"])
-    if (regulation["selected"] not in ("current", "upcoming")
-            or regulation[regulation["selected"]] is None):
-        raise ValueError("Unavailable selected regulation option")
-    return context, regulation

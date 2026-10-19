@@ -53,8 +53,9 @@ private contract. Source-transfer and loading exports remain a private host prot
 
 The private ABI binds, prepares and evaluates regulation handlers through dedicated
 exports. `_regulations/handlers.py` resolves owned source functions
-inside Wasm; `_regulations/policy.py` checks and copies their bounded JSON values
-on both sides. Bounded preparation decodes and copies up to four invocations
+inside Wasm; `_regulations/policy.py` checks common JSON fields and
+`_regulations/values.py` composes exact logical bounds on both sides.
+Bounded preparation copies up to four invocations
 without calling their handlers. Each prepared slot is then consumed once with
 its own ordinary 5M fuel/64 host-call allowance; framework preparation has a
 separate 64M fuel bound. Every phase shares the original 100 ms action deadline.
@@ -65,9 +66,10 @@ rebuilt runner bundle is required when these trusted sources change.
 
 ### Resident regulation state (private 0.4.0 development)
 
-The resident exports are additive until the coordinated caller cutover. Existing
-callers keep their old path. Once a Store begins resident setup its binding table
-is sealed and legacy preparation cannot run in that Store. No new author facade
+The resident exports are the sole regulation execution path. The superseded
+full-payload preparation/evaluation exports have been removed in the coordinated
+v2 transport cutover. Once a Store begins resident setup its binding table
+is sealed. No new author facade
 methods, host imports, native targets or event routing are exposed. Only owners
 with validation bindings need a resident execution view; definitions without
 validators remain a launcher/governance concern.

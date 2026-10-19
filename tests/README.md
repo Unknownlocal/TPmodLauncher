@@ -114,9 +114,12 @@ inputs fail instead of triggering a rebuild. Local tests build once on demand
 per pytest session when no shared bundle is supplied.
 
 Regulation dispatch checks stay in the existing launcher and hook-manager suites.
-They cover real Wasm binding, copied/bounded payloads, batching and failure
-isolation, plus authenticated framing and shutdown. One native check uses the
-owned CPython client to reach a Wasm handler under the same absolute deadline.
+They cover real Wasm binding, copied/bounded resident arguments, staged policy
+publication, career reset and owner failure isolation, plus authenticated framing
+and shutdown. One native check sends a fragmented shared action from the owned
+CPython client to three Wasm Stores under the same absolute deadline. Logical
+maximum framing capacity has a separate clock-controlled transport check; it
+does not assert that arbitrary maximum-size actions complete within 100 ms.
 It joins the existing native acceptance selection; no additional CI job or
 per-test runner build is needed. Native game mappings remain a later step.
 
