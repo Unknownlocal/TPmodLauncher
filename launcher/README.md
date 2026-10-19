@@ -69,9 +69,11 @@ menu acknowledgement. Session closure releases active mods in reverse order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
 
 [`regulations/`](regulations/README.md) stages enabled-source regulation
-definitions through a private, one-shot pack preparation seam. It preserves
-native fields and keeps condition data opaque. Public capability admission,
-sandbox handler binding and native publication remain gated by later steps.
+definitions and binds owned Python handlers inside Wasm through private seams.
+A persistent authenticated transport queues requests for controller-thread
+execution. It preserves native fields and keeps condition logic in mod source.
+Pack lifetime/readiness, actual native mappings, policy publication and public
+capability admission remain separate integration work.
 
 [`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
 field selection and explicit duplicate policies. Document-specific adapters own

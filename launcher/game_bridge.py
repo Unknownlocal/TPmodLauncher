@@ -17,6 +17,7 @@ import uuid
 PYTHON_SOURCES = (
     "manager", "callables/fingerprint", "callables/target",
     "callables/result_contract", "callables/binding", "callables/adapters",
+    "regulations/framing", "regulations/channel",
     "pack_discovery", "menu", "settings", "themes",
 )
 
@@ -34,6 +35,7 @@ class Bridge:
         self.script = session.create_script(source, name="modLauncher-hook-bridge")
         self.loaded = False
         self.waiters = {}
+        self._on_message = on_message
         self.lock = threading.Lock()
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
@@ -58,6 +60,10 @@ class Bridge:
         # Loading observes the interpreter; Python runs later at a main-thread GIL boundary.
         self.script.load()
         self.loaded = True
+
+    def wake(self):
+        """Wake the controller queue without native RPC or guest execution."""
+        self._on_message({"type": "send", "payload": {"event": "regulation-wake"}})
 
     def _post(self, message, timeout):
         # Frida's native send supports cancellation; its synchronous script RPC wait does not.

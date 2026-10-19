@@ -1,7 +1,7 @@
 # Regulation admission and sandbox handlers
 
 This private package admits regulation definitions and binds owned Python
-handlers inside Wasm. Pack/session transport, native validators and publication
+handlers inside Wasm. Pack/session lifetime, native validators and publication
 remain separate integration work. Public API 0.4.0 stays unavailable; existing
 public API versions remain unchanged.
 
@@ -121,3 +121,23 @@ there is no truncation or automatic retry. Failure closes the owned runner.
 This requires a matching private ABI 0.4.0 runner bundle. The author facade and
 host imports are unchanged; dispatch uses no lifecycle events and exposes no
 generic callable or native target access. Native integration remains separate.
+
+## Private persistent transport
+
+`RegulationServer` owns one authenticated loopback connection, a bounded pending
+request queue and an I/O thread. The thread only receives/queues/wakes; `poll()`
+invokes a trusted evaluator on the creating controller thread. This transport
+slice does not create a regulation runtime or publish a native endpoint.
+
+The native `RegulationChannel` uses session tokens, sequential request IDs and
+one absolute action deadline. Frames are length-prefixed and bounded to 256 KiB
+for up to 32 expanded invocations; this does not increase per-invocation limits.
+An identified owner failure remains unavailable without dropping other owners'
+connection. Protocol, disconnect or timeout failure closes the session with no
+retry/reconnect or stale approval reuse. Shutdown stops owned I/O.
+
+Fixed client/framing sources are included in the native bridge bootstrap. Its
+private wake callback queues controller work without native RPC or guest entry.
+Pack lifecycle, complete readiness acknowledgement and actual game validation
+mappings remain separate integrations. No author method or native authority is
+exposed by this transport. Resident rule-data redesign follows the staged split.
