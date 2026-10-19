@@ -17,4 +17,22 @@ world code-runner {
     export prepare-regulation: func(index: u32, context: string, regulation: string) -> string;
     export prepare-regulations: func(batch: string) -> string;
     export validate-regulation: func(index: u32) -> string;
+
+    // Resident policy/action operations are private, not author capabilities.
+    export begin-regulation-policy: func(epoch: u64, generation: u64, manifest-bytes: u32) -> string;
+    export put-regulation-policy: func(chunk: string);
+    export seal-regulation-policy-manifest: func() -> string;
+    export install-regulation-records: func(page: string) -> string;
+    export begin-regulation-record: func(slot: u32, bytes: u32);
+    export put-regulation-record: func(chunk: string);
+    export seal-regulation-record: func() -> string;
+    export seal-regulation-policy: func() -> string;
+    export commit-regulation-policy: func(epoch: u64, generation: u64) -> string;
+    export reset-regulation-career: func(epoch: u64) -> string;
+    export begin-regulation-action: func(action: u64, epoch: u64, generation: u64, bytes: u32, first: string) -> string;
+    export put-regulation-action: func(chunk: string);
+    export seal-regulation-action: func() -> string;
+    export prepare-regulation-slots: func(action: u64) -> string;
+    export validate-resident-regulation: func(action: u64, slot: u32) -> string;
+    export discard-regulation-action: func(action: u64);
 }

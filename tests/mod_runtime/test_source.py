@@ -109,14 +109,15 @@ class WitWorld(wit_world.WitWorld):
 
 
 def test_guest_rejects_runtime_collisions_during_transfer_before_author_execution(mod, runner_bundle):
-    (mod / "src/json.py").write_bytes(b'import wit_world\nwit_world.report("must not execute")\n')
+    (mod / "src/_regulations").mkdir()
+    (mod / "src/_regulations/__init__.py").write_bytes(b'import wit_world\nwit_world.report("must not execute")\n')
     snapshot = SourceSnapshot.read(mod)
     messages, cleaned = [], []
     with Sandbox(runner_bundle.component(), bind_operations({"diagnostics"}, {"report": messages.append}),
                  limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True)) as guest:
-        text = dict(snapshot.files)["json.py"]
+        text = dict(snapshot.files)["_regulations/__init__.py"]
         with pytest.raises(SandboxError) as rejected:
-            guest.call("put-source", "json.py", text)
+            guest.call("put-source", "_regulations/__init__.py", text)
         assert not any(word in str(rejected.value).lower() for word in ("fuel", "deadline", "interrupt"))
         assert guest.closed and cleaned == [True] and messages == []
     assert cleaned == [True]

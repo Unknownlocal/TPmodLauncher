@@ -26,10 +26,10 @@ from .contract import HOST_OPERATIONS
 def check_interface(data):
     """Validate the private ABI without instantiating or executing the runner."""
     from wasmtime import Config, Engine
-    from wasmtime.component import Component, ComponentInstanceType, FuncType, String, U32
+    from wasmtime.component import Component, ComponentInstanceType, FuncType, String, U32, U64
 
     def signature(function):
-        kinds = {String: "string", U32: "u32"}
+        kinds = {String: "string", U32: "u32", U64: "u64"}
         if type(function) is not FuncType or any(type(value) not in kinds for _, value in function.params):
             raise BundleError("Unexpected runner function type")
         if function.result is not None and type(function.result) is not String:
@@ -69,18 +69,25 @@ def build(output):
         source.mkdir()
         (stage / "notices").mkdir()
         (stage / "empty/lib/site-packages").mkdir(parents=True)
+        # Preserve nested package paths in both the receipt and compiler input;
+        # flattening these names would detach modules from their __init__.py.
         for name in SOURCES:
-            basename = Path(name).name
-            origin = package / ABI_VERSION / basename if basename == "runner.wit" else package / basename
-            (source / basename).write_bytes(_read(origin, 1024 * 1024))
+            relative = Path(name).relative_to("source")
+            origin = package / ABI_VERSION / relative if relative == Path("runner.wit") else package / relative
+            target = source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(_read(origin, 1024 * 1024))
         # Freeze only this fixed trusted inventory; no author input enters builds.
         build_source = stage / "input"
         build_source.mkdir()
         for name in SOURCES:
-            basename = Path(name).name
-            if basename != "runner.wit":
-                destination = "runner_guest.py" if basename == "guest.py" else basename
-                shutil.copyfile(source / basename, build_source / destination)
+            relative = Path(name).relative_to("source")
+            if relative != Path("runner.wit"):
+                # WIT is passed separately as the interface definition. Only the
+                # guest entry module is renamed to the compiler's selected name.
+                destination = build_source / ("runner_guest.py" if relative == Path("guest.py") else relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source / relative, destination)
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment["PYTHONNOUSERSITE"] = "1"
@@ -105,7 +112,7 @@ def build(output):
         output.mkdir()
         for name in sorted(FILES):
             target = output / name
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as destination:
                 destination.write(_read(stage / name, MAX_COMPONENT_BYTES))
         with (output / MANIFEST).open("xb") as destination:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Deduplicate bounded guest calls without widening expanded invocation limits."""
 
-from mod_runtime._regulation_policy import MAX_CALLS, encode
+from mod_runtime._regulations.policy import MAX_CALLS, encode
 
 
 def pack(calls):

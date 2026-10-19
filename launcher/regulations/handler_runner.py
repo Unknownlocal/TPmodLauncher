@@ -5,7 +5,7 @@ import math
 import time
 
 from launcher.sandbox import Limits, SandboxError
-from mod_runtime._regulation_policy import decode, decision, encode, fields, invocation
+from mod_runtime._regulations.policy import decode, decision, encode, fields, invocation
 from mod_runtime.runtime import PythonRunner, SOURCE_FUEL, SOURCE_SECONDS
 from .batching import batches
 
@@ -44,7 +44,7 @@ class HandlerRunner:
                 declarations.append({key: row[key] for key in ("rule", "scope", "handler")})
             with runner.sandbox.phase(fuel=SOURCE_FUEL, seconds=SOURCE_SECONDS):
                 for index, declaration in enumerate(declarations):
-                    error = runner.sandbox.call("bind-regulation", index, encode(declaration))
+                    error = runner.sandbox.call("bind-regulation", index, encode({"owner": runner.manifest.id, **declaration}))
                     if error:
                         raise SandboxError(("Regulation binding failed: " + error)[:512])
             return cls(runner, {row["id"]: (index, declaration) for index, (row, declaration)
@@ -80,6 +80,8 @@ class HandlerRunner:
             with self.runner.sandbox.phase(fuel=PREPARATION_FUEL, seconds=remaining):
                 for packet, group in batches(prepared):
                     if packet is None:
+                        # The batch wrapper would exceed its scalar bound; send
+                        # this invocation's already bounded arguments separately.
                         index, context, regulation = group[0]
                         error = self.runner.sandbox.call("prepare-regulation", index, encode(context), encode(regulation), fuel=PREPARATION_FUEL)
                     else:

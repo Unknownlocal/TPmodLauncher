@@ -25,9 +25,28 @@ EXPORTS = MappingProxyType({
     "prepare-regulation": (("u32", "string", "string"), "string"),
     "prepare-regulations": (("string",), "string"),
     "validate-regulation": (("u32",), "string"),
+    "begin-regulation-policy": (("u64", "u64", "u32"), "string"),
+    "put-regulation-policy": (("string",), None),
+    "seal-regulation-policy-manifest": ((), "string"),
+    "install-regulation-records": (("string",), "string"),
+    "begin-regulation-record": (("u32", "u32"), None),
+    "put-regulation-record": (("string",), None),
+    "seal-regulation-record": ((), "string"),
+    "seal-regulation-policy": ((), "string"),
+    "commit-regulation-policy": (("u64", "u64"), "string"),
+    "reset-regulation-career": (("u64",), "string"),
+    "begin-regulation-action": (("u64", "u64", "u64", "u32", "string"), "string"),
+    "put-regulation-action": (("string",), None),
+    "seal-regulation-action": ((), "string"),
+    "prepare-regulation-slots": (("u64",), "string"),
+    "validate-resident-regulation": (("u64", "u32"), "string"),
+    "discard-regulation-action": (("u64",), None),
 })
 SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
-           "source/_regulation_policy.py", "source/_regulation_handlers.py")
+           "source/_regulations/__init__.py", "source/_regulations/policy.py",
+           "source/_regulations/handlers.py", "source/_regulations/values.py",
+           "source/_regulations/transfer.py", "source/_regulations/catalog.py",
+           "source/_regulations/action.py", "source/_regulations/resident.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",
@@ -73,6 +92,8 @@ NOTICE_FILES = (
     "notices/NOTICE.PythonChanges.txt",
 )
 FILES = frozenset((*SOURCES, *NOTICE_FILES, "runner.wasm"))
+# Nested trusted packages are allowed only where the fixed inventory needs them.
+DIRECTORIES = frozenset(parent.as_posix() for name in FILES for parent in Path(name).parents if parent != Path("."))
 MANIFEST = "bundle.json"
 DIRECTORY = "libs/mod-runners"
 MAX_COMPONENT_BYTES = 32 * 1024 * 1024
@@ -167,7 +188,7 @@ class RunnerBundle:
                 item = _checked(parent / name)
                 relative = item.relative_to(self.directory).as_posix()
                 if item.is_dir():
-                    if relative not in {"source", "notices"}:
+                    if relative not in DIRECTORIES:
                         raise BundleError("Unexpected runner bundle directory")
                 else:
                     found.add(relative)
@@ -189,7 +210,7 @@ class RunnerBundle:
         for name in sorted(FILES):
             data = self._file(name)
             target = directory / name
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as destination:
                 destination.write(data)
         with (directory / MANIFEST).open("xb") as destination:

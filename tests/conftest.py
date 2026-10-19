@@ -31,9 +31,9 @@ def runner_bundle(tmp_path_factory):
         bundle = RunnerBundle(shared)
         package = Path(__file__).resolve().parents[1] / "mod_runtime"
         from mod_runtime.bundle import ABI_VERSION, SOURCES
-        sources = {name: package / ABI_VERSION / "runner.wit" if name.endswith("runner.wit")
-                   else package / Path(name).name for name in SOURCES}
-        for name, current in sources.items():
+        for name in SOURCES:
+            relative = Path(name).relative_to("source")
+            current = package / ABI_VERSION / relative if relative == Path("runner.wit") else package / relative
             if bundle._file(name) != current.read_bytes():
                 pytest.fail(f"Shared runner sources differ from the tested checkout: {name}")
         return bundle

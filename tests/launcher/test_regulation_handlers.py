@@ -11,7 +11,7 @@ import pytest
 
 from launcher.regulations.handler_runner import HandlerRunner
 from launcher.sandbox import SandboxError
-from mod_runtime._regulation_policy import encode, invocation
+from mod_runtime._regulations.policy import encode, invocation
 from regulation_support import call, context, make_mod, regulation, validator
 
 

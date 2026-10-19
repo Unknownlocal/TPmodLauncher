@@ -17,8 +17,9 @@ import sys
 from types import ModuleType
 import runner_bindings as _bindings
 from _source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_path
-from _regulation_handlers import RegulationHandlers
-from _regulation_policy import decode as _decode_regulation, encode as _encode_regulation
+from _regulations.handlers import RegulationHandlers
+from _regulations.resident import RegulationResident
+from _regulations.policy import decode as _decode_regulation, encode as _encode_regulation
 
 
 class AuthorWorld:
@@ -44,10 +45,32 @@ _reserved = frozenset(
 )
 _sources = {}
 _regulations = RegulationHandlers(_sources)
+_resident = RegulationResident(_regulations)
 _bytes = 0
 _sealed = False
 _instance = None
 _activated = False
+
+
+def _resident_call(method, *arguments):
+    # Literal export methods below are the sole dispatcher; author facade and
+    # event handling never receive these operations. Error strings poison state
+    # even before the controller observes them and closes the failed owner.
+    try:
+        if not _activated:
+            raise RuntimeError("Activate before resident regulation setup")
+        result = method(*arguments)
+        return "" if result is None else _encode_regulation(result)
+    except BaseException:
+        _resident.fail()
+        return '{"error":"Resident regulation failed"}'
+
+
+def _resident_void(method, *arguments):
+    if _resident_call(method, *arguments):
+        # Void exports cannot carry an error reply. Trap rather than let an
+        # ignored transfer error leave apparently usable policy/action state.
+        raise RuntimeError("Resident regulation transfer failed")
 
 
 def _in_memory_source(event, arguments):
@@ -167,4 +190,52 @@ class RunnerBindings(_bindings.RunnerBindings):
             return _encode_regulation(_regulations.evaluate(index))
         except BaseException:
             return '{"error":"Regulation handler failed"}'
+
+    def begin_regulation_policy(self, epoch, generation, manifest_bytes):
+        return _resident_call(_resident.begin_policy, epoch, generation, manifest_bytes)
+
+    def put_regulation_policy(self, chunk):
+        _resident_void(_resident.put, "manifest", chunk)
+
+    def seal_regulation_policy_manifest(self):
+        return _resident_call(_resident.seal_manifest)
+
+    def install_regulation_records(self, page):
+        return _resident_call(_resident.install_records, page)
+
+    def begin_regulation_record(self, slot, bytes):
+        _resident_void(_resident.begin_record, slot, bytes)
+
+    def put_regulation_record(self, chunk):
+        _resident_void(_resident.put_record, chunk)
+
+    def seal_regulation_record(self):
+        return _resident_call(_resident.seal_record)
+
+    def seal_regulation_policy(self):
+        return _resident_call(_resident.seal_policy)
+
+    def commit_regulation_policy(self, epoch, generation):
+        return _resident_call(_resident.commit_policy, epoch, generation)
+
+    def reset_regulation_career(self, epoch):
+        return _resident_call(_resident.reset, epoch)
+
+    def begin_regulation_action(self, action, epoch, generation, bytes, first):
+        return _resident_call(_resident.begin_action, action, epoch, generation, bytes, first)
+
+    def put_regulation_action(self, chunk):
+        _resident_void(_resident.put, "action", chunk)
+
+    def seal_regulation_action(self):
+        return _resident_call(_resident.seal_action)
+
+    def prepare_regulation_slots(self, action):
+        return _resident_call(_resident.prepare, action)
+
+    def validate_resident_regulation(self, action, slot):
+        return _resident_call(_resident.validate, action, slot)
+
+    def discard_regulation_action(self, action):
+        _resident_void(_resident.discard, action)
 

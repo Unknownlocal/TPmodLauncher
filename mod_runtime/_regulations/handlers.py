@@ -5,7 +5,7 @@ import importlib
 from types import FunctionType
 
 from _source_policy import module_part
-from _regulation_policy import MAX_CALLS, decode, decision, fields, invocation
+from .policy import MAX_CALLS, decode, decision, fields, invocation
 
 
 class RegulationHandlers:
@@ -14,14 +14,18 @@ class RegulationHandlers:
     def __init__(self, sources):
         self._sources, self._handlers = sources, []
         self._prepared, self._next = None, 0
+        self._sealed = False
+        self.owner = None
 
     def bind(self, index, text):
-        if type(index) is not int or index != len(self._handlers) or index >= 32:
+        if self._sealed or type(index) is not int or index != len(self._handlers) or index >= 32:
             raise ValueError("Invalid or repeated regulation binding")
         data = decode(text)
-        fields(data, ("handler", "rule", "scope"))
+        fields(data, ("handler", "rule", "scope", "owner"))
         if any(type(value) is not str or not value for value in data.values()):
             raise ValueError("Invalid regulation binding names")
+        if len(data["owner"]) > 128 or self.owner not in (None, data["owner"]):
+            raise ValueError("Foreign regulation binding owner")
         parts = data["handler"].split(".")
         if len(parts) < 2:
             raise ValueError("Handler needs an owned module and function")
@@ -42,9 +46,19 @@ class RegulationHandlers:
                 or function.__code__.co_flags & (4 | 8 | 32 | 128 | 512)):
             raise ValueError("Handler must be an owned synchronous two-argument function")
         self._handlers.append((function, data["scope"], data["rule"]))
+        self.owner = data["owner"]
+
+    def seal(self):
+        """Switch this Store to resident dispatch without changing admitted code."""
+        # Do not switch protocols while legacy argument slots are outstanding.
+        # Once sealed, neither bindings nor the legacy staging path may change.
+        if self._prepared is not None:
+            raise ValueError("Previous regulation preparation has not been consumed")
+        self._sealed = True
+        return tuple(self._handlers)
 
     def _stage(self, calls):
-        if self._prepared is not None:
+        if self._sealed or self._prepared is not None:
             raise ValueError("Previous regulation preparation has not been consumed")
         prepared = []
         for index, context, regulation in calls:

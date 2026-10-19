@@ -38,6 +38,8 @@ def decode(text):
 def decision(value):
     if type(value) is not dict:
         raise ValueError("Expected a plain regulation decision")
+    # Allow has a short form; a refusal must carry the bounded UI message checked
+    # below. Returning new dictionaries keeps only the admitted decision fields.
     if value == {"decision": "allow"}:
         return {"decision": "allow"}
     fields(value, ("decision", "message"))
@@ -49,6 +51,7 @@ def decision(value):
 
 
 def _integer(value, nullable=False):
+    # Unknown optional week bounds use None; zero remains an actual integer value.
     if not (type(value) is int or (nullable and value is None)):
         raise ValueError("Expected an integer regulation field")
 
@@ -64,6 +67,27 @@ def _option(value):
     _integer(value["effective_season"])
     if type(value["parameters"]) is not dict or type(value["option_data"]) is not dict:
         raise ValueError("Expected regulation parameter objects")
+
+
+def context_fields(context):
+    """Check the common context once; semantic adapters own proposal fields."""
+    fields(context, ("schema", "scope", "operation", "initiator", "clock", "effective", "proposal"))
+    if type(context["schema"]) is not int or context["schema"] != 1:
+        raise ValueError("Unsupported regulation context schema")
+    _text(context["scope"])
+    if context["operation"] not in ("preview", "commit", "activate", "restore"):
+        raise ValueError("Unknown regulation operation")
+    if context["initiator"] not in ("player", "ai", "system", "unknown"):
+        raise ValueError("Unknown regulation initiator")
+    fields(context["clock"], ("season", "absolute_week"))
+    for value in context["clock"].values():
+        _integer(value)
+    fields(context["effective"], ("season", "start_week", "end_week"))
+    _integer(context["effective"]["season"])
+    for key in ("start_week", "end_week"):
+        _integer(context["effective"][key], nullable=True)
+    if type(context["proposal"]) is not dict:
+        raise ValueError("Expected a normalized regulation proposal")
 
 
 def invocation(context, regulation):
@@ -103,23 +127,7 @@ def invocation(context, regulation):
     if len(encode(result).encode("utf-8")) > 4096:
         raise ValueError("Regulation invocation exceeds 4096 UTF-8 bytes")
     context, regulation = result["context"], result["regulation"]
-    fields(context, ("schema", "scope", "operation", "initiator", "clock", "effective", "proposal"))
-    if type(context["schema"]) is not int or context["schema"] != 1:
-        raise ValueError("Unsupported regulation context schema")
-    _text(context["scope"])
-    if context["operation"] not in ("preview", "commit", "activate", "restore"):
-        raise ValueError("Unknown regulation operation")
-    if context["initiator"] not in ("player", "ai", "system", "unknown"):
-        raise ValueError("Unknown regulation initiator")
-    fields(context["clock"], ("season", "absolute_week"))
-    for value in context["clock"].values():
-        _integer(value)
-    fields(context["effective"], ("season", "start_week", "end_week"))
-    _integer(context["effective"]["season"])
-    for key in ("start_week", "end_week"):
-        _integer(context["effective"][key], nullable=True)
-    if type(context["proposal"]) is not dict:
-        raise ValueError("Expected a normalized regulation proposal")
+    context_fields(context)
     fields(regulation, ("schema", "key", "revision", "evaluation_season", "selected", "current", "upcoming"))
     if type(regulation["schema"]) is not int or regulation["schema"] != 1:
         raise ValueError("Unsupported regulation snapshot schema")
