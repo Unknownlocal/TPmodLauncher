@@ -24,3 +24,7 @@ are also loaded into the native bridge's flat bootstrap namespace, so
 their helper names are prefixed and package imports are conditional. This adds
 no public mod method, native target selection or generic callable access. Native
 validation mappings and dispatch selection are a separate trusted integration.
+
+The first [project mapping slice](projects/README.md) records build-checked native
+entry points and the mutation/normalization constraints for later guard wiring.
+It is not yet loaded into the bridge and does not enable enforcement.

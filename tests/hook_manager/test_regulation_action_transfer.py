@@ -25,7 +25,9 @@ def message():
 
 
 def test_fragmented_maximum_action_roundtrips_without_repeating_owner_headers(monkeypatch):
-    now = time.monotonic()
+    # A zero origin makes deadline - now exactly .1. Freezing an arbitrary real
+    # timestamp can round that subtraction above .1 and fail header admission.
+    now = 0.0
     monkeypatch.setattr(time, "monotonic", lambda: now)
     value = message()
     value["selections"] = ["x" * (REGULATION_ACTION_BYTES - len(json.dumps(value, separators=(",", ":")).encode()))]
