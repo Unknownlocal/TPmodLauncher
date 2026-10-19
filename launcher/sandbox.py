@@ -38,6 +38,14 @@ def _message(error):
     return text if len(text) <= 512 else text[:128] + "\n...\n" + text[-379:]
 
 
+def _cancel_timer(timer):
+    """Stop and join before Engine cleanup can free the timer's native target."""
+    if timer is not None:
+        timer.cancel()
+        if timer.ident is not None:
+            timer.join()
+
+
 @dataclass(frozen=True)
 class Limits:
     """Resource budgets chosen by the launcher, not by mod manifests.
@@ -204,6 +212,7 @@ class Sandbox:
         self._instance = None
         self._limits = limits
         self._phase_deadline = None
+        self._phase_timer = None
         if cleanup is not None:
             self._resources.callback(cleanup)
         try:
@@ -293,7 +302,9 @@ class Sandbox:
 
         Host work between calls counts against the same deadline. Normal calls
         after this context again use the sandbox's ordinary per-call limits.
-        Guest input cannot select these allowances or enter this context.
+        One watchdog covers the entire phase, including host work between calls.
+        Trusted calls may refresh fuel/host-call budgets without moving this
+        deadline. Guest input cannot select allowances or enter this context.
         """
         Limits(fuel=fuel, seconds=seconds)  # Reuse the trusted-budget validation.
         self._check_entry()
@@ -303,6 +314,10 @@ class Sandbox:
         self._calls = 0
         try:
             self._store.set_fuel(fuel)
+            self._store.set_epoch_deadline(1)
+            self._phase_timer = threading.Timer(seconds, self._engine.increment_epoch)
+            self._phase_timer.daemon = True
+            self._phase_timer.start()
             yield
             if time.monotonic() >= self._phase_deadline:
                 raise SandboxError("Sandbox phase exceeded its deadline")
@@ -311,6 +326,8 @@ class Sandbox:
             self.close()
             raise
         finally:
+            _cancel_timer(self._phase_timer)
+            self._phase_timer = None
             self._phase_deadline = None
 
     def _host_function(self, operation):
@@ -349,7 +366,7 @@ class Sandbox:
             self.failure = "Nested sandbox entry is unsupported"
             raise SandboxError(self.failure)
 
-    def _run(self, action, *, initialize=False):
+    def _run(self, action, *, initialize=False, fuel=None):
         """Bound one initialization/call, including host callbacks and post-return work."""
         self._check_entry()
         if not _ENTRY_LOCK.acquire(blocking=False):
@@ -363,18 +380,26 @@ class Sandbox:
             self._deadline = time.monotonic() + seconds
         else:
             self._deadline = self._phase_deadline
-            seconds = max(0, self._deadline - time.monotonic())
-        timer = threading.Timer(seconds, self._engine.increment_epoch)
-        timer.daemon = True
+        timer = None
         try:
             if time.monotonic() >= self._deadline:
                 raise SandboxError("Guest execution exceeded its deadline")
-            # Only ordinary calls reset fuel; phase calls share what remains.
+            if fuel is not None:
+                if self._phase_deadline is None:
+                    raise SandboxError("Per-call fuel selection requires a trusted phase")
+                Limits(fuel=fuel)
+                self._store.set_fuel(fuel)
+                self._calls = 0
+            # Unspecified phase calls still share the aggregate source allowance.
+            # Only ordinary calls own a separate timer: phase calls use the one
+            # watchdog already armed by phase(), without changing its epoch.
             if self._phase_deadline is None:
-                fuel = self._limits.initialization_fuel if initialize else None
-                self._store.set_fuel(fuel or self._limits.fuel)
-            self._store.set_epoch_deadline(1)
-            timer.start()
+                budget = self._limits.initialization_fuel if initialize else None
+                self._store.set_fuel(budget or self._limits.fuel)
+                self._store.set_epoch_deadline(1)
+                timer = threading.Timer(max(0, self._deadline - time.monotonic()), self._engine.increment_epoch)
+                timer.daemon = True
+                timer.start()
             result = action()
             if self.failure is not None or time.monotonic() >= self._deadline:
                 raise SandboxError(
@@ -388,17 +413,18 @@ class Sandbox:
                 raise
             raise SandboxError(self.failure) from None
         finally:
-            # Join before freeing Engine so the timer can never increment a closed native handle.
-            timer.cancel()
-            if timer.ident is not None:
-                timer.join()
+            _cancel_timer(timer)
             self._busy = False
             _ENTRY_LOCK.release()
             if self.failure is not None:
                 self.close()
 
-    def call(self, name, *arguments):
-        """Invoke a scalar export; any invalid request, trap or timeout disables this instance."""
+    def call(self, name, *arguments, fuel=None):
+        """Invoke a scalar export; invalid requests/traps/timeouts disable the instance.
+
+        Only trusted phase callers may select a fresh fuel/host-call allowance;
+        the phase's watchdog and absolute deadline remain unchanged.
+        """
 
         def invoke():
             if type(name) is not str or name not in self._exports:
@@ -412,7 +438,7 @@ class Sandbox:
             function.post_return(self._store)
             return result
 
-        return self._run(invoke)
+        return self._run(invoke, fuel=fuel)
 
     def close(self):
         """Revoke grants, release native state and run trusted cleanup exactly once."""
@@ -420,6 +446,8 @@ class Sandbox:
             return
         self._check_entry()
         self._closed = True
+        _cancel_timer(self._phase_timer)
+        self._phase_timer = None
         self._instance = None
         self._exports.clear()
         self._capabilities.clear()

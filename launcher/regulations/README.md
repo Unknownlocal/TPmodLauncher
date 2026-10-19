@@ -1,8 +1,9 @@
-# Regulation definition admission
+# Regulation admission and sandbox handlers
 
-This private package implements the definition-loading part of the planned
-regulation adapter. It does not publish rules, bind handlers, install native
-validators or enable public API 0.4.0. Existing API versions remain unchanged.
+This private package admits regulation definitions and binds owned Python
+handlers inside Wasm. Pack/session transport, native validators and publication
+remain separate integration work. Public API 0.4.0 stays unavailable; existing
+public API versions remain unchanged.
 
 `PackMods.prepare_regulations()` is a trusted, one-shot preparation seam after
 pack activation. Enabled owners come from its retained, active Python source
@@ -10,7 +11,8 @@ instances requesting `regulations`; closed, failed and prebuilt-component mods
 cannot supply owners. Source snapshots are retained after admission rather than
 reopening `src/`. Current manifest versions cannot request this capability, so
 ordinary sessions neither read the extension file here nor gain new resources.
-Handler binding/readiness must be connected before any staged view is published.
+`HandlerRunner.bind()` provides the private binding seam; pack readiness and
+native integration must connect it before any staged view is published.
 
 `RegulationDefinitions.read()` pins the selected folder and reads at most 1 MiB
 from its fixed `regulations.json`. Empty ownership performs no filesystem I/O.
@@ -44,8 +46,8 @@ Unreferenced native definitions remain outside extension-specific validation.
 Minimum envelopes include empty owner metadata. `payload.py` checks each owner's
 actual metadata by replacing that placeholder with its measured node count,
 container depth and UTF-8 length. A shared native measurement never implies that
-another owner's metadata fits. Full runtime context/upcoming-policy checks still
-belong to dispatch integration.
+another owner's metadata fits. Full invocation bounds and common context fields are checked by dispatch;
+scope normalization and adopted upcoming-policy selection remain later work.
 
 Revision finalization streams the existing canonical JSON representation into
 SHA-256. It reuses encoded native categories and any shared immutable source-file
@@ -73,7 +75,7 @@ rejected; native fields retain the game's last-value-wins behavior.
 - Validators have exactly `id`, `rule`, `scope`, `handler`. Rule references stay
   native or owner-local, scopes must have a trusted mapping, and dotted handler
   modules must exist in that owner's snapshot. Function resolution/signatures
-  and execution belong to later sandbox binding, not host imports.
+  and execution are resolved inside the sandbox, never through host imports.
 - Scripts require `key`, `new_regulation`, positive `effective_season`, and
   optionally a named `id`. `new_regulation` has exactly the option's `key`, using
   the native object format. They target owned custom categories only. IDs are
@@ -94,3 +96,28 @@ envelope removed. Revisions include the selected declarations, author version
 and exact admitted source text, plus referenced native/fallback definitions.
 Save-state compatibility, disable/re-enable
 transitions, effective dates and native governance remain later work.
+
+## Private sandbox handler dispatch
+
+`HandlerRunner` binds ordinary synchronous two-argument functions from each
+owner's admitted source snapshot through dedicated private runner exports. Owned
+re-exports are supported; author Python is never imported into the launcher.
+Binding shares the source-import allowance (256M fuel/five seconds per owner).
+
+Every invocation receives independent plain JSON copies of context and rule,
+limited together to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels.
+Common envelope fields are checked on both sides. Handlers return exactly allow
+or deny with 1 to 160 trimmed printable message characters. Conditions stay mod code.
+
+Up to four invocations share bounded preparation (64M fuel) for decoding,
+checking and copying; this routine invokes no validators. Each prepared slot is
+consumed once with its own ordinary 5M fuel and 64 host-call allowance. Preparation
+cannot spend a handler's allowance, and siblings cannot spend one another's.
+One watchdog covers the original absolute 100 ms action deadline across every
+preparation/execution call; selecting a fresh fuel allowance cannot restart it. A full valid
+4-KiB invocation uses single-call preparation if batch headers would overflow;
+there is no truncation or automatic retry. Failure closes the owned runner.
+
+This requires a matching private ABI 0.4.0 runner bundle. The author facade and
+host imports are unchanged; dispatch uses no lifecycle events and exposes no
+generic callable or native target access. Native integration remains separate.

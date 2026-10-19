@@ -14,15 +14,20 @@ import re
 import stat
 from types import MappingProxyType
 
-ABI_VERSION = "0.3.0"
+ABI_VERSION = "0.4.0"
 COMPONENTIZE_VERSION = "0.25.1"
 EXPORTS = MappingProxyType({
     "put-source": (("string", "string"), None),
     "load-source": (("string",), "string"),
     "activate": ((), None),
     "on-event": (("string", "string"), "string"),
+    "bind-regulation": (("u32", "string"), "string"),
+    "prepare-regulation": (("u32", "string", "string"), "string"),
+    "prepare-regulations": (("string",), "string"),
+    "validate-regulation": (("u32",), "string"),
 })
-SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py")
+SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
+           "source/_regulation_policy.py", "source/_regulation_handlers.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",

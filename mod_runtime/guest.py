@@ -17,6 +17,8 @@ import sys
 from types import ModuleType
 import runner_bindings as _bindings
 from _source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_path
+from _regulation_handlers import RegulationHandlers
+from _regulation_policy import decode as _decode_regulation, encode as _encode_regulation
 
 
 class AuthorWorld:
@@ -41,6 +43,7 @@ _reserved = frozenset(
     for name in (*sys.stdlib_module_names, *sys.modules)
 )
 _sources = {}
+_regulations = RegulationHandlers(_sources)
 _bytes = 0
 _sealed = False
 _instance = None
@@ -127,4 +130,41 @@ class RunnerBindings(_bindings.RunnerBindings):
         if not _activated:
             raise RuntimeError("Mod has not activated")
         return _instance.on_event(name, payload)
+
+    def bind_regulation(self, index, declaration):
+        if not _activated:
+            raise RuntimeError("Activate before binding regulation handlers")
+        try:
+            _regulations.bind(index, declaration)
+        except BaseException as error:
+            # As with load_source, avoid upstream traceback formatting through
+            # unsupported WASI file/stat calls. The host revokes a failed owner.
+            return (type(error).__name__ + ": " + str(error))[:512]
+        return ""
+
+    def prepare_regulation(self, index, context, regulation):
+        if not _activated:
+            raise RuntimeError("Activate before regulation preparation")
+        try:
+            _regulations.prepare(index, _decode_regulation(context), _decode_regulation(regulation))
+        except BaseException as error:
+            return (type(error).__name__ + ": " + str(error))[:512]
+        return ""
+
+    def prepare_regulations(self, batch):
+        if not _activated:
+            raise RuntimeError("Activate before regulation preparation")
+        try:
+            _regulations.prepare_batch(batch)
+        except BaseException as error:
+            return (type(error).__name__ + ": " + str(error))[:512]
+        return ""
+
+    def validate_regulation(self, index):
+        if not _activated:
+            raise RuntimeError("Activate before regulation validation")
+        try:
+            return _encode_regulation(_regulations.evaluate(index))
+        except BaseException:
+            return '{"error":"Regulation handler failed"}'
 

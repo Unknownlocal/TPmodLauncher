@@ -96,6 +96,18 @@ def test_epoch_deadline_interrupts_guest_even_with_plentiful_fuel(guest):
         assert sandbox.closed
 
 
+def test_phase_call_budgets_refresh_without_restarting_the_action_watchdog(guest):
+    with Sandbox(guest, grants(), limits=Limits(host_calls=1)) as sandbox:
+        with pytest.raises(SandboxError, match="interrupt|deadline"):
+            with sandbox.phase(fuel=1000, seconds=.05):
+                assert sandbox.call("apply", 1, fuel=1000) == 7
+                assert sandbox.call("apply", 2, fuel=1000) == 8
+                # Fresh fuel/host-call counts cannot replace the phase deadline;
+                # epoch interruption still stops a loop with effectively ample fuel.
+                sandbox.call("loop", fuel=2**62)
+        assert sandbox.closed and sandbox._phase_timer is None
+
+
 def test_other_threads_cannot_use_or_free_a_live_store(guest):
     errors = []
     with Sandbox(guest, grants()) as sandbox:

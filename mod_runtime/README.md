@@ -15,7 +15,8 @@ uses the previously accepted receipt, publishing that receipt last into a fresh
 directory. The receipt detects mismatches against its inventory; trust in that
 inventory comes from the launcher distribution.
 
-`build.py` freezes the fixed `guest.py` against `0.3.0/runner.wit` with the pinned
+`build.py` freezes the fixed `guest.py` and source/regulation policy helpers
+against `0.4.0/runner.wit` with the pinned
 developer componentizer. It checks the resulting interface and publishes a fresh
 bundle. Artifact and source-reader imports require only the standard library;
 execution modules load the sandbox/compiler explicitly. Player startup needs no
@@ -49,6 +50,18 @@ runtime dependencies. The public `wit_world` facade exposes the author base clas
 diagnostics, menu, UI settings and palette operations. Host providers own native
 registration and persistence; the guest exchanges bounded strings through the
 private contract. Source-transfer and loading exports remain a private host protocol.
+
+The private ABI binds, prepares and evaluates regulation handlers through dedicated
+exports. `_regulation_handlers.py` resolves owned source functions
+inside Wasm; `_regulation_policy.py` checks and copies their bounded JSON values
+on both sides. Bounded preparation decodes and copies up to four invocations
+without calling their handlers. Each prepared slot is then consumed once with
+its own ordinary 5M fuel/64 host-call allowance; framework preparation has a
+separate 64M fuel bound. Every phase shares the original 100 ms action deadline.
+These exports add no host imports or author facade methods and do
+not use lifecycle events. The private ABI version advances independently of
+public source admission, which still accepts only API 0.2.0/0.3.0. A matching
+rebuilt runner bundle is required when these trusted sources change.
 
 `runtime.py` owns one verified bundle and source snapshot through transfer, import,
 explicit activation, string events and cleanup. UTF-8 chunks are accumulated and

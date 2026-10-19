@@ -49,9 +49,9 @@ def test_component_changed_after_open_is_checked_again(synthetic):
 
 
 def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
-    assert (runner_bundle.directory / "source/guest.py").read_bytes() == (ROOT / "mod_runtime/guest.py").read_bytes()
-    assert (runner_bundle.directory / "source/_source_policy.py").read_bytes() == (ROOT / "mod_runtime/_source_policy.py").read_bytes()
-    assert (runner_bundle.directory / "source/runner.wit").read_bytes() == (ROOT / "mod_runtime" / ABI_VERSION / "runner.wit").read_bytes()
+    for name in artifacts.SOURCES:
+        origin = ROOT / "mod_runtime" / ABI_VERSION / "runner.wit" if name.endswith("runner.wit") else ROOT / "mod_runtime" / Path(name).name
+        assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()
     for name in artifacts.NOTICE_FILES:
         origin = ROOT / "LICENCE" if name.endswith("LICENCE.Project.txt") else ROOT / "notices/mod-runtime" / Path(name).name
         assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()

@@ -30,10 +30,9 @@ def runner_bundle(tmp_path_factory):
     if shared:
         bundle = RunnerBundle(shared)
         package = Path(__file__).resolve().parents[1] / "mod_runtime"
-        from mod_runtime.bundle import ABI_VERSION
-        sources = {"source/guest.py": package / "guest.py",
-                   "source/_source_policy.py": package / "_source_policy.py",
-                   "source/runner.wit": package / ABI_VERSION / "runner.wit"}
+        from mod_runtime.bundle import ABI_VERSION, SOURCES
+        sources = {name: package / ABI_VERSION / "runner.wit" if name.endswith("runner.wit")
+                   else package / Path(name).name for name in SOURCES}
         for name, current in sources.items():
             if bundle._file(name) != current.read_bytes():
                 pytest.fail(f"Shared runner sources differ from the tested checkout: {name}")
@@ -221,12 +220,11 @@ def bundled_project(project_factory):
 
 
 @pytest.fixture(scope="module")
-def embedded_project(tmp_path_factory):
+def embedded_project(tmp_path_factory, request):
     """Return a temporary copy of bundled Python, dependencies and launcher files."""
     # An isolated prepared candidate lets the same acceptance tests exercise either binding.
-    source = Path(
-        os.environ.get("TPM_TEST_RELEASE_ROOT", Path(__file__).resolve().parents[1])
-    ).resolve()
+    candidate = os.environ.get("TPM_TEST_RELEASE_ROOT")
+    source = Path(candidate if candidate is not None else Path(__file__).resolve().parents[1]).resolve()
     runtime = source / "libs/python-3.13.16-embed-amd64"
     try:
         directory = dependencies.verify_bundle(source)
@@ -258,7 +256,11 @@ def embedded_project(tmp_path_factory):
     shutil.copytree(source / "mod_runtime", root / "mod_runtime", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(source / "examples", root / "examples", ignore=shutil.ignore_patterns("__pycache__", "*.wasm"))
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
-    RunnerBundle(source / DIRECTORY).copy_to(root / DIRECTORY)
+    # Explicit release acceptance must exercise that candidate's own artifact.
+    # Checkout tests use freshly built/shared bytes without replacing installed libs.
+    selected_runner = (RunnerBundle(source / DIRECTORY) if candidate is not None
+                       else request.getfixturevalue("runner_bundle"))
+    selected_runner.copy_to(root / DIRECTORY)
     return root
 
 

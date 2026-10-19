@@ -7,5 +7,7 @@ notices/mod-runtime/** -text -whitespace
 # Keep shared runner build inputs identical on Linux and Windows checkouts.
 mod_runtime/guest.py text eol=lf
 mod_runtime/_source_policy.py text eol=lf
+mod_runtime/_regulation_policy.py text eol=lf
+mod_runtime/_regulation_handlers.py text eol=lf
 mod_runtime/*/runner.wit text eol=lf
 LICENCE text eol=lf

@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MPL-2.0
+// Private runner ABI. This does not publish source mod API 0.4.0.
+package modlauncher:python-runner@0.4.0;
+
+world code-runner {
+    import report: func(message: string);
+    import add-menu-button: func(id: string, label: string, message: string);
+    import register-settings: func(definition: string) -> string;
+    import save-settings: func(values: string) -> string;
+    import register-theme: func(definition: string);
+
+    export put-source: func(path: string, chunk: string);
+    export load-source: func(entry: string) -> string;
+    export activate: func();
+    export on-event: func(name: string, payload: string) -> string;
+    export bind-regulation: func(index: u32, declaration: string) -> string;
+    export prepare-regulation: func(index: u32, context: string, regulation: string) -> string;
+    export prepare-regulations: func(batch: string) -> string;
+    export validate-regulation: func(index: u32) -> string;
+}

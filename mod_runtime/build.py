@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 from .bundle import (
-    ABI_VERSION, COMPONENTIZE_VERSION, EXPORTS, FILES, MANIFEST, NOTICE_FILES,
+    ABI_VERSION, COMPONENTIZE_VERSION, EXPORTS, FILES, MANIFEST, NOTICE_FILES, SOURCES,
     RunnerBundle, BundleError, _checked, _read, MAX_COMPONENT_BYTES,
 )
 from .contract import HOST_OPERATIONS
@@ -26,14 +26,15 @@ from .contract import HOST_OPERATIONS
 def check_interface(data):
     """Validate the private ABI without instantiating or executing the runner."""
     from wasmtime import Config, Engine
-    from wasmtime.component import Component, ComponentInstanceType, FuncType, String
+    from wasmtime.component import Component, ComponentInstanceType, FuncType, String, U32
 
     def signature(function):
-        if type(function) is not FuncType or any(type(value) is not String for _, value in function.params):
+        kinds = {String: "string", U32: "u32"}
+        if type(function) is not FuncType or any(type(value) not in kinds for _, value in function.params):
             raise BundleError("Unexpected runner function type")
         if function.result is not None and type(function.result) is not String:
             raise BundleError("Unexpected runner result type")
-        return tuple("string" for _ in function.params), "string" if function.result is not None else None
+        return tuple(kinds[type(value)] for _, value in function.params), "string" if function.result is not None else None
 
     with Config() as config:
         config.wasm_component_model = True
@@ -68,14 +69,18 @@ def build(output):
         source.mkdir()
         (stage / "notices").mkdir()
         (stage / "empty/lib/site-packages").mkdir(parents=True)
-        (source / "guest.py").write_bytes(_read(package / "guest.py", 1024 * 1024))
-        (source / "_source_policy.py").write_bytes(_read(package / "_source_policy.py", 64 * 1024))
-        (source / "runner.wit").write_bytes(_read(package / ABI_VERSION / "runner.wit", 64 * 1024))
-        # The application module name is fixed; no pack or author path enters this command.
+        for name in SOURCES:
+            basename = Path(name).name
+            origin = package / ABI_VERSION / basename if basename == "runner.wit" else package / basename
+            (source / basename).write_bytes(_read(origin, 1024 * 1024))
+        # Freeze only this fixed trusted inventory; no author input enters builds.
         build_source = stage / "input"
         build_source.mkdir()
-        shutil.copyfile(source / "guest.py", build_source / "runner_guest.py")
-        shutil.copyfile(source / "_source_policy.py", build_source / "_source_policy.py")
+        for name in SOURCES:
+            basename = Path(name).name
+            if basename != "runner.wit":
+                destination = "runner_guest.py" if basename == "guest.py" else basename
+                shutil.copyfile(source / basename, build_source / destination)
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment["PYTHONNOUSERSITE"] = "1"
