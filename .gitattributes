@@ -1,3 +1,5 @@
+# Exclude licence and attribution notices from GitHub language statistics.
+notices/** linguist-documentation
 # Preserve upstream runner licence and attribution bytes on every platform.
 notices/mod-runtime/** -text -whitespace
 
