@@ -1,13 +1,19 @@
 # SPDX-License-Identifier: MPL-2.0
-"""One canonical payload and its once-computed JSON/measurement components."""
+"""Cache one rule value with its JSON text and size measurements in the launcher.
+
+OwnerView objects can refer to the same record, so mods subscribing to the same
+native option do not make the launcher encode and measure it separately for each
+mod. Each sandbox still receives its own installed data.
+"""
 
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class CatalogRecord:
-    # Field bindings are frozen; nested values stay trusted read-only canonical
-    # data. Only independent copies cross into author execution in the guest.
+    # frozen=True prevents field reassignment; it does not freeze nested dicts.
+    # Launcher code treats value as read-only. Mod handlers receive separate
+    # argument copies inside their sandbox.
     identity: int
     kind: str
     value: dict

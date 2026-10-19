@@ -1,5 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
-"""One admitted action and four one-use copies, independent of resident payloads."""
+"""Check one action and prepare separate arguments for its validator calls.
+
+Resolve rule references against the installed catalog instead of receiving full
+rule values again. Prepare at most four argument pairs at a time to limit temporary
+memory. Copying happens outside each handler's allowance; mods can keep or change
+their arguments without affecting later calls or cached rules.
+"""
 
 from .policy import _integer, context_fields, fields
 from .values import bounded, clone, integer, measure, object_measure, scalar

@@ -2,6 +2,7 @@
 """Real resident guest protocol; each test owns a distinct lifecycle/resource proof."""
 
 from copy import deepcopy
+import gc
 import json
 
 import pytest
@@ -148,6 +149,7 @@ def test_reused_components_are_neither_remeasured_nor_encoded_during_action_prep
     for slot, value in enumerate(records):
         catalog.install(slot, value)
     catalog.seal()
+    assert all(not gc.is_tracked(record[2].tokens) for record in catalog.records.values())
     original = values.encode
 
     def encoding(value):

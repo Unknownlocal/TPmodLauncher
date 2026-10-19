@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Shared native bases, owner-private records and reverse rule subscriptions."""
+"""Keep one launcher-side catalog for all participating regulation mods.
+
+Share native rule values among subscribing mods while keeping each mod's custom
+rules and extra option data separate. Track which mods use each rule so updates
+only need to visit affected mods. Sandboxes retain their own copies.
+"""
 
 from collections import ChainMap
 

@@ -79,6 +79,7 @@ The state is split by responsibility, with one class per module:
 | Module | Owns |
 | --- | --- |
 | `_regulations/catalog.py` | One owner manifest and its distinct canonical records; active-record reuse by immutable identity |
+| `_regulations/frozen.py` | Flat immutable canonical payloads and fresh ordinary argument reconstruction |
 | `_regulations/action.py` | Checked context/choice/call references and at most four fresh handler argument pairs |
 | `_regulations/transfer.py` | One exact-length UTF-8 transfer; JSON is parsed only after completion |
 | `_regulations/resident.py` | Epoch/generation fences, staged publication, action lifetime and terminal failure |
@@ -105,6 +106,16 @@ record is a plain object, independently decoded/measured once and checked agains
 its descriptor. An unchanged active ID can be reused only with the same kind and
 metrics; it cannot be overwritten by another page. Full adopted-future membership
 is input-derived, without a new option quota. Resource limits still apply.
+
+After verification, canonical payloads use a flat tuple of scalar tokens rather
+than a retained mutable JSON tree. The first young-generation collection untracks
+these atomic tuples during counted installation, avoiding later cyclic-GC scans
+through large stable payloads. This does not disable or freeze author GC. Copying
+reconstructs fresh ordinary dicts/lists for handlers, without JSON encoding or
+decoding; copying and dynamic-context validation still cost time. A full collection
+at policy seal is deliberately avoided because it would also clear free lists
+accumulated by earlier actions. See [performance evidence](../benchmarks/regulations/RESULTS.md).
+
 
 Policy begin advances the required generation before any data arrives. Sealing
 checks completeness; commit alone makes the staged view active. Reset drops

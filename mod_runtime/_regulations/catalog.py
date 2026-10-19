@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: MPL-2.0
-"""A sealed owner policy view, with immutable shared-record reuse across updates."""
+"""Keep the installed rules for one mod inside its sandbox.
+
+Check incoming rule tables before they can be used. Unchanged records are reused
+across updates; new values use FrozenValue so later validation calls do not pay
+for garbage-collector scans of the cached dict/list trees.
+"""
+
+import gc
 
 from .policy import fields
+from .frozen import FrozenValue
 from .values import bounded, integer, loads, measure, text
 
 
@@ -102,7 +110,9 @@ class RegulationCatalog:
         metric = bounded(measure(value))
         if metric != expected:
             raise ValueError("Resident record measurements differ")
-        record = kind, metric, value
+        # Keep the checked value in the flat cache format. Validation creates
+        # ordinary argument copies from it rather than passing cached data out.
+        record = kind, metric, FrozenValue(value)
         self.records[slot] = self.by_id[identity] = record
 
     def install_page(self, packet):
@@ -120,3 +130,11 @@ class RegulationCatalog:
         if self.sealed or len(self.records) != len(self.descriptors):
             raise ValueError("Repeated or incomplete resident policy seal")
         self.sealed = True
+        # Let Python remove the new flat tuples from cyclic-GC tracking now,
+        # under the installation allowance rather than a later validator's.
+        # Generation 0 collects recently created objects; older cache tuples
+        # have already had their first collection. A full collection would also
+        # scan mod objects and clear Python's pools of reusable object storage,
+        # which exhausted the install allowance after some earlier workloads.
+        # Automatic garbage collection for mod objects continues as normal.
+        gc.collect(0)

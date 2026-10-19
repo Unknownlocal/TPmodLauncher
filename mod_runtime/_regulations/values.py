@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Exact resident-component accounting; stable payloads are measured only once."""
+"""Check JSON values and count their size without repeatedly walking cached rules.
+
+Record byte size, value count, nesting depth and large-integer conversion work.
+Later checks combine those saved measurements with the action's context to enforce
+the full argument limits. clone() makes independent arguments for each validator.
+"""
 
 import json
 import math
 
 from .policy import _constant, _object, encode
+from .frozen import FrozenValue
 
 
 def integer(value, bits=32, *, positive=False):
@@ -44,22 +50,26 @@ def measure(value, *, encoded=None):
     def visit(item, depth=0):
         nonlocal nodes, deepest, work
         nodes += 1
-        if type(item) in (dict, list):
+        kind = type(item)
+        if kind is dict:
             depth += 1
             deepest = max(deepest, depth)
-            if type(item) is dict:
-                if any(type(key) is not str for key in item):
+            # Check keys during the value walk: avoid a generator and second
+            # iteration for every object, including node-dense empty objects.
+            for key, child in item.items():
+                if type(key) is not str:
                     raise ValueError("Resident keys must be strings")
-                children = item.values()
-            else:
-                children = item
-            for child in children:
                 visit(child, depth)
-        elif type(item) is int:
+        elif kind is list:
+            depth += 1
+            deepest = max(deepest, depth)
+            for child in item:
+                visit(child, depth)
+        elif kind is int:
             digits = max(1, (item.bit_length() * 30103 + 99999) // 100000)
             work += digits * digits if digits > 64 else 0
-        elif item is not None and type(item) not in (str, bool):
-            if type(item) is not float or not math.isfinite(item):
+        elif item is not None and kind not in (str, bool):
+            if kind is not float or not math.isfinite(item):
                 raise ValueError("Expected finite plain resident JSON")
 
     visit(value)
@@ -95,11 +105,20 @@ def bounded(metric):
 
 
 def clone(value):
-    """Fresh containers for authors; immutable scalars can remain shared."""
-    if type(value) is dict:
-        return {key: clone(child) for key, child in value.items()}
-    if type(value) is list:
-        return [clone(child) for child in value]
+    """Make fresh dicts/lists so a mod cannot change another call's arguments.
+
+    Cached FrozenValue objects are rebuilt here; ordinary context dicts/lists
+    are copied recursively. Strings and numbers can safely be shared.
+    """
+    kind = type(value)
+    if kind is FrozenValue:
+        return value.copy()
+    if kind is dict:
+        # Empty containers still need fresh identities, but no iterator or
+        # recursive comprehension work. They are common at the node limit.
+        return {key: clone(child) for key, child in value.items()} if value else {}
+    if kind is list:
+        return [clone(child) for child in value] if value else []
     return value
 
 

@@ -151,3 +151,10 @@ five portable areas on both platforms plus Windows acceptance. Suite/platform
 percentages remain separate, and reports are never combined across runs or
 commits. The summary distinguishes the workflow-definition commit from the
 tested PR head recorded by the claim/status jobs.
+
+Developer performance comparisons live in
+[`benchmarks/regulations`](../benchmarks/regulations/README.md), outside CI.
+They reuse one matching artifact per frozen source set and separate diagnostic
+counts/memory from clean timings. CI retains semantic isolation, exact accounting,
+publication/reset and dense-catalog GC checks in the existing test cases; it does
+not add a noisy benchmark matrix or per-scenario component builds.

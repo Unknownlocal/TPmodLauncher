@@ -43,7 +43,8 @@ SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
            "source/_regulations/__init__.py", "source/_regulations/policy.py",
            "source/_regulations/handlers.py", "source/_regulations/values.py",
            "source/_regulations/transfer.py", "source/_regulations/catalog.py",
-           "source/_regulations/action.py", "source/_regulations/resident.py")
+           "source/_regulations/action.py", "source/_regulations/resident.py",
+           "source/_regulations/frozen.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",

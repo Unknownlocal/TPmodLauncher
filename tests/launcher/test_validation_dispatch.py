@@ -114,8 +114,10 @@ def validate(c,r):
  assert r['current']['option_data']['owner']=={owner!r}
  if retained:
   retained[0]['proposal']['leak']=True
+  retained[0]['proposal']['empty'].append(999)
   retained[1]['current']['parameters']['points'].append(999)
  assert 'leak' not in c['proposal']
+ assert c['proposal']['empty']==[]
  retained=(c,r)
  return {{'decision':'allow'}}
 """, owner=owner)
@@ -152,7 +154,7 @@ def validate(c,r):
     assert len(traffic) == 6 and sum(name == "begin-regulation-policy" for _, name in traffic) == 2
     traffic.clear()
     ctx = context()
-    ctx["proposal"] = {"expect": 35}
+    ctx["proposal"] = {"expect": 35, "empty": []}
     requests = {owner: [["check", 0, 0]] * 32 for owner in mods}
     assert session.evaluate([ctx], [selection(2)], requests) == {owner: [{"decision": "allow"}] * 32 for owner in mods}
     ctx["proposal"]["expect"] = 25
@@ -187,7 +189,11 @@ def test_control_replacement_counts_retirement_and_reset_preserves_bindings(make
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     session = dispatch({mod.manifest.id: mod})
     # Many adopted payloads share a key, then a tiny publication retires them.
-    session.publish(native={"native": [{"key": "open", "values": [{} for _ in range(950)], "marker": index} for index in range(32)]})
+    session.publish(native={"native": [{"key": "open", "values": [{} for _ in range(950)], "marker": index} for index in range(320)]})
+    # Repeated actions must not spend their bounded preparation/handler fuel
+    # collecting the large, unchanged resident payload graph.
+    for _ in range(4):
+        assert session.evaluate([context()], [selection()], {mod.manifest.id: [["check", 0, 0]] * 32})[mod.manifest.id] == [{"decision": "allow"}] * 32
     previous_ids = {record.identity for record in session.catalog.views[mod.manifest.id].records}
     session.publish(native={"native": [{"key": "open", "p": "x" * 4088}]})
     assert any(record.metric[0] == 4096 for record in session.catalog.views[mod.manifest.id].records)

@@ -67,5 +67,7 @@ failure fences the entire affected cohort. Required owners remain in the model.
 `reset(new_epoch)` clears policy views while preserving bindings and monotonically
 increasing action/record identities. Reset cannot revive a failed Store.
 
-Native transport and pack readiness use this package through the runtime. Full
-production performance and live game mappings remain separate acceptance gates.
+Native transport and pack readiness use this package through the runtime.
+[Owned-process performance measurements](../../../benchmarks/regulations/RESULTS.md)
+cover this path; live game mappings remain a separate acceptance gate. Supported
+packet cardinality does not guarantee arbitrary workloads finish within 100 ms.
