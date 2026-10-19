@@ -64,6 +64,7 @@ class PackMods:
         background=False,
         cache=None,
         runner_bundle=None,
+        wake=None,
     ):
         # game_root and report come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
@@ -97,6 +98,55 @@ class PackMods:
         self.finished = False
         self._pack_root = None
         self._regulations_prepared = False
+        self._regulation_failed = False
+        self._regulation_dispatching = False
+        self.regulations, self._regulation_status = None, None
+        self._regulation_owners, self._regulation_wake = set(), wake
+
+    def _regulation_waiting(self):
+        return (not self.closed and (self._regulation_failed or (bool(self._regulation_owners)
+                and (self.regulations is None or not self.regulations.ready))))
+
+    def bind_regulations(self, *, scopes, native_categories=()):
+        """Bind admitted handlers; Step 5 must still confirm native interception."""
+        from launcher.regulations.runtime import RegulationRuntime
+
+        try:
+            for owner in self._regulation_owners:
+                mod = self.mods.get(owner)
+                if type(mod) is not SourceMod or not mod._active or mod.sandbox.closed:
+                    raise ManifestError("Required regulation owner became unavailable before binding")
+            definitions = self.prepare_regulations(scopes=scopes, native_categories=native_categories)
+            if definitions is None:
+                return None
+            # Capability requests with no selected declaration contribute no resources.
+            # Keep declared/unavailable owners required; cleanup is not disabling.
+            self._regulation_owners = set(definitions.owner_ids)
+            self.regulations = RegulationRuntime(definitions, self.mods, self._regulation_wake)
+            self.regulations.bind()
+        except Exception as error:
+            # Preparation can fail before there is a runtime, and listener startup
+            # can fail after handlers bind. Neither can revert to loading/ready.
+            self._regulation_failed = True
+            self._log("REGULATIONS FAILED", owners=sorted(self._regulation_owners), detail=str(error)[:512])
+            self._progress("error")
+            raise
+        if self.regulations.ready:
+            self._flush_menu()
+            self._flush_settings()
+            self._flush_themes()
+            self._progress("complete")
+        return self.regulations
+
+    def confirm_regulations(self):
+        """Trusted mapping acknowledgement, inaccessible to source mod code."""
+        if self._regulation_failed or self.regulations is None:
+            raise RuntimeError("Regulations have not bound")
+        self.regulations.confirm_native()
+        self._flush_menu()
+        self._flush_settings()
+        self._flush_themes()
+        self._progress("complete")
 
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.
@@ -120,16 +170,19 @@ class PackMods:
 
     def _flush_menu(self):
         """Send staged declarations outside guest execution, without per-frame callbacks."""
-        if self.set_menu is None or self.applied_menu == self.menu.buttons:
+        # Keep desired declarations staged, but revoke published UI if a required
+        # owner fails. Readiness must block additions without blocking cleanup.
+        records = [] if self._regulation_waiting() else self.menu.buttons
+        if self.set_menu is None or self.applied_menu == records:
             return
         # An uncertain acknowledgement must still cause a later rollback/cleanup request.
         self.applied_menu = None
-        result = self.set_menu(self.menu.buttons)
+        result = self.set_menu(records)
         if result is not None:
             self.menu_generation = result["menu"]["generation"]
             if result["menu"]["state"] == "failed":
                 raise ManifestError(result["menu"]["detail"])
-        self.applied_menu = [dict(item) for item in self.menu.buttons]
+        self.applied_menu = [dict(item) for item in records]
 
     def _remove_menu(self, owner):
         """Revoke a closed mod immediately; bulk shutdown publishes one final empty registry."""
@@ -140,7 +193,10 @@ class PackMods:
         error = None
         for applied, flush in ((self.applied_settings, self._flush_settings), (self.applied_menu, self._flush_menu),
                                (self.applied_themes, self._flush_themes)):
-            if not self.closed and applied is not None and any(item["owner"] == owner for item in applied):
+            # Validation holds the native caller until its reply. A synchronous
+            # UI bridge request here would wait on that same game thread.
+            if (not self.closed and not self._regulation_dispatching and applied is not None
+                    and any(item["owner"] == owner for item in applied)):
                 try:
                     flush()
                 except Exception as failure:
@@ -150,7 +206,10 @@ class PackMods:
 
     def _flush_settings(self):
         """Publish copied declarations only after guest execution has returned."""
-        records = self.settings.records
+        waiting = self._regulation_waiting()
+        records = [] if waiting else self.settings.records
+        if waiting:
+            self.settings_result = None  # A revoked registry cannot accept a stale save acknowledgement.
         if self.set_settings is None or (self.applied_settings == records and self.settings_result is None):
             return
         self.applied_settings = None
@@ -163,7 +222,7 @@ class PackMods:
         self.settings_result = None
 
     def _flush_themes(self):
-        records = self.themes.records
+        records = [] if self._regulation_waiting() else self.themes.records
         if self.set_themes is None or self.applied_themes == records:
             return
         self.applied_themes = None
@@ -277,6 +336,10 @@ class PackMods:
 
     def _progress(self, state="loading"):
         """Publish host-owned counts; native readiness still waits for registry installation."""
+        if state in ("loading", "complete") and self._regulation_waiting():
+            failed = self._regulation_failed or (self.regulations is not None
+                     and "unavailable" in self.regulations.status["owners"].values())
+            state = "error" if failed else "loading"
         if self.set_loading is not None:
             self.set_loading(
                 dict(
@@ -320,6 +383,19 @@ class PackMods:
         """Advance only ready work on the owning controller thread; never wait on a compiler."""
         if self.closed:
             return
+        if self.regulations is not None:
+            # This runs on the controller/Store owner before any synchronous UI
+            # bridge request. The I/O thread only wakes this loop and queues data.
+            self._regulation_dispatching = True
+            try:
+                self.regulations.poll()
+            finally:
+                self._regulation_dispatching = False
+            status = self.regulations.status
+            if status != self._regulation_status:
+                self._regulation_status = status
+                self._flush_menu()
+                self._progress("complete" if self.finished else "loading")
         if self.loading is None:
             self._flush_settings()
             self._flush_themes()
@@ -373,6 +449,12 @@ class PackMods:
                     phase_seconds=timings,
                 )
         counts = Counter(item.manifest.id for item in candidates_read)
+        # Reserve before activating any UI owner: a later regulation owner must
+        # fence earlier declarations too. Rejected duplicate IDs never reserve.
+        self._regulation_owners = {item.manifest.id for item in candidates_read
+                                  if type(item.manifest) is SourceManifest
+                                  and counts[item.manifest.id] == 1
+                                  and "regulations" in item.manifest.capabilities}
         for candidate in sorted(candidates_read, key=lambda item: (item.manifest.id, item.root.name)):
             manifest, timings = candidate.manifest, candidate.timings
             # Decide duplicate identity before initializing either copy; never pick a winner.
@@ -389,6 +471,7 @@ class PackMods:
                 continue
             prepared = None
             source_result = None
+            activated = False
             try:
                 if type(manifest) is SourceManifest:
                     # Generator closure exits this context and cancels/disposes the job.
@@ -431,6 +514,7 @@ class PackMods:
                 self.mods[manifest.id] = mod
                 with measure(timings, "activate"):
                     mod.activate()
+                activated = True
                 if "main-menu" in manifest.capabilities:
                     with measure(timings, "registration"):
                         self._flush_menu()
@@ -438,6 +522,8 @@ class PackMods:
                     self._flush_settings()
                     self._flush_themes()
             except Exception as error:
+                if not activated:
+                    self._regulation_owners.discard(manifest.id)
                 self.failed += 1
                 self.settings.remove(manifest.id)
                 self.themes.remove(manifest.id)
@@ -470,9 +556,14 @@ class PackMods:
                 )
             self._progress()
         self.finished = True
+        # Failed activation can release the last reservation; publish surviving
+        # UI declarations now rather than leaving an earlier owner staged forever.
+        self._flush_menu()
+        self._flush_settings()
+        self._flush_themes()
         self._progress("complete")
         self._log(
-            "READY",
+            "BINDING REQUIRED" if self._regulation_waiting() else "READY",
             pack=pack["id"],
             active=len(self.mods),
             phase_seconds=load_timings,
@@ -526,6 +617,12 @@ class PackMods:
             # A native compiler cannot be interrupted by Future.cancel(); dispose its late result.
             self.executor.shutdown(wait=False, cancel_futures=True)
         failed = False
+        if self.regulations is not None:
+            try:
+                self.regulations.close()
+            except Exception as error:
+                failed = True
+                self._log("CLEANUP ERROR", detail=str(error)[:512])
         while self.mods:
             mod_id, mod = self.mods.popitem()
             try:

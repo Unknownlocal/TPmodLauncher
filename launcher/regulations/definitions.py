@@ -45,6 +45,16 @@ class RegulationDefinitions:
         return cls.from_bytes(content, sources, scopes=scopes, native_categories=native_categories)
 
     @property
+    def owner_ids(self):
+        """List admitted declarations without materializing their opaque data."""
+        return tuple(self._owners)
+
+    @property
+    def validators(self):
+        """Copy only handler declarations for binding, not full option catalogues."""
+        return {owner: deepcopy(data.validators) for owner, data in self._owners.items()}
+
+    @property
     def revisions(self):
         # Digests are immutable strings, so only the owner-to-digest map is copied.
         return dict(self._revisions)

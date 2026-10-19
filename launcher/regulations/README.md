@@ -1,8 +1,8 @@
 # Regulation admission and sandbox handlers
 
 This private package admits regulation definitions and binds owned Python
-handlers inside Wasm. Pack/session lifetime, native validators and publication
-remain separate integration work. Public API 0.4.0 stays unavailable; existing
+handlers inside Wasm. Pack/session lifetime is launcher-owned; native validators
+and rule publication remain separate integration work. Public API 0.4.0 stays unavailable; existing
 public API versions remain unchanged.
 
 `PackMods.prepare_regulations()` is a trusted, one-shot preparation seam after
@@ -11,8 +11,10 @@ instances requesting `regulations`; closed, failed and prebuilt-component mods
 cannot supply owners. Source snapshots are retained after admission rather than
 reopening `src/`. Current manifest versions cannot request this capability, so
 ordinary sessions neither read the extension file here nor gain new resources.
-`HandlerRunner.bind()` provides the private binding seam; pack readiness and
-native integration must connect it before any staged view is published.
+`PackMods.bind_regulations()` binds retained owners and starts their private
+transport. Trusted native acknowledgement through `confirm_regulations()` is
+required before staged UI and completion can publish; actual game mappings
+and rule publication remain later integration steps.
 
 `RegulationDefinitions.read()` pins the selected folder and reads at most 1 MiB
 from its fixed `regulations.json`. Empty ownership performs no filesystem I/O.
@@ -87,7 +89,7 @@ category, 128 categories/256 validators per session, and 128 scripts per owner.
 Known policy data is checked against a minimum invocation envelope for the
 4,096-byte/1,024-node/eight-container-level limits. These apply to each validator
 invocation payload; the complete `regulations.json` file has the separate 1 MiB
-limit described above (tentative). 
+limit described above (tentative).
 
 Preparation is atomic. `owners`, `native_document`, `document` and `revisions`
 return independent data. `document` is a candidate merged view for future binding
@@ -126,8 +128,8 @@ generic callable or native target access. Native integration remains separate.
 
 `RegulationServer` owns one authenticated loopback connection, a bounded pending
 request queue and an I/O thread. The thread only receives/queues/wakes; `poll()`
-invokes a trusted evaluator on the creating controller thread. This transport
-slice does not create a regulation runtime or publish a native endpoint.
+invokes a trusted evaluator on the creating controller thread. The runtime owns
+this server and supplies its endpoint only to trusted native integration.
 
 The native `RegulationChannel` uses session tokens, sequential request IDs and
 one absolute action deadline. Frames are length-prefixed and bounded to 256 KiB
@@ -138,6 +140,24 @@ retry/reconnect or stale approval reuse. Shutdown stops owned I/O.
 
 Fixed client/framing sources are included in the native bridge bootstrap. Its
 private wake callback queues controller work without native RPC or guest entry.
-Pack lifecycle, complete readiness acknowledgement and actual game validation
-mappings remain separate integrations. No author method or native authority is
-exposed by this transport. Resident rule-data redesign follows the staged split.
+Actual game validation mappings remain a separate integration. No author method
+or native authority is exposed by this transport. Resident rule-data redesign
+follows the staged split.
+
+## Pack lifetime and readiness
+
+`RegulationRuntime` binds required owners once and dispatches queued calls on the
+Store's creating controller thread. A connection alone cannot establish readiness:
+only trusted acknowledgement of complete native interception permits publication.
+Identified handler failure latches its owner unavailable while other owners can
+still be checked; transport failure makes all required owners unavailable.
+Cleanup does not disable or remove a required declaration.
+
+`PackMods` reserves eligible owners before any activation can publish UI. Failed
+activation releases that reservation; successful activation keeps the owner
+required until session closure. While unready, desired declarations stay staged
+and any published menu/settings/themes are cleared. Loading cannot report complete
+until all required owners are ready. Failure cleanup removes local declarations
+immediately but defers native UI updates until the validation reply is released,
+so UI acknowledgement cannot block that reply. Shutdown stops transport before closing
+source Stores in reverse activation order. Public API 0.4.0 remains withheld.

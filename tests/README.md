@@ -113,11 +113,12 @@ guest, frozen policy/handler helpers and WIT bytes against the checkout. With
 inputs fail instead of triggering a rebuild. Local tests build once on demand
 per pytest session when no shared bundle is supplied.
 
-Regulation handler checks stay in the launcher suite. Socket framing,
-authentication, correlated replies, controller-thread evaluation and shutdown
-stay in the hook-manager suite. These use the existing suite/runner setup with
-no new CI job. Native bridge acceptance also compiles the fixed transport sources
-in its flat bootstrap namespace; full handler/session integration remains later.
+Regulation dispatch checks stay in the existing launcher and hook-manager suites.
+They cover real Wasm binding, copied/bounded payloads, batching and failure
+isolation, plus authenticated framing and shutdown. One native check uses the
+owned CPython client to reach a Wasm handler under the same absolute deadline.
+It joins the existing native acceptance selection; no additional CI job or
+per-test runner build is needed. Native game mappings remain a later step.
 
 Windows acceptance prepares one verified player bundle for its independent
 embedded and native jobs. The native job runs `tests/callables/` in a separate
