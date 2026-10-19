@@ -1,5 +1,9 @@
 # Regulation admission and sandbox handlers
 
+The additive [validation package](validation/README.md) owns the combined host
+catalog and reference-based dispatch. Its controller API is implemented alongside
+the existing socket path; coordinated native transport cutover remains separate.
+
 This private package admits regulation definitions and binds owned Python
 handlers inside Wasm. Pack/session lifetime is launcher-owned; native validators
 and rule publication remain separate integration work. Public API 0.4.0 stays unavailable; existing

@@ -26,6 +26,14 @@ class HandlerRunner:
 
     def __init__(self, runner, validators):
         self.runner, self.validators = runner, validators
+        self._validation = None
+
+    def validation(self):
+        """Trusted additive seam; existing callers keep evaluate() until cutover."""
+        if self._validation is None:
+            from .validation.runner import ValidationRunner
+            self._validation = ValidationRunner(self)
+        return self._validation
 
     @classmethod
     def bind(cls, runner, validators):

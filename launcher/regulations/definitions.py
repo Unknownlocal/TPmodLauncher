@@ -15,22 +15,29 @@ class RegulationDefinitions:
 
     The constructor takes ownership of converter-prepared state. Byte ingestion
     goes through from_bytes(); no JSON can select this model or a host class.
-    All outward views are independent copies of the retained declarations.
+    Public outward views are independent copies of the retained declarations.
     """
 
-    def __init__(self, native, owners, revisions):
+    def __init__(self, native, owners, revisions, references):
         # Ownership transfers here after conversion has finished. Revalidating or
         # copying in the model would repeat the converter's work; use read() or
         # from_bytes() when starting with untrusted file content.
         self._native, self._owners, self._revisions = native, owners, revisions
+        # Retain the admitted file/fallback index separately from the file view.
+        # Trusted catalog preparation borrows it without re-reading or cloning it.
+        self._references = references
 
     @classmethod
     def from_bytes(cls, content, enabled_sources, *, scopes, native_categories=()):
         """Convert bounded bytes using trusted admission/mapping inputs."""
-        native, owners, revisions = convert(content, enabled_sources, scopes=scopes,
-                                            native_categories=native_categories)
+        native, owners, revisions, references = convert(content, enabled_sources, scopes=scopes,
+                                                        native_categories=native_categories)
         # Do not construct a candidate with only the owners that happened to pass.
-        return cls(native, owners, revisions)
+        return cls(native, owners, revisions, references)
+
+    def _catalog_inputs(self):
+        """Borrow retained inputs for trusted read-only catalog preparation only."""
+        return self._references, self._owners, self._revisions
 
     @classmethod
     def read(cls, folder, enabled_sources, *, scopes, native_categories=()):

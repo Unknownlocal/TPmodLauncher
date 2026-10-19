@@ -97,6 +97,6 @@ def convert(content, enabled_sources, *, scopes, native_categories=()):
         # Only accepted owners reach revision finalization. All hashes are ready
         # before the aggregate model can take ownership of prepared state.
         revisions = finalize(owners, sources, base)
-        return native, owners, revisions
+        return native, owners, revisions, base
     except (ValueError, TypeError, KeyError, RecursionError) as error:
         raise ValueError(f"Cannot prepare regulation definitions: {error}") from error

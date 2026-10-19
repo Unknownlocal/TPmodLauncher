@@ -36,7 +36,7 @@ def scalar(value):
     return len(encode(value).encode("utf-8")), 1, 0, work
 
 
-def measure(value):
+def measure(value, *, encoded=None):
     # Metric order: UTF-8 bytes, value nodes, container depth, integer work.
     # Object keys contribute bytes, while only values/containers contribute nodes.
     nodes, deepest, work = 0, 0, 0
@@ -63,7 +63,17 @@ def measure(value):
                 raise ValueError("Expected finite plain resident JSON")
 
     visit(value)
-    return len(encode(value).encode("utf-8")), nodes, deepest, work
+    # Trusted host preparation can retain the encoding it just made. Guest
+    # verification always omits this argument and measures received values itself.
+    return len((encode(value) if encoded is None else encoded).encode("utf-8")), nodes, deepest, work
+
+
+def array_measure(metrics):
+    metrics = tuple(metrics)
+    return (2 + max(0, len(metrics) - 1) + sum(metric[0] for metric in metrics),
+            1 + sum(metric[1] for metric in metrics),
+            1 + max((metric[2] for metric in metrics), default=0),
+            sum(metric[3] for metric in metrics))
 
 
 def object_measure(pairs):
@@ -106,4 +116,5 @@ def entry_fuel(byte_count, nodes, calls, work):
 # Only fixed envelope keys are cached; arbitrary mod keys cannot grow this map.
 KEY_BYTES = {key: scalar(key)[0] + 1 for key in (
     "schema", "key", "revision", "evaluation_season", "selected", "current", "upcoming",
-    "effective_season", "parameters", "option_data", "context", "regulation")}
+    "effective_season", "parameters", "option_data", "context", "regulation",
+    "owner", "contexts", "selections", "calls", "rule")}
