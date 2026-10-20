@@ -7,6 +7,21 @@ protocol v2, sequential request IDs and an absolute action deadline. It never re
 requests or reconnects an expired session. An identified handler failure latches
 only that owner; protocol, disconnect or timeout failures close the channel.
 
+`RegulationGuards` reuses the callable manager's wrapper ownership, worker
+admission and restoration, but prepares one proposal for all subscribing mods.
+The authenticated hello includes each owner's admitted `(rule, scope)` bindings
+in ascending validator-ID order. Native adapters map those slots to one shared
+context/selection table and make one channel call. Neither that metadata nor the
+mod API can choose a native target or supply a host projection.
+
+The trusted `select(rule, evaluation_season)` callback returns `selected`,
+`current` and `upcoming` choice references from the published adopted policy.
+It must use the same membership ordering as publication, not predict voting.
+Selection runs once per distinct rule; proposal preparation runs once per action.
+Projection, dispatch queueing and all decisions share the existing 100 ms budget.
+Native execution follows only after all required decisions allow; native errors
+propagate without retry. Validation failure keeps guards installed and unavailable.
+
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each
 changed rule; custom entries are admitted option keys. A `None` value advances

@@ -46,6 +46,30 @@ class RegulationChannel:
             self.close()
             raise
 
+    def bindings(self, scope):
+        """Return admitted binding slots for a trusted scope, never native targets.
+
+        Slots follow the launcher's ascending validator IDs. A single binding
+        per owner/target can therefore fan out to every applicable mod handler.
+        """
+        result = {}
+        for owner, row in sorted(self._owners.items()):
+            bindings = row.get("bindings")
+            if type(bindings) is not list or not 1 <= len(bindings) <= 32:
+                raise HookError("Missing admitted regulation bindings")
+            selected = []
+            for slot, binding in enumerate(bindings):
+                if (type(binding) is not dict or set(binding) != {"rule", "scope"}
+                        or binding["rule"] not in row["rules"] or type(binding["scope"]) is not str):
+                    raise HookError("Invalid admitted regulation binding")
+                if binding["scope"] == scope:
+                    # Keep the original slot: other scopes can leave gaps, and
+                    # renumbering would call a different admitted handler.
+                    selected.append((slot, binding["rule"]))
+            if selected:
+                result[owner] = tuple(selected)
+        return result
+
     def _enter(self):
         # One logical operation owns the stream through all pages/fragments.
         # Policy phases share this request ID rather than reserving new IDs.

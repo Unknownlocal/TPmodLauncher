@@ -4,25 +4,29 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing, nullcontext
 import json
+import inspect
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from hook_manager.manager import HookError
+from hook_manager.callables import CallBinding, CallableTarget, ResultContract, code_digest
 from hook_manager.regulations import RegulationChannel
+from hook_manager.regulations.guards import RegulationGuards
 from launcher.pack_mods import PackMods
 from mod_runtime.source import SourceManifest
 from regulation_support import context, make_mod, selection, validator
 
 
-def prepare_scope(tmp_path, mods):
+def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract"):
     wake, progress, menus = threading.Event(), [], []
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [{"key": "native", "options": [{"key": "open"}]}],
-        "mod_extensions": {owner: {"schema": 1, "validators": [validator()]} for owner in mods}}), encoding="utf-8")
+        "mod_extensions": {owner: {"schema": 1, "validators": [dict(validator(), scope=semantic_scope)]} for owner in mods}}), encoding="utf-8")
     scope = PackMods(tmp_path, lambda _: None, wake=wake.set, set_loading=progress.append, set_menu=menus.append)
     scope.mods, scope.finished, scope._pack_root, scope.total = dict(mods), True, tmp_path, len(mods)
     for owner, mod in mods.items():
@@ -31,7 +35,7 @@ def prepare_scope(tmp_path, mods):
         mod.sandbox._resources.callback(scope._remove_menu, owner)
     # A staged UI declaration must stay unpublished until native acknowledgement.
     scope.menu.add(next(iter(mods)), "owned", "Owned", "Message")
-    runtime = scope.bind_regulations(scopes={"personnel.contract"})
+    runtime = scope.bind_regulations(scopes={semantic_scope})
     scope.poll()
     assert not runtime.ready and progress[-1]["state"] == "loading" and not menus
     return scope, runtime, wake, progress, menus
@@ -44,6 +48,50 @@ def pump(scope, wake, future):
         wake.clear()
         scope.poll()
     return future.result(timeout=.1)
+
+
+def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod, tmp_path, monkeypatch):
+    mods = {
+        "a.rules": make_mod("def validate(c,r):\n c['proposal']['budget']=0\n return {'decision':'allow'}\n", owner="a.rules"),
+        "b.rules": make_mod("def validate(c,r):\n if c['proposal']['budget']>5: return {'decision':'deny','message':'Budget refused'}\n return {'decision':'allow'}\n", owner="b.rules")}
+    scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods, semantic_scope="development.project")
+    module = ModuleType("owned_project_native_entry")
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    writes, projections = [], []
+
+    def native(budget):
+        writes.append(budget)
+        return True
+
+    def project(arguments, result):
+        projections.append(arguments["budget"])
+        return dict(context(), scope="development.project", proposal={"budget": arguments["budget"]})
+
+    module.start = native
+    with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+        engine = RegulationGuards(channel, lambda rule, season: {"selected": "current", "current": [0, 2026], "upcoming": None}, "development.project")
+        engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native)), (code_digest(native.__code__),)))
+        codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
+        try:
+            for owner in mods:
+                engine.register(owner, [CallBinding("project", "project", project, codec)])
+            scope.confirm_regulations()
+            pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            thread = worker.submit(threading.current_thread).result(timeout=1)
+            engine.enroll(thread)
+
+            def start(budget):
+                with engine.operation():
+                    result = module.start(budget)
+                    return result, engine.last_refusal
+
+            assert pump(scope, wake, worker.submit(start, 12)) == (False, "Budget refused")
+            assert not writes and projections == [12]
+            assert pump(scope, wake, worker.submit(start, 4)) == (True, None)
+            assert writes == [4] and projections == [12, 4] and runtime.ready
+        finally:
+            engine.stop()
+        assert module.start is native
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])

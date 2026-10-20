@@ -1,4 +1,4 @@
-# Development-project mapping and proposal planning
+# Development-project mapping, planning and guards
 
 This private Step 5 package identifies the native methods that create aero projects,
 aero spec upgrades and current/future chassis projects. `project_targets()` returns
@@ -23,9 +23,9 @@ The recorded lines help inspection and are excluded from compatibility checks.
 Descriptors locate methods by path and full signature, then check the specific
 implementation, including nested code and exception handling. Filenames and
 source-line metadata are excluded recursively. Unrelated changes elsewhere in
-the game therefore do not disable this integration. Helpers and callers must
-also be checked when enforcement is added; these three identities do not certify
-the whole call graph. A body change can still require reinspection even when it
+the game therefore do not disable this integration. The planner checks its helper
+groups; `caller_targets.py` also checks eleven UI/AI callers and preparation helpers.
+These checks do not certify the entire game call graph. A body change can still require reinspection even when it
 preserves behavior; these checks do not prove equivalence across compiler versions.
 
 ## Findings that constrain the next slice
@@ -50,16 +50,15 @@ The two managers also use different `_absolute_week` conventions: aero uses
 `(season_no - 1) * 52 + week_index`, while chassis adds one. Context dates must
 follow the appropriate native path rather than a shared guessed formula.
 
-Current direct callers include the aero/development screens, aero
+Checked direct callers include the aero/development screens, aero
 `_ai_try_launch_project` and `AIDevelopment._ensure_current_project`,
-`_ensure_future_project`, `_ensure_aero_projects`. They are inspected dependencies,
-not completed rejection tests. Their surrounding mutations and handling of
-`False` must be checked before UI/AI coverage can be claimed.
+`_ensure_future_project`, `_ensure_aero_projects`. Their start/result handling is
+compared with the installed game bodies on owned fixtures. Full live-game,
+worker transaction and release coverage retain their later acceptance gates.
 
-The shared-context transport remains the execution path to connect: a single
-proposal is prepared once for all relevant owners. The existing generic callable
-engine dispatches per owner, so it must not be connected directly to the new
-channel signature or used to duplicate a shared proposal per validator.
+`RegulationGuards` connects the shared transport: a single proposal is prepared
+once for all relevant owners. It reuses the callable engine's lifecycle, with a
+dedicated validation path instead of the older per-owner projection/dispatcher.
 
 ## Reproduce the compatibility check
 
@@ -97,7 +96,8 @@ other integrations. It never substitutes an unchecked planner. The constructor
 itself remains strict for developer checks. This failure policy concerns initial
 compatibility, not a validator's deny decision or an active dispatch failure.
 The project package is still private and not wired into bridge startup yet;
-that integration must use this factory and forward its diagnostics to the reporter.
+career startup must use `ProjectAdapter.create` below and forward diagnostics to
+the reporter. Ordinary API versions still cannot request regulations.
 
 `prepare(target, arguments, initiator=..., operation=...)` expects the fully bound
 native arguments, including defaults and `self`. It creates one plain context for
@@ -122,7 +122,49 @@ data is independently owned and contains no native objects.
 
 The planner predicts normalized terms, not eligibility. It does not run native
 eligibility/start/design methods, charge fees, install hooks or acknowledge readiness.
-Caller cancellation and transaction handling still require the next integration slice.
+The adapter below guards commit calls; native eligibility still runs on allowance.
+
+## Installing the private project integration
+
+`ProjectAdapter.create(state, channel, select, report)` installs one career's
+project guards, or reports incompatibility and returns `None`. No subscribing
+project validators means no inspection or hooks. `channel` is the authenticated
+resident regulation channel; `select(rule, evaluation_season)` is trusted native
+adopted-policy selection, using the published option indexes. Governance, policy
+publication and career startup orchestration are separate integrations.
+
+Call the factory on the main thread after all mapped modules have completed
+their normal imports. It resolves/checks all three starts and eleven caller/helper
+targets before installing anything. Missing or initializing modules cause a
+reported skip rather than a forced import or partially active guard: a worker
+must never execute unchecked AI preparation while waiting for a later main-thread
+poll. A failed installation restores all assignments owned by that attempt.
+
+`callers.py` supplies player/AI initiators and keeps pre-start AI writes private:
+
+- The AI chassis caller sets its package before start. Within that checked caller,
+  the setter's earlier write is suppressed; the actual native start stores the
+  explicit package on success.
+- Store reads use private container mappings. Aero part normalization uses a
+  private copy of the selected record, cached for the caller's planning work.
+- The legacy aero AI calculates budget-pool changes in a draft. Its four output
+  fields are written back only after a successful native start.
+
+Allowed start bodies run once against real state. Rejected or unavailable
+validation returns `False`; UI callers receive failure feedback, and AI callers
+leave project/financial state uncommitted. `last_refusal` retains the executing
+thread's reason for later presentation integration. Guards remain installed after
+dispatch failure; explicit removal is required to withdraw validation. Use the
+inherited worker enrollment/operation and bounded shutdown lifecycle; unknown
+workers cannot bypass the guard. Whole week/load transactions remain later work.
+
+The optional local `tools/regulations/check_project_guards.py` compares actual
+native caller/start bodies on owned fixtures: eight UI/AI paths with allow, deny
+and unavailable validation, plus incomplete-import, install-rollback and no-owner
+checks. Financial/candidate computations outside this boundary use fixture stubs;
+this is not a live career or full scheduling simulation. Portable checks add one
+real two-mod Wasm scenario for shared projection, independent arguments, rejection,
+allowance and enrolled-worker dispatch. No CI job/matrix or runner build is added.
 
 ## Compare plans with native output
 
@@ -138,8 +180,7 @@ spec upgrades and both chassis periods with player upkeep and AI/ERS variations.
 Eligibility and design feedback outside the normalized proposal use fixture stubs;
 this is not live-game acceptance. No CI matrix or player archive dependency is added.
 
-Remaining Step 5 work: shared native
-dispatch, wrapper/caller cancellation, worker handling, and the personnel/academy,
+Remaining Step 5 work: career/startup orchestration, enclosing worker transactions, and the personnel/academy,
 restoration and scheduled-activation paths. Governance/persistence/presentation
-and live acceptance retain their later production gates. This inventory does not
-enable gameplay enforcement or acknowledge native readiness.
+and live acceptance retain their later production gates. This private adapter does
+not expose gameplay capability or acknowledge complete native readiness.

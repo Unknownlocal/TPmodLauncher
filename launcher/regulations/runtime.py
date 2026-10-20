@@ -46,8 +46,11 @@ class RegulationRuntime:
         self._dispatch = ValidationDispatch(self.definitions, {owner: handler for owner, handler in self._handlers.items() if handler.validators})
         if self._states:
             catalog = self._dispatch.catalog
+            # Preserve the catalog's ascending validator-ID order as wire slots.
+            # Native adapters receive subscriptions, never handler Python code.
             metadata = {"epoch": self._dispatch.epoch, "custom": sorted(catalog.custom),
-                        "owners": {owner: {"revision": revision, "rules": sorted({row["rule"] for row in validators})}
+                        "owners": {owner: {"revision": revision, "rules": sorted({row["rule"] for row in validators}),
+                                           "bindings": [{key: row[key] for key in ("rule", "scope")} for row in validators]}
                                    for owner, (revision, validators, _) in catalog.owners.items()}}
             self._server = RegulationServer(metadata, self._wake)
         self._bound = True
