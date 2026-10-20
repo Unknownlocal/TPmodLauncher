@@ -1,10 +1,11 @@
-# Driver employment mapping and proposal planning
+# Driver employment mapping, planning and signing guards
 
-This private package prepares the `personnel.contract` context for Formula driver
-employment. It installs no hooks, forces no game imports and does not enable a
-mod capability or acknowledge native readiness. Driver guards and caller
-cancellation follow in a separate chunk. Staff and academy contracts are separate
-native paths; their implementations remain pending.
+This private package prepares the `personnel.contract` context and guards Formula
+driver signing. Importing installs nothing and forces no game imports. The
+explicit `DriverAdapter.create` entry installs a per-career integration; it is not
+yet in public startup or the fixed bridge source list and does not admit a mod
+capability or acknowledge complete personnel coverage. Staff and academy contracts
+are separate native paths; their implementations remain pending.
 
 The inspected executable was
 `e1812f2fce94c16e02df8056f62ef976e6c8d3b877101d3019fb77005059f773`.
@@ -15,7 +16,7 @@ image; the following locations were re-read from the currently installed archive
 
 | Native path | Inspected behavior / later guard requirement |
 | --- | --- |
-| `DriverManager.sign_driver`, line 3954 | Chooses dates from current/future capacity, supports shortened reserve cover, normalizes bonuses/status, stores active or future employment and reconciles hierarchy. Loan-return branches can clear contracts at 4028/4043 before later validation; final assignment is at 4121/4126. Guard before the whole body. |
+| `DriverManager.sign_driver`, line 3954 | Chooses dates from current/future capacity, supports shortened reserve cover, normalizes bonuses/status, stores active or future employment and reconciles hierarchy. Loan-return branches can clear contracts at 4028/4043 before later validation; final assignment is at 4121/4126. The signing guard now runs before the whole body. |
 | `PersonnelNegotiationManager.accept_player_driver_proposal`, line 1702 | Converts proposal fields and requests next-season signing. It handles `False` before accepted/viewed/save writes at 1766 onward. Entry-specific branches belong to Oval, outside this mapper. |
 | `PersonnelNegotiationManager._execute_offer`, line 4136 | Normalizes rookie offer duration before signing. It returns the signing boolean and records a final-validation reason on refusal. Enclosing offer resolution still needs transaction/caller checks. |
 | `submit_offer`, line 2182; `ai_manage_drivers`, line 3435 | Offer/market flows converge through negotiation execution. A submitted offer is not a final contract, and incomplete approaches cannot authorize signing. |
@@ -99,3 +100,58 @@ effects use fixture stubs. This is not live signing or full caller acceptance.
 Two cheap portable checks cover ownership/effect isolation, invalid context data,
 stale state and compatibility reporting without importing the game. There are no
 new CI jobs/matrices, runner builds, API versions or public registrations.
+
+## Signing guards and immediate callers
+
+`DriverAdapter.create(state, channel, select, report)` takes the authenticated
+resident-policy channel, trusted adopted-rule selection and CLI/file reporter.
+No `personnel.contract` subscribers means no inspection or wrappers. All twelve
+caller/query targets and signing must be loaded and compatible before installation
+starts; negotiation, career-stage and prestige helper bodies/defaults are checked
+too. Partial install
+failure restores every owned wrapper and reports the skipped integration.
+The generic callable adapter remains private launcher infrastructure.
+
+An invocation prepares one context and uses one shared channel action for all
+subscribing owners. Stable rule definitions remain resident. A mod deny returns
+native `False`; unavailable validators also block signing and retain their guards.
+No successful preview is reused to authorize a commit. Native code executes once
+only after allowance; its own refusal or exception retains native behavior.
+Other career instances sharing the same native classes use their own original
+behavior. Whole caller execution pins the owner registry against removal/shutdown.
+
+The checked immediate paths are:
+
+| Caller | Handling |
+| --- | --- |
+| Player proposal acceptance | Native handles `False` before accepted/viewed/save writes. Return the regulation reason to the caller. |
+| Uncontested signing | Native finishes the market only on successful execution. A refused attempt returns the regulation reason. |
+| Offer execution | Normalize an owned draft of offer/context; only publish the inspected duration/interest/score fields when no regulation refusal occurred. Keep dictionary identities, including a shared offer/planned-offer. On refusal, publish only `execution_block_reason`. |
+| Player decision acceptance | Native would try backups, remove the pending decision and close the market after `False`. A private cancellation unwinds to this wrapper before those writes and returns `(False, reason)`. Native signing failures retain native fallback behavior. Declining a decision still uses the native decline/backup flow; no contract rejected by a guard can be signed. |
+
+Pre-signing native queries are not all read-only: active contracts, teammate
+records and status queries normalize agreement dictionaries; active/count queries
+also cache results. `queries.py` supplies private contracts/cache containers only
+while a checked caller is preparing. Roster query results preserve original
+person identities for exclusion/comparison, paired with copied records. An allowed
+native signing runs its real queries and effects on the career normally.
+The shared 100 ms validation allowance covers projection/selection/dispatch and
+replies; native caller preparation and allowed game execution remain outside it.
+
+The wider `resolve_due_decisions` batch normalizes and ranks offers before these
+immediate paths. Its enclosing market transactions, week advancement, activation,
+rollover, restore and academy signing are not certified by this chunk. They remain
+required before personnel readiness or public admission. This integration is an
+internal component, not partial public coverage for the entire scope.
+
+Two additional portable collected tests cover guarded cancellation/lifecycle,
+native exceptions/other careers, and unsubscribed/incompatible installation.
+The ignored native guard probe runs the actual checked signing/caller/helper/query
+bodies on owned fixtures: fifteen allow/deny/unavailable combinations verify loan
+preservation, private query/offer preparation, caller stopping and normalized
+allowed terms, including actual scoring/personality/career-stage/prestige bodies.
+Six further checks cover native-failure fallback, declining with a refused backup,
+shared offer identity, unfinished imports, partial-install rollback and no
+subscribers. Metric/configuration/presentation dependencies outside the inspected
+calculations use fixture stubs. It is not live gameplay or full transaction
+acceptance.
