@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Planning isolation and helper metadata; native parity uses the owned game probe."""
+"""Planning isolation; native parity uses the owned game probe."""
 
 from copy import deepcopy
 
@@ -7,7 +7,6 @@ import pytest
 
 from hook_manager.manager import HookError
 from hook_manager.regulations.projects import planner as planner_module
-from hook_manager.regulations.projects.methods import method_group
 
 
 class NativeObject:
@@ -34,21 +33,6 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     assert "REGULATIONS COMPATIBILITY FAILED" in output
     assert "helpers changed: aero" in output and "continuing native game" in output
     assert path.read_text(encoding="utf-8") == output and len(output.splitlines()) == 1
-
-
-def test_helper_identity_includes_defaults_keyword_defaults_and_descriptor_kind():
-    def helper(self, value=1, *, option=True):
-        return value
-    owner = NativeObject()
-    owner.helper = helper
-    _, original = method_group(owner, ("helper",))
-    helper.__defaults__ = (2,)
-    _, changed_default = method_group(owner, ("helper",))
-    helper.__kwdefaults__ = {"option": False}
-    _, changed_keyword = method_group(owner, ("helper",))
-    owner.helper = staticmethod(helper)
-    _, changed_descriptor = method_group(owner, ("helper",))
-    assert len({original, changed_default, changed_keyword, changed_descriptor}) == 4
 
 
 def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_managers(monkeypatch):

@@ -7,10 +7,11 @@ import inspect
 import marshal
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableAdapters, CallableTarget, code_digest
+from hook_manager.callables import CallBinding, CallableAdapters, CallableTarget, code_digest, method_group
 from hook_manager.manager import HookError
 
 from .support import approve, boolean, project
@@ -98,3 +99,18 @@ def test_code_fingerprints_survive_serialization_and_reject_body_drift(host):
     with pytest.raises(HookError, match="identity changed"):
         engine.register("owner", [CallBinding("rule", "method", project, boolean())])
     assert module.method is original and not engine.entries
+
+
+def test_helper_identity_includes_defaults_keyword_defaults_and_descriptor_kind():
+    def helper(self, value=1, *, option=True):
+        return value
+    owner = SimpleNamespace()
+    owner.helper = helper
+    _, original = method_group(owner, ("helper",))
+    helper.__defaults__ = (2,)
+    _, changed_default = method_group(owner, ("helper",))
+    helper.__kwdefaults__ = {"option": False}
+    _, changed_keyword = method_group(owner, ("helper",))
+    owner.helper = staticmethod(helper)
+    _, changed_descriptor = method_group(owner, ("helper",))
+    assert len({original, changed_default, changed_keyword, changed_descriptor}) == 4

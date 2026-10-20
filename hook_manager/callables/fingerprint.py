@@ -2,8 +2,12 @@
 """Stable identity checks for trusted native code catalogues."""
 
 import hashlib
+import inspect
 import json
-from types import CodeType
+from types import CodeType, FunctionType
+
+if __package__:
+    from ..manager import HookError
 
 
 def code_digest(code):
@@ -40,3 +44,21 @@ def code_digest(code):
     # Marshal's reference/interning flags can differ for equivalent code loaded
     # in separate processes. Hash values, not the serializer's object sharing.
     return hashlib.sha256(json.dumps(record(code), separators=(",", ":")).encode()).hexdigest()
+
+
+def method_group(owner, names):
+    """Retain a trusted helper group and check code, defaults and descriptor kind."""
+    # Project and personnel planners reuse this check. Inspect without calling
+    # a descriptor; keep the checked functions for binding to private state.
+    methods, records = {}, []
+    for name in names:
+        raw = inspect.getattr_static(owner, name)
+        static = type(raw) is staticmethod
+        function = raw.__func__ if static else raw
+        if type(function) is not FunctionType or function.__closure__:
+            raise HookError("Native helper checks require ordinary functions")
+        methods[name] = function, static
+        records.append((name, static, code_digest(function.__code__), repr(function.__defaults__),
+                        repr(sorted((function.__kwdefaults__ or {}).items()))))
+    digest = hashlib.sha256(json.dumps(records, separators=(",", ":")).encode()).hexdigest()
+    return methods, digest

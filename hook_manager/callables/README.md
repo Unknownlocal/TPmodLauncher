@@ -13,6 +13,10 @@ Mods cannot register native targets or import this host package.
 | `fingerprint.py` | Canonical native code fingerprints. |
 | `__init__.py` | Private host exports; importing installs no hooks. |
 
+`method_group` in `fingerprint.py` checks a trusted native helper set, including
+defaults and static-method status, and retains its functions for private planning
+objects. Project and driver planning share it; no mod can supply a helper group.
+
 Fingerprints cover the method implementation, including nested functions and
 exception handling, while excluding filenames and source-line metadata. Moving
 unchanged methods in a build therefore preserves compatibility. Relevant code

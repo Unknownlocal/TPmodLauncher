@@ -7,12 +7,9 @@ constructing the planner. Retain those checked functions for the scratch objects
 mod declarations never supply this list or these implementations.
 """
 
-import hashlib
 import inspect
-import json
-from types import FunctionType
 
-from ...callables import code_digest
+from ...callables import method_group
 from ...manager import HookError
 from .targets import project_targets
 
@@ -68,21 +65,6 @@ _GROUPS = {
         'get_hq_upkeep_pct',
     ), 'f29735da2bc03bd7eb21801c91f455ba279ad86c24b96ff8e3beb670bcd26afe'),
 }
-
-
-def method_group(owner, names):
-    methods, records = {}, []
-    for name in names:
-        raw = inspect.getattr_static(owner, name)
-        static = type(raw) is staticmethod
-        function = raw.__func__ if static else raw
-        if type(function) is not FunctionType or function.__closure__:
-            raise HookError("Project planning needs ordinary checked native methods")
-        methods[name] = function, static
-        records.append((name, static, code_digest(function.__code__), repr(function.__defaults__),
-                        repr(sorted((function.__kwdefaults__ or {}).items()))))
-    digest = hashlib.sha256(json.dumps(records, separators=(",", ":")).encode()).hexdigest()
-    return methods, digest
 
 
 def project_methods(state):
