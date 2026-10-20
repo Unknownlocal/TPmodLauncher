@@ -6,7 +6,7 @@ import sys
 import time
 
 sys.path.insert(0, sys.argv[1])
-from hook_manager.regulations import RegulationChannel
+from hook_manager.game_adapters.regulations import RegulationChannel
 
 channel = RegulationChannel(json.loads(sys.stdin.readline()))
 try:

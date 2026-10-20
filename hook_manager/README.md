@@ -39,6 +39,11 @@ cleanup, retrying shutdown through the bounded bridge request while operations
 finish; no bridge request, manifest capability or guest operation
 exposes registration or native calls.
 
+[`game_adapters/`](game_adapters/README.md) separates native driver/project
+knowledge from regulation binding, context assembly and dispatch. These are
+private sibling integrations above the callable mechanism; moving them adds no
+mod imports, native targets or public capability.
+
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
 waits for the normal menu import before adapting native rendering and input.

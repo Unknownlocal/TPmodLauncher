@@ -10,8 +10,8 @@ from types import ModuleType
 import pytest
 
 from hook_manager.callables import CallBinding, CallableTarget, ResultContract, code_digest
-from hook_manager.regulations.channel import RegulationChannel
-from hook_manager.regulations.guards import RegulationGuards
+from hook_manager.game_adapters.regulations.channel import RegulationChannel
+from hook_manager.game_adapters.regulations.guards import RegulationGuards
 
 
 class Channel:
@@ -101,7 +101,7 @@ def test_unenrolled_worker_cannot_bypass_shared_required_validation(monkeypatch)
 
 
 def test_shared_deadline_includes_projection_and_rejects_late_allowance(monkeypatch):
-    from hook_manager.regulations import guards as implementation
+    from hook_manager.game_adapters.regulations import guards as implementation
 
     clock = [0.0]
     monkeypatch.setattr(implementation.time, "monotonic", lambda: clock[0])

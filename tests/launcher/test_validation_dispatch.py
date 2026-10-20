@@ -10,7 +10,7 @@ import pytest
 from launcher.regulations import RegulationDefinitions
 from launcher.regulations.handler_runner import HandlerRunner
 from launcher.regulations.publication import PolicyPublication
-from hook_manager.regulations.protocol import regulation_policy_value
+from hook_manager.game_adapters.regulations.protocol import regulation_policy_value
 from launcher.regulations.validation import catalog as catalog_module
 from launcher.regulations.validation import action as action_module
 from launcher.regulations.validation import dispatch as dispatch_module

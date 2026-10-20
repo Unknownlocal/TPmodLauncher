@@ -10,11 +10,12 @@ from functools import update_wrapper
 
 from ...callables import CallBinding, ResultContract
 from ...manager import HookError, Manager
-from ..guards import RegulationGuards
-from .caller_targets import project_caller_targets
-from .callers import ProjectCallers
-from .planner import ProjectPlanner
-from .targets import project_targets
+from .guards import RegulationGuards
+from .contexts import regulation_context
+from ..projects.caller_targets import project_caller_targets
+from ..projects.callers import ProjectCallers
+from ..projects.planner import ProjectPlanner
+from ..projects.targets import project_targets
 
 
 class ProjectAdapter(RegulationGuards):
@@ -23,10 +24,9 @@ class ProjectAdapter(RegulationGuards):
         try:
             if not channel.bindings("development.project"):
                 return None  # No subscribing mods: do not inspect or hook the game.
-            planner = ProjectPlanner.create(state, report)
-            if planner is None:
-                return None
-            return cls(planner, channel, select)
+            # The native planner has no regulation logging/subscription policy.
+            # This consumer owns both the skip diagnostic and guard installation.
+            return cls(ProjectPlanner(state), channel, select)
         except Exception as error:
             report("REGULATIONS COMPATIBILITY FAILED scope=development.project: "
                    + " ".join(str(error).split())[:512] + "; project integration skipped; continuing native game")
@@ -66,11 +66,12 @@ class ProjectAdapter(RegulationGuards):
     def _projection(self, target):
         def project(arguments, result):
             caller = getattr(self._local, "project_caller", None)
-            return self.planner.prepare(target, arguments, initiator=caller["initiator"] if caller else "unknown")
+            return regulation_context("development.project", self.planner.prepare(target, arguments),
+                                      initiator=caller["initiator"] if caller else "unknown")
         return project
 
     def _wrapper(self, name, binding, target, original, signature):
-        if target.name.startswith("regulations.project."):
+        if target.name.startswith("projects.caller."):
             wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
             update_wrapper(wrapped, original)
             wrapped._tpm_hook_group = name

@@ -47,5 +47,5 @@ _PROJECT_CALLERS = (
 
 
 def project_caller_targets():
-    return tuple(CallableTarget("regulations.project." + role, module, (owner,), method, signature, (digest,))
+    return tuple(CallableTarget("projects.caller." + role, module, (owner,), method, signature, (digest,))
                  for role, module, owner, method, signature, digest in _PROJECT_CALLERS)

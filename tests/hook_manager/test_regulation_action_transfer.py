@@ -10,10 +10,10 @@ import threading
 
 import pytest
 
-from hook_manager.regulations.action_transfer import regulation_receive_action, regulation_send_action
-from hook_manager.regulations.framing import regulation_read
-from hook_manager.regulations.protocol import REGULATION_ACTION_BYTES
-from hook_manager.regulations import RegulationChannel
+from hook_manager.game_adapters.regulations.action_transfer import regulation_receive_action, regulation_send_action
+from hook_manager.game_adapters.regulations.framing import regulation_read
+from hook_manager.game_adapters.regulations.protocol import REGULATION_ACTION_BYTES
+from hook_manager.game_adapters.regulations import RegulationChannel
 from launcher.regulations.server import RegulationServer
 
 
@@ -70,7 +70,7 @@ def test_all_legal_maximum_refusals_cross_the_actual_server_and_channel():
 def test_invalid_fragment_sets_never_return_a_partial_action(monkeypatch, fault):
     value, frames = message(), []
     value["contexts"] = value["contexts"][:80]
-    monkeypatch.setattr("hook_manager.regulations.action_transfer.regulation_write", lambda connection, part, deadline: frames.append(part))
+    monkeypatch.setattr("hook_manager.game_adapters.regulations.action_transfer.regulation_write", lambda connection, part, deadline: frames.append(part))
     regulation_send_action(None, value)
     assert len(frames) == 2
     if fault == "count":
@@ -84,6 +84,6 @@ def test_invalid_fragment_sets_never_return_a_partial_action(monkeypatch, fault)
     elif fault == "late":
         frames[0]["deadline"] = time.monotonic() - 1
     remaining = iter(frames[1:])
-    monkeypatch.setattr("hook_manager.regulations.action_transfer.regulation_read", lambda *_: next(remaining))
+    monkeypatch.setattr("hook_manager.game_adapters.regulations.action_transfer.regulation_read", lambda *_: next(remaining))
     with pytest.raises(ValueError):
         regulation_receive_action(None, frames[0])

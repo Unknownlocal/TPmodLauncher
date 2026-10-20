@@ -16,8 +16,8 @@ import pytest
 
 from hook_manager.manager import HookError
 from hook_manager.callables import CallBinding, CallableTarget, ResultContract, code_digest
-from hook_manager.regulations import RegulationChannel
-from hook_manager.regulations.guards import RegulationGuards
+from hook_manager.game_adapters.regulations import RegulationChannel
+from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from launcher.pack_mods import PackMods
 from mod_runtime.source import SourceManifest
 from regulation_support import context, make_mod, selection, validator

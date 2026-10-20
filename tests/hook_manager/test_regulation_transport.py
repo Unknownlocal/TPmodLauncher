@@ -14,13 +14,13 @@ import weakref
 import pytest
 
 from hook_manager.manager import HookError
-from hook_manager.regulations import RegulationChannel
-from hook_manager.regulations.framing import (
+from hook_manager.game_adapters.regulations import RegulationChannel
+from hook_manager.game_adapters.regulations.framing import (
     REGULATION_FRAME_BYTES, regulation_encode, regulation_read, regulation_write,
 )
 from launcher.regulations.server import RegulationServer
 from launcher.regulations import server as server_module
-from hook_manager.regulations.protocol import regulation_header
+from hook_manager.game_adapters.regulations.protocol import regulation_header
 
 
 METADATA = {"epoch": 1, "custom": [], "owners": {"owned.rules": {"revision": "revision", "rules": ["native"]}}}
@@ -62,7 +62,7 @@ def test_uncorrelated_or_expired_replies_close_the_channel_without_retry(monkeyp
     if fault == "validation_deadline":
         clock = [time.monotonic()]
         monkeypatch.setattr(time, "monotonic", lambda: clock[0])
-        from hook_manager.regulations import channel as channel_module
+        from hook_manager.game_adapters.regulations import channel as channel_module
         decisions = channel_module.regulation_decisions
 
         def delayed_validation(values, count):

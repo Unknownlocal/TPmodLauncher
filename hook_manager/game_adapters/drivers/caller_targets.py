@@ -47,6 +47,6 @@ _DRIVER_CALLERS = (
 
 
 def driver_caller_targets():
-    return tuple(CallableTarget("regulations.driver.caller." + role, module, (owner,), method, signature, (digest,))
+    return tuple(CallableTarget("drivers.caller." + role, module, (owner,), method, signature, (digest,))
                  for role, module, owner, method, signature, digest in _DRIVER_CALLERS)
 

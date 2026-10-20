@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Prepare the final project terms a regulation validator will see.
+"""Prepare final native project terms for trusted game integrations.
 
 Use the inspected game's staff and budget helpers on private scratch inputs.
 Running the actual start or eligibility methods here could initialize projects
-or charge money before a mod refuses. Rule conditions stay entirely in mod code.
+or charge money before a trusted caller has accepted the proposal.
 """
 
 from ...manager import HookError, data_copy
@@ -12,35 +12,17 @@ from .snapshot import ProjectSnapshot
 
 
 class ProjectPlanner:
-    @classmethod
-    def create(cls, state, report):
-        """Return None on incompatibility, reporting through the launcher's logger.
-
-        report is the trusted lifecycle reporter (CLI and file), not a mod
-        callback. Callers must leave this integration uninstalled on None;
-        the native game and other integrations can continue normally.
-        """
-        try:
-            return cls(state)
-        except Exception as error:
-            # No hooks have been installed at this point. Missing game objects,
-            # changed signatures or failed body checks can all skip this adapter
-            # safely. Active validation failures do not pass through this catch.
-            detail = " ".join(str(error).split())[:512]
-            report(f"REGULATIONS COMPATIBILITY FAILED scope=development.project: {detail}; "
-                   "project regulation integration disabled; continuing native game")
-            return None
-
     def __init__(self, state):
+        # Native support raises on incompatibility. The consuming adapter owns
+        # reporting and whether to skip its integration; no rule system is needed.
         self.state = state
         self.methods = project_methods(state)
         self.managers = state.aero_manager, state.development_manager
 
-    def prepare(self, target, arguments, *, initiator="unknown", operation="commit"):
-        if (target not in ("regulations.aero.start", "regulations.aero.spec", "regulations.chassis.start")
-                or initiator not in ("player", "ai", "system", "unknown") or operation not in ("preview", "commit")):
+    def prepare(self, target, arguments):
+        if target not in ("projects.aero.start", "projects.aero.spec", "projects.chassis.start"):
             raise HookError("Unsupported project proposal context")
-        chassis = target == "regulations.chassis.start"
+        chassis = target == "projects.chassis.start"
         native = self.managers[int(chassis)]
         # Checked helpers belong to this career's managers. A reused planner must
         # not silently plan for a replacement manager or a different live state.
@@ -87,7 +69,7 @@ class ProjectPlanner:
                 raise HookError("Unknown aero project part")
             staff = manager._clamp_staff(team, int(arguments["staff"]), project_key)
             technical = manager._clamp_technical_staff(team, int(arguments["technical_staff"]), project_key)
-            spec = target == "regulations.aero.spec"
+            spec = target == "projects.aero.spec"
             kind = "spec" if spec else "development"
             budget = manager._sanitize_budget_key(arguments["budget_key"], kind, arguments["weekly_spend"])
             meta = manager._budget_meta(budget, kind)
@@ -101,8 +83,9 @@ class ProjectPlanner:
         # Legacy weekly_spend only selects an aero tier and is discarded for
         # chassis. Neither start stores it as a promised weekly expenditure.
         # created_week is available now; no scheduled end exists at admission.
+        # Keep native proposal data independent of regulation schema/operation
+        # metadata so other trusted game adapters can use the same preparation.
         return data_copy({
-            "schema": 1, "scope": "development.project", "operation": operation, "initiator": initiator,
             "clock": {"season": scratch.state.season_no, "absolute_week": week},
             "effective": {"season": scratch.state.season_no + int(period == "future"), "start_week": week, "end_week": None},
             "proposal": {"employer": {"ref": scratch.reference, "name": team_name, "kind": "team"},

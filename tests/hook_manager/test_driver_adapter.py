@@ -8,7 +8,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.callables import CallableTarget, code_digest
-from hook_manager.regulations.drivers import adapter as implementation
+from hook_manager.game_adapters.regulations import driver_adapter as implementation
 
 
 def owned(monkeypatch):
@@ -73,12 +73,12 @@ def owned(monkeypatch):
         return CallableTarget(name, module.__name__, (owner.__name__,), method,
                               str(inspect.signature(fn)), (code_digest(fn.__code__),))
 
-    signing = target("regulations.driver.sign", DriverManager, "sign_driver")
-    callers = (target("regulations.driver.caller.offer", Negotiations, "_execute_offer"),
-               target("regulations.driver.caller.decision", Negotiations, "resolve_player_contract_decision"),
-               target("regulations.driver.caller.personalities", DriverManager, "driver_personalities"),
-               target("regulations.driver.caller.career", DriverManager, "career_stage_modifiers"),
-               target("regulations.driver.caller.prestige", PrestigeManager, "displayed_prestige"))
+    signing = target("drivers.sign", DriverManager, "sign_driver")
+    callers = (target("drivers.caller.offer", Negotiations, "_execute_offer"),
+               target("drivers.caller.decision", Negotiations, "resolve_player_contract_decision"),
+               target("drivers.caller.personalities", DriverManager, "driver_personalities"),
+               target("drivers.caller.career", DriverManager, "career_stage_modifiers"),
+               target("drivers.caller.prestige", PrestigeManager, "displayed_prestige"))
     monkeypatch.setattr(implementation, "driver_target", lambda: signing)
     monkeypatch.setattr(implementation, "driver_caller_targets", lambda: callers)
     monkeypatch.setattr(implementation, "check_preparation", lambda state: None)
@@ -93,6 +93,8 @@ def owned(monkeypatch):
             return {"owned.rules": ((0, "rule"),)}
 
         def __call__(self, contexts, selections, calls, deadline):
+            assert contexts[0]["schema"] == 1 and contexts[0]["scope"] == "personnel.contract"
+            assert contexts[0]["operation"] == "commit"
             if self.mode == "failed":
                 self._unavailable.add("owned.rules")
                 raise RuntimeError("Owned handler failed")
@@ -100,7 +102,8 @@ def owned(monkeypatch):
                                     else {"decision": "deny", "message": "Owned refusal"}]}
 
     planner = SimpleNamespace(state=state, manager=manager,
-                              prepare=lambda arguments, **kwargs: {"scope": "personnel.contract", "effective": {"season": 3}})
+                              prepare=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
+                                                         "effective": {"season": 3}, "proposal": {}})
     return state, driver, negotiations, planner, Channel(), signing, callers
 
 
@@ -148,10 +151,10 @@ def test_driver_creation_skips_unsubscribed_or_incompatible_callers_atomically(m
     state, driver, negotiations, planner, channel, signing, callers = owned(monkeypatch)
     reports = []
     monkeypatch.setattr(channel, "bindings", lambda scope: {})
-    monkeypatch.setattr(implementation.DriverContractPlanner, "create", lambda *a: pytest.fail("No subscriptions must skip inspection"))
+    monkeypatch.setattr(implementation, "DriverContractPlanner", lambda *a: pytest.fail("No subscriptions must skip inspection"))
     assert implementation.DriverAdapter.create(state, channel, None, reports.append) is None and not reports
     monkeypatch.setattr(channel, "bindings", lambda scope: {"owned.rules": ((0, "rule"),)})
-    monkeypatch.setattr(implementation.DriverContractPlanner, "create", lambda *a: planner)
+    monkeypatch.setattr(implementation, "DriverContractPlanner", lambda *a: planner)
     originals = type(state.driver_manager).sign_driver, type(negotiations)._execute_offer
     broken = callers[-1]
     broken.signature = "(changed)"

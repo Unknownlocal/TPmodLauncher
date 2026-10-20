@@ -11,19 +11,9 @@ from .terms import BONUS_KEYS, contract_terms, return_owner_loans
 
 
 class DriverContractPlanner:
-    @classmethod
-    def create(cls, state, report):
-        try:
-            return cls(state)
-        except Exception as error:
-            # This is initialization incompatibility: skip this integration and
-            # let the trusted reporter notify both CLI and log. It is separate
-            # from an installed validator denying a proposal.
-            report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract driver: "
-                   + " ".join(str(error).split())[:512] + "; driver integration skipped; continuing native game")
-            return None
-
     def __init__(self, state):
+        # Native support raises on incompatibility. The consuming adapter owns
+        # reporting and whether to skip its integration; no rule system is needed.
         if str(getattr(state, "game_mode", "formula")).lower() != "formula":
             raise HookError("Driver employment planning supports Formula mode")
         self.state, self.manager = state, state.driver_manager
@@ -35,9 +25,7 @@ class DriverContractPlanner:
         if self.bonus_code.co_freevars != ("bonus_values",):
             raise HookError("Native driver bonus conversion changed")
 
-    def prepare(self, arguments, *, initiator="unknown", operation="commit"):
-        if operation not in ("preview", "commit") or initiator not in ("player", "ai", "system", "unknown"):
-            raise HookError("Unsupported driver proposal context")
+    def prepare(self, arguments):
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
                 or self.state.driver_manager is not self.manager or self.manager.state is not self.state):
             raise HookError("Driver planner belongs to another native state")
@@ -116,8 +104,9 @@ class DriverContractPlanner:
                 or any(person[key] is not None and type(person[key]) is not str for key in ("nationality", "role"))
                 or person["age"] is not None and type(person["age"]) is not int):
             raise HookError("Driver identity fields do not match the personnel context")
+        # Keep native proposal data independent of regulation schema/operation
+        # metadata so other trusted game adapters can use the same preparation.
         return data_copy({
-            "schema": 1, "scope": "personnel.contract", "operation": operation, "initiator": initiator,
             "clock": {"season": state.season_no, "absolute_week": week},
             "effective": {"season": state.season_no + int(start == next_start),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},

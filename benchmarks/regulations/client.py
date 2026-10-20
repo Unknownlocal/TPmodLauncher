@@ -22,7 +22,7 @@ def main():
     args = parser.parse_args()
     sys.path.insert(0, str(args.root.resolve()))
     from hook_manager.manager import HookError
-    from hook_manager.regulations import RegulationChannel
+    from hook_manager.game_adapters.regulations import RegulationChannel
     config = json.loads(sys.stdin.readline())
     case, owners, native, sections, _ = inputs(args.case)
     ctx, expanded, bindings = tables(case, owners, native, sections, config["revisions"])

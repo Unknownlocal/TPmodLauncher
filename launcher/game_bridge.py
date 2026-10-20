@@ -17,7 +17,9 @@ import uuid
 PYTHON_SOURCES = (
     "manager", "callables/fingerprint", "callables/target",
     "callables/result_contract", "callables/binding", "callables/adapters",
-    "regulations/framing", "regulations/protocol", "regulations/action_transfer", "regulations/channel",
+    # Relocation does not activate native driver/project guards. Only the same
+    # four transport sources are admitted into this fixed flat namespace.
+    "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",
     "pack_discovery", "menu", "settings", "themes",
 )
 

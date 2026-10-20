@@ -9,8 +9,8 @@ Neither the projections nor the rule-selection callback come from mod code.
 import threading
 import time
 
-from ..callables import CallableAdapters
-from ..manager import HookError, data_copy
+from ...callables import CallableAdapters
+from ...manager import HookError, data_copy
 from .framing import regulation_decisions
 
 

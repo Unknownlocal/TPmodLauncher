@@ -59,7 +59,7 @@ class DriverCallers:
                 return (False, frame["refusal"]) if frame["refusal"] else result
             finally:
                 # Native prechecks may return or raise without ever signing.
-                # Preserve their usual initialization unless a mod refused it.
+                # Preserve their usual initialization unless a guard refused it.
                 try:
                     if not frame["refusal"]:
                         publish_preparation(frame)
@@ -83,7 +83,7 @@ class DriverCallers:
                 row["execution_block_reason"] = frame["refusal"]
             else:
                 # Native failure still keeps its own offer normalization. Only
-                # a regulation refusal cancels these writes.
+                # a guard refusal cancels these writes.
                 # The checked normalizer updates only these term/score fields.
                 # Preserve live dictionary identities, including planned offers.
                 pairs = [(row.get("offer"), draft.get("offer")),
@@ -101,6 +101,6 @@ class DriverCallers:
             previous["refusal"] = frame["refusal"]
             if previous["cancel"]:
                 # Native player acceptance tries backups and closes the decision
-                # after False. A regulation refusal must stop before those writes.
+                # after False. A guard refusal must stop before those writes.
                 raise DriverCancellation(frame["refusal"])
         return result

@@ -8,7 +8,9 @@ from types import MethodType, SimpleNamespace
 import pytest
 
 from hook_manager.manager import HookError
-from hook_manager.regulations.drivers import planner as implementation
+from hook_manager.game_adapters.drivers import planner as implementation
+from hook_manager.game_adapters.regulations.contexts import regulation_context
+from hook_manager.game_adapters.regulations.driver_adapter import DriverAdapter
 
 
 def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monkeypatch):
@@ -58,7 +60,10 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
                  "cost_points": 0, "role": "main", "priority": "lead", "bonuses": {"bonus_per_point_m": .1},
                  "entry_id": None, "contract_start_week": None}
     before = deepcopy((state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"]))
-    result = planner.prepare(arguments, initiator="player")
+    prepared = planner.prepare(arguments)
+    assert set(prepared) == {"clock", "effective", "proposal"}
+    result = regulation_context("personnel.contract", prepared, initiator="player")
+    assert result["schema"] == 1 and result["initiator"] == "player"
     proposal = result["proposal"]
     assert result["clock"] == {"season": 3, "absolute_week": 114}
     assert result["effective"] == {"season": 4, "start_week": 157, "end_week": 261}
@@ -67,7 +72,8 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     assert proposal["existing"]["status"] == proposal["proposed"]["status"] == "equal"
     proposal["person"]["nationality"] = "changed"
     proposal["proposed"]["bonuses_m"]["point"] = 99
-    assert planner.prepare(arguments, operation="preview")["proposal"]["proposed"]["bonuses_m"]["point"] == .1
+    preview = regulation_context("personnel.contract", planner.prepare(arguments), operation="preview")
+    assert preview["operation"] == "preview" and preview["proposal"]["proposed"]["bonuses_m"]["point"] == .1
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"])
     for incomplete in (True, None):
         arguments["salary_m"] = incomplete
@@ -81,6 +87,7 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
 def test_incompatible_driver_planning_reports_and_does_not_import_game():
     state = SimpleNamespace(game_mode="formula", driver_manager=SimpleNamespace(sign_driver=lambda: True))
     before, reports = set(sys.modules), []
-    assert implementation.DriverContractPlanner.create(state, reports.append) is None
+    channel = SimpleNamespace(bindings=lambda scope: {"owned.rules": ((0, "rule"),)})
+    assert DriverAdapter.create(state, channel, None, reports.append) is None
     assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
     assert not {"managers.driver", "managers.formula_entries", "game_state"} & (set(sys.modules) - before)

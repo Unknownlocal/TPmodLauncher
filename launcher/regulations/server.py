@@ -7,9 +7,9 @@ import socket
 import threading
 import time
 
-from hook_manager.regulations.framing import regulation_read, regulation_write
-from hook_manager.regulations.protocol import regulation_header
-from hook_manager.regulations.action_transfer import regulation_receive_action, regulation_send_action
+from hook_manager.game_adapters.regulations.framing import regulation_read, regulation_write
+from hook_manager.game_adapters.regulations.protocol import regulation_header
+from hook_manager.game_adapters.regulations.action_transfer import regulation_receive_action, regulation_send_action
 from .transport_request import TransportRequest
 
 

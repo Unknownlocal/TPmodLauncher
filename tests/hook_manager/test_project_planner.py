@@ -6,7 +6,9 @@ from copy import deepcopy
 import pytest
 
 from hook_manager.manager import HookError
-from hook_manager.regulations.projects import planner as planner_module
+from hook_manager.game_adapters.projects import planner as planner_module
+from hook_manager.game_adapters.regulations.contexts import regulation_context
+from hook_manager.game_adapters.regulations.project_adapter import ProjectAdapter
 
 
 class NativeObject:
@@ -19,16 +21,21 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     state = NativeObject()
     state.aero_manager, state.development_manager = NativeObject(), NativeObject()
     monkeypatch.setattr(planner_module, "project_methods", lambda state: {})
+    channel = NativeObject()
+    channel.bindings = lambda scope: {"owned.rules": ((0, "rule"),)}
+    # This case isolates initialization reporting. Native install/rollback is
+    # exercised separately by the owned native guard probe.
+    monkeypatch.setattr(ProjectAdapter, "__init__", lambda *a: None)
     path = tmp_path / "launch.log"
     with reporter(path) as logger:
-        assert planner_module.ProjectPlanner.create(state, logger.warning) is not None
+        assert ProjectAdapter.create(state, channel, None, logger.warning) is not None
         assert path.read_text(encoding="utf-8") == ""
 
         def incompatible(state):
             raise HookError("Native project planning helpers changed:\naero")
 
         monkeypatch.setattr(planner_module, "project_methods", incompatible)
-        assert planner_module.ProjectPlanner.create(state, logger.warning) is None
+        assert ProjectAdapter.create(state, channel, None, logger.warning) is None
     output = capsys.readouterr().err
     assert "REGULATIONS COMPATIBILITY FAILED" in output
     assert "helpers changed: aero" in output and "continuing native game" in output
@@ -77,17 +84,20 @@ def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_m
     before = deepcopy(state.teams)
     aero_args = {"self": aero, "team_name": "team", "part_key": "wing", "staff": 100,
                  "technical_staff": 100, "budget_key": None, "weekly_spend": 999}
-    first = planner.prepare("regulations.aero.start", aero_args)
+    first = planner.prepare("projects.aero.start", aero_args)
     assert first["proposal"]["total_budget_m"] == 12.0 and first["proposal"]["weekly_spend_m"] is None
     assert first["proposal"]["package_key"] is None
     first["proposal"]["employer"]["name"] = "changed by caller"
-    spec = planner.prepare("regulations.aero.spec", aero_args, initiator="ai", operation="preview")
+    assert set(first) == {"clock", "effective", "proposal"}
+    spec = regulation_context("development.project", planner.prepare("projects.aero.spec", aero_args),
+                              initiator="ai", operation="preview")
+    assert spec["schema"] == 1 and spec["initiator"] == "ai" and spec["operation"] == "preview"
     assert spec["proposal"]["action"] == "spec_upgrade" and spec["proposal"]["employer"]["name"] == "team"
     args = {"self": chassis, "team_name": "team", "project_type": "current", "staff": None,
             "technical_staff": None, "budget_key": None, "package_key": None}
-    current = planner.prepare("regulations.chassis.start", args)
+    current = planner.prepare("projects.chassis.start", args)
     args["project_type"] = "future"
-    future = planner.prepare("regulations.chassis.start", args)
+    future = planner.prepare("projects.chassis.start", args)
     assert current["proposal"]["total_budget_m"] == 60.0 and future["proposal"]["total_budget_m"] == 45.0
     assert current["proposal"]["package_key"] == future["proposal"]["package_key"] == "spec_b"
     assert current["effective"] == {"season": 3, "start_week": 108, "end_week": None}
@@ -96,7 +106,7 @@ def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_m
     assert state.teams == before and aero.state is chassis.state is state
     aero.meta["amount_m"] = float("nan")
     with pytest.raises(HookError, match="plain values"):
-        planner.prepare("regulations.aero.start", aero_args)
+        planner.prepare("projects.aero.start", aero_args)
     state.aero_manager = NativeObject()
     with pytest.raises(HookError, match="another native state"):
-        planner.prepare("regulations.chassis.start", args)
+        planner.prepare("projects.chassis.start", args)

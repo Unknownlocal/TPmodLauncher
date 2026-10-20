@@ -23,13 +23,13 @@ def project_targets():
     # Unrelated executable changes and source-line shifts are compatible. The
     # executable hash above records the developer inspection's provenance only.
     return (
-        CallableTarget("regulations.aero.start", "managers.aero_manager", ("AeroDevelopmentManager",),
+        CallableTarget("projects.aero.start", "managers.aero_manager", ("AeroDevelopmentManager",),
                        "start_project", _AERO_SIGNATURE,
                        ("3cc7407b599825997e5e718f5eeb6ee57602ea76b3b2925d7b6422570822c29a",)),
-        CallableTarget("regulations.aero.spec", "managers.aero_manager", ("AeroDevelopmentManager",),
+        CallableTarget("projects.aero.spec", "managers.aero_manager", ("AeroDevelopmentManager",),
                        "start_spec_upgrade", _AERO_SIGNATURE,
                        ("aaf6ac495ff3368312bbcb508356b06ac2b6ccbf2212926b693fba2542cab00e",)),
-        CallableTarget("regulations.chassis.start", "managers.development_manager", ("DevelopmentManager",),
+        CallableTarget("projects.chassis.start", "managers.development_manager", ("DevelopmentManager",),
                        "start_project",
                        "(self, team_name: str, project_type: str, weekly_spend: Optional[float] = None, "
                        "budget_key: Optional[str] = None, staff: Optional[int] = None, "

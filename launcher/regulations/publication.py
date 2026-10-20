@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Finite policy ingestion on the controller, with page-by-page backpressure."""
 
-from hook_manager.regulations.protocol import regulation_integer, regulation_policy_value
+from hook_manager.game_adapters.regulations.protocol import regulation_integer, regulation_policy_value
 
 
 class PolicyPublication:

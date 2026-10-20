@@ -3,7 +3,7 @@
 
 import sys
 
-from hook_manager.regulations.projects import project_targets
+from hook_manager.game_adapters.projects import project_targets
 
 
 def test_project_targets_resolve_individual_methods_without_importing_game():

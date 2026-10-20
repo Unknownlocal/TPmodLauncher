@@ -5,13 +5,14 @@ from functools import update_wrapper
 
 from ...callables import CallBinding, ResultContract
 from ...manager import HookError, Manager
-from ..guards import RegulationGuards
-from .caller_targets import driver_caller_targets
-from .callers import DriverCallers
-from .planner import DriverContractPlanner
-from .preparation import publish_preparation
-from .preparation_methods import check_preparation
-from .targets import driver_target
+from .guards import RegulationGuards
+from .contexts import regulation_context
+from ..drivers.caller_targets import driver_caller_targets
+from ..drivers.callers import DriverCallers
+from ..drivers.planner import DriverContractPlanner
+from ..drivers.preparation import publish_preparation
+from ..drivers.preparation_methods import check_preparation
+from ..drivers.targets import driver_target
 
 
 class DriverAdapter(RegulationGuards):
@@ -21,8 +22,9 @@ class DriverAdapter(RegulationGuards):
             # Disabled/unsubscribed mods must not trigger inspection or hooks.
             if not channel.bindings("personnel.contract"):
                 return None
-            planner = DriverContractPlanner.create(state, report)
-            return None if planner is None else cls(planner, channel, select)
+            # Keep rule-specific diagnostics at this boundary. The native
+            # planner remains reusable and raises its compatibility errors.
+            return cls(DriverContractPlanner(state), channel, select)
         except Exception as error:
             report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract driver: "
                    + " ".join(str(error).split())[:512] + "; driver integration skipped; continuing native game")
@@ -60,10 +62,11 @@ class DriverAdapter(RegulationGuards):
 
     def _projection(self, arguments, result):
         caller = getattr(self._local, "driver_caller", None)
-        return self.planner.prepare(arguments, initiator=caller["initiator"] if caller else "unknown")
+        return regulation_context("personnel.contract", self.planner.prepare(arguments),
+                                  initiator=caller["initiator"] if caller else "unknown")
 
     def _wrapper(self, name, binding, target, original, signature):
-        if target.name.startswith("regulations.driver.caller."):
+        if target.name.startswith("drivers.caller."):
             wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
             update_wrapper(wrapped, original)
             wrapped._tpm_hook_group = name
