@@ -44,6 +44,8 @@ python*/
 /docs/local/
 /docs/*.md
 DEVELOPMENT.md
+# Developer inspection tools stay local and are not distributed with the launcher.
+/tools/
 
 # Generated state, logs, temporary files and build output.
 __pycache__/

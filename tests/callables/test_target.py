@@ -80,8 +80,16 @@ def test_worker_import_defers_readiness_until_main_thread_poll(tmp_path, monkeyp
 
 
 def test_code_fingerprints_survive_serialization_and_reject_body_drift(host):
-    code = compile("def method(value): return True\n", "owned.py", "exec").co_consts[0]
+    source = ("def method(value):\n"
+              "    def nested(): return True\n"
+              "    try: return nested() if value else False\n"
+              "    except ValueError: return False\n")
+    code = compile(source, "owned.py", "exec").co_consts[0]
     assert code_digest(code) == code_digest(marshal.loads(marshal.dumps(code)))
+    moved = compile("\n\n" + source.replace("    try:", "\n    try:"), "different-build/owned.py", "exec").co_consts[0]
+    assert code_digest(code) == code_digest(moved)
+    for changed in (source.replace("return True", "return False"), source.replace("ValueError", "TypeError")):
+        assert code_digest(code) != code_digest(compile(changed, "owned.py", "exec").co_consts[0])
     module, engine = host()
     module.method = lambda value: True
     approve(engine, module)

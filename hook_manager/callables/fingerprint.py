@@ -7,10 +7,13 @@ from types import CodeType
 
 
 def code_digest(code):
-    """Pin the exact native code object, including nested code and exception tables.
+    """Check implementation details without depending on where code was built.
 
-    Catalogue producers must use the same Python version and original frozen code;
-    filenames/line tables are deliberately part of build compatibility, not ignored.
+    Ignore filenames and source lines, including those of nested functions. Keep
+    instructions, constants and exception handling: matching arguments alone do
+    not show that a helper still calculates the same terms or writes at the same
+    point. This is a conservative compatibility check, not proof of equivalence;
+    a different Python compiler can still require a refreshed catalogue.
     """
     def constant(value):
         # Nested functions are part of native identity; frozenset iteration order
@@ -25,10 +28,10 @@ def code_digest(code):
         return [type(value).__name__, repr(value)]
 
     def record(item):
-        # Include control flow, call layout and source/build metadata. This pins
-        # the code object; signature checks remain the target resolver's job.
-        return [item.co_code.hex(), item.co_exceptiontable.hex(), item.co_linetable.hex(),
-                item.co_filename, item.co_firstlineno, item.co_name, item.co_qualname,
+        # Source locations change when unrelated code is inserted earlier in a
+        # module. They do not affect the calculation or our admission boundary.
+        # Signature checks remain the target resolver's job.
+        return [item.co_code.hex(), item.co_exceptiontable.hex(), item.co_name, item.co_qualname,
                 item.co_argcount, item.co_posonlyargcount, item.co_kwonlyargcount,
                 item.co_flags, item.co_stacksize, list(item.co_names), list(item.co_varnames),
                 list(item.co_freevars), list(item.co_cellvars),

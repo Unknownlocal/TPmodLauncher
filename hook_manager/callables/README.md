@@ -13,6 +13,13 @@ Mods cannot register native targets or import this host package.
 | `fingerprint.py` | Canonical native code fingerprints. |
 | `__init__.py` | Private host exports; importing installs no hooks. |
 
+Fingerprints cover the method implementation, including nested functions and
+exception handling, while excluding filenames and source-line metadata. Moving
+unchanged methods in a build therefore preserves compatibility. Relevant code
+changes still require reinspection; signatures alone do not establish that a
+native admission boundary or calculation stayed compatible. Failure reporting
+and whether to skip an integration belong to its trusted adapter, not mod code.
+
 Normal host imports use package-relative imports. The game bridge executes its
 fixed `PYTHON_SOURCES` list in dependency order in the existing private namespace;
 the implementation files skip package imports on that path. The package adds no
