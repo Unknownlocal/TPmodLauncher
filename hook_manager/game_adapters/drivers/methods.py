@@ -9,48 +9,47 @@ from ...manager import HookError
 from .targets import driver_target
 
 
-# Generated from the inspected native declarations. Signing delegates date,
-# capacity and status calculations to these helpers; checking only sign_driver
-# would miss a change in how the final promised terms are calculated.
+# Signing delegates date/capacity/status queries to these named helpers. Check
+# their call signatures too, without pinning their bodies or private locals.
 _DRIVER_GROUPS = {
-    'driver': ((
-        'current_reserve_cover_weeks',
-        'active_contract',
-        'active_driver_count',
-        'drivers_contracted_next_season',
-        'driver_role_contract_limit',
-        'driver_team_next_season',
-        'normalize_contract_status',
-        'driver_overall',
-        '_contract_covers_week',
-        '_set_contract_status',
-        '_next_season_main_contract_entries',
-        'normalize_ai_team_hierarchy',
-        'ensure_main_status_consistency',
-        'contract_status_at_week',
-        '_schedule_contract_status_change',
-        'reconcile_player_main_statuses',
-        '_compatible_teammate_status',
-    ), 'b7757e8de56f75fb170e6428b2e8286e65823f9158824f6ef44857800aec090b'),
-    'state': ((
-        'current_season_start_week',
-        'next_season_start',
-    ), '126d22c1769b2d17e56e7bd6efaffca841a3e746496383e5e0e1a2ddb1eb2874'),
-    'globals': ((
-        'canonical_driver_status',
-        'normalize_driver_contract_status',
-        'driver_contract_capacity',
-        'formula_statuses_valid',
-    ), '44a8bc6c72f63b1fa046c40e3e8b80a985cc5dbd5610c3392971b9dce695bf6d'),
-    'entries': ((
-        '_int',
-        'is_formula',
-        'team_entry_count',
-        'entry_rule_profile',
-        'entry_count_for_season',
-        'entry_count_for_week',
-        'next_entry_count',
-    ), '9e975ff08a45fb471ecd2e2aeb7f6681cc67aa1e68ef20208cb79496edb1cf08'),
+    'driver': {
+        'current_reserve_cover_weeks': '(self, team_name, driver, role, contract_start_week)',
+        'active_contract': '(self, driver: managers.driver.Driver, week: Optional[int] = None) -> Optional[Dict[str, Any]]',
+        'active_driver_count': "(self, team_name: str, role: str = 'main', week: Optional[int] = None) -> int",
+        'drivers_contracted_next_season': "(self, team_name: str, role: str = 'main') -> int",
+        'driver_role_contract_limit': '(self, team_name: str, role: str, *, season_no=None, week=None) -> int',
+        'driver_team_next_season': '(self, driver: managers.driver.Driver) -> Optional[str]',
+        'normalize_contract_status': '(self, contract: Any) -> Any',
+        'driver_overall': '(self, driver: managers.driver.Driver) -> float',
+        '_contract_covers_week': '(self, contract: Dict[str, Any], week: int) -> bool',
+        '_set_contract_status': '(self, contract: Dict[str, Any], status: Any) -> None',
+        '_next_season_main_contract_entries': '(self, team_name: str) -> List[Tuple[managers.driver.Driver, Dict[str, Any]]]',
+        'normalize_ai_team_hierarchy': '(self, team_name: str) -> None',
+        'ensure_main_status_consistency': '(self, team_name: str, week: int, *, apply_effects: bool = False) -> None',
+        'contract_status_at_week': '(self, contract: Any, week: Optional[int] = None) -> str',
+        '_schedule_contract_status_change': "(self, driver: managers.driver.Driver, contract: Dict[str, Any], new_status: Any, start_week: int, *, reason: str = 'Status changed by teammate signing', category: str = 'status_reconciliation', apply_effects: bool = True) -> bool",
+        'reconcile_player_main_statuses': '(self, team_name: str, signed_driver: managers.driver.Driver, signed_contract: Dict[str, Any], start_week: int) -> None',
+        '_compatible_teammate_status': '(status: Any) -> str',
+    },
+    'state': {
+        'current_season_start_week': '(self)',
+        'next_season_start': '(self)',
+    },
+    'globals': {
+        'canonical_driver_status': '(value: Any) -> str',
+        'normalize_driver_contract_status': '(contract: Any) -> Any',
+        'driver_contract_capacity': "(manager, team_name, role='main', *, week=None)",
+        'formula_statuses_valid': '(statuses, capacity)',
+    },
+    'entries': {
+        '_int': '(value, default=0)',
+        'is_formula': '(state)',
+        'team_entry_count': '(team, season_no=None, current_season=1)',
+        'entry_rule_profile': '(state, season_no=None)',
+        'entry_count_for_season': '(state, team_name, season_no=None)',
+        'entry_count_for_week': '(state, team_name, week)',
+        'next_entry_count': '(state, team_name)',
+    },
 }
 
 
@@ -59,8 +58,6 @@ def driver_methods(state):
     target = driver_target()
     function = inspect.getattr_static(manager, target.attribute)
     target._check(function)
-    if str(inspect.signature(function)) != target.signature:
-        raise HookError("Driver signing signature changed")
     # Reuse completed game imports. Planning must not load gameplay modules just
     # to probe compatibility or observe a module halfway through initialization.
     owners = {"driver": manager, "state": state,
@@ -69,9 +66,5 @@ def driver_methods(state):
     for role, owner in owners.items():
         if owner is None or getattr(getattr(owner, "__spec__", None), "_initializing", False):
             raise HookError("Driver planning needs completed native imports: " + role)
-        names, expected = _DRIVER_GROUPS[role]
-        methods, digest = method_group(owner, names)
-        if digest != expected:
-            raise HookError("Native driver planning helpers changed: " + role)
-        result[role] = methods
+        result[role] = method_group(owner, _DRIVER_GROUPS[role])
     return result

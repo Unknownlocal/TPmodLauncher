@@ -8,8 +8,9 @@ Importing it installs no hooks and forces no game imports.
 
 The inspected executable was
 `e1812f2fce94c16e02df8056f62ef976e6c8d3b877101d3019fb77005059f773`.
-This records inspection provenance only. Compatibility checks the signing
-signature and relevant implementations/defaults, excluding source locations.
+This records inspection provenance only. Compatibility checks signing/helper
+paths and exposed signatures, including defaults and annotations. Matching
+signatures accept changed bodies; there is no runtime implementation-hash gate.
 The mapping below was re-read from the current installed archive.
 
 | Native path | Inspected behavior / later guard requirement |
@@ -49,7 +50,8 @@ Normalization follows the inspected native signing path:
 - Player reserve cover can end at next season instead of lasting a full year.
 - Returned academy loans are removed on copies before date queries; the prior
   agreement is retained. Future-loan removal takes precedence over current loans.
-- A fresh owned input cell runs the checked nested native bonus converter.
+- Bonus conversion mirrors inspected native signing: float conversion, a zero
+  floor and zero for invalid values, without depending on a nested function's layout.
 - Native post-signing hierarchy can change promised status. Helpers calculate
   that on private agreements while suppressing later mail/morale effects.
 

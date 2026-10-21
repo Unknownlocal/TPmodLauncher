@@ -22,11 +22,6 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     manager.state = state
 
     def sign_driver(self, bonuses=None):
-        bonus_values = bonuses
-
-        def _bonus_value(key):
-            return bonus_values.get(key, 0.0)
-
         raise AssertionError("Proposal preparation must never sign")
 
     manager.sign_driver = MethodType(sign_driver, manager)
@@ -74,6 +69,14 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     preview = regulation_context("personnel.contract", planner.prepare(arguments), operation="preview")
     assert preview["operation"] == "preview" and preview["proposal"]["proposed"]["bonuses_m"]["point"] == .1
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"])
+
+    class CustomBonus:
+        def __float__(self):
+            pytest.fail("Proposal input checks must precede custom conversion")
+
+    arguments["bonuses"] = {"bonus_per_point_m": CustomBonus()}
+    with pytest.raises(HookError, match="bounded plain values"):
+        planner.prepare(arguments)
     for incomplete in (True, None):
         arguments["salary_m"] = incomplete
         with pytest.raises(HookError, match="finite native numbers"):

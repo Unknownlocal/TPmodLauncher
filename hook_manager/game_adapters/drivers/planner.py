@@ -2,7 +2,6 @@
 """Prepare final driver employment terms without signing or changing a career."""
 
 import math
-from types import CellType, CodeType, FunctionType
 
 from ...manager import HookError, data_copy
 from .methods import driver_methods
@@ -19,12 +18,6 @@ class DriverContractPlanner:
             raise HookError("Driver employment planning supports Formula mode")
         self.state, self.manager = state, state.driver_manager
         self.methods = driver_methods(state)
-        # The sign-body check includes its nested functions. Keep the native
-        # bonus conversion rather than maintaining a second set of its rules.
-        self.bonus_code = next(code for code in self.manager.sign_driver.__code__.co_consts
-                               if type(code) is CodeType and code.co_name == "_bonus_value")
-        if self.bonus_code.co_freevars != ("bonus_values",):
-            raise HookError("Native driver bonus conversion changed")
 
     def prepare(self, arguments):
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
@@ -71,14 +64,21 @@ class DriverContractPlanner:
         start = requested if requested is not None else (
             current_start if active is None and manager.active_driver_count(employer, role, week) < current_limit else next_start)
         bonuses = arguments["bonuses"] if isinstance(arguments["bonuses"], dict) else {}
-        # Reuse the nested native converter with a fresh, privately owned input
-        # cell. It handles missing/invalid/negative bonuses exactly like signing.
-        values = data_copy({key: bonuses[key] for key in BONUS_KEYS if key in bonuses})
-        bonus = FunctionType(self.bonus_code, {}, closure=(CellType(values),))
+        # Preserve the existing plain-data bounds before float conversion, so
+        # custom objects cannot run conversion methods during proposal planning.
+        bonus_values = data_copy({key: bonuses[key] for key in BONUS_KEYS if key in bonuses})
+        # Mirror the inspected native conversion without reaching into a nested
+        # function or requiring a particular signing implementation layout.
+        values = {}
+        for key in BONUS_KEYS:
+            try:
+                values[key] = max(0.0, float(bonus_values.get(key, 0.0) or 0.0))
+            except Exception:
+                values[key] = 0.0
         status = self.methods["globals"]["canonical_driver_status"][0](arguments["priority"])
         proposed = dict(team=employer, role=role, status=status, priority=status, salary_m=arguments["salary_m"],
                         start_week=week if cover is not None else start, length_weeks=cover if cover is not None else 52 * years,
-                        **{key: bonus(key) for key in BONUS_KEYS})
+                        **values)
         # Native implicit current signing cancels a scheduled agreement, while
         # an explicit current start preserves it. Both writes stay on the copy.
         if start <= week:

@@ -15,7 +15,7 @@ import uuid
 # The callable files skip relative imports on that path; the package __init__
 # serves normal host imports and is deliberately absent from this execution list.
 PYTHON_SOURCES = (
-    "manager", "callables/fingerprint", "callables/target",
+    "manager", "callables/signatures", "callables/target",
     "callables/result_contract", "callables/binding", "callables/adapters",
     # Relocation does not activate native driver/project guards. Only the same
     # four transport sources are admitted into this fixed flat namespace.

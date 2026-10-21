@@ -11,9 +11,9 @@ Driver-specific query isolation remains in `../drivers/queries.py`. Common contr
 formatting remains in `../employment.py`; the two native planners stay separate.
 
 `caller_targets.py` includes the shared methods plus driver-specific proposal and
-query methods when driver support is active. `preparation_methods.py` checks the
-helpers that determine which data native queries may write. Staff commitment and
-prestige-skill queries are checked read-only; team prestige getters can initialize
+query methods when driver support is active. `preparation_methods.py` checks their
+exposed call signatures. Inspected staff commitment and prestige-skill queries
+are read-only; team prestige getters can initialize
 fields, which `preparation.py` holds until signing is allowed.
 
 `callers.py` copies only offer/context data, preserving aliases. The staff branch

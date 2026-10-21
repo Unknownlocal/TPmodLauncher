@@ -23,7 +23,7 @@ def guarded(value):
 original = guarded
 host.callables.evaluate = lambda owner, batch, deadline: [{"decision": "deny", "message": "Owned guard"}]
 host.callables.approve(host.CallableTarget(
-    "owned.guard", "__main__", (), "guarded", "(value)", (host.code_digest(guarded.__code__),),
+    "owned.guard", "__main__", (), "guarded", "(value)",
 ))
 host.callables.register("owned.guard", [host.CallBinding(
     "rule", "owned.guard", lambda arguments, result: {"value": arguments["value"]},

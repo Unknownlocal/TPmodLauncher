@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallableTarget, code_digest
+from hook_manager.callables import CallableTarget
 from hook_manager.game_adapters.regulations import personnel_adapter as implementation
 
 
@@ -88,7 +88,7 @@ def owned(monkeypatch):
     def target(name, owner, method):
         fn = getattr(owner, method)
         return CallableTarget(name, module.__name__, (owner.__name__,), method,
-                              str(inspect.signature(fn)), (code_digest(fn.__code__),))
+                              str(inspect.signature(fn)))
 
     signing = target("drivers.sign", DriverManager, "sign_driver")
     callers = (target("personnel.caller.offer", Negotiations, "_execute_offer"),

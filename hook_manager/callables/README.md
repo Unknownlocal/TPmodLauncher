@@ -6,23 +6,26 @@ Mods cannot register native targets or import this host package.
 
 | File | Responsibility |
 | --- | --- |
-| `target.py` | `CallableTarget`: approved native identity and decorator checks. |
+| `target.py` | `CallableTarget`: trusted native path/signature and hook ownership checks. |
 | `result_contract.py` | `ResultContract`: native result structure, success selection and refusal rendering. |
 | `binding.py` | `CallBinding`: trusted projection and target/phase association. |
 | `adapters.py` | `CallableAdapters`: ownership, installation, dispatch, worker admission and cleanup. |
-| `fingerprint.py` | Canonical native code fingerprints. |
+| `signatures.py` | Readable call-signature checks and retained helper groups. |
 | `__init__.py` | Private host exports; importing installs no hooks. |
 
-`method_group` in `fingerprint.py` checks a trusted native helper set, including
-defaults and static-method status, and retains its functions for private planning
-objects. Project and driver planning share it; no mod can supply a helper group.
+`method_group` in `signatures.py` checks a trusted mapping of helper names to
+signature strings and retains those functions for private planning objects. The
+current static/instance binding is retained, not fingerprinted. No mod can supply
+a helper group or approve a native target.
 
-Fingerprints cover the method implementation, including nested functions and
-exception handling, while excluding filenames and source-line metadata. Moving
-unchanged methods in a build therefore preserves compatibility. Relevant code
-changes still require reinspection; signatures alone do not establish that a
-native admission boundary or calculation stayed compatible. Failure reporting
-and whether to skip an integration belong to its trusted adapter, not mod code.
+Runtime game compatibility uses paths and exposed signatures, including defaults
+and annotations. Matching signatures accept changed bodies, constants, private
+locals, closures and decorator arrangements. No bytecode or executable hash gates
+game integration. Synchronous Python call support and hook ownership are separate
+execution requirements. Actual outer decorators still run when native code is
+allowed. Developer conformance checks cover preparation and cancellation behavior.
+Failure reporting and skipping an incompatible integration belong to its trusted
+adapter, not mod code.
 
 Normal host imports use package-relative imports. The game bridge executes its
 fixed `PYTHON_SOURCES` list in dependency order in the existing private namespace;

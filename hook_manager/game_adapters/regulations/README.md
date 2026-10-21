@@ -52,7 +52,8 @@ unchanged; these private internal target names are not mod declarations.
 
 The adapters' `create(state, channel, select, report)` factories skip all inspection
 without subscribers. They construct strict native planners and verify completed
-imports plus caller/helper identities before any assignment. Incompatibility is
+imports plus caller/helper signatures before any assignment. Matching signatures
+accept changed method bodies without implementation-hash checks. Incompatibility is
 reported through the trusted CLI/file reporter and skips the affected integration.
 Driver and staff compatibility are checked separately; a usable kind can remain
 active when the other kind fails. Shared caller failure affects both kinds.

@@ -8,8 +8,8 @@ Neither path supplies modules or registration operations to sandboxed mods.
 
 from .adapters import CallableAdapters
 from .binding import CallBinding
-from .fingerprint import code_digest, method_group
+from .signatures import method_group
 from .result_contract import ResultContract
 from .target import CallableTarget
 
-__all__ = ["CallBinding", "CallableAdapters", "CallableTarget", "ResultContract", "code_digest", "method_group"]
+__all__ = ["CallBinding", "CallableAdapters", "CallableTarget", "ResultContract", "method_group"]

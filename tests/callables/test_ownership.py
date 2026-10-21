@@ -73,10 +73,10 @@ def test_registration_rolls_back_and_rejects_native_conflicts(host):
     assert engine.owners == {"a": "ready"}
 
 
-def test_only_private_fingerprinted_approvals_and_no_registration_request(host):
+def test_only_private_callable_approvals_and_no_registration_request(host):
     module, engine = host()
     module.method = lambda value: True
-    with pytest.raises(HookError, match="fingerprinted"):
+    with pytest.raises(HookError, match="private callable"):
         engine.approve(Target("plain", module.__name__, (), "method", "(value)"))
     for request in ({"operation": "register"}, {"operation": "call"}, {"operation": "approve"}):
         with pytest.raises(HookError, match="Unknown"):

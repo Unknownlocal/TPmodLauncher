@@ -55,10 +55,10 @@ class CallableAdapters(Manager):
             raise HookError("Cannot change callable bindings during an operation")
 
     def approve(self, target):
-        """Store a fingerprinted catalogue entry without forcing a game import."""
+        """Store a signature-checked catalogue entry without forcing a game import."""
         with self._lock:
             if not isinstance(target, CallableTarget):
-                raise HookError("Callable adapters require fingerprinted targets")
+                raise HookError("Callable adapters require private callable targets")
             return super().approve(target)
 
     def enroll(self, thread):

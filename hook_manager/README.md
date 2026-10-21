@@ -27,7 +27,7 @@ when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
 [`callables/`](callables/README.md) adds a private synchronous guard layer using
-the same import watcher and restoration journal. Trusted adapters approve code-fingerprinted native targets,
+the same import watcher and restoration journal. Trusted adapters approve native paths and call signatures,
 provide read-only projections and structural denial contracts, and register owned
 bindings. One wrapper multiplexes all owners of a target. Native refusals survive
 query extensions; identified validator failures latch only that owner unavailable

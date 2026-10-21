@@ -22,7 +22,7 @@ class DriverQueries:
         if role == "status":
             values["contract"] = deepcopy(values["contract"])
             return original(*bound.args, **bound.kwargs)
-        # These dependencies come from the checked query bodies. The native
+        # These dependencies come from the inspected query bodies. The native
         # functions still calculate the answer; only their writable inputs change.
         private = SimpleNamespace(
             state=manager.state, drivers=manager.drivers, _ai_signing_query_cache=None,

@@ -9,7 +9,7 @@ from types import ModuleType
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableTarget, ResultContract, code_digest
+from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations.channel import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 
@@ -56,7 +56,7 @@ def guarded(monkeypatch):
 
     module.start = native
     engine = RegulationGuards(channel, lambda rule, season: {"selected": "current", "current": [0, 3], "upcoming": None}, "development.project")
-    engine.approve(CallableTarget("start", module.__name__, (), "start", str(inspect.signature(native)), (code_digest(native.__code__),)))
+    engine.approve(CallableTarget("start", module.__name__, (), "start", str(inspect.signature(native))))
     codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
     for owner in channel._owners:
         engine.register(owner, [CallBinding("project", "start", project, codec)])

@@ -8,10 +8,9 @@ no game modules to load.
 
 Inspected executable provenance:
 `e1812f2fce94c16e02df8056f62ef976e6c8d3b877101d3019fb77005059f773`.
-Runtime checks method paths/signatures and relevant implementations/defaults;
-source locations and unrelated executable contents are excluded. Compiler or
-relevant body changes can still require reinspection. The checks do not certify
-the complete game call graph.
+Runtime checks method paths and exposed signatures, including defaults and
+annotations. Matching signatures accept body changes; there is no bytecode or
+executable hash gate. Native behavior is covered by developer conformance checks.
 
 | Native entry | Source line | Native refusal | Normalized inputs / first writes |
 | --- | ---: | --- | --- |
@@ -34,7 +33,7 @@ fields are assembled separately by `regulations/contexts.py`.
 Native eligibility helpers are not read-only: project stores use `setdefault`,
 part readers normalize history, and budget/staff helpers can initialize data.
 The snapshot copies only headquarters, allocations and package choice needed by
-checked helpers, borrowing stable budget definitions read-only. Neither starts
+inspected helpers, borrowing stable budget definitions read-only. Neither starts
 nor eligibility methods run during planning; there is no whole-career copy.
 
 Final staff is clamped with native helpers. Aero legacy weekly spend selects a

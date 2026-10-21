@@ -4,14 +4,13 @@
 from functools import wraps
 import importlib
 import inspect
-import marshal
 import sys
 import threading
 from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableAdapters, CallableTarget, code_digest, method_group
+from hook_manager.callables import CallBinding, CallableAdapters, CallableTarget, method_group
 from hook_manager.manager import HookError
 
 from .support import approve, boolean, project
@@ -59,9 +58,8 @@ def test_worker_import_defers_readiness_until_main_thread_poll(tmp_path, monkeyp
     source = "def method(value):\n    return True\n"
     (tmp_path / (name + ".py")).write_text(source)
     monkeypatch.syspath_prepend(str(tmp_path))
-    code = compile(source, str(tmp_path / (name + ".py")), "exec").co_consts[0]
     engine = CallableAdapters(lambda *args: [{"decision": "deny", "message": "No"}])
-    engine.approve(CallableTarget("method", name, (), "method", "(value)", (code_digest(code),)))
+    engine.approve(CallableTarget("method", name, (), "method", "(value)"))
     try:
         engine.register("owner", [CallBinding("rule", "method", project, boolean())])
         assert name not in sys.modules and engine.owners == {"owner": "pending"}
@@ -80,37 +78,52 @@ def test_worker_import_defers_readiness_until_main_thread_poll(tmp_path, monkeyp
         sys.modules.pop(name, None)
 
 
-def test_code_fingerprints_survive_serialization_and_reject_body_drift(host):
-    source = ("def method(value):\n"
-              "    def nested(): return True\n"
-              "    try: return nested() if value else False\n"
-              "    except ValueError: return False\n")
-    code = compile(source, "owned.py", "exec").co_consts[0]
-    assert code_digest(code) == code_digest(marshal.loads(marshal.dumps(code)))
-    moved = compile("\n\n" + source.replace("    try:", "\n    try:"), "different-build/owned.py", "exec").co_consts[0]
-    assert code_digest(code) == code_digest(moved)
-    for changed in (source.replace("return True", "return False"), source.replace("ValueError", "TypeError")):
-        assert code_digest(code) != code_digest(compile(changed, "owned.py", "exec").co_consts[0])
+def test_signature_targets_accept_body_changes_and_reject_signature_changes(host):
     module, engine = host()
     module.method = lambda value: True
     approve(engine, module)
     module.method = lambda value: False
-    original = module.method
-    with pytest.raises(HookError, match="identity changed"):
+    current = module.method
+    events = []
+
+    @wraps(current)
+    def decorated(*args, **kwargs):
+        events.append("native decorator")
+        return current(*args, **kwargs)
+
+    module.method = decorated
+    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    assert module.method(1) is False and events == ["native decorator"]
+    assert engine.owners == {"owner": "ready"}
+    engine.remove_owner("owner")
+    assert module.method is decorated
+    module.method = lambda value, added: True
+    with pytest.raises(HookError, match="signature changed"):
         engine.register("owner", [CallBinding("rule", "method", project, boolean())])
-    assert module.method is original and not engine.entries
+    assert not engine.entries
 
 
-def test_helper_identity_includes_defaults_keyword_defaults_and_descriptor_kind():
+def test_helper_signatures_accept_new_bodies_and_check_defaults():
     def helper(self, value=1, *, option=True):
         return value
-    owner = SimpleNamespace()
-    owner.helper = helper
-    _, original = method_group(owner, ("helper",))
-    helper.__defaults__ = (2,)
-    _, changed_default = method_group(owner, ("helper",))
-    helper.__kwdefaults__ = {"option": False}
-    _, changed_keyword = method_group(owner, ("helper",))
-    owner.helper = staticmethod(helper)
-    _, changed_descriptor = method_group(owner, ("helper",))
-    assert len({original, changed_default, changed_keyword, changed_descriptor}) == 4
+
+    owner = SimpleNamespace(helper=helper)
+    expected = {"helper": "(self, value=1, *, option=True)"}
+    assert method_group(owner, expected)["helper"] == (helper, False)
+    offset = 2
+
+    def replacement(self, value=1, *, option=True):
+        return value + offset
+
+    owner.helper = replacement
+    assert method_group(owner, expected)["helper"] == (replacement, False)
+    replacement.__defaults__ = (2,)
+    with pytest.raises(HookError, match="signature changed"):
+        method_group(owner, expected)
+    replacement.__defaults__ = (1,)
+    replacement.__kwdefaults__ = {"option": False}
+    with pytest.raises(HookError, match="signature changed"):
+        method_group(owner, expected)
+    replacement.__kwdefaults__ = {"option": True}
+    owner.helper = staticmethod(replacement)
+    assert method_group(owner, expected)["helper"] == (replacement, True)

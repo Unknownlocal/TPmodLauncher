@@ -6,7 +6,7 @@ It returns `clock`, `effective` and `proposal` data. It does not sign a contract
 change eligibility or install regulation guards. The regulation adapter adds its
 own schema, scope and operation metadata when it consumes this model.
 
-The helper catalogue checks the relevant functions once when the planner is
+The helper catalogue checks the relevant call signatures once when the planner is
 constructed. Preparation binds the retained read-only helpers to a small query
 owner and borrows the live roster, teams and suppliers. These helpers do not
 normalize records or populate caches, so copying the career is unnecessary.
@@ -23,8 +23,8 @@ lives in `../employment.py`; regulation policy remains mod-owned Python code.
 
 ## Inspected native entry points
 
-The line numbers below are inspection references, not runtime selectors. Relevant
-function checks exclude source locations; the archive hash in `targets.py` records
+The line numbers below are inspection references, not runtime selectors. Runtime
+compatibility checks signatures only; the archive hash in `targets.py` records
 inspection provenance only. No compiled engine or executable is modified.
 
 | Native point | Behavior / remaining enforcement work |

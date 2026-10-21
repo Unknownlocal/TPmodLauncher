@@ -15,7 +15,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.manager import HookError
-from hook_manager.callables import CallBinding, CallableTarget, ResultContract, code_digest
+from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from launcher.pack_mods import PackMods
@@ -70,7 +70,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
     module.start = native
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         engine = RegulationGuards(channel, lambda rule, season: {"selected": "current", "current": [0, 2026], "upcoming": None}, "development.project")
-        engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native)), (code_digest(native.__code__),)))
+        engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native))))
         codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
         try:
             for owner in mods:

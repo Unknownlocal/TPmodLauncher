@@ -3,7 +3,7 @@
 
 import inspect
 
-from hook_manager.callables import CallableTarget, ResultContract, code_digest
+from hook_manager.callables import CallableTarget, ResultContract
 
 
 def boolean():
@@ -30,9 +30,5 @@ def approve(engine, module, attribute="method", owners=(), name=None):
         owner = getattr(owner, part)
     raw = inspect.getattr_static(owner, attribute)
     function = raw.__func__ if type(raw) in (staticmethod, classmethod) else raw
-    fingerprints, current = [], function
-    while current is not None:
-        fingerprints.append(code_digest(current.__code__))
-        current = vars(current).get("__wrapped__")
     engine.approve(CallableTarget(name or attribute, module.__name__, owners, attribute,
-                                  str(inspect.signature(function)), tuple(fingerprints)))
+                                  str(inspect.signature(function))))

@@ -19,22 +19,18 @@ _AERO_SIGNATURE = (
 
 def project_targets():
     """Return descriptors without importing the game or gating its whole image."""
-    # Resolve by method path/signature, then check the relevant implementation.
-    # Unrelated executable changes and source-line shifts are compatible. The
-    # executable hash above records the developer inspection's provenance only.
+    # Resolve by method path/signature. Body edits and source-line shifts do not
+    # disable support; the executable hash records inspection provenance only.
     return (
         CallableTarget("projects.aero.start", "managers.aero_manager", ("AeroDevelopmentManager",),
-                       "start_project", _AERO_SIGNATURE,
-                       ("3cc7407b599825997e5e718f5eeb6ee57602ea76b3b2925d7b6422570822c29a",)),
+                       "start_project", _AERO_SIGNATURE),
         CallableTarget("projects.aero.spec", "managers.aero_manager", ("AeroDevelopmentManager",),
-                       "start_spec_upgrade", _AERO_SIGNATURE,
-                       ("aaf6ac495ff3368312bbcb508356b06ac2b6ccbf2212926b693fba2542cab00e",)),
+                       "start_spec_upgrade", _AERO_SIGNATURE),
         CallableTarget("projects.chassis.start", "managers.development_manager", ("DevelopmentManager",),
                        "start_project",
                        "(self, team_name: str, project_type: str, weekly_spend: Optional[float] = None, "
                        "budget_key: Optional[str] = None, staff: Optional[int] = None, "
                        "technical_staff: Optional[int] = None, concept: Optional[str] = None, "
                        "car_concept: Optional[str] = None, car_focus: Optional[str] = None, "
-                       "package_key: Optional[str] = None, allow_ai: bool = False) -> bool",
-                       ("738e087be3908e4c98cebc19e03b00036fb186e30b177f9133a6426153ec793a",)),
+                       "package_key: Optional[str] = None, allow_ai: bool = False) -> bool"),
     )
