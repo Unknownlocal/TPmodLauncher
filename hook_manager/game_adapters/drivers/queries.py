@@ -4,19 +4,18 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-from .preparation import PRESTIGE_FIELDS, preparation_draft
+from ..personnel.preparation import preparation_draft
 
 
 class DriverQueries:
     def run(self, role, original, bound, frame):
         values = bound.arguments
         manager = values["self"]
-        # These getters fill missing fields, such as career_stage or prestige
-        # history. Keep their answers available to nested queries on private data.
-        if role in ("personalities", "career", "prestige"):
-            parameter, fields = ("team", PRESTIGE_FIELDS) if role == "prestige" else (
-                "driver", ("personalities", "personality") if role == "personalities" else ("career_stage",))
-            values[parameter] = preparation_draft(frame, values[parameter], fields)
+        # These getters fill missing identity fields. Keep their answers
+        # available to nested queries on the same private person data.
+        if role in ("personalities", "career"):
+            fields = ("personalities", "personality") if role == "personalities" else ("career_stage",)
+            values["driver"] = preparation_draft(frame, values["driver"], fields)
             return original(*bound.args, **bound.kwargs)
         # Status normalization only serves this read. Unlike missing identity/
         # prestige data, it need not be staged for later publication.

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Checked driver callers and queries that run before final signing admission."""
+"""Checked shared negotiation callers and optional driver preparation queries."""
 
 from ...callables import CallableTarget
 
 
 # The caller bodies define refusal/commit boundaries. Query bodies define the
 # private state each wrapper must supply; a signature match alone is insufficient.
-_DRIVER_CALLERS = (
+_PERSONNEL_CALLERS = (
     ('proposal', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'accept_player_driver_proposal',
      "(self, event_id: 'str') -> 'Tuple[bool, str]'",
      'd6296ea535db85fa01796bb6a180cb68d1fc6ac5189ef8322a787a5643d7898d'),
@@ -46,7 +46,11 @@ _DRIVER_CALLERS = (
 )
 
 
-def driver_caller_targets():
-    return tuple(CallableTarget("drivers.caller." + role, module, (owner,), method, signature, (digest,))
-                 for role, module, owner, method, signature, digest in _DRIVER_CALLERS)
+def personnel_caller_targets(kinds):
+    # A staff-only integration needs the common negotiation/prestige methods,
+    # but must not depend on driver-only modules completing or remaining compatible.
+    shared = {"uncontested", "decision", "offer", "prestige"}
+    return tuple(CallableTarget("personnel.caller." + role, module, (owner,), method, signature, (digest,))
+                 for role, module, owner, method, signature, digest in _PERSONNEL_CALLERS
+                 if "driver" in kinds or role in shared)
 

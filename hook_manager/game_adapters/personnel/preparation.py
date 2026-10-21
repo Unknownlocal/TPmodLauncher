@@ -33,6 +33,13 @@ def preparation_draft(frame, live, fields):
 def publish_preparation(frame):
     # The caller supplies the admission boundary. Copy back only the fields the
     # checked helpers can fill, then forget the drafts before native signing.
+    candidate = frame.pop("staff_candidate", None)
+    if candidate:
+        # Only this inspected root attribute is writable on the shallow copy.
+        # Its contract, skills and other borrowed records are never copied back.
+        live, private = candidate
+        if hasattr(private, "_oval_target_entry_id"):
+            live._oval_target_entry_id = private._oval_target_entry_id
     pending = frame["normalizations"]
     for live, private, fields in pending.values():
         for field in fields:

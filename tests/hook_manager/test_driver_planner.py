@@ -10,7 +10,6 @@ import pytest
 from hook_manager.manager import HookError
 from hook_manager.game_adapters.drivers import planner as implementation
 from hook_manager.game_adapters.regulations.contexts import regulation_context
-from hook_manager.game_adapters.regulations.driver_adapter import DriverAdapter
 
 
 def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monkeypatch):
@@ -84,10 +83,9 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
         planner.prepare(arguments)
 
 
-def test_incompatible_driver_planning_reports_and_does_not_import_game():
+def test_incompatible_driver_planning_does_not_import_game():
     state = SimpleNamespace(game_mode="formula", driver_manager=SimpleNamespace(sign_driver=lambda: True))
-    before, reports = set(sys.modules), []
-    channel = SimpleNamespace(bindings=lambda scope: {"owned.rules": ((0, "rule"),)})
-    assert DriverAdapter.create(state, channel, None, reports.append) is None
-    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
+    before = set(sys.modules)
+    with pytest.raises(HookError):
+        implementation.DriverContractPlanner(state)
     assert not {"managers.driver", "managers.formula_entries", "game_state"} & (set(sys.modules) - before)

@@ -42,8 +42,9 @@ validation mappings and dispatch selection are a separate trusted integration.
 
 ## Native support and validation contexts
 
-`driver_adapter.py` and `project_adapter.py` compose the sibling
-[driver](../drivers/README.md) and [project](../projects/README.md) support packages.
+`personnel_adapter.py` and `project_adapter.py` compose the sibling
+[driver](../drivers/README.md), [staff](../staff/README.md), shared
+[personnel](../personnel/README.md) and [project](../projects/README.md) support packages.
 Native planners return owned `clock`, `effective` and `proposal` data without
 regulation metadata. `contexts.py` adds schema 1, supported scope, operation and
 initiator for the existing validator protocol. Payload fields and wire format are
@@ -52,19 +53,23 @@ unchanged; these private internal target names are not mod declarations.
 The adapters' `create(state, channel, select, report)` factories skip all inspection
 without subscribers. They construct strict native planners and verify completed
 imports plus caller/helper identities before any assignment. Incompatibility is
-reported once through the trusted CLI/file reporter and skips this integration.
+reported through the trusted CLI/file reporter and skips the affected integration.
+Driver and staff compatibility are checked separately; a usable kind can remain
+active when the other kind fails. Shared caller failure affects both kinds.
 A partial installation is restored. An active refusal or unavailable validator
 retains guards and blocks the attempted native action.
 
-Driver signing runs after all decisions allow, before native early loan removal.
+Driver and staff signing run only after all decisions allow, before native early
+loan removal or staff signing's prestige/contract/morale writes. One personnel
+adapter owns their shared offer and confirmation wrappers.
 Caller handling retains pending player confirmations on refusal and keeps native
 failure/decline fallback behavior. Project guards keep AI preparation private.
 Native preparation side effects are handled by the sibling support packages;
 rule subscription, adopted selection, context assembly and dispatch belong here.
-Neither native-support package imports this integration.
+The native-support packages do not import this integration.
 
-The fixed bridge source list includes only transport at its new paths. Driver/
-project guard startup wiring, complete personnel/market/worker transaction
+The fixed bridge source list includes only transport at its new paths. Personnel/
+project guard startup wiring, complete market/worker transaction
 coverage and public capability admission retain their later gates. JSON ingest
 stays under `launcher/regulations`; mod handlers remain in the Wasm runtime.
 There are no imports or forwarding aliases at the unpublished former

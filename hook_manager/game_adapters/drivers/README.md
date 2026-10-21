@@ -27,8 +27,8 @@ The mapping below was re-read from the current installed archive.
 Construct `DriverContractPlanner(state)` after the ordinary native driver and
 Formula-entry modules finish loading. Incompatibility raises; the consuming
 adapter decides how to report and skip its integration. The regulation consumer's
-`DriverAdapter.create` handles that CLI/log reporting and installation rollback.
-It lives in `../regulations/driver_adapter.py`.
+`PersonnelAdapter.create` handles that CLI/log reporting and installation rollback.
+It lives in `../regulations/personnel_adapter.py` and also handles staff signing.
 
 `prepare(arguments)` expects fully bound `sign_driver` arguments including
 `self` and defaults. It returns owned `clock`, `effective` and `proposal` data:
@@ -62,11 +62,12 @@ fields remain null. Entry-specific/Oval terms remain outside this Formula mapper
 
 ## Preparing callers
 
-`DriverCallers` accepts a trusted guard lifecycle; it handles player proposals,
+The shared `PersonnelCallers` in `../personnel/` accepts a trusted guard lifecycle;
+it handles player proposals,
 uncontested signing, offer execution and player confirmation. Native query
 wrappers keep agreement/status/cache edits private before signing. Scoring and
 prestige getters can also fill personality/career-stage and team prestige/history
-fields. `preparation.py` holds only those small writes until allowance, or an
+fields. Shared `../personnel/preparation.py` holds those small writes until allowance, or an
 ordinary native precheck failure; a guard refusal discards them. Native pure
 personality conversion can still fill its detached value memoization cache.
 
@@ -77,7 +78,7 @@ writes. Native failures and explicit declines keep native fallback behavior.
 The consumers own subscriptions, dispatch and the decision to allow or deny.
 
 The wider market-resolution batch, week/season activation, rollover, restore,
-academy paths and staff coverage remain release gates for regulation integration.
+academy paths and direct staff ownership transfers remain release gates for regulation integration.
 See [the regulation consumer](../regulations/README.md) for current guard behavior.
 
 Optional ignored `tools/regulations/check_driver_plans.py` and

@@ -29,8 +29,8 @@ inspection provenance only. No compiled engine or executable is modified.
 
 | Native point | Behavior / remaining enforcement work |
 | --- | --- |
-| `StaffManager.sign_staff` (1209) | Team/supplier signing and renewal. Native prestige queries can write before contract assignment, so a guard must precede the entire body. |
-| `PersonnelNegotiationManager._execute_offer` (4136, staff branch 4225) | Shared driver/staff negotiation caller. Integrate caller ownership with the existing driver adapter rather than installing competing wrappers. |
+| `StaffManager.sign_staff` (1209) | Team/supplier signing and renewal. The personnel regulation adapter now guards the entire body, before prestige queries, contract assignment and morale effects. |
+| `PersonnelNegotiationManager._execute_offer` (4136, staff branch 4225) | One shared personnel adapter owns driver/staff negotiation callers. Prestige initialization and the optional entry hint remain private until allowance; refusal cancels player acceptance before backup/closing writes. |
 | `StaffManager.onboard_joining_team_staff` (1614) | Uses signing and checks its result, but can create candidates beforehand. Enclosing transaction coverage remains required. |
 | `StaffManager.ensure_active_teams_have_staff` (1701) | Uses signing without checking its result. A signing refusal alone cannot cancel recovery bookkeeping. |
 | `StaffManager.transfer_head_of_engine_contract` (752) | Reassigns current/future contract owners directly. Called by `GameState._apply_engine_takeover` and `EngineManager._merge_external_supplier_into_works_team`; needs enclosing transaction coverage. |
@@ -38,7 +38,9 @@ inspection provenance only. No compiled engine or executable is modified.
 | `GameState._activate_future_staff_contracts` (11953), `finalize_and_rollover_season` (13396) | Activation and fallback writes bypass signing; remain release coverage gates. |
 | `StaffManager.enforce_head_of_engine_eligibility` (727) | Can remove agreements during load/season/engine-plant configuration. Must be included in enclosing transition checks. |
 
-This chunk supplies Formula planning only. Signing/caller guards, enclosing
-transactions, academy employment and public regulation admission remain pending.
+`PersonnelAdapter.create` in `../regulations/personnel_adapter.py` consumes this
+planner and installs signing/caller guards with compatibility diagnostics and
+installation rollback. Enclosing transactions, academy employment, startup wiring
+and public regulation admission remain pending.
 The generic archive-inspection refactor stays deferred until the functional
 regulation framework is complete, before broad compatibility acceptance.

@@ -2,5 +2,5 @@
 """Unwind a checked player confirmation before its backup/closing writes."""
 
 
-class DriverCancellation(Exception):
+class PersonnelCancellation(Exception):
     """Private control flow, caught by the owning player-decision wrapper."""
