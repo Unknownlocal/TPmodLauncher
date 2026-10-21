@@ -9,7 +9,7 @@ read-only. Nothing from those borrowed objects is returned to a mod.
 from types import MethodType, SimpleNamespace
 
 from ...manager import HookError, data_copy
-from .terms import BONUS_KEYS
+from ..employment import BONUS_KEYS
 
 
 _CONTRACT_KEYS = ("team", "role", "status", "priority", "start_week", "length_weeks", "salary_m",

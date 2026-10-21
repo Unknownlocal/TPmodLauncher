@@ -7,7 +7,8 @@ from types import CellType, CodeType, FunctionType
 from ...manager import HookError, data_copy
 from .methods import driver_methods
 from .snapshot import DriverContractSnapshot
-from .terms import BONUS_KEYS, contract_terms, return_owner_loans
+from ..employment import BONUS_KEYS, contract_terms, person_identity
+from .terms import return_owner_loans
 
 
 class DriverContractPlanner:
@@ -97,13 +98,7 @@ class DriverContractPlanner:
         terms = contract_terms(proposed)
         # The person may have no independent role attribute; employment role is
         # carried in the proposed terms. Never invent an identity field from it.
-        person = {"kind": "driver", "ref": "driver:" + str(id(original)), "name": driver.name,
-                  "nationality": getattr(driver, "nationality", None), "age": getattr(driver, "age", None),
-                  "role": getattr(driver, "role", None)}
-        if (type(person["name"]) is not str or not person["name"]
-                or any(person[key] is not None and type(person[key]) is not str for key in ("nationality", "role"))
-                or person["age"] is not None and type(person["age"]) is not int):
-            raise HookError("Driver identity fields do not match the personnel context")
+        person = person_identity(original, "driver")
         # Keep native proposal data independent of regulation schema/operation
         # metadata so other trusted game adapters can use the same preparation.
         return data_copy({

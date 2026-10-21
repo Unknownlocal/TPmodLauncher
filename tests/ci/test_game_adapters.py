@@ -11,7 +11,7 @@ def test_native_game_support_imports_without_regulation_runtime_or_game_modules(
     # integration tests. Import every native-support module, not a fixed list.
     source = """
 import importlib, pkgutil, sys
-for name in ('hook_manager.game_adapters.drivers', 'hook_manager.game_adapters.projects'):
+for name in ('hook_manager.game_adapters.drivers', 'hook_manager.game_adapters.projects', 'hook_manager.game_adapters.staff'):
     package = importlib.import_module(name)
     for module in pkgutil.walk_packages(package.__path__, package.__name__ + '.'):
         importlib.import_module(module.name)

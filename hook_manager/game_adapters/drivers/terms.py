@@ -1,35 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Convert native employment records to the shared personnel context shape."""
-
-import math
-
-from ...manager import HookError
-
-
-BONUS_KEYS = ("bonus_per_point_m", "bonus_per_win_m", "bonus_per_podium_m")
-
-
-def contract_terms(contract, *, status=None):
-    if not contract or not contract.get("team"):
-        return None
-    start, duration = contract.get("start_week"), contract.get("length_weeks")
-    if any(value is not None and type(value) is not int for value in (start, duration)):
-        raise HookError("Driver contract dates need native integer weeks")
-    for value in (contract.get("role"), status if status is not None else contract.get("status")):
-        if value is not None and type(value) is not str:
-            raise HookError("Driver contract role/status need native strings")
-    for value in (contract.get("salary_m"), *(contract.get(key) for key in BONUS_KEYS)):
-        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
-            raise HookError("Driver contract money needs finite native numbers")
-    # Native records store weeks and annual salary, not a separate season count
-    # or retainer. Keep absent fields null and use the native exclusive end week.
-    return {
-        "role": contract.get("role"), "status": status if status is not None else contract.get("status"),
-        "start_week": start, "end_week": start + duration if start is not None and duration is not None else None,
-        "duration_weeks": duration, "duration_seasons": None,
-        "annual_salary_m": contract.get("salary_m"), "annual_retainer_m": None,
-        "bonuses_m": dict(zip(("point", "win", "podium"), (contract.get(key) for key in BONUS_KEYS))),
-    }
+"""Prepare native driver loan returns on private contract records."""
 
 
 def return_owner_loans(manager, driver, employer, requested, years, next_start):
