@@ -42,9 +42,10 @@ validation mappings and dispatch selection are a separate trusted integration.
 
 ## Native support and validation contexts
 
-`personnel_adapter.py` and `project_adapter.py` compose the sibling
+`personnel_adapter.py`, `academy_adapter.py` and `project_adapter.py` compose the sibling
 [driver](../drivers/README.md), [staff](../staff/README.md), shared
-[personnel](../personnel/README.md) and [project](../projects/README.md) support packages.
+[personnel](../personnel/README.md), [academy](../academy/README.md) and
+[project](../projects/README.md) support packages.
 Native planners return owned `clock`, `effective` and `proposal` data without
 regulation metadata. `contexts.py` adds schema 1, supported scope, operation and
 initiator for the existing validator protocol. Payload fields and wire format are
@@ -65,6 +66,8 @@ loan removal or staff signing's prestige/contract/morale writes. One personnel
 adapter owns their shared offer and confirmation wrappers.
 Caller handling retains pending player confirmations on refusal and keeps native
 failure/decline fallback behavior. Project guards keep AI preparation private.
+Academy guards preserve native `(success, reason)` results, isolate AI academy/RNG
+preparation and retain player refusal notices without closing successful-only UI.
 Native preparation side effects are handled by the sibling support packages;
 rule subscription, adopted selection, context assembly and dispatch belong here.
 The native-support packages do not import this integration.

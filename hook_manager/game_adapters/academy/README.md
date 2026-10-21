@@ -28,7 +28,7 @@ if it is still in the future; the reported full term can begin in an earlier yea
 
 The constructor checks native paths/signatures once, including its read-only
 helpers. Matching signatures accept changed implementations. Missing or incomplete
-native imports raise; the future consuming adapter owns CLI/log reporting and
+native imports raise; the consuming regulation adapter owns CLI/log reporting and
 installation. Importing this package installs no hooks and forces no game imports.
 
 ## Inspected game paths
@@ -38,23 +38,39 @@ paths and signatures. Native archive tooling and evidence stay local/ignored.
 
 | Native path | Observed behavior / remaining enforcement work |
 | --- | --- |
-| `AcademyManager.sign_driver` (257) | Calls mutating `ensure_team_state` (24) before slot/eligibility checks. It writes membership list, team contract and driver link, then charges the signing fee. A future guard must precede the whole body. |
-| `AcademyManager.renew_contract` (691) | Normalizes academy state before checking membership; increases the stored full term and rebinds the driver's link. Separate entry point from signing. Full native renewal eligibility remains native code. |
-| `AcademyScreen.handle_event` (808) | Calls renewal at879 and signing at1069. Success controls modal/selection changes; the native caller discards the returned reason and uses generic action feedback. Refusal feedback needs caller integration. |
-| `AcademyManager.ai_sign_drivers` (922) | Normalizes academy state and can write `ai_last_sign_season` before signing; removes the candidate from its pool regardless of success. Checks the signing boolean before reducing available slots. Requires enclosing preparation/cancellation handling. |
-| `AcademyManager.ai_renew_contracts` (1138) | Normalizes academy state and ignores the renewal result. Call-site protection must account for that preparation; a false return alone is not whole-transaction cancellation. |
+| `AcademyManager.sign_driver` (257) | Calls mutating `ensure_team_state` (24) before slot/eligibility checks. The regulation consumer now guards the whole body, before membership/link/financial writes. |
+| `AcademyManager.renew_contract` (691) | Separate guarded entry point; native renewal eligibility, full-term extension and link updates run only after allowance. |
+| `AcademyScreen.handle_event` (808) | Calls renewal at879 and signing at1069. Native success checks preserve modal/selection state on refusal. The consumer retains the refusal reason in an adapter-owned temporary notice drawn after the native screen. |
+| `AcademyManager.ai_sign_drivers` (922) | Academy normalization, `ai_last_sign_season`, query inputs and random draws use private preparation state. Each signing attempt crosses the live guard; refused local pool removal cannot change career data. |
+| `AcademyManager.ai_renew_contracts` (1138) | Its ignored result is safe because all preparation is private; only the guarded live renewal can change membership. |
 | `AcademyManager.progress_season` (778), `sync_driver_links` (819) | Normalize/expire membership, bill retainers and restore links directly. Initial/load/rollover admission needs enclosing preflight. |
 | `AcademyManager.arrange_seat` (587), `apply_main_series_placements` (431) | Write placements and employment contracts directly, bypassing ordinary signing. Must join later employment/activation transaction coverage. |
 | `AcademyManager.release_driver` (716), `_clear_driver` (747), `release_team` (765) | Remove membership/placement links; release can charge a remaining-term penalty. These are separate lifecycle transitions. |
 
-Only proposal preparation is implemented here. Slot/history/employment eligibility
-and native renewal age refusal are not replaced by launcher policy. Signing/renewal
-guards, enclosing transactions, startup wiring and public admission remain pending.
+`../regulations/academy_adapter.py` composes this support with shared regulation
+dispatch, pair-shaped native results, compatibility diagnostics and atomic install
+rollback. Native caller methods run on a shallow career view with only academy
+records copied. Driver active-contract reads normalize private agreements with no
+live cache writes; no driver query wrapper competes with the personnel adapter.
+Before an allowed native action, only the selected team's preparation and consumed
+random state are published. Actual native signing runs once on real objects, then
+the view refreshes its roster/contracts/balance. Canonical contract dictionaries
+and cached driver-link aliases are retained. A refusal discards all still-pending
+batch preparation; earlier allowed actions remain committed. A pass without any
+mod refusal preserves ordinary native preparation, even when native checks refuse.
+
+Slot/history/employment eligibility and native renewal age refusal remain game
+code. Unknown caller threads are rejected; worker use requires the adapter's
+explicit enrollment/operation scope. Broader placement/load/rollover transactions,
+startup wiring and public admission remain pending.
 The generic archive inspection refactor stays deferred until the functional
 regulation framework is complete, before broad compatibility acceptance.
 
-Two portable collected tests cover ownership and strict signature failure.
+Two portable planner cases and two guard cases cover ownership, compatibility,
+AI preparation and rollback.
 Ignored `tools/regulations/check_academy_plans.py` compares actual native signing
 and renewal results on owned fixtures. Eligibility/driver-centre configuration is
 supplied by the fixture; no live save, module constructor or compiled kernel is
-modified. This evidence does not claim complete career or caller enforcement.
+modified. `check_academy_guards.py` also exercises actual native immediate caller
+paths on owned fixtures, with minimal presentation primitives. This evidence does
+not claim complete career transactions or live screen/layout acceptance.
