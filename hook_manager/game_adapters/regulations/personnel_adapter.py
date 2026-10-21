@@ -9,6 +9,7 @@ from .guards import RegulationGuards
 from .contexts import regulation_context
 from ..personnel.caller_targets import personnel_caller_targets
 from ..personnel.callers import PersonnelCallers
+from ..personnel.feedback import PersonnelFeedback
 from ..drivers.planner import DriverContractPlanner
 from ..personnel.preparation import publish_preparation
 from ..personnel.preparation_methods import check_preparation
@@ -42,14 +43,15 @@ class PersonnelAdapter(RegulationGuards):
                     planners[kind] = planner
                 except Exception as error:
                     failure(kind, error)
-            return cls(planners, channel, select) if planners else None
+            return cls(planners, channel, select, report=report) if planners else None
         except Exception as error:
             failure("personnel", error)
             return None
 
-    def __init__(self, planners, channel, select):
+    def __init__(self, planners, channel, select, *, report=None):
         super().__init__(channel, select, "personnel.contract")
         self.planners = dict(planners)
+        self.feedback = None
         try:
             if not self.planners or self.planners.keys() - {"driver", "staff"}:
                 raise HookError("Personnel integration needs supported native planners")
@@ -82,6 +84,7 @@ class PersonnelAdapter(RegulationGuards):
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
                 raise HookError("Personnel integration did not install completely")
+            self.feedback = PersonnelFeedback(self, state, report or self._report)
         except Exception:
             self.stop()
             raise
@@ -121,7 +124,25 @@ class PersonnelAdapter(RegulationGuards):
         if caller:
             caller["refusal"] = message
             caller["normalizations"].clear()
+        screen = getattr(self._local, "personnel_screen", None)
+        # The optional UI owner records the reason; policy decisions and native
+        # return values remain the responsibility of this shared signing guard.
+        if self.feedback is not None and screen is not None:
+            self.feedback.refuse(screen, message)
         return super()._deny(codec, message)
+
+    def stop(self):
+        result = super().stop()
+        if self.feedback is not None:
+            self.feedback.stop()
+        return result
+
+    def poll(self):
+        result = super().poll()
+        # A screen imported on a worker is installed at the next main-thread poll.
+        if self.feedback is not None:
+            self.feedback.poll()
+        return result
 
     def _execute(self, original, args, kwargs):
         caller = getattr(self._local, "personnel_caller", None)
