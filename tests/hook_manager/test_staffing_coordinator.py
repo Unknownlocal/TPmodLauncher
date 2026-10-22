@@ -13,6 +13,7 @@ from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
+from hook_manager.game_adapters.staff import staffing
 from hook_manager.game_adapters.staff.staffing import StaffingPlanner
 from hook_manager.manager import HookError
 from tests.hook_manager.test_staffing_planner import owned
@@ -35,7 +36,7 @@ def coordinator(monkeypatch, mode="allow"):
             return {owner: ((0, "rule"),) for owner in self._owners}
 
         def __call__(self, contexts, selections, calls, deadline):
-            assert contexts[0]["initiator"] == "system" and contexts[0]["operation"] == "commit"
+            assert contexts[0]["initiator"] in ("system", "unknown") and contexts[0]["operation"] == "commit"
             self.actions.append(contexts[0])
             self.calls.append(calls)
             if self.mode == "unavailable":
@@ -50,6 +51,7 @@ def coordinator(monkeypatch, mode="allow"):
         def __init__(self, channel):
             RegulationGuards.__init__(self, channel, lambda *args: {"selected": "current"}, "personnel.contract")
             self.planners, self.feedback = {"staff": planner.contracts}, None
+            self._personnel_operation = threading.Lock()
 
     channel = Channel()
     guards = Guards(channel)
@@ -59,7 +61,7 @@ def coordinator(monkeypatch, mode="allow"):
     guards.approve(CallableTarget("staff.sign", module.__name__, ("StaffManager",), "sign_staff",
                                   str(inspect.signature(planner.sign))))
     codec = ResultContract({"shape": "bool", "denied": {"literal": False}})
-    project = lambda arguments, result: {}
+    project = guards._projection
     for owner in channel._owners:
         guards.register(owner, [CallBinding("staff", "staff.sign", project, codec)])
     return state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
@@ -110,11 +112,22 @@ def test_stale_inputs_and_policy_block_publication_without_overwriting_external_
     class Contract(dict):
         pass
 
-    for change in ("roster", "clock", "policy", "contract"):
+    for change in ("roster", "clock", "policy", "contract", "copy"):
         state, manager, person, channel, guards, run = coordinator(monkeypatch)
         extra = SimpleNamespace(name="External", role="chief_designer", retired=True, contract=None)
         if change == "contract":
             person.contract = Contract()
+        if change == "copy":
+            # Change the live roster after its private list was copied but before
+            # planning. Dispatch-time mutations do not exercise this early gap.
+            original_copy = staffing.copy
+            def copy_with_external_publication(value):
+                private = original_copy(value)
+                if value is manager._name_pool:
+                    extra.retired, extra.contract = False, {"team": "first"}
+                    manager.staff.append(extra)
+                return private
+            monkeypatch.setattr(staffing, "copy", copy_with_external_publication)
         def mutate():
             if change == "roster" and all(member is not extra for member in manager.staff):
                 manager.staff.append(extra)
@@ -130,7 +143,7 @@ def test_stale_inputs_and_policy_block_publication_without_overwriting_external_
             assert not result.published and result.refusal.status == "unavailable"
             assert person.contract == ({"team": "external"} if change == "contract" else None)
             assert not person.morale_effects
-            assert manager.staff == ([person, extra] if change == "roster" else [person])
+            assert manager.staff == ([person, extra] if change in ("roster", "copy") else [person])
             assert "Generated" not in manager.staff_season_history and not guards._active
         finally:
             guards.stop()
@@ -172,10 +185,140 @@ def test_generation_error_and_unadmitted_worker_leave_staffing_private(monkeypat
                 run.recover()
             except HookError as error:
                 errors.append(str(error))
-        thread = threading.Thread(target=worker)
-        thread.start()
-        thread.join(2)
-        assert not thread.is_alive() and len(errors) == 1
+        for enrolled in (False, True):
+            thread = threading.Thread(target=worker)
+            if enrolled:
+                guards.enroll(thread)
+            thread.start()
+            thread.join(2)
+            assert not thread.is_alive()
+        assert len(errors) == 2
         assert manager.staff == [person] and person.contract is None and not guards._active
     finally:
         guards.stop()
+
+
+def test_admitted_worker_outcomes_freeze_configuration_and_clean_up(monkeypatch):
+    for mode in ("allow", "deny", "unavailable", "nested", "removed"):
+        state, manager, person, channel, guards, run = coordinator(monkeypatch, mode if mode in ("deny", "unavailable") else "allow")
+        entered, proceed = threading.Event(), threading.Event()
+        results, errors = [], []
+        before = deepcopy((vars(person), manager.staff_season_history))
+        if mode == "nested":
+            channel.after = lambda: run.onboard("first")
+        if mode == "removed":
+            for owner in tuple(guards.owners):
+                guards.remove_owner(owner)
+        def worker():
+            try:
+                with guards.operation():
+                    entered.set()
+                    assert proceed.wait(2)
+                    result = run.recover()
+                    results.append((result, guards.last_outcome, getattr(guards._local, "staffing_caller", None), guards._active))
+            except BaseException as error:
+                errors.append(error)
+        thread = threading.Thread(target=worker)
+        guards.enroll(thread)
+        try:
+            thread.start()
+            assert entered.wait(2)
+            with pytest.raises(HookError, match="during an operation"):
+                guards.remove_owner("owned.rules")
+            assert not guards.try_stop() and not guards.closed
+            proceed.set()
+            thread.join(2)
+            assert not thread.is_alive() and not errors and len(results) == 1
+            result, outcome, caller, active = results[0]
+            assert caller is None and active == 1 and not guards._active
+            assert guards.last_outcome is None
+            assert result.published is (mode == "allow")
+            if mode == "allow":
+                assert outcome.status == "allow" and len(manager.staff) == 2
+                assert person.contract == {"team": "first"}
+            else:
+                assert result.refusal.status == outcome.status == ("deny" if mode == "deny" else "unavailable")
+                assert manager.staff == [person] and (vars(person), manager.staff_season_history) == before
+                if mode == "removed":
+                    assert not channel.actions and not guards._personnel_operation.locked()
+        finally:
+            proceed.set()
+            thread.join(2)
+            guards.stop()
+
+
+def test_busy_personnel_operations_cannot_overlap_and_worker_can_retry(monkeypatch):
+    for operation in ("signing", "staffing"):
+        state, manager, person, channel, guards, run = coordinator(monkeypatch)
+        rival = StaffingCoordinator(guards, run.planner)
+        entered, release, first_done = threading.Event(), threading.Event(), threading.Event()
+        values, errors = {}, []
+        before = deepcopy((vars(person), manager.staff_season_history))
+        if operation == "signing":
+            execute = guards._execute
+            def paused(original, args, kwargs):
+                # Validation has allowed, but native writes have not run yet.
+                entered.set()
+                assert release.wait(2)
+                return execute(original, args, kwargs)
+            monkeypatch.setattr(guards, "_execute", paused)
+            first_call = lambda: manager.sign_staff("second", person, 2., 1, bypass_requirements=True)
+        else:
+            prepare = run.planner.prepare_onboarding
+            def paused(*args, **kwargs):
+                plan = prepare(*args, **kwargs)
+                # A complete private plan is waiting to publish. Another worker
+                # must not begin its own snapshot against changing dictionaries.
+                entered.set()
+                assert release.wait(2)
+                return plan
+            monkeypatch.setattr(run.planner, "prepare_onboarding", paused)
+            first_call = lambda: run.onboard("second")
+
+        def first_worker():
+            try:
+                with guards.operation():
+                    values["first"] = first_call()
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                first_done.set()
+
+        def second_worker():
+            try:
+                with guards.operation():
+                    values["busy"] = rival.onboard("first")
+                    if operation == "signing":
+                        assert manager.sign_staff("first", person, 2., 1, bypass_requirements=True) is False
+                        assert guards.last_outcome.status == "unavailable"
+                    assert set(guards.owners.values()) <= {"ready"}
+                    assert manager.staff == [person] and (vars(person), manager.staff_season_history) == before
+                    # Contention did not poison the validators. Once the first
+                    # run ends, the same worker can prepare a fresh legal action.
+                    release.set()
+                    assert first_done.wait(2)
+                    values["retry"] = rival.onboard("first")
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=call) for call in (first_worker, second_worker)]
+        for thread in threads:
+            guards.enroll(thread)
+        try:
+            threads[0].start()
+            assert entered.wait(2)
+            threads[1].start()
+            for thread in threads:
+                thread.join(3)
+            assert all(not thread.is_alive() for thread in threads) and not errors, errors
+            assert values["first"] is True if operation == "signing" else values["first"].published
+            assert not values["busy"].published and values["busy"].refusal.status == "unavailable"
+            assert values["retry"].published and not guards._active
+            assert len(manager.staff) == 2 and person.contract == {"team": "second"}
+            assert person.morale_effects == [{"amount": 1}] and manager.staff[1].contract == {"team": "first"}
+        finally:
+            release.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(2)
+            guards.stop()

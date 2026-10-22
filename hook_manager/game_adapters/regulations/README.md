@@ -49,11 +49,20 @@ allow/deny results while choosing staff. Publication requires all queried roles
 to be filled, unchanged native inputs and the same acknowledged policy under the
 channel lock. Its private `StaffingResult` distinguishes published completion,
 incomplete native staffing, policy refusal and unavailable validation. It is a
-main-thread coordinator for future enclosing callers; no load/rollover/worker
-hooks or public admission are installed here.
+coordinator for future enclosing callers. It accepts the main thread or a native
+worker explicitly enrolled through the guards and running inside `operation()`.
+Guarded signing and coordinated staffing share one nonblocking operation
+reservation. An overlapping attempt returns unavailable without disabling healthy
+validators; a later fresh operation can retry. Staffing retains that reservation
+from its initial snapshot through publication. Worker coordination requires active
+staff signing guards: removing the last owner restores unwrapped native signing,
+so workers then return unavailable before preparation. Main-thread coordination
+without validators retains native completion/staleness checks. No load/rollover/
+worker hooks or public admission are installed here.
 Participants come from currently registered staff-signing bindings, so removed
-owners stop participating. With no staff validators, channel readiness is not
-required; native completeness and stale-input checks still apply.
+owners stop participating. For main-thread calls with no staff validators,
+channel readiness is not required; native completeness and stale-input checks
+still apply.
 
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each

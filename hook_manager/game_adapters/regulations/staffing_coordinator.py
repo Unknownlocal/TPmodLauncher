@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Validate a complete private staff operation before publishing its native writes."""
 
+import threading
+
 from ...manager import HookError
 from ..personnel.cancellation import PersonnelCancellation
 from .contexts import regulation_context
@@ -9,11 +11,12 @@ from .staffing_result import StaffingResult
 
 
 class StaffingCoordinator:
-    """Validate native onboarding/recovery as a whole on the main thread.
+    """Validate native onboarding/recovery on the main thread or an admitted worker.
 
     The planner owns private native effects; this class owns regulation decisions
     and the final permission to publish. Enclosing career/load/rollover changes
-    still need their own integration before using this coordinator.
+    still need their own integration before using this coordinator. Workers need
+    an active staff signing guard so native signing shares the same reservation.
     """
 
     def __init__(self, guards, planner):
@@ -45,16 +48,34 @@ class StaffingCoordinator:
                                     for owner in owners)
 
     def _run(self, prepare, *args, **kwargs):
+        """Reserve one staffing run while retaining its bindings and caller frame."""
         guards = self.guards
         guards._local.outcome = None
         with guards._lock:
-            guards._main()
             if guards.closed:
                 raise HookError("Staffing coordinator is closed")
+            current = threading.current_thread()
+            # Enrollment grants this particular Thread object; operation() marks
+            # its admitted work. Both are needed, while main-thread runs retain
+            # the existing idle-operation check.
+            if current is threading.main_thread():
+                guards._main()
+            elif current not in guards._threads or not getattr(guards._local, "operation", False):
+                raise HookError("Staffing requires an enrolled native worker operation")
+            if (getattr(guards._local, "staffing_caller", None) is not None
+                    or getattr(guards._local, "dispatching", False)):
+                raise HookError("Nested staffing preparation is not supported")
             # Admission declarations survive explicit owner removal. Use only
             # installed staff bindings, then freeze configuration for this run.
             participants = frozenset(owner for (owner, _), binding in guards.entries.items()
                                      if binding.target == "staff.sign")
+            if current is not threading.main_thread() and not participants:
+                # Owner removal restores unwrapped native signing. A worker can
+                # no longer exclude those writes, so stop before taking a snapshot
+                # or adding a coordinator frame/count to its enclosing operation.
+                outcome = ValidationOutcome("unavailable", "Native staff signing interception is unavailable")
+                guards._local.outcome = outcome
+                return StaffingResult(False, refusal=outcome)
             guards._active += 1
         # Reuse policy refusals only within this operation. No allowance survives
         # a signing attempt; every later allowed contract is checked freshly.
@@ -83,7 +104,14 @@ class StaffingCoordinator:
             frame["validation"].clear()
             return True
 
+        acquired = False
         try:
+            # This reservation is shared with live signing and starts before
+            # reading/copying native inputs, not just at final publication. Other
+            # attempts fail promptly; the registry lock stays free during dispatch.
+            acquired = guards._personnel_operation.acquire(blocking=False)
+            if not acquired:
+                return unavailable("Personnel operation is busy")
             # Do not hold the transport lock across mod dispatch. Remember its
             # acknowledged policy now, then require the same policy at publication.
             if participants and not channel._lock.acquire(blocking=False):
@@ -119,6 +147,10 @@ class StaffingCoordinator:
                     channel._lock.release()
             return StaffingResult(True, plan.native_result)
         finally:
+            # Every denial, cancellation, stale plan and native exception returns
+            # this reservation. Busy attempts never release another run's lock.
+            if acquired:
+                guards._personnel_operation.release()
             guards._local.staffing_caller = previous
             with guards._lock:
                 guards._active -= 1

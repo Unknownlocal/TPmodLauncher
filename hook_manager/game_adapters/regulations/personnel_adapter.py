@@ -2,11 +2,13 @@
 """Guard Formula driver/staff signing with one shared negotiation owner."""
 
 from functools import update_wrapper
+import threading
 
 from ...callables import CallBinding, ResultContract
 from ...manager import HookError, Manager
 from .guards import RegulationGuards
 from .contexts import regulation_context
+from .outcome import ValidationOutcome
 from .refused_proposals import RefusedProposals
 from ..personnel.caller_targets import personnel_caller_targets, personnel_mail_target
 from ..personnel.callers import PersonnelCallers
@@ -59,6 +61,10 @@ class PersonnelAdapter(RegulationGuards):
     def __init__(self, planners, channel, select, *, report=None):
         super().__init__(channel, select, "personnel.contract")
         self.planners = dict(planners)
+        # One owned signing or complete staffing run may use career inputs at a
+        # time. The registry lock only protects bindings; an admitted signer can
+        # still be executing native writes after leaving that lock.
+        self._personnel_operation = threading.Lock()
         self.feedback = None
         try:
             if not self.planners or self.planners.keys() - {"driver", "staff"}:
@@ -141,7 +147,15 @@ class PersonnelAdapter(RegulationGuards):
             # The copy was only for the caller's temporary field write. Proposal
             # identity, contract assignment and morale effects use the real person.
             bound.arguments["staff"] = candidate[0]
-        return super()._validate(original, signature, entries, bound.args, bound.kwargs)
+        # Reserve before projection and keep the reservation through native
+        # execution. A staffing publication must not invalidate allowed terms.
+        # Busy is host unavailability, so no healthy validator is latched failed.
+        if not self._personnel_operation.acquire(blocking=False):
+            return self._deny(entries[0][1].result, ValidationOutcome("unavailable", "Personnel operation is busy"))
+        try:
+            return super()._validate(original, signature, entries, bound.args, bound.kwargs)
+        finally:
+            self._personnel_operation.release()
 
     def _deny(self, codec, outcome):
         caller = getattr(self._local, "personnel_caller", None)

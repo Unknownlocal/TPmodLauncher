@@ -66,9 +66,18 @@ current plans under the acknowledged policy. They return a `StaffingResult`; its
 No native signing is replayed. Native errors propagate with private work discarded;
 native False, policy deny and unavailable validation remain distinct.
 
-This coordinator currently requires the main thread. It installs no outer hooks.
-Enclosing load/joining/rollover mutations, worker admission, lifecycle wiring and
-complete personnel readiness retain their later Step 5 gates.
+The coordinator accepts the main thread or a native worker previously enrolled
+with `guards.enroll(thread)` and running inside `guards.operation()`. Enrollment
+alone does not grant execution. A shared nonblocking reservation excludes other
+coordinated staffing and guarded signing from the initial snapshot through final
+publication. Busy attempts return unavailable without disabling healthy validators;
+a later fresh run can retry. Workers also require active staff signing guards;
+after their last owner is removed, worker calls return unavailable before planning,
+because ordinary native signing has been restored and cannot share the reservation.
+Main-thread calls without validators retain their existing behavior. It installs
+no outer hooks. Enclosing load/joining/rollover mutations, actual worker
+creation/admission, lifecycle wiring and complete personnel readiness retain their
+later Step 5 gates.
 
 ## Inspected native entry points
 

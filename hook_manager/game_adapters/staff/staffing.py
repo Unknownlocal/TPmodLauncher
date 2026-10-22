@@ -35,6 +35,9 @@ class StaffingPlanner:
     def _prepare(self, method, *args, validate=None, **kwargs):
         if self.state.staff_manager is not self.manager or self.manager.state is not self.state:
             raise HookError("Staffing planner belongs to another native state")
+        # Capture the baseline before copying roots. Otherwise an old private
+        # roster could accidentally be checked against a newer live snapshot.
+        publication = StaffingPublication(self.state)
         state, manager = copy(self.state), copy(self.manager)
         state.staff_manager, manager.state = manager, state
         # Queries only read existing people, teams, histories and name lists. Copy
@@ -48,7 +51,6 @@ class StaffingPlanner:
         contracts = copy(self.contracts)
         contracts.state, contracts.manager = state, manager
         generated, signings = [], []
-        publication = StaffingPublication(self.state)
         requirements = set()
         active_staff = manager.team_has_active_staff
 
