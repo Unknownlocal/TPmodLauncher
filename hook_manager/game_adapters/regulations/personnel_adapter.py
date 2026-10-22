@@ -119,17 +119,19 @@ class PersonnelAdapter(RegulationGuards):
             bound.arguments["staff"] = candidate[0]
         return super()._validate(original, signature, entries, bound.args, bound.kwargs)
 
-    def _deny(self, codec, message):
+    def _deny(self, codec, outcome):
         caller = getattr(self._local, "personnel_caller", None)
         if caller:
-            caller["refusal"] = message
+            # Carry the host status through nested cancellation; only native
+            # return values and feedback should extract the display message.
+            caller["refusal"] = outcome
             caller["normalizations"].clear()
         screen = getattr(self._local, "personnel_screen", None)
         # The optional UI owner records the reason; policy decisions and native
         # return values remain the responsibility of this shared signing guard.
         if self.feedback is not None and screen is not None:
-            self.feedback.refuse(screen, message)
-        return super()._deny(codec, message)
+            self.feedback.refuse(screen, outcome.message)
+        return super()._deny(codec, outcome)
 
     def stop(self):
         result = super().stop()

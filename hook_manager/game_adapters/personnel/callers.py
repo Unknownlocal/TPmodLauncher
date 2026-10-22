@@ -47,6 +47,9 @@ class PersonnelCallers:
                      # Nested offer execution must see the same temporary
                      # personality/prestige values as its enclosing confirmation.
                      "normalizations": previous["normalizations"] if previous else {}}
+            # A native precheck may return before signing reaches a guard. Do not
+            # let that call inherit an earlier attempt's validation outcome.
+            guards._local.outcome = None
             if role == "offer":
                 frame["initiator"] = values["row"].get("initiated_by", "unknown")
                 if frame["initiator"] not in ("player", "ai", "system"):
@@ -63,7 +66,7 @@ class PersonnelCallers:
                     result = original(*bound.args, **bound.kwargs)
                 except PersonnelCancellation as refused:
                     return False, str(refused)
-                return (False, frame["refusal"]) if frame["refusal"] else result
+                return (False, frame["refusal"].message) if frame["refusal"] else result
             finally:
                 # Native prechecks may return or raise without ever signing.
                 # Preserve their usual initialization unless a guard refused it.
@@ -94,7 +97,7 @@ class PersonnelCallers:
             result = original(*bound.args, **bound.kwargs)
         finally:
             if frame["refusal"]:
-                row["execution_block_reason"] = frame["refusal"]
+                row["execution_block_reason"] = frame["refusal"].message
             else:
                 # Native failure still keeps its own offer normalization. Only
                 # a guard refusal cancels these writes.
@@ -116,5 +119,5 @@ class PersonnelCallers:
             if previous["cancel"]:
                 # Native player acceptance tries backups and closes the decision
                 # after False. A guard refusal must stop before those writes.
-                raise PersonnelCancellation(frame["refusal"])
+                raise PersonnelCancellation(frame["refusal"].message)
         return result

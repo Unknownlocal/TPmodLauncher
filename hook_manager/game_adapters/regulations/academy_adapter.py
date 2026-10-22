@@ -85,13 +85,15 @@ class AcademyAdapter(RegulationGuards):
             caller["attempted"], caller["team_name"] = True, bound.arguments["team_name"]
         return super()._validate(original, signature, entries, args, kwargs)
 
-    def _deny(self, codec, message):
+    def _deny(self, codec, outcome):
         caller = getattr(self._local, "academy_caller", None)
         if caller:
-            caller["refusal"] = message
+            # Retain the refusal's status even if later AI attempts replace the
+            # thread's latest outcome. This frame still has preparation to drop.
+            caller["refusal"] = outcome
             if caller["preparation"] is not None:
                 caller["preparation"].refused = True
-        return super()._deny(codec, message)
+        return super()._deny(codec, outcome)
 
     def _execute(self, original, args, kwargs):
         caller = getattr(self._local, "academy_caller", None)

@@ -12,6 +12,7 @@ import time
 from ...callables import CallableAdapters
 from ...manager import HookError, data_copy
 from .framing import regulation_decisions
+from .outcome import ValidationOutcome
 
 
 class RegulationGuards(CallableAdapters):
@@ -31,21 +32,28 @@ class RegulationGuards(CallableAdapters):
         return super()._register(owner, bindings)
 
     @property
-    def last_refusal(self):
-        """The executing caller can read its reason without sharing thread state."""
-        return getattr(self._local, "refusal", None)
+    def last_outcome(self):
+        """Most recent owned validation on this thread, not native execution success."""
+        return getattr(self._local, "outcome", None)
 
-    def _deny(self, codec, message):
-        self._local.refusal = message
-        return codec.denied(message)
+    @property
+    def last_refusal(self):
+        """Keep the existing text accessor for presentation and native return shapes."""
+        outcome = self.last_outcome
+        return outcome.message if outcome else None
+
+    def _deny(self, codec, outcome):
+        self._local.outcome = outcome
+        return codec.denied(outcome.message)
 
     def _validate(self, original, signature, entries, args, kwargs):
+        # Direct native calls do not always have a caller frame to clear this.
+        self._local.outcome = None
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
         deadline = time.monotonic() + self.seconds
         codec, projection = entries[0][1].result, entries[0][1].project
         participants = {key[0] for key, _ in entries}
-        self._local.refusal = None
         acquired = False
         try:
             if (getattr(self._local, "dispatching", False)
@@ -53,7 +61,7 @@ class RegulationGuards(CallableAdapters):
                     and not getattr(self._local, "operation", False)):
                 raise HookError("Unenrolled thread or reentrant regulation validation")
             if any(self.owners[owner] != "ready" for owner in participants):
-                return self._deny(codec, "Validation unavailable")
+                return self._deny(codec, ValidationOutcome("unavailable", "Validation unavailable"))
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not self._guest.acquire(timeout=remaining):
                 raise HookError("Regulation dispatch deadline expired")
@@ -83,7 +91,7 @@ class RegulationGuards(CallableAdapters):
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:
-                return self._deny(codec, refusal)
+                return self._deny(codec, ValidationOutcome("deny", refusal))
         except Exception as error:
             # Identified handler failures belong to that owner. A projection or
             # broken stream prevents checking this action's whole cohort.
@@ -91,12 +99,14 @@ class RegulationGuards(CallableAdapters):
             for owner in failed or participants:
                 self.owners[owner] = "unavailable"
             self._report(error)
-            return self._deny(codec, "Validation unavailable")
+            return self._deny(codec, ValidationOutcome("unavailable", "Validation unavailable"))
         finally:
             if acquired:
                 self._local.dispatching = False
                 self._guest.release()
-        # Native exceptions propagate once, outside validation error handling.
+        # Record permission before execution: native False or exceptions are
+        # still native failures after allowance, not unavailable validation.
+        self._local.outcome = ValidationOutcome("allow")
         return self._execute(original, args, kwargs)
 
     def _execute(self, original, args, kwargs):

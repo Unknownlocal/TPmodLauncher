@@ -39,6 +39,9 @@ class AcademyCallers:
                 elif notice:
                     self.notices.pop(owner, None)
                 return result
+            # Clear before worker admission too: a reused thread may still hold
+            # an allowance from its earlier enrolled operation.
+            guards._local.outcome = None
             if threading.current_thread() is not threading.main_thread() and not getattr(guards._local, "operation", False):
                 # Reject before creating or publishing drafts. Trusted workers
                 # must enter the same enrolled operation scope as direct guards.
@@ -67,7 +70,7 @@ class AcademyCallers:
                     if frame["preparation"] is not None:
                         frame["preparation"].finish()
                     elif frame["refusal"]:
-                        self.notices[owner] = frame["refusal"], time.monotonic() + 3.0
+                        self.notices[owner] = frame["refusal"].message, time.monotonic() + 3.0
                     elif frame["attempted"]:
                         # Unrelated mouse/key events must not erase a refusal.
                         self.notices.pop(owner, None)

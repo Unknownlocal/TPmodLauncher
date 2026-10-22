@@ -22,6 +22,17 @@ Projection, dispatch queueing and all decisions share the existing 100 ms budget
 Native execution follows only after all required decisions allow; native errors
 propagate without retry. Validation failure keeps guards installed and unavailable.
 
+`outcome.py` keeps the host's validation result separate from the displayed reason:
+`allow`, `deny` or `unavailable`. `RegulationGuards.last_outcome` is private,
+thread-local state for the most recent owned validation. `allow` permits native
+execution; it does not mean that native execution succeeded. An owned caller
+clears the outcome on entry, so a native precheck that never reaches validation
+leaves it `None`. This is not a summary of every attempt in an enclosing batch.
+Personnel and academy caller frames retain the refusal object, extracting only
+its message for native return values and UI. `last_refusal` remains a text accessor;
+control flow must use the structured status, since mod messages can match host
+failure wording. No outcome object or new status is sent to a mod.
+
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each
 changed rule; custom entries are admitted option keys. A `None` value advances

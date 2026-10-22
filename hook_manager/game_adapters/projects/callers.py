@@ -50,6 +50,9 @@ class ProjectCallers:
     def _caller(self, role, original, bound, previous):
         guards = self.guards
         caller = {"role": role, "initiator": "player" if role.endswith("_ui") else "ai", "parts": {}}
+        # Native checks can return before start_project reaches a guard. That
+        # means no validation outcome for this call, regardless of the last call.
+        guards._local.outcome = None
         guards._local.project_caller = caller
         # Treat preparation and the nested start as one operation for registry
         # changes/shutdown. The nested guard still checks worker enrollment.

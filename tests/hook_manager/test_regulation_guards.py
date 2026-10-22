@@ -20,6 +20,7 @@ class Channel:
     def __init__(self):
         self._unavailable, self.actions = set(), []
         self.mode = "allow"
+        self.message = None
         self.before_reply = lambda: None
         self._owners = {
             "a.rules": {"rules": ["native"], "bindings": [
@@ -34,7 +35,7 @@ class Channel:
             self._unavailable.add("b.rules")
             raise RuntimeError("Owned handler failed")
         self.before_reply()
-        return {owner: [{"decision": "deny", "message": owner} if self.mode == "deny" else {"decision": "allow"}
+        return {owner: [{"decision": "deny", "message": self.message or owner} if self.mode == "deny" else {"decision": "allow"}
                         for _ in rows] for owner, rows in calls.items()}
 
 
@@ -48,7 +49,7 @@ def guarded(monkeypatch):
         writes.append(value)
         if value == 0:
             raise ValueError("Native failure")
-        return True
+        return value > 0
 
     def project(arguments, result):
         projections.append(arguments["value"])
@@ -69,33 +70,50 @@ def guarded(monkeypatch):
 
 def test_shared_projection_ordering_native_execution_and_identified_owner_failure(monkeypatch):
     with guarded(monkeypatch) as (module, engine, channel, projections, writes):
+        assert engine.last_outcome is None
         channel.mode = "deny"
         assert module.start(12) is False and not writes and engine.last_refusal == "a.rules"
+        assert engine.last_outcome.status == "deny"
         contexts, selections, calls = channel.actions[-1]
         assert len(contexts) == len(selections) == 1 and projections == [12]
         assert calls == {"a.rules": [[0, 0, 0], [2, 0, 0]], "b.rules": [[0, 0, 0]]}
         channel.mode = "allow"
         assert module.start(4) is True and writes == [4] and projections == [12, 4]
+        assert engine.last_outcome.status == "allow" and engine.last_refusal is None
+        assert module.start(-1) is False and engine.last_outcome.status == "allow"
         with pytest.raises(ValueError, match="Native failure"):
             module.start(0)
-        assert writes == [4, 0] and set(engine.owners.values()) == {"ready"}
+        assert writes == [4, -1, 0] and set(engine.owners.values()) == {"ready"}
+        assert engine.last_outcome.status == "allow"
+        # Mod messages are arbitrary display text. Even the host's usual error
+        # wording must remain a policy deny when that is what the mod returned.
+        channel.mode, channel.message = "deny", "Validation unavailable"
+        assert module.start(5) is False and engine.last_outcome.status == "deny"
+        assert engine.last_refusal == "Validation unavailable" and set(engine.owners.values()) == {"ready"}
         channel.mode = "failed"
         assert module.start(1) is False
+        assert engine.last_outcome.status == "unavailable" and engine.last_refusal == "Validation unavailable"
         assert engine.owners == {"a.rules": "ready", "b.rules": "unavailable"}
         attempts = len(channel.actions)
-        assert module.start(2) is False and len(channel.actions) == attempts and writes == [4, 0]
+        assert module.start(2) is False and len(channel.actions) == attempts and writes == [4, -1, 0]
+        assert engine.last_outcome.status == "unavailable"
         engine.remove_owner("b.rules")
         channel.mode = "allow"
         assert module.start(3) is True and set(channel.actions[-1][2]) == {"a.rules"}
+        assert engine.last_outcome.status == "allow" and engine.last_refusal is None
 
 
 def test_unenrolled_worker_cannot_bypass_shared_required_validation(monkeypatch):
     with guarded(monkeypatch) as (module, engine, channel, projections, writes):
         results = []
-        thread = threading.Thread(target=lambda: results.append(module.start(1)))
+        def invoke():
+            results.append((module.start(1), engine.last_outcome.status))
+
+        thread = threading.Thread(target=invoke)
         thread.start()
         thread.join(2)
-        assert not thread.is_alive() and results == [False]
+        assert not thread.is_alive() and results == [(False, "unavailable")]
+        assert engine.last_outcome is None  # Worker outcomes do not leak to the UI thread.
         assert not writes and not projections and not channel.actions
         assert set(engine.owners.values()) == {"unavailable"}
 
@@ -124,3 +142,4 @@ def test_shared_deadline_includes_projection_and_rejects_late_allowance(monkeypa
             assert module.start(1) is False and not writes
             assert len(channel.actions) == int(phase == "reply")
             assert set(engine.owners.values()) == {"unavailable"}
+            assert engine.last_outcome.status == "unavailable"

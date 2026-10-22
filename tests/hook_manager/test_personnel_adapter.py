@@ -52,6 +52,8 @@ def owned(monkeypatch):
 
     class Negotiations:
         def _execute_offer(self, row, candidate):
+            if row.get("native_precheck_failure"):
+                return False
             if row["candidate_type"] == "staff":
                 self.state.prestige_manager.displayed_prestige(self.state.teams["target"])
                 if row.get("context", {}).get("entry_id"):
@@ -135,9 +137,17 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         for mode, reason in (("deny", "Owned refusal"), ("failed", "Validation unavailable")):
             channel.mode = mode
             assert negotiations.resolve_player_contract_decision("decision", True) == (False, reason)
+            assert adapter.last_outcome.status == ("deny" if mode == "deny" else "unavailable")
             assert "decision" in negotiations.pending and negotiations.row["offer"]["years"] == 3
             assert not state.writes and vars(driver) == {"contract": None} and state.teams == {"target": {}}
         assert adapter.owners == {"owned.rules": "unavailable"}
+        # No guard is reached for this new attempt. An old blocked reason may
+        # remain on the native record, but it is not this attempt's outcome.
+        negotiations.row["native_precheck_failure"] = True
+        assert negotiations._execute_offer(negotiations.row, driver) is False
+        assert adapter.last_outcome is None and adapter.last_refusal is None
+        assert negotiations.row["execution_block_reason"] == "Validation unavailable"
+        negotiations.row.pop("native_precheck_failure")
     finally:
         adapter.stop()
     assert type(state.driver_manager).sign_driver is original
@@ -156,6 +166,7 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         negotiations.pending["decision"] = {"status": "pending"}
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert state.writes[-2:] == [2, "backup"] and adapter.last_refusal is None
+        assert adapter.last_outcome.status == "allow"
         other = type(state.driver_manager)()
         other.state = SimpleNamespace(writes=[], native_refuse=False)
         channel.mode = "deny"
