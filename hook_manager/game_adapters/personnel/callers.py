@@ -4,6 +4,7 @@
 from copy import copy, deepcopy
 
 from .cancellation import PersonnelCancellation
+from .market_preparation import MarketPreparation
 from .preparation import PRESTIGE_FIELDS, preparation_draft, publish_preparation
 from ..drivers.queries import DriverQueries
 
@@ -25,15 +26,42 @@ class PersonnelCallers:
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
             values = bound.arguments
+            previous = getattr(guards._local, "personnel_caller", None)
+            market = previous["market"] if previous else None
+            if role == "mail":
+                # Signing uses live managers and can send through their real
+                # state's mailbox. Bring that mail into this caller's view too;
+                # calls for another career keep their original owner.
+                if market is not None and market.mail is not None and (
+                        values["self"] is market.mail.live or values["self"] is market.mail.private):
+                    return market.mail.send(original, bound)
+                return original(*bound.args, **bound.kwargs)
             # PrestigeManager has no career-state member; identify its instance
             # directly. Other managers identify the career through their state.
             belongs = (values["self"] is self.state.prestige_manager if role == "prestige"
-                       else getattr(values["self"], "state", None) is self.state)
+                       else getattr(values["self"], "state", None) is self.state
+                       or market is not None and getattr(values["self"], "state", None) is market.state)
             if not belongs:
                 return original(*args, **kwargs)
-            previous = getattr(guards._local, "personnel_caller", None)
             if role == "ai_failure":
-                return self._ai_failure(original, bound, previous)
+                result = self._ai_failure(original, bound, previous)
+                if market is not None:
+                    # Only this offer failed; competing teams are still pending.
+                    market.checkpoint(values["row"])
+                return result
+            if role in ("finish", "stage", "notice", "debug"):
+                if market is None:
+                    return original(*args, **kwargs)
+                market.bind(bound)
+                row = bound.arguments["source_row" if role == "finish" else "player_row" if role == "stage" else "row"]
+                # These helpers retain their native logic/return values. The
+                # scope attaches their sends to a record; only finish/stage
+                # also establish a completed candidate checkpoint.
+                with market.mail_for(row):
+                    result = original(*bound.args, **bound.kwargs)
+                if role in ("finish", "stage"):
+                    market.checkpoint(row, candidate_scope=True)
+                return result
             if role in ("active", "count", "status", "entries", "next_entries", "personalities", "career", "prestige"):
                 if previous is None or getattr(guards._local, "committing_personnel", False):
                     return original(*args, **kwargs)
@@ -48,7 +76,12 @@ class PersonnelCallers:
                 # Compatibility may have disabled one kind. Preserve that kind's
                 # native path while retaining guards for the compatible kind.
                 return original(*args, **kwargs)
+            # A native precheck or private-view failure may happen before signing.
+            guards._local.outcome = None
             frame = {"role": role, "initiator": "ai" if role in _MARKET_CALLERS else "player", "refusal": None,
+                     # One view for the outer operation, reused by all nested
+                     # offers. Rule count does not create more market copies.
+                     "market": market or MarketPreparation(self.state),
                      # Driver failure handling consumes this single attempt;
                      # it is not a cache of decisions or a retry-suppression map.
                      "offer_attempt": None,
@@ -56,14 +89,12 @@ class PersonnelCallers:
                      # Nested offer execution must see the same temporary
                      # personality/prestige values as its enclosing confirmation.
                      "normalizations": previous["normalizations"] if previous else {}}
-            # A native precheck may return before signing reaches a guard. Do not
-            # let that call inherit an earlier attempt's validation outcome.
-            guards._local.outcome = None
             if role == "offer":
                 frame["initiator"] = values["row"].get("initiated_by", "unknown")
                 if frame["initiator"] not in ("player", "ai", "system"):
                     frame["initiator"] = "unknown"
             guards._local.personnel_caller = frame
+            frame["market"].bind(bound)
             # Freeze owner changes and shutdown through the entire caller, not
             # just the nested signing guard, so preparation uses one registry.
             with guards._lock:
@@ -90,6 +121,10 @@ class PersonnelCallers:
                 try:
                     if not frame["refusal"]:
                         publish_preparation(frame)
+                    if previous is None:
+                        # Only the outer owner publishes/discards the shared
+                        # market; nested offer return is not market completion.
+                        frame["market"].finish(frame)
                 finally:
                     if previous is not None:
                         # The outer AI must associate failure with the offer that
@@ -137,7 +172,8 @@ class PersonnelCallers:
             frame["staff_candidate"] = live, copy(live)
             bound.arguments["candidate"] = frame["staff_candidate"][1]
         try:
-            result = original(*bound.args, **bound.kwargs)
+            with frame["market"].mail_for(row):
+                result = original(*bound.args, **bound.kwargs)
         finally:
             # Match the caller's original record, never the private offer draft.
             frame["offer_attempt"] = row, frame["refusal"]

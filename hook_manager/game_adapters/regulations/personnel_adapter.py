@@ -7,7 +7,7 @@ from ...callables import CallBinding, ResultContract
 from ...manager import HookError, Manager
 from .guards import RegulationGuards
 from .contexts import regulation_context
-from ..personnel.caller_targets import personnel_caller_targets
+from ..personnel.caller_targets import personnel_caller_targets, personnel_mail_target
 from ..personnel.callers import PersonnelCallers
 from ..personnel.feedback import PersonnelFeedback
 from ..drivers.planner import DriverContractPlanner
@@ -19,6 +19,13 @@ from ..staff.targets import staff_target
 
 
 class PersonnelAdapter(RegulationGuards):
+    @staticmethod
+    def _caller_targets(state, kinds):
+        targets = personnel_caller_targets(kinds)
+        # An owned/headless state can omit mail; a real mailbox must participate
+        # in the same preflight/install group as the negotiation callers.
+        return (*targets, personnel_mail_target()) if getattr(state, "email_manager", None) is not None else targets
+
     @classmethod
     def create(cls, state, channel, select, report):
         def failure(kind, error):
@@ -38,7 +45,7 @@ class PersonnelAdapter(RegulationGuards):
                 try:
                     planner = factory(state)
                     check_preparation(state, {kind})
-                    if any(item.resolve({}) is None for item in (target(), *personnel_caller_targets({kind}))):
+                    if any(item.resolve({}) is None for item in (target(), *cls._caller_targets(state, {kind}))):
                         raise HookError("Personnel integration needs completed native caller imports")
                     planners[kind] = planner
                 except Exception as error:
@@ -61,7 +68,7 @@ class PersonnelAdapter(RegulationGuards):
             self.callers = PersonnelCallers(self, state)
             signing = [factory() for kind, factory in (("driver", driver_target), ("staff", staff_target))
                        if kind in self.planners]
-            callers = personnel_caller_targets(self.planners)
+            callers = self._caller_targets(state, self.planners)
             # Recheck the complete set here: trusted callers may also construct
             # this adapter directly, without the factory's per-kind preflight.
             # Readiness here is local to this signing component. The wider

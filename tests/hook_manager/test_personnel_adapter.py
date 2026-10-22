@@ -9,6 +9,7 @@ import pytest
 
 from hook_manager.callables import CallableTarget
 from hook_manager.game_adapters.regulations import personnel_adapter as implementation
+from hook_manager.game_adapters.personnel.market_preparation import MarketPreparation
 
 
 def owned(monkeypatch):
@@ -23,6 +24,9 @@ def owned(monkeypatch):
             if self.state.native_refuse:
                 return False
             driver.contract = {"salary": salary}
+            mail = getattr(self.state, "email_manager", None)
+            if mail is not None:
+                mail.send_email("Native signed", "Owned contract")
             return True
 
         def driver_personalities(self, driver):
@@ -76,11 +80,24 @@ def owned(monkeypatch):
             return True, "closed"
 
         def resolve_due_decisions(self):
-            for rows, candidate in self.markets:
-                for row in rows:
-                    if self._execute_offer(row, candidate):
+            for row_ids, candidate in self.markets:
+                for row_id in row_ids:
+                    if getattr(self.state, "email_manager", None) is not None:
+                        self._notify_player(self.records[row_id], "Preparing " + row_id, "Owned preparation")
+                    self.records[row_id]["prepared"] = True
+                    if self._execute_offer(self.records[row_id], candidate):
                         break
-                self.state.writes.append("closed")
+                self._finish_candidate_market(self.records[row_ids[0]], None)
+
+        def _finish_candidate_market(self, source_row, winner):
+            self.state.writes.append("closed")
+            source_row["status"] = "completed"
+            self.candidate_deadlines.pop(source_row.get("candidate_key"), None)
+            if getattr(self.state, "email_manager", None) is not None:
+                self.state.email_manager.send_email("Market completed", "Owned result")
+
+        def _notify_player(self, row, subject, body):
+            self.state.email_manager.send_email(subject, body)
 
         def sign_uncontested(self, candidate_type, candidate, team_name, *, signer_kind="team"):
             ok = self._execute_offer(self.row, candidate)
@@ -96,8 +113,17 @@ def owned(monkeypatch):
                        blocked_role="reserve" if not permanent and "reserve role" in reason.lower() else None)
             self.state.writes.append("cooldown")
 
+    class EmailManager:
+        def __init__(self, state):
+            self.state, self.inbox, self.urgent_sound_serial = state, [], 0
+
+        def send_email(self, subject, body):
+            self.inbox.insert(0, {"subject": subject, "body": body})
+            self.urgent_sound_serial += 1
+
     module.DriverManager, module.Negotiations, module.PrestigeManager = DriverManager, Negotiations, PrestigeManager
     module.StaffManager = StaffManager
+    module.EmailManager = EmailManager
     state = SimpleNamespace(writes=[], teams={"target": {}}, prestige_manager=PrestigeManager(), native_refuse=False)
     manager, negotiations = DriverManager(), Negotiations()
     manager.state = negotiations.state = state
@@ -107,6 +133,10 @@ def owned(monkeypatch):
     driver = SimpleNamespace(contract=None)
     negotiations.row = {"candidate_type": "driver", "initiated_by": "player", "offer": {"years": 3}}
     negotiations.driver, negotiations.pending = driver, {"decision": {"status": "pending"}}
+    negotiations.records = {"row": negotiations.row}
+    negotiations.pending_player_decisions = negotiations.pending
+    negotiations.driver_proposals, negotiations.candidate_deadlines = {}, {}
+    negotiations._serial = negotiations._proposal_serial = 0
 
     def target(name, owner, method):
         fn = getattr(owner, method)
@@ -120,12 +150,15 @@ def owned(monkeypatch):
                target("personnel.caller.uncontested", Negotiations, "sign_uncontested"),
                target("personnel.caller.ai_drivers", Negotiations, "ai_manage_drivers"),
                target("personnel.caller.ai_failure", Negotiations, "_fail_ai_driver_record"),
+               target("personnel.caller.finish", Negotiations, "_finish_candidate_market"),
+               target("personnel.caller.notice", Negotiations, "_notify_player"),
                target("personnel.caller.personalities", DriverManager, "driver_personalities"),
                target("personnel.caller.career", DriverManager, "career_stage_modifiers"),
                target("personnel.caller.prestige", PrestigeManager, "displayed_prestige"))
     monkeypatch.setattr(implementation, "driver_target", lambda: signing)
     monkeypatch.setattr(implementation, "staff_target", lambda: target("staff.sign", StaffManager, "sign_staff"))
     monkeypatch.setattr(implementation, "personnel_caller_targets", lambda kinds: callers)
+    monkeypatch.setattr(implementation, "personnel_mail_target", lambda: target("personnel.caller.mail", EmailManager, "send_email"))
     monkeypatch.setattr(implementation, "check_preparation", lambda state, kinds: None)
 
     class Channel:
@@ -153,11 +186,104 @@ def owned(monkeypatch):
     return state, driver, negotiations, planner, Channel(), signing, callers
 
 
+def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_preparation(monkeypatch):
+    state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
+    state.email_manager = sys.modules["owned_personnel_adapter"].EmailManager(state)
+    first, blocked = negotiations.row, {"candidate_type": "driver", "offer": {"years": 3}, "candidate_key": "b"}
+    first["candidate_key"] = "a"
+    first["context"] = {"planned_offer": first["offer"]}
+    negotiations.records = {"first": first, "blocked": blocked}
+    negotiations.candidate_deadlines = {"a": 114, "b": 114}
+    other = SimpleNamespace(contract=None)
+    negotiations.markets = [(["first"], driver), (["blocked"], other)]
+    roots = negotiations.records, negotiations.candidate_deadlines, state.email_manager.inbox, first["offer"]
+    original = type(channel).__call__
+    modes = iter(("allow", "failed"))
+
+    def dispatch(*args):
+        channel.mode = next(modes)
+        return original(*args)
+
+    monkeypatch.setattr(type(channel), "__call__", dispatch)
+    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    try:
+        negotiations.resolve_due_decisions()
+        assert first["status"] == "completed" and driver.contract == {"salary": 2} and other.contract is None
+        assert negotiations.candidate_deadlines == {"b": 114} and "prepared" not in blocked
+        assert blocked["offer"]["years"] == 3 and blocked["execution_block_reason"] == "Validation unavailable"
+        assert [mail["subject"] for mail in state.email_manager.inbox] == ["Market completed", "Native signed", "Preparing first"]
+        assert state.email_manager.urgent_sound_serial == 3
+        assert roots[0] is negotiations.records and roots[1] is negotiations.candidate_deadlines
+        assert roots[2] is state.email_manager.inbox and roots[3] is first["offer"] is first["context"]["planned_offer"]
+    finally:
+        adapter.stop()
+
+
+def test_market_save_publishes_aliases_and_new_containers_without_exposing_private_writes(monkeypatch):
+    state, _, negotiations, _, _, _, _ = owned(monkeypatch)
+    offer = negotiations.row["offer"]
+    negotiations.row["context"] = {"planned_offer": offer}
+    saves = []
+    state.save_season = lambda: saves.append(offer["years"])
+    preparation = MarketPreparation(state)
+    private = preparation.manager.records["row"]
+    private["offer"]["years"] = 2
+    private["new"] = {"items": []}
+    preparation.state.save_season()
+    assert saves == [2] and negotiations.row is negotiations.records["row"]
+    assert negotiations.row["offer"] is offer is negotiations.row["context"]["planned_offer"]
+    private["new"]["items"].append("pending")
+    assert negotiations.row["new"]["items"] == []
+    preparation.publish()
+    assert negotiations.row["new"]["items"] == ["pending"]
+
+
+def test_market_terminal_publication_does_not_publish_other_offers_or_their_mail(monkeypatch):
+    state, _, negotiations, _, _, _, _ = owned(monkeypatch)
+    state.email_manager = sys.modules["owned_personnel_adapter"].EmailManager(state)
+    negotiations.records = {
+        key: {"id": key, "candidate_key": candidate, "status": "talks_open", "offer": {"years": 3}}
+        for key, candidate in (("winner", "a"), ("backup", "b"), ("pending", "b"), ("failed", "c"), ("blocked", "c"))}
+    negotiations.candidate_deadlines = {key: 114 for key in ("a", "b", "c")}
+    preparation = MarketPreparation(state)
+    records = preparation.manager.records
+    # Native driver AI normalizes multiple candidates before the first signs.
+    # Cancelling a backup must not publish its other team's still-pending offer.
+    for row in records.values():
+        row["offer"]["years"] = 1
+    records["winner"]["status"] = "completed"
+    records["backup"]["status"] = "cancelled"
+    preparation.manager.candidate_deadlines.pop("a")
+    for key in ("winner", "pending"):
+        with preparation.mail_for(records[key]):
+            bound = inspect.signature(type(state.email_manager).send_email).bind(state.email_manager, key, "Owned mail")
+            preparation.mail.send(type(state.email_manager).send_email, bound)
+    preparation.checkpoint(records["winner"], candidate_scope=True)
+    # An individual AI failure also cannot commit that competing offer.
+    preparation.checkpoint(records["backup"])
+    assert negotiations.records["backup"]["status"] == "cancelled"
+    assert negotiations.records["pending"]["offer"]["years"] == 3
+    assert negotiations.candidate_deadlines == {"b": 114, "c": 114}
+    records["failed"].update(status="failed", failure_reason="Native rejection")
+    # Staff AI can reject a different team's offer for the same person inline,
+    # before the next offer reaches validation. That completed rejection survives.
+    with preparation.mail_for(records["failed"]):
+        bound = inspect.signature(type(state.email_manager).send_email).bind(state.email_manager, "failed", "Owned debug")
+        preparation.mail.send(type(state.email_manager).send_email, bound)
+    preparation.finish({"role": "ai_staff", "refusal": SimpleNamespace(message="Unavailable"),
+                        "offer_attempt": (records["blocked"], None)})
+    assert negotiations.records["failed"]["failure_reason"] == "Native rejection"
+    assert negotiations.records["blocked"]["offer"]["years"] == 3
+    assert [message["subject"] for message in state.email_manager.inbox] == ["failed", "winner"]
+    assert state.email_manager.urgent_sound_serial == 2
+
+
 def test_market_keeps_native_fallback_and_stops_unavailable_after_prior_completion(monkeypatch):
     state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
     first = {**negotiations.row, "initiated_by": "ai", "offer": {"years": 3}}
     second = {**first, "offer": {"years": 3}}
-    negotiations.markets = [([first, second], driver), ([dict(first)], SimpleNamespace(contract=None))]
+    negotiations.records = {"first": first, "second": second, "next": dict(first)}
+    negotiations.markets = [(["first", "second"], driver), (["next"], SimpleNamespace(contract=None))]
     original_dispatch = type(channel).__call__
     modes = iter(("deny", "allow", "failed"))
     attempts = []

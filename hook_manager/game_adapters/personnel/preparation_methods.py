@@ -2,6 +2,7 @@
 """Check helpers whose lazy initialization must stay private before signing."""
 
 from ...callables import method_group
+from .market_preparation import MarketPreparation
 
 
 # Check the signatures used by preparation, with driver/staff-only dependencies
@@ -46,6 +47,7 @@ _PREPARATION_GROUPS = {
 
 
 def check_preparation(state, kinds):
+    MarketPreparation.check(state)
     for role, signatures in _PREPARATION_GROUPS.items():
         if (role in ("driver_manager", "driver_negotiation") and "driver" not in kinds
                 or role == "staff_manager" and "staff" not in kinds):

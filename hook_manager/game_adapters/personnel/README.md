@@ -44,11 +44,40 @@ post-sign failure/closing logic; it does not turn unavailability into a losing
 offer. A direct offer call still returns its native boolean and exposes the
 structured validation outcome separately.
 
-These hooks stop execution at the refused attempt. Earlier completed candidates
-remain committed, and native preparation before that attempt may already have
-changed market records or emitted notifications. Candidate-state isolation and
-publication, repeated-proposal suppression and outer career transactions remain
-separate work. No offer-selection algorithm is reimplemented here.
+`MarketPreparation` gives each outer caller one private native manager/state view.
+Market records, deadlines, proposals, pending confirmations and mailbox data are
+copied together by `MarketGraph`, retaining aliases such as an offer shared with
+its context. Native closing, confirmation staging and AI failure handling publish
+completed candidate work. Later unavailability discards pending preparation while
+keeping those checkpoints. Existing records retain their diagnostic refusal text;
+an unpublished new record is not created solely to store that text.
+
+Publication preserves canonical dictionary/list identities and separates newly
+published containers from the working view. Checkpoints publish the completed
+candidate's stores and individual records the game has failed or cancelled,
+including driver backups released by a filled seat. Other offers for those backup
+candidates stay private. This also retains staff rejections made inline by native
+AI code, without needing another completion helper. Market cancellation excludes
+the blocked offer; earlier rejections by other teams remain complete, even for the
+same person. A player-confirmation decision excludes that person's whole group,
+including an explicit decline awaiting a backup.
+Only native deadline removals for the completed records are retained;
+normal caller completion performs a final publication. Native mailbox methods run
+on a private owner, including mail sent by live native signing. `MarketMail` records
+which row sent a message while native notification, debug, offer and completion
+helpers run. A checkpoint publishes that row's messages and urgent-mail counter
+contribution. Pending notifications, edits to messages from before this view and
+mail outside those helpers wait for normal publication. Native save calls through the view
+publish before saving.
+Player-decline relationship adjustments wait for completion, so an unavailable
+backup validator cannot leave a penalty behind with a still-pending confirmation.
+Native code still calculates the adjustment and its existing error handling is
+retained.
+
+This protects market preparation; allowed native contract/financial effects still
+run on real people and teams. It does not make an enclosing week, load or rollover
+atomic. Repeated-proposal suppression and outer career/worker admission retain
+their later gates. No offer-selection algorithm is reimplemented here.
 
 `feedback/` owns optional driver/staff negotiation presentation separately from
 signing. It observes ordinary screen imports and checks native helper signatures;
@@ -82,7 +111,7 @@ boundaries; they do not install transaction handling or open personnel admission
 | `StaffManager.onboard_joining_team_staff` | Creates free staff/history before signing; returns successful names. A rejected signing can leave generated people behind. |
 | `StaffManager.ensure_active_teams_have_staff` | Seeds missing staff, ignores the signing boolean and returns `None`. Generation/selection must be prepared before required staffing is admitted. |
 | `StaffManager.ensure_active_suppliers_have_head_of_engine` | Requests supplier approaches through personnel negotiation; it does not directly create/sign replacement staff. |
-| `PersonnelNegotiationManager.resolve_due_decisions` | Native ranking/fallback remains active after policy/native refusal. Unavailability now stops before market closure/deadline removal for that attempt. Preparation/publication remains pending. |
+| `PersonnelNegotiationManager.resolve_due_decisions` | Native ranking/fallback remains active. Candidate checkpoints keep completed records, mail and deadline cleanup when later unavailability discards remaining preparation. |
 | `PersonnelNegotiationManager.ai_manage_staff` | A policy-denied acceptable offer keeps native continuation and can be retried later. Unavailability now unwinds the ignored uncontested result before later approach passes. |
 | `PersonnelNegotiationManager.ai_manage_drivers` | Reserve offers can sign immediately; main-driver final offers wait for deadline resolution. Unavailability stops before failure handling. Policy denial uses ordinary native cooldown without inferring eligibility from mod prose; genuine native refusal retains native classification. |
 
