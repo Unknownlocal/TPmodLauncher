@@ -77,17 +77,9 @@ class RegulationGuards(CallableAdapters):
                      for owner in sorted(participants)}
             if time.monotonic() >= deadline:
                 raise HookError("Regulation projection deadline expired")
-            decisions = self.channel([context], selections, calls, deadline)
-            if type(decisions) is not dict or decisions.keys() != calls.keys():
-                raise HookError("Incomplete regulation decisions")
-            refusal = None
-            # Validate every reply before accepting the first ordered refusal;
-            # a malformed later decision is an unavailable validator, not a deny.
-            for owner, rows in calls.items():
-                regulation_decisions(decisions[owner], len(rows))
-                for decision in decisions[owner]:
-                    if decision["decision"] == "deny":
-                        refusal = refusal or decision["message"]
+            # Trusted integrations can reuse an operation's policy refusal here;
+            # admission/readiness and deadline checks still surround that path.
+            refusal = self._refusal(context, selections, calls, deadline)
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:
@@ -108,6 +100,21 @@ class RegulationGuards(CallableAdapters):
         # still native failures after allowance, not unavailable validation.
         self._local.outcome = ValidationOutcome("allow")
         return self._execute(original, args, kwargs)
+
+    def _refusal(self, context, selections, calls, deadline):
+        """Return a fully checked policy refusal, or None when every handler allows."""
+        decisions = self.channel([context], selections, calls, deadline)
+        if type(decisions) is not dict or decisions.keys() != calls.keys():
+            raise HookError("Incomplete regulation decisions")
+        refusal = None
+        # Validate every reply before accepting the first ordered refusal;
+        # a malformed later decision is an unavailable validator, not a deny.
+        for owner, rows in calls.items():
+            regulation_decisions(decisions[owner], len(rows))
+            for decision in decisions[owner]:
+                if decision["decision"] == "deny":
+                    refusal = refusal or decision["message"]
+        return refusal
 
     def _execute(self, original, args, kwargs):
         return original(*args, **kwargs)

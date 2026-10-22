@@ -76,8 +76,12 @@ retained.
 
 This protects market preparation; allowed native contract/financial effects still
 run on real people and teams. It does not make an enclosing week, load or rollover
-atomic. Repeated-proposal suppression and outer career/worker admission retain
-their later gates. No offer-selection algorithm is reimplemented here.
+atomic. Nested callers share operation-local validation storage for the consuming
+adapter's refusal history. That integration can suppress unchanged duplicate
+policy checks while native prechecks, selection and fallback still run. The
+storage ends with the outer caller; no denial persists across operations. Outer
+career/worker admission retains its later gate. No offer-selection algorithm is
+reimplemented here.
 
 `feedback/` owns optional driver/staff negotiation presentation separately from
 signing. It observes ordinary screen imports and checks native helper signatures;

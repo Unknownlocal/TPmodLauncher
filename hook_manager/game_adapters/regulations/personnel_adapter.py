@@ -7,6 +7,7 @@ from ...callables import CallBinding, ResultContract
 from ...manager import HookError, Manager
 from .guards import RegulationGuards
 from .contexts import regulation_context
+from .refused_proposals import RefusedProposals
 from ..personnel.caller_targets import personnel_caller_targets, personnel_mail_target
 from ..personnel.callers import PersonnelCallers
 from ..personnel.feedback import PersonnelFeedback
@@ -104,6 +105,19 @@ class PersonnelAdapter(RegulationGuards):
         return regulation_context("personnel.contract", planner.prepare(arguments),
                                   initiator=caller["initiator"] if caller else "unknown")
 
+    def _refusal(self, context, selections, calls, deadline):
+        """Keep duplicate-denial handling inside this caller's operation lifetime."""
+        caller = getattr(self._local, "personnel_caller", None)
+        if caller is None:
+            # Direct signing has no enclosing operation to share earlier checks.
+            return super()._refusal(context, selections, calls, deadline)
+        history = caller["validation"]
+        if "refusals" not in history:
+            # Native caller support supplies only storage; regulation decisions
+            # and policy revision checks remain in this integration.
+            history["refusals"] = RefusedProposals()
+        return history["refusals"].check(self.channel, context, selections, calls, deadline, super()._refusal)
+
     def _wrapper(self, name, binding, target, original, signature):
         if target.name.startswith("personnel.caller."):
             wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
@@ -156,6 +170,9 @@ class PersonnelAdapter(RegulationGuards):
     def _execute(self, original, args, kwargs):
         caller = getattr(self._local, "personnel_caller", None)
         if caller:
+            # Signing can change career data beyond the proposal, even if it
+            # ultimately returns False or raises. Earlier refusals must expire.
+            caller["validation"].clear()
             # Publish native getter initialization at the same admission boundary
             # as signing; denial discards it and native failure still retains it.
             publish_preparation(caller)
@@ -165,3 +182,7 @@ class PersonnelAdapter(RegulationGuards):
             return original(*args, **kwargs)
         finally:
             self._local.committing_personnel = previous
+            if caller:
+                # Nested native calls may have added refusals during execution.
+                # Discard them after the signer's last possible state changes.
+                caller["validation"].clear()

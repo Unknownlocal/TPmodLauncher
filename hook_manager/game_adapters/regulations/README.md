@@ -33,6 +33,16 @@ its message for native return values and UI. `last_refusal` remains a text acces
 control flow must use the structured status, since mod messages can match host
 failure wording. No outcome object or new status is sent to a mod.
 
+Personnel callers also share a `RefusedProposals` history within one outer
+operation. An unchanged policy refusal can be reused only for the same complete
+context, rule selections, binding calls and acknowledged policy revision. The
+history keeps one last refusal per person/employer; changed terms invalidate it.
+Allowed native signing attempts clear all prior refusals before and after
+execution, including native `False` or exceptions. Later operations and direct
+signing calls validate freshly. Native prechecks and fallback still run, and
+unavailability keeps its normal stopping behavior. No allowance is cached and
+no JSON serialization is added to compare proposals.
+
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each
 changed rule; custom entries are admitted option keys. A `None` value advances

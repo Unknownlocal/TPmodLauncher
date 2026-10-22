@@ -82,6 +82,9 @@ class PersonnelCallers:
                      # One view for the outer operation, reused by all nested
                      # offers. Rule count does not create more market copies.
                      "market": market or MarketPreparation(self.state),
+                     # Consumer-owned validation bookkeeping. Nested offers share
+                     # it, and removing the outer frame prevents later reuse.
+                     "validation": previous["validation"] if previous else {},
                      # Driver failure handling consumes this single attempt;
                      # it is not a cache of decisions or a retry-suppression map.
                      "offer_attempt": None,
