@@ -51,9 +51,17 @@ class RegulationGuards(CallableAdapters):
         self._local.outcome = None
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
-        deadline = time.monotonic() + self.seconds
         codec, projection = entries[0][1].result, entries[0][1].project
         participants = {key[0] for key, _ in entries}
+        outcome = self._decision(lambda: projection(dict(bound.arguments), None), participants)
+        self._local.outcome = outcome
+        if outcome.status != "allow":
+            return self._deny(codec, outcome)
+        return self._execute(original, args, kwargs)
+
+    def _decision(self, project, participants):
+        """Check one proposal without executing native code or choosing its return shape."""
+        deadline = time.monotonic() + self.seconds
         acquired = False
         try:
             if (getattr(self._local, "dispatching", False)
@@ -61,12 +69,12 @@ class RegulationGuards(CallableAdapters):
                     and not getattr(self._local, "operation", False)):
                 raise HookError("Unenrolled thread or reentrant regulation validation")
             if any(self.owners[owner] != "ready" for owner in participants):
-                return self._deny(codec, ValidationOutcome("unavailable", "Validation unavailable"))
+                return ValidationOutcome("unavailable", "Validation unavailable")
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not self._guest.acquire(timeout=remaining):
                 raise HookError("Regulation dispatch deadline expired")
             acquired = self._local.dispatching = True
-            context = data_copy(projection(dict(bound.arguments), None))
+            context = data_copy(project())
             # Only small choice references vary by rule. The complete proposal
             # is sent once, and every applicable handler points to context zero.
             rules = sorted({rule for owner in participants for _, rule in self.subscriptions[owner]})
@@ -83,7 +91,7 @@ class RegulationGuards(CallableAdapters):
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:
-                return self._deny(codec, ValidationOutcome("deny", refusal))
+                return ValidationOutcome("deny", refusal)
         except Exception as error:
             # Identified handler failures belong to that owner. A projection or
             # broken stream prevents checking this action's whole cohort.
@@ -91,15 +99,14 @@ class RegulationGuards(CallableAdapters):
             for owner in failed or participants:
                 self.owners[owner] = "unavailable"
             self._report(error)
-            return self._deny(codec, ValidationOutcome("unavailable", "Validation unavailable"))
+            return ValidationOutcome("unavailable", "Validation unavailable")
         finally:
             if acquired:
                 self._local.dispatching = False
                 self._guest.release()
-        # Record permission before execution: native False or exceptions are
-        # still native failures after allowance, not unavailable validation.
-        self._local.outcome = ValidationOutcome("allow")
-        return self._execute(original, args, kwargs)
+        # Execution belongs to the caller, outside validation error handling.
+        # Native False or exceptions after this allowance remain native failures.
+        return ValidationOutcome("allow")
 
     def _refusal(self, context, selections, calls, deadline):
         """Return a fully checked policy refusal, or None when every handler allows."""

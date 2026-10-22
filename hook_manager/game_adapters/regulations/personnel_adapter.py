@@ -107,7 +107,10 @@ class PersonnelAdapter(RegulationGuards):
 
     def _refusal(self, context, selections, calls, deadline):
         """Keep duplicate-denial handling inside this caller's operation lifetime."""
-        caller = getattr(self._local, "personnel_caller", None)
+        # Staffing validates prepared contracts without entering a live signing
+        # wrapper, so its coordinator supplies the same bounded history frame.
+        caller = (getattr(self._local, "personnel_caller", None)
+                  or getattr(self._local, "staffing_caller", None))
         if caller is None:
             # Direct signing has no enclosing operation to share earlier checks.
             return super()._refusal(context, selections, calls, deadline)

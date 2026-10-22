@@ -43,6 +43,18 @@ signing calls validate freshly. Native prechecks and fallback still run, and
 unavailability keeps its normal stopping behavior. No allowance is cached and
 no JSON serialization is added to compare proposals.
 
+`StaffingCoordinator` checks prepared onboarding/recovery contracts through the
+same decision path without executing live signing. The native planner observes
+allow/deny results while choosing staff. Publication requires all queried roles
+to be filled, unchanged native inputs and the same acknowledged policy under the
+channel lock. Its private `StaffingResult` distinguishes published completion,
+incomplete native staffing, policy refusal and unavailable validation. It is a
+main-thread coordinator for future enclosing callers; no load/rollover/worker
+hooks or public admission are installed here.
+Participants come from currently registered staff-signing bindings, so removed
+owners stop participating. With no staff validators, channel readiness is not
+required; native completeness and stale-input checks still apply.
+
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each
 changed rule; custom entries are admitted option keys. A `None` value advances

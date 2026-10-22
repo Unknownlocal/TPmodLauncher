@@ -10,9 +10,11 @@ from .planner import StaffContractPlanner
 from .staff_signing import StaffSigning
 from .staffing_methods import staffing_methods
 from .staffing_plan import StaffingPlan
+from .staffing_publication import StaffingPublication
 
 
 class StaffingPlanner:
+    """Run native staffing privately; an optional trusted callback checks contracts."""
     def __init__(self, state):
         self.contracts = StaffContractPlanner(state)
         self.state, self.manager = state, state.staff_manager
@@ -22,15 +24,15 @@ class StaffingPlanner:
         self.sign = inspect.getattr_static(self.manager, "sign_staff")
         self.signature = inspect.signature(self.sign)
 
-    def prepare_onboarding(self, team_name, *, contract_years=1):
+    def prepare_onboarding(self, team_name, *, contract_years=1, validate=None):
         """Prepare native joining-team staff choices and their final cover terms."""
-        return self._prepare("onboard_joining_team_staff", team_name, contract_years=contract_years)
+        return self._prepare("onboard_joining_team_staff", team_name, contract_years=contract_years, validate=validate)
 
-    def prepare_recovery(self, roles=None):
+    def prepare_recovery(self, roles=None, *, validate=None):
         """Prepare missing team staff and native population seeds for these roles."""
-        return self._prepare("ensure_active_teams_have_staff", roles)
+        return self._prepare("ensure_active_teams_have_staff", roles, validate=validate)
 
-    def _prepare(self, method, *args, **kwargs):
+    def _prepare(self, method, *args, validate=None, **kwargs):
         if self.state.staff_manager is not self.manager or self.manager.state is not self.state:
             raise HookError("Staffing planner belongs to another native state")
         state, manager = copy(self.state), copy(self.manager)
@@ -45,7 +47,20 @@ class StaffingPlanner:
                 setattr(owner, name, function if static else MethodType(function, owner))
         contracts = copy(self.contracts)
         contracts.state, contracts.manager = state, manager
-        generated, signings, people = [], [], {}
+        generated, signings = [], []
+        publication = StaffingPublication(self.state)
+        requirements = set()
+        active_staff = manager.team_has_active_staff
+
+        def team_has_staff(team_name, role, week=None):
+            # Ask native code to define required slots. Its recovery loop ignores
+            # sign_staff False, so the final plan checks these slots explicitly.
+            if week is None:
+                week = state.current_season_start_week() + state.week_index
+            requirements.add((team_name, role, week))
+            return active_staff(team_name, role, week=week)
+
+        manager.team_has_active_staff = team_has_staff
         live_ids = {id(person) for person in self.manager.staff}
         create = manager._create_free_staff_for_role
 
@@ -65,30 +80,29 @@ class StaffingPlanner:
             if values["signer_kind"] != "team" or values["bypass_requirements"] is not True:
                 raise HookError("Staffing preparation requires native team recovery arguments")
             person = values["staff"]
-            pair = people.get(id(person))
-            if pair is None:
+            if id(person) not in publication.people:
                 if not any(member is person for member in manager.staff):
                     raise HookError("Native staffing selected a person outside its roster")
                 # Copy a selected person once. Later team choices see its private
                 # agreement, while canonical existing/generated people stay intact.
-                original, person = person, deepcopy(person)
+                original, person = publication.person(person)
                 manager.staff = [person if member is original else member for member in manager.staff]
                 # Native callers can reuse an earlier argument or read its new
                 # roster entry. Both identities must resolve to this same copy.
-                people[id(original)] = people[id(person)] = original, person
             else:
-                original, person = pair
+                original, person = publication.person(person)
             values["staff"] = person
             prepared = contracts.prepare(dict(values))
             # Terms come from the temporary person; identity belongs to the live
             # person or the retained unsigned generator result, never that copy.
             prepared["proposal"]["person"]["ref"] = "staff:" + str(id(original))
             arguments = {**values, "self": self.manager, "staff": original, "bonuses": deepcopy(values["bonuses"])}
-            # Native effects run privately too, so later choices observe exactly
-            # the roster native signing would leave. No validator runs here.
-            accepted = self.sign(*bound.args, **bound.kwargs)
+            # The callback can withhold execution. Allowed native effects stay
+            # private so later choices see the roster native signing would leave.
+            # None records withheld execution separately from native False.
+            accepted = self.sign(*bound.args, **bound.kwargs) if validate is None or validate(prepared) else None
             signings.append(StaffSigning(arguments, prepared, accepted))
-            return accepted
+            return False if accepted is None else accepted
 
         manager._create_free_staff_for_role, manager.sign_staff = create_staff, sign_staff
         result = getattr(manager, method)(*args, **kwargs)
@@ -96,4 +110,6 @@ class StaffingPlanner:
         # the generated population a later coordinator might publish.
         history = {name: rows for name, rows in manager.staff_season_history.items()
                    if name not in self.manager.staff_season_history}
-        return StaffingPlan(result, tuple(signings), tuple(generated), history)
+        # Use the saved native query, not the recorder, when checking completion.
+        missing = tuple(slot for slot in sorted(requirements) if not active_staff(slot[0], slot[1], week=slot[2]))
+        return StaffingPlan(result, tuple(signings), tuple(generated), history, missing, publication)

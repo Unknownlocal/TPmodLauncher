@@ -42,16 +42,33 @@ rejected before it can run against borrowed owner data.
 The result is a private `StaffingPlan` with the native list/`None` result, ordered
 `StaffSigning` attempts, generated people and newly added history keys. Each attempt
 keeps canonical manager/person arguments, owned normalized `prepared` proposal data
-and a `native_accepted` flag. Existing person/employer refs match live objects;
+and a `native_accepted` flag (None if validation withheld native execution).
+Existing person/employer refs match live objects;
 generated refs match the retained unsigned objects. The flag records native
 planning success, not permission from a regulation validator. These models have
 one class per file and are never passed to mods.
 
-This layer provides preparation only. A transaction coordinator must still check
-required staffing completion, validate proposals, reject stale plans, preserve
-canonical containers and perform publication/replay at the enclosing load/joining/
-rollover boundary. The plan supplies no commit method. Worker admission, lifecycle
-wiring and complete personnel readiness retain their later Step 5 gates.
+An optional trusted `validate(prepared)` callback checks each contract before
+private native signing; a withheld contract returns False to the native caller.
+The plan records the native staffing queries still unsatisfied at the end.
+`StaffingPublication` retains only selected-person signing changes, generated
+people and new history keys. It checks the clock, roster/person data, team
+eligibility, name-pool data and history roots/keys for staleness. Existing history
+rows are borrowed and preserved. Publication keeps canonical people, roster/history
+containers and existing mutable values that native code edited in place.
+
+The private regulations `StaffingCoordinator` consumes this support and the
+installed personnel guards. Construct the staffing planner before hooks retain
+signing, then pass it and the guards to the coordinator. `onboard(...)` and
+`recover(...)` validate on the private native run and publish only complete,
+current plans under the acknowledged policy. They return a `StaffingResult`; its
+`published` field determines success, independently of native list/None results.
+No native signing is replayed. Native errors propagate with private work discarded;
+native False, policy deny and unavailable validation remain distinct.
+
+This coordinator currently requires the main thread. It installs no outer hooks.
+Enclosing load/joining/rollover mutations, worker admission, lifecycle wiring and
+complete personnel readiness retain their later Step 5 gates.
 
 ## Inspected native entry points
 

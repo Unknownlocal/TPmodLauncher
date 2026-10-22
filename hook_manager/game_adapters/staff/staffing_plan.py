@@ -14,10 +14,14 @@ class StaffingPlan:
     every attempted contract, including native refusals. ``generated`` also keeps
     unselected population seeds, still unsigned. ``history_entries`` contains only
     newly created history keys. These are trusted native objects, never mod data.
-    Validation, stale-state checks and publication belong to the later coordinator.
+    ``missing`` records native queried staffing slots still empty after planning.
+    ``publication`` holds the native writes and a stale-input check; it grants no
+    regulation permission. The consuming coordinator decides whether to publish.
     """
 
     native_result: object
     signings: tuple[StaffSigning, ...]
     generated: tuple
     history_entries: dict
+    missing: tuple = ()
+    publication: object = None

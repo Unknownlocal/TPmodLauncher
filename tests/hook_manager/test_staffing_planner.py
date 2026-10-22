@@ -21,6 +21,8 @@ def owned(monkeypatch):
             return person
 
         def onboard_joining_team_staff(self, team_name, *, contract_years=1):
+            if self.team_has_active_staff(team_name, "chief_designer", week=114):
+                return []
             person = next((person for person in self.staff if not person.retired and not person.contract), None)
             if person is None:
                 person = self._create_free_staff_for_role("chief_designer", None)
@@ -40,6 +42,10 @@ def owned(monkeypatch):
             staff.morale_effects.append({"amount": 1})
             return True
 
+        def team_has_active_staff(self, team_name, role, week=None):
+            return any(getattr(person, "role", None) == role and (person.contract or {}).get("team") == team_name
+                       for person in self.staff)
+
     manager = Manager()
     manager.refuse = False
     person = SimpleNamespace(name="Existing", role="chief_designer", nationality="GB", age=40,
@@ -50,6 +56,8 @@ def owned(monkeypatch):
     state = SimpleNamespace(game_mode="formula", season_no=3, week_index=9,
                             teams={"first": {"active": True}, "second": {"active": True}}, staff_manager=manager)
     manager.state = state
+    state.current_season_start_week = lambda: 105
+    state.next_season_start = lambda: 157
     queries = {
         "state": {"current_season_start_week": (lambda self: 105, False), "next_season_start": (lambda self: 157, False)},
         "staff": {"normalize_role": (lambda role: role, True),
@@ -57,7 +65,7 @@ def owned(monkeypatch):
     }
     monkeypatch.setattr(contracts, "staff_methods", lambda state: queries)
     methods = {name: (getattr(Manager, name), False) for name in (
-        "_create_free_staff_for_role", "onboard_joining_team_staff", "ensure_active_teams_have_staff")}
+        "_create_free_staff_for_role", "onboard_joining_team_staff", "ensure_active_teams_have_staff", "team_has_active_staff")}
     monkeypatch.setattr(staffing, "staffing_methods", lambda manager: {"staff": methods, "names": {}})
     return state, manager, person
 
