@@ -8,11 +8,20 @@ class ScrollText:
         self.bar = ui.scrollbar(align="right_inside", color_palette=ui.chrome)
         self.offset, self.key, self.lines = 0.0, None, []
         self.rect = None
+        self.wheel_step = 0
 
     def reset(self):
         self.offset = 0.0
 
     def draw(self, screen, surface, rect, blocks, font):
+        """Draw visible lines from ``(text, color)`` blocks inside ``rect``.
+
+        The rectangle uses canvas coordinates and respects the surface's existing
+        clip. ``screen`` supplies spacing; ``font`` controls wrapping and wheel
+        distance. Wrapped lines are cached, scroll position is clamped to the
+        current content, and the scrollbar is drawn inside the rectangle.
+        Updates the input bounds for ``handle_event`` and restores the surface clip.
+        """
         self.rect = rect.clip(surface.get_rect()).clip(surface.get_clip())
         if self.rect.width <= 0 or self.rect.height <= 0:
             self.rect = None
@@ -21,11 +30,14 @@ class ScrollText:
         room = max(1, self.rect.width - 2 * pad - screen.ui_gap(16, minimum=10))
         key = tuple(blocks), font, room
         # Wrapping changes only with content, font or available width. Each frame
-        # renders the visible lines, so a long refusal does not redraw every row.
+        # renders the visible lines, so a long message does not redraw every row.
         if key != self.key:
             self.lines = [(line, color) for text, color in blocks for line in self.ui.wrap(text, font, room)]
             self.key = key
         line_h = max(1, font.get_linesize() + screen.ui_gap(3, minimum=1))
+        # Follow the caller's font, rather than assuming a particular screen's
+        # small-font field. Resizing or changing fonts updates the step too.
+        self.wheel_step = font.get_linesize() * 3
         maximum = max(0, len(self.lines) * line_h + 2 * pad - self.rect.height)
         self.offset = max(0.0, min(self.offset, maximum))
         self.bar.sync(self.rect, self.offset, maximum)
@@ -55,7 +67,7 @@ class ScrollText:
             delta = 1 if event.button == 4 else -1
         pos = screen.window_to_canvas(event.pos) if hasattr(event, "pos") else screen.get_mouse_canvas_pos()
         if delta and self.bar.visible and pos is not None and self.rect.collidepoint(pos):
-            self.offset = self.bar.set_scroll(self.offset - delta * screen.small.get_linesize() * 3)
+            self.offset = self.bar.set_scroll(self.offset - delta * self.wheel_step)
             return True
         value = self.bar.handle_event(event, screen.window_to_canvas)
         if value is None:

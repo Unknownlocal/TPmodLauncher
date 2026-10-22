@@ -35,6 +35,9 @@ one group. UI incompatibility reports through the launcher reporter and leaves
 the signing integration usable. Shutdown restores both owners.
 
 A regulation refusal opens a dialog following the native driver refusal layout.
+The widgets and common native bindings come from [shared UI support](../ui/README.md).
+Personnel supplies contract wording, candidate names and pending-decision notes;
+its own bindings check the negotiation-specific helpers and layout anchors.
 The full reason also stays in Latest Response after dismissal, until a later
 native action changes the response. Native wrapping, fonts, theme and scrollbar
 helpers keep both the dialog body and inline response within fixed rectangles.

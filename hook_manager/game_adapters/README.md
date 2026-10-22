@@ -10,6 +10,7 @@ hook_manager/
   game_adapters/
     drivers/                    native driver contracts and caller behavior
     projects/                   native aero/chassis proposals and callers
+    ui/                         shared native bindings, scrollable text and dialogs
     regulations/                rule selection, validator contexts and dispatch
 ```
 
@@ -25,6 +26,10 @@ validation channel. It adds `schema`, `scope`, `operation` and `initiator`, repo
 initialization incompatibility through the trusted CLI/file reporter, and binds
 native guards. Driver/project support can be reused by another trusted adapter
 without depending on regulation dispatch.
+
+[Shared UI support](ui/README.md) provides native helper bindings and reusable
+scrollable text/dialog components. Consumers supply their wording and data, own
+their hooks and lifecycle, and check any additional screen-specific helpers.
 
 The direction is `regulations -> drivers/projects -> private callable/manager
 infrastructure`. Internal target names use `drivers.*` and `projects.*`; they are

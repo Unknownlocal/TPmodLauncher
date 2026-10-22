@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: MPL-2.0
 """Retain a full refusal after closing its dialog, without moving native controls."""
 
-from .dialog import RefusalDialog
-from .scroll_text import ScrollText
+from ...ui import ScrollableDialog, ScrollText
 
 
 class PersonnelNotice:
     def __init__(self, ui, kind):
         self.ui, self.kind, self.reason = ui, kind, None
-        self.inline, self.dialog = ScrollText(ui), RefusalDialog(ui)
+        self.inline, self.dialog = ScrollText(ui), ScrollableDialog(ui)
 
     def refuse(self, reason):
         self.reason = reason
@@ -29,6 +28,15 @@ class PersonnelNotice:
         return self.inline.handle_event(screen, event)
 
     def draw(self, screen, surface, original):
+        """Draw the native negotiation screen with persistent refusal feedback.
+
+        ``original`` draws the native screen once with no arguments; its return
+        value is preserved. Temporary helper overrides capture the response area
+        and clip native text before we repaint it with scrollable content. Native
+        fields, helpers and clipping are restored even if drawing fails.
+        Read-only screens and unrelated native modals use the native draw alone;
+        otherwise, an open refusal dialog is drawn above the completed screen.
+        """
         # Empty/read-only responses and other native modals must not leave an
         # invisible scroll target behind. Active response drawing sets fresh bounds.
         self.inline.rect = None
@@ -127,10 +135,24 @@ class PersonnelNotice:
         if rect is not None and (self.reason or factors):
             self._response(screen, surface, rect, factors)
         if self.dialog.open:
-            self.dialog.draw(screen, surface, getattr(screen, self.kind), self.reason)
+            # The shared dialog only draws supplied text; personnel owns the
+            # meaning of the pending decision and which candidate it concerns.
+            pending = (screen._pipeline_record() or {}).get("status") == "awaiting_player_confirmation"
+            footer = "The agreed contract is still awaiting your decision." if pending else "No contract was signed."
+            self.dialog.draw(screen, surface, title="Contract cannot be signed", body=self.reason,
+                             subtitle=str(getattr(screen, self.kind).name), footer=footer, font=screen.small)
         return result
 
     def _response(self, screen, surface, rect, factors):
+        """Repaint Latest Response with the refusal and all interest factors.
+
+        ``rect`` is the native panel area captured during screen drawing.
+        Staff panels include their heading here; the driver heading is already
+        drawn. ``factors`` contains native ``(label, value)`` pairs, displayed as
+        signed percentages using the driver threshold or the staff 100-point scale.
+        The shared text widget keeps the full content scrollable within the
+        remaining panel area.
+        """
         theme, pg = self.ui.theme, self.ui.pygame
         pg.draw.rect(surface, self.ui.chrome[theme.PANEL_ALT], rect, border_radius=max(1, screen.sy(6)))
         pg.draw.rect(surface, self.ui.chrome[theme.BORDER], rect, max(1, screen.sy(1)), border_radius=max(1, screen.sy(6)))
