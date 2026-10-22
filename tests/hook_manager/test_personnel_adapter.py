@@ -75,6 +75,27 @@ def owned(monkeypatch):
             self.pending.pop(decision_id)
             return True, "closed"
 
+        def resolve_due_decisions(self):
+            for rows, candidate in self.markets:
+                for row in rows:
+                    if self._execute_offer(row, candidate):
+                        break
+                self.state.writes.append("closed")
+
+        def sign_uncontested(self, candidate_type, candidate, team_name, *, signer_kind="team"):
+            ok = self._execute_offer(self.row, candidate)
+            return ok, "Native driver will not renew"
+
+        def ai_manage_drivers(self, role_phase="all"):
+            ok, reason = self.sign_uncontested("driver", self.driver, "target")
+            if not ok:
+                self._fail_ai_driver_record(self.row, reason, permanent="will not renew" in reason.lower())
+
+        def _fail_ai_driver_record(self, row, reason, *, permanent=False):
+            row.update(failure_reason=reason, permanent_block=permanent,
+                       blocked_role="reserve" if not permanent and "reserve role" in reason.lower() else None)
+            self.state.writes.append("cooldown")
+
     module.DriverManager, module.Negotiations, module.PrestigeManager = DriverManager, Negotiations, PrestigeManager
     module.StaffManager = StaffManager
     state = SimpleNamespace(writes=[], teams={"target": {}}, prestige_manager=PrestigeManager(), native_refuse=False)
@@ -95,6 +116,10 @@ def owned(monkeypatch):
     signing = target("drivers.sign", DriverManager, "sign_driver")
     callers = (target("personnel.caller.offer", Negotiations, "_execute_offer"),
                target("personnel.caller.decision", Negotiations, "resolve_player_contract_decision"),
+               target("personnel.caller.due", Negotiations, "resolve_due_decisions"),
+               target("personnel.caller.uncontested", Negotiations, "sign_uncontested"),
+               target("personnel.caller.ai_drivers", Negotiations, "ai_manage_drivers"),
+               target("personnel.caller.ai_failure", Negotiations, "_fail_ai_driver_record"),
                target("personnel.caller.personalities", DriverManager, "driver_personalities"),
                target("personnel.caller.career", DriverManager, "career_stage_modifiers"),
                target("personnel.caller.prestige", PrestigeManager, "displayed_prestige"))
@@ -105,6 +130,7 @@ def owned(monkeypatch):
 
     class Channel:
         mode = "deny"
+        message = "Owned refusal"
 
         def __init__(self):
             self._unavailable = set()
@@ -119,12 +145,56 @@ def owned(monkeypatch):
                 self._unavailable.add("owned.rules")
                 raise RuntimeError("Owned handler failed")
             return {"owned.rules": [{"decision": "allow"} if self.mode == "allow"
-                                    else {"decision": "deny", "message": "Owned refusal"}]}
+                                    else {"decision": "deny", "message": self.message}]}
 
     planner = SimpleNamespace(state=state, manager=manager,
                               prepare=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
                                                          "effective": {"season": 3}, "proposal": {}})
     return state, driver, negotiations, planner, Channel(), signing, callers
+
+
+def test_market_keeps_native_fallback_and_stops_unavailable_after_prior_completion(monkeypatch):
+    state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
+    first = {**negotiations.row, "initiated_by": "ai", "offer": {"years": 3}}
+    second = {**first, "offer": {"years": 3}}
+    negotiations.markets = [([first, second], driver), ([dict(first)], SimpleNamespace(contract=None))]
+    original_dispatch = type(channel).__call__
+    modes = iter(("deny", "allow", "failed"))
+    attempts = []
+
+    def dispatch(*args):
+        channel.mode = next(modes)
+        attempts.append(channel.mode)
+        return original_dispatch(*args)
+
+    monkeypatch.setattr(type(channel), "__call__", dispatch)
+    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    try:
+        assert negotiations.resolve_due_decisions() is None
+        assert attempts == ["deny", "allow", "failed"]
+        assert state.writes == [2, "closed"] and driver.contract == {"salary": 2}
+        assert adapter.last_outcome.status == "unavailable" and not adapter._active
+    finally:
+        adapter.stop()
+
+
+def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_failure_continue(monkeypatch):
+    for mode in ("deny", "allow", "failed"):
+        state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
+        channel.mode, state.native_refuse = mode, True
+        channel.message = "Rule says driver will not renew this reserve role contract"
+        adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+        try:
+            assert negotiations.ai_manage_drivers("reserve") is None
+            assert state.writes == ({"deny": ["cooldown"], "allow": [2, "cooldown"], "failed": []}[mode])
+            assert adapter.last_outcome.status == {"failed": "unavailable"}.get(mode, mode)
+            assert driver.contract is None and not adapter._active
+            if mode != "failed":
+                assert negotiations.row["permanent_block"] is (mode == "allow")
+                assert negotiations.row["blocked_role"] is None
+                assert negotiations.row["failure_reason"] == (channel.message if mode == "deny" else "Native driver will not renew")
+        finally:
+            adapter.stop()
 
 
 def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(monkeypatch):

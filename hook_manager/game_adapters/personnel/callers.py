@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Keep offer preparation private and stop refused player confirmations."""
+"""Keep offer preparation private and distinguish policy refusal from unavailability."""
 
 from copy import copy, deepcopy
 
 from .cancellation import PersonnelCancellation
 from .preparation import PRESTIGE_FIELDS, preparation_draft, publish_preparation
 from ..drivers.queries import DriverQueries
+
+
+# These native entry points return None, including when their work is stopped.
+_MARKET_CALLERS = {"due", "ai_staff", "ai_drivers"}
 
 
 class PersonnelCallers:
@@ -28,6 +32,8 @@ class PersonnelCallers:
             if not belongs:
                 return original(*args, **kwargs)
             previous = getattr(guards._local, "personnel_caller", None)
+            if role == "ai_failure":
+                return self._ai_failure(original, bound, previous)
             if role in ("active", "count", "status", "entries", "next_entries", "personalities", "career", "prestige"):
                 if previous is None or getattr(guards._local, "committing_personnel", False):
                     return original(*args, **kwargs)
@@ -42,7 +48,10 @@ class PersonnelCallers:
                 # Compatibility may have disabled one kind. Preserve that kind's
                 # native path while retaining guards for the compatible kind.
                 return original(*args, **kwargs)
-            frame = {"role": role, "initiator": "player", "refusal": None,
+            frame = {"role": role, "initiator": "ai" if role in _MARKET_CALLERS else "player", "refusal": None,
+                     # Driver failure handling consumes this single attempt;
+                     # it is not a cache of decisions or a retry-suppression map.
+                     "offer_attempt": None,
                      "cancel": role == "decision" and bool(values["accept"]),
                      # Nested offer execution must see the same temporary
                      # personality/prestige values as its enclosing confirmation.
@@ -65,6 +74,14 @@ class PersonnelCallers:
                 try:
                     result = original(*bound.args, **bound.kwargs)
                 except PersonnelCancellation as refused:
+                    frame["refusal"] = refused.outcome
+                    if refused.outcome.status == "unavailable" and previous is not None:
+                        # AI can ignore an inner uncontested-signing result.
+                        # Keep unwinding until its owning caller can stop too.
+                        previous["refusal"] = refused.outcome
+                        raise
+                    if role in _MARKET_CALLERS:
+                        return None
                     return False, str(refused)
                 return (False, frame["refusal"].message) if frame["refusal"] else result
             finally:
@@ -74,10 +91,36 @@ class PersonnelCallers:
                     if not frame["refusal"]:
                         publish_preparation(frame)
                 finally:
+                    if previous is not None:
+                        # The outer AI must associate failure with the offer that
+                        # just returned, including a native precheck/no refusal.
+                        previous["offer_attempt"] = frame["offer_attempt"]
                     guards._local.personnel_caller = previous
                     with guards._lock:
                         guards._active -= 1
         return wrapped
+
+    def _ai_failure(self, original, bound, frame):
+        if frame is None or frame["role"] != "ai_drivers":
+            return original(*bound.args, **bound.kwargs)
+        attempt = frame["offer_attempt"]
+        # Consume even a nonmatching attempt: a later native precheck must not
+        # inherit policy denial from an earlier row or use it a second time.
+        frame["offer_attempt"] = None
+        row = bound.arguments["row"]
+        if (attempt is None or attempt[0] is not row or attempt[1] is None
+                or attempt[1].status != "deny"):
+            return original(*bound.args, **bound.kwargs)
+        # Native code turns 'will not renew' and 'reserve role' into eligibility
+        # blocks. Give its classifier trusted text for policy denial, while it
+        # still calculates the ordinary cooldown. Genuine native failures bypass.
+        bound.arguments.update(reason="Regulation policy denied", permanent=False)
+        try:
+            return original(*bound.args, **bound.kwargs)
+        finally:
+            # Keep the complete mod reason for UI/records. The native debug entry
+            # uses the generic marker supplied to its classifier above.
+            row["failure_reason"] = attempt[1].message
 
     def _offer(self, original, bound, frame, previous):
         row = bound.arguments["row"]
@@ -96,6 +139,8 @@ class PersonnelCallers:
         try:
             result = original(*bound.args, **bound.kwargs)
         finally:
+            # Match the caller's original record, never the private offer draft.
+            frame["offer_attempt"] = row, frame["refusal"]
             if frame["refusal"]:
                 row["execution_block_reason"] = frame["refusal"].message
             else:
@@ -114,10 +159,14 @@ class PersonnelCallers:
                 for key in ("offer_score", "execution_block_reason"):
                     if key in draft:
                         row[key] = draft[key]
-        if frame["refusal"] and previous and (previous["cancel"] or previous["role"] == "uncontested"):
-            previous["refusal"] = frame["refusal"]
-            if previous["cancel"]:
-                # Native player acceptance tries backups and closes the decision
-                # after False. A guard refusal must stop before those writes.
-                raise PersonnelCancellation(frame["refusal"].message)
+        refusal = frame["refusal"]
+        if refusal and previous:
+            unavailable = refusal.status == "unavailable"
+            if unavailable or previous["cancel"] or previous["role"] == "uncontested":
+                previous["refusal"] = refusal
+            if unavailable or previous["cancel"]:
+                # Player acceptance would try backups and close after False.
+                # Unavailability must also stop automated failure/closing logic;
+                # an automated policy denial still follows native alternatives.
+                raise PersonnelCancellation(refusal)
         return result

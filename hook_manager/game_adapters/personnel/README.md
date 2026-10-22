@@ -25,8 +25,30 @@ the game would have performed. Mod refusal discards them.
 
 Player acceptance treats mod refusal differently from native `False`: native
 `False` tries backups and closes the decision, while refusal must return its reason
-with the decision still pending. `PersonnelCancellation` unwinds only that checked
-acceptance path. Explicit declines retain native cleanup and backup behavior.
+with the decision still pending. `PersonnelCancellation` carries the trusted
+outcome through checked caller boundaries. Policy refusals retain the existing
+player-acceptance cancellation; explicit declines keep native backup behavior.
+
+Deadline resolution and staff/driver AI also run through caller hooks. Policy
+denial returns the ordinary signing failure value so native ranking, alternative
+offers and cooldown calculation remain in charge. Driver AI failure classification
+receives a trusted generic reason for a policy-denied offer, so phrases in mod
+messages cannot create native permanent or role-specific eligibility blocks. The
+full mod message is retained on the failed record; native failure debug output
+uses the generic policy marker. Attribution is limited to the just-completed row
+and consumed once. Genuine native failures keep their original classification.
+If required validation is
+unavailable, cancellation passes through nested uncontested signing to the owning
+caller, which retains its native `None` return. This stops later attempts and
+post-sign failure/closing logic; it does not turn unavailability into a losing
+offer. A direct offer call still returns its native boolean and exposes the
+structured validation outcome separately.
+
+These hooks stop execution at the refused attempt. Earlier completed candidates
+remain committed, and native preparation before that attempt may already have
+changed market records or emitted notifications. Candidate-state isolation and
+publication, repeated-proposal suppression and outer career transactions remain
+separate work. No offer-selection algorithm is reimplemented here.
 
 `feedback/` owns optional driver/staff negotiation presentation separately from
 signing. It observes ordinary screen imports and checks native helper signatures;
@@ -60,9 +82,9 @@ boundaries; they do not install transaction handling or open personnel admission
 | `StaffManager.onboard_joining_team_staff` | Creates free staff/history before signing; returns successful names. A rejected signing can leave generated people behind. |
 | `StaffManager.ensure_active_teams_have_staff` | Seeds missing staff, ignores the signing boolean and returns `None`. Generation/selection must be prepared before required staffing is admitted. |
 | `StaffManager.ensure_active_suppliers_have_head_of_engine` | Requests supplier approaches through personnel negotiation; it does not directly create/sign replacement staff. |
-| `PersonnelNegotiationManager.resolve_due_decisions` | Normalizes/ranks offers, tries alternatives, then closes the market and removes its deadline. Native signing failure, policy denial and unavailable validation need distinct caller outcomes. |
-| `PersonnelNegotiationManager.ai_manage_staff` | Ignores uncontested signing results; a denied acceptable offer stays open and can be retried on later invocations. |
-| `PersonnelNegotiationManager.ai_manage_drivers` | Reserve offers can sign immediately; main-driver final offers wait for deadline resolution. Preserve native failure reasons and fallback/cooldown behavior. |
+| `PersonnelNegotiationManager.resolve_due_decisions` | Native ranking/fallback remains active after policy/native refusal. Unavailability now stops before market closure/deadline removal for that attempt. Preparation/publication remains pending. |
+| `PersonnelNegotiationManager.ai_manage_staff` | A policy-denied acceptable offer keeps native continuation and can be retried later. Unavailability now unwinds the ignored uncontested result before later approach passes. |
+| `PersonnelNegotiationManager.ai_manage_drivers` | Reserve offers can sign immediately; main-driver final offers wait for deadline resolution. Unavailability stops before failure handling. Policy denial uses ordinary native cooldown without inferring eligibility from mod prose; genuine native refusal retains native classification. |
 
 Team recovery loops are finite in the inspected code, although the same unsigned
 candidate can be attempted for multiple teams. A policy-denied offer may have a

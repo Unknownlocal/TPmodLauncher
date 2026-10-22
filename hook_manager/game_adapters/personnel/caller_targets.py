@@ -16,6 +16,14 @@ _PERSONNEL_CALLERS = (
      "(self, decision_id: 'str', accept: 'bool') -> 'Tuple[bool, str]'"),
     ('offer', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', '_execute_offer',
      "(self, row: 'Dict[str, Any]', candidate: 'Any') -> 'bool'"),
+    ('due', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'resolve_due_decisions',
+     "(self) -> 'None'"),
+    ('ai_staff', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'ai_manage_staff',
+     "(self) -> 'None'"),
+    ('ai_drivers', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'ai_manage_drivers',
+     "(self, role_phase: 'str' = 'all') -> 'None'"),
+    ('ai_failure', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', '_fail_ai_driver_record',
+     "(self, row: 'Dict[str, Any]', reason: 'str', *, permanent: 'bool' = False) -> 'None'"),
     ('active', 'managers.driver', 'DriverManager', 'active_contract',
      '(self, driver: managers.driver.Driver, week: Optional[int] = None) -> Optional[Dict[str, Any]]'),
     ('count', 'managers.driver', 'DriverManager', 'active_driver_count',
@@ -38,8 +46,10 @@ _PERSONNEL_CALLERS = (
 def personnel_caller_targets(kinds):
     # A staff-only integration needs the common negotiation/prestige methods,
     # but must not depend on driver-only modules completing or remaining compatible.
-    shared = {"uncontested", "decision", "offer", "prestige"}
+    shared = {"uncontested", "decision", "offer", "prestige", "due", "ai_staff"}
+    # The driver branch includes driver queries/AI/failure classification. Its
+    # final filter excludes staff AI when only driver support is compatible.
     return tuple(CallableTarget("personnel.caller." + role, module, (owner,), method, signature)
                  for role, module, owner, method, signature in _PERSONNEL_CALLERS
-                 if "driver" in kinds or role in shared)
+                 if ("driver" in kinds or role in shared) and (role != "ai_staff" or "staff" in kinds))
 
