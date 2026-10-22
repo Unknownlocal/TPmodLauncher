@@ -49,3 +49,29 @@ objects or registration API are exposed to mods. Academy feedback is separate.
 Enclosing market batches, recovery, takeover/merge, load/activation/rollover and
 academy behavior remain separate coverage gates. This package installs nothing
 on import and grants no callable-target access to mods.
+
+## Remaining caller boundaries
+
+Native caller inspection and owned-code prototypes establish these remaining
+boundaries; they do not install transaction handling or open personnel admission.
+
+| Caller | Behavior the enclosing integration must handle |
+| --- | --- |
+| `StaffManager.onboard_joining_team_staff` | Creates free staff/history before signing; returns successful names. A rejected signing can leave generated people behind. |
+| `StaffManager.ensure_active_teams_have_staff` | Seeds missing staff, ignores the signing boolean and returns `None`. Generation/selection must be prepared before required staffing is admitted. |
+| `StaffManager.ensure_active_suppliers_have_head_of_engine` | Requests supplier approaches through personnel negotiation; it does not directly create/sign replacement staff. |
+| `PersonnelNegotiationManager.resolve_due_decisions` | Normalizes/ranks offers, tries alternatives, then closes the market and removes its deadline. Native signing failure, policy denial and unavailable validation need distinct caller outcomes. |
+| `PersonnelNegotiationManager.ai_manage_staff` | Ignores uncontested signing results; a denied acceptable offer stays open and can be retried on later invocations. |
+| `PersonnelNegotiationManager.ai_manage_drivers` | Reserve offers can sign immediately; main-driver final offers wait for deadline resolution. Preserve native failure reasons and fallback/cooldown behavior. |
+
+Team recovery loops are finite in the inspected code, although the same unsigned
+candidate can be attempted for multiple teams. A policy-denied offer may have a
+legal alternative; unconditionally aborting every fallback would suppress it.
+Unavailable validation must remain distinguishable without matching reason text.
+
+Recovery is also called after staff load, and joining-team onboarding runs after
+season changes during rollover. Local signing cancellation alone cannot guarantee
+whole-load or whole-rollover admission. [Staffing preparation](../staff/README.md)
+now captures native onboarding/recovery choices with canonical existing/generated
+person refs and private generation/history. Publication, stale-plan checks, outer
+transactions and worker acceptance remain to be implemented and verified.

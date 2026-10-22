@@ -21,6 +21,38 @@ negative amounts; an absent bonus object leaves the amounts null. These differ
 from driver signing and remain in the staff planner. Shared record formatting
 lives in `../employment.py`; regulation policy remains mod-owned Python code.
 
+## Required team staffing preparation
+
+`StaffingPlanner(state)` in `staffing.py` prepares native joining-team onboarding
+or missing-staff recovery. Construct it after native imports complete and before
+signing hooks acquire their methods, like the existing contract planner. Each
+`prepare_onboarding(team, contract_years=1)` or `prepare_recovery(roles=None)` call
+uses a fresh private manager/roster and retains checked native generation, ranking,
+name-pool and signing behavior. It installs no wrappers or regulation dispatcher.
+
+Existing people, teams, name lists and historical rows are read by the inspected
+queries. Roster/history roots are copied; a selected person is copied once before
+private signing. Subsequent choices see that planned contract. Generated people
+are retained separately in their unsigned state, including unselected population
+seeds. Neither native effects nor generation are published to the live career.
+Preparation supports the native team recovery path that bypasses ordinary prestige
+requirements; a newly introduced supplier or prestige-checking signing path is
+rejected before it can run against borrowed owner data.
+
+The result is a private `StaffingPlan` with the native list/`None` result, ordered
+`StaffSigning` attempts, generated people and newly added history keys. Each attempt
+keeps canonical manager/person arguments, owned normalized `prepared` proposal data
+and a `native_accepted` flag. Existing person/employer refs match live objects;
+generated refs match the retained unsigned objects. The flag records native
+planning success, not permission from a regulation validator. These models have
+one class per file and are never passed to mods.
+
+This layer provides preparation only. A transaction coordinator must still check
+required staffing completion, validate proposals, reject stale plans, preserve
+canonical containers and perform publication/replay at the enclosing load/joining/
+rollover boundary. The plan supplies no commit method. Worker admission, lifecycle
+wiring and complete personnel readiness retain their later Step 5 gates.
+
 ## Inspected native entry points
 
 The line numbers below are inspection references, not runtime selectors. Runtime
