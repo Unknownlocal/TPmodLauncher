@@ -1,140 +1,40 @@
-# Shared native personnel negotiation support
+# Shared personnel negotiations
 
-Driver and staff employment share the game's offer execution, uncontested signing
-and player confirmation methods. This package supplies one caller catalogue and
-one `PersonnelCallers` instance for those methods, preventing competing wrappers.
-It imports no regulation dispatcher, mod definitions, launcher or sandbox runtime.
+Driver and staff negotiations use many of the same game functions. This package
+gives `PersonnelAdapter` one shared set of wrappers for offers, deadlines, AI
+choices and player confirmations. It handles the game's records and presentation;
+rule selection and mod checks belong to the
+[regulation adapter](../regulations/README.md).
 
-The consuming `PersonnelAdapter` lives under `../regulations/`. It owns rule
-selection and validation; this package owns native preparation and cancellation.
-Driver-specific query isolation remains in `../drivers/queries.py`. Common contract
-formatting remains in `../employment.py`; the two native planners stay separate.
+## Main parts
 
-Regulation validation applies when a new contract is signed or renewed, including
-an agreement starting in a future season. Once accepted, that stored agreement is
-not submitted for another custom approval when loaded or activated. The native
-weekly activation methods retain contract promotion, normalization, team setters,
-cache invalidation and career callbacks. There is no activation planner or guard.
-New signings initiated during recovery or rollover still need signing coverage.
+- [callers.py](callers.py): `PersonnelCallers` wraps the shared negotiation
+  functions. [caller_targets.py](caller_targets.py) identifies those functions,
+  and [preparation.py](preparation.py) holds temporary changes made by their
+  scoring and eligibility helpers.
+- [market_preparation.py](market_preparation.py): `MarketPreparation` keeps draft
+  offers, deadlines, pending confirmations and mail separate from live records.
+  Completed market actions can be applied as the batch progresses; a later
+  interruption discards the remaining drafts.
+- [market_graph.py](market_graph.py): `MarketGraph` copies related records together
+  so references to the same offer still refer to one offer. Applying changes
+  preserves the game's original dictionaries and lists.
+- [market_mail.py](market_mail.py): `MarketMail` keeps messages with the offer that
+  produced them, so unfinished work does not send premature mail.
+- [cancellation.py](cancellation.py): `PersonnelCancellation` carries a refusal
+  back to the caller responsible for the action.
 
-`caller_targets.py` includes the shared methods plus driver-specific proposal and
-query methods when driver support is active. `preparation_methods.py` checks their
-exposed call signatures. Inspected staff commitment and prestige-skill queries
-are read-only; team prestige getters can initialize
-fields, which `preparation.py` holds until signing is allowed.
+## Decisions and feedback
 
-`callers.py` copies only offer/context data, preserving aliases. The staff branch
-can also set `_oval_target_entry_id` even in Formula mode: when such a hint is
-present, it uses a shallow staff copy for the pre-sign caller. The signing guard
-restores the real staff argument, then publishes the hint only on allowance.
-An ordinary native precheck failure retains the same hint/getter initialization
-the game would have performed. Mod refusal discards them.
+A mod refusal keeps a player confirmation pending. A refusal from the game's own
+signing method retains its normal handling of alternative offers. If a required
+mod check cannot run, the caller stops rather than treating that failure as an
+ordinary rejected offer. Completed signings are not undone.
 
-Player acceptance treats mod refusal differently from native `False`: native
-`False` tries backups and closes the decision, while refusal must return its reason
-with the decision still pending. `PersonnelCancellation` carries the trusted
-outcome through checked caller boundaries. Policy refusals retain the existing
-player-acceptance cancellation; explicit declines keep native backup behavior.
+[feedback/](feedback/) uses the [shared UI components](../ui/README.md) to show
+refusal dialogs and retain the reason in the scrollable Latest Response panel.
+Its screen wrappers are separate from signing checks.
 
-Deadline resolution and staff/driver AI also run through caller hooks. Policy
-denial returns the ordinary signing failure value so native ranking, alternative
-offers and cooldown calculation remain in charge. Driver AI failure classification
-receives a trusted generic reason for a policy-denied offer, so phrases in mod
-messages cannot create native permanent or role-specific eligibility blocks. The
-full mod message is retained on the failed record; native failure debug output
-uses the generic policy marker. Attribution is limited to the just-completed row
-and consumed once. Genuine native failures keep their original classification.
-If required validation is
-unavailable, cancellation passes through nested uncontested signing to the owning
-caller, which retains its native `None` return. This stops later attempts and
-post-sign failure/closing logic; it does not turn unavailability into a losing
-offer. A direct offer call still returns its native boolean and exposes the
-structured validation outcome separately.
-
-`MarketPreparation` gives each outer caller one private native manager/state view.
-Market records, deadlines, proposals, pending confirmations and mailbox data are
-copied together by `MarketGraph`, retaining aliases such as an offer shared with
-its context. Native closing, confirmation staging and AI failure handling publish
-completed candidate work. Later unavailability discards pending preparation while
-keeping those checkpoints. Existing records retain their diagnostic refusal text;
-an unpublished new record is not created solely to store that text.
-
-Publication preserves canonical dictionary/list identities and separates newly
-published containers from the working view. Checkpoints publish the completed
-candidate's stores and individual records the game has failed or cancelled,
-including driver backups released by a filled seat. Other offers for those backup
-candidates stay private. This also retains staff rejections made inline by native
-AI code, without needing another completion helper. Market cancellation excludes
-the blocked offer; earlier rejections by other teams remain complete, even for the
-same person. A player-confirmation decision excludes that person's whole group,
-including an explicit decline awaiting a backup.
-Only native deadline removals for the completed records are retained;
-normal caller completion performs a final publication. Native mailbox methods run
-on a private owner, including mail sent by live native signing. `MarketMail` records
-which row sent a message while native notification, debug, offer and completion
-helpers run. A checkpoint publishes that row's messages and urgent-mail counter
-contribution. Pending notifications, edits to messages from before this view and
-mail outside those helpers wait for normal publication. Native save calls through the view
-publish before saving.
-Player-decline relationship adjustments wait for completion, so an unavailable
-backup validator cannot leave a penalty behind with a still-pending confirmation.
-Native code still calculates the adjustment and its existing error handling is
-retained.
-
-This protects market preparation; allowed native contract/financial effects still
-run on real people and teams. It does not make an enclosing week, load or rollover
-atomic. Nested callers share operation-local validation storage for the consuming
-adapter's refusal history. That integration can suppress unchanged duplicate
-policy checks while native prechecks, selection and fallback still run. The
-storage ends with the outer caller; no denial persists across operations. Outer
-career/worker admission retains its later gate. No offer-selection algorithm is
-reimplemented here.
-
-`feedback/` owns optional driver/staff negotiation presentation separately from
-signing. It observes ordinary screen imports and checks native helper signatures;
-it never imports a screen to install hooks. Each kind installs its UI wrappers as
-one group. UI incompatibility reports through the launcher reporter and leaves
-the signing integration usable. Shutdown restores both owners.
-
-A regulation refusal opens a dialog following the native driver refusal layout.
-The widgets and common native bindings come from [shared UI support](../ui/README.md).
-Personnel supplies contract wording, candidate names and pending-decision notes;
-its own bindings check the negotiation-specific helpers and layout anchors.
-The full reason also stays in Latest Response after dismissal, until a later
-native action changes the response. Native wrapping, fonts, theme and scrollbar
-helpers keep both the dialog body and inline response within fixed rectangles.
-All interest factors remain reachable by scrolling, rather than retaining the
-native nine-row limit or dropping rows at the panel edge. Native action controls
-keep their positions. Feedback is held by weak screen references; no UI methods,
-objects or registration API are exposed to mods. Academy feedback is separate.
-
-Enclosing market batches, recovery, takeover/merge, new signings during load or
-rollover, and academy behavior remain separate coverage gates. Carrying forward
-accepted contracts remains native. This package installs nothing on import and
-grants no callable-target access to mods.
-
-## Remaining caller boundaries
-
-Native caller inspection and owned-code prototypes establish these remaining
-boundaries; they do not install transaction handling or open personnel admission.
-
-| Caller | Behavior the enclosing integration must handle |
-| --- | --- |
-| `StaffManager.onboard_joining_team_staff` | Creates free staff/history before signing; returns successful names. A rejected signing can leave generated people behind. |
-| `StaffManager.ensure_active_teams_have_staff` | Seeds missing staff, ignores the signing boolean and returns `None`. Generation/selection must be prepared before required staffing is admitted. |
-| `StaffManager.ensure_active_suppliers_have_head_of_engine` | Requests supplier approaches through personnel negotiation; it does not directly create/sign replacement staff. |
-| `PersonnelNegotiationManager.resolve_due_decisions` | Native ranking/fallback remains active. Candidate checkpoints keep completed records, mail and deadline cleanup when later unavailability discards remaining preparation. |
-| `PersonnelNegotiationManager.ai_manage_staff` | A policy-denied acceptable offer keeps native continuation and can be retried later. Unavailability now unwinds the ignored uncontested result before later approach passes. |
-| `PersonnelNegotiationManager.ai_manage_drivers` | Reserve offers can sign immediately; main-driver final offers wait for deadline resolution. Unavailability stops before failure handling. Policy denial uses ordinary native cooldown without inferring eligibility from mod prose; genuine native refusal retains native classification. |
-
-Team recovery loops are finite in the inspected code, although the same unsigned
-candidate can be attempted for multiple teams. A policy-denied offer may have a
-legal alternative; unconditionally aborting every fallback would suppress it.
-Unavailable validation must remain distinguishable without matching reason text.
-
-Recovery is also called after staff load, and joining-team onboarding runs after
-season changes during rollover. Local signing cancellation alone cannot guarantee
-whole-load or whole-rollover admission. [Staffing preparation](../staff/README.md)
-now captures native onboarding/recovery choices with canonical existing/generated
-person refs and private generation/history. Publication, stale-plan checks, outer
-transactions and worker acceptance remain to be implemented and verified.
+Driver and staff proposal calculations stay in their respective packages.
+Accepted future contracts are not checked again when loaded or activated.
+Importing this package installs nothing; it exposes no game-function API to mods.
