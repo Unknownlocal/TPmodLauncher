@@ -40,6 +40,9 @@ EXPORTS = MappingProxyType({
     "discard-regulation-action": (("u64",), None),
 })
 SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
+           "source/_loading/__init__.py", "source/_loading/author_world.py",
+           "source/_loading/memory_importer.py", "source/_loading/source_loader.py",
+           "source/_loading/runner_bindings.py",
            "source/_regulations/__init__.py", "source/_regulations/policy.py",
            "source/_regulations/handlers.py", "source/_regulations/values.py",
            "source/_regulations/transfer.py", "source/_regulations/catalog.py",

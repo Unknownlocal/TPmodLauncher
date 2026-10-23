@@ -1,18 +1,19 @@
 # Mod runtime architecture
 
 `mod_runtime` owns the trusted Python runner and source loading. It runs author
-Python inside Wasm in the external launcher. Each mod has its own interpreter
-state, memory, Store and permissions, while identical compiled runner code is
-shared on the execution thread. Author source is never imported into the launcher
-or game interpreter.
+Python inside Wasm in the external launcher. Each mod has its own Wasmtime Store,
+which holds its Python interpreter, memory and execution state. Mods have separate
+permissions, while identical compiled runner code is shared on the execution
+thread. Author source is never imported into the launcher or game interpreter.
 
 ## Runner files and verification
 
-`bundle.py` defines the runner's private interface and checks the bounded inventory
-of Wasm, trusted source and upstream notices. Installed bundles live under
-`libs/mod-runners`. Every component read rechecks its bytes. Release copying
-publishes the accepted receipt last into a fresh directory. Trust in that receipt
-comes from the launcher distribution.
+`bundle.py` defines the runner's private interface and checks its Wasm, trusted
+source and upstream notices against the file list, sizes and hashes in
+`bundle.json`. Installed bundles live under `libs/mod-runners`. Every component
+read checks its bytes again. Release copying writes `bundle.json` last into a
+new directory, so incomplete copies cannot pass verification. The launcher
+distribution supplies this file and the contents it describes.
 
 `build.py` builds the fixed `guest.py` and source/regulation helpers against
 `0.4.0/runner.wit` using the pinned developer component builder. It checks the
@@ -38,11 +39,22 @@ its existing module names before loading author files.
 
 ## Guest loading and execution
 
-`guest.py` loads author modules from guest memory. Its fixed standard library
-includes `json`, `math` and `os` with their runtime dependencies. The `wit_world`
-facade exposes the author base class, diagnostics, menu, UI settings and palette
-operations. Trusted host providers own native registration and persistence.
-Source transfer and loading remain private host operations.
+`guest.py` is the fixed build entry. It makes `json`, `math` and `os` available
+to author imports, installs the `wit_world` API and exposes the private runner
+exports. Modules under `_loading/` handle source and lifecycle state inside Wasm:
+
+| Module under `_loading/` | Responsibility |
+| --- | --- |
+| `author_world.py` | Supply the author base class and `wit_world` host operations |
+| `memory_importer.py` | Import modules and packages from transferred source |
+| `source_loader.py` | Limit source transfer, load the entry object and track activation |
+| `runner_bindings.py` | Route private exports to the loader and retained regulations |
+
+Each Store retains one `SourceLoader` with its source table and entry object.
+`MemoryImporter` reads that same table. The `wit_world` API exposes diagnostics,
+menu, UI settings and palette operations. Trusted host providers own native
+registration and persistence. Source transfer and loading remain private host
+operations.
 
 `runtime.py` transfers one checked source snapshot in bounded UTF-8 chunks,
 then imports it inside Wasm. Transfer and import share an aggregate fuel,
@@ -51,7 +63,7 @@ activation and later events retain ordinary call budgets. Activation is explicit
 A failure closes the instance and releases its owned registrations.
 
 `launcher/source_mod.py` applies the launcher's lifecycle, bounded JSON events
-and host-owned diagnostic/UI identity to the runner. Prepared code is adopted
+and host-owned diagnostic/UI identity to the runner. Prepared code is used
 only when its portable bytes match a fresh read of the verified runner.
 
 ## Resident regulation validation
