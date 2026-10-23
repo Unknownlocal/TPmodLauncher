@@ -10,42 +10,12 @@ selection and validation; this package owns native preparation and cancellation.
 Driver-specific query isolation remains in `../drivers/queries.py`. Common contract
 formatting remains in `../employment.py`; the two native planners stay separate.
 
-## Preparing future employment activation
-
-`ActivationPlanner(state, kinds=("driver", "staff"))` prepares proposals for the
-native weekly future-contract activation methods. Construct it after native
-imports complete and before those methods are intercepted. `prepare(week,
-evaluation_season=...)` returns `ContractActivation` records containing canonical
-people and owned `clock`, `effective` and `proposal` data. Each proposal's action
-is `activate`; the regulation consumer can supply that same operation in its
-context. This metadata is already supported by the private validator envelope.
-
-Native activation decides which stored agreements are due and normalizes driver
-status, including its caught-error behavior. It runs on a plain private state
-view, shallow person copies and shared copies of future agreement containers.
-Setters are observed to capture the contracts; actual team setters, cache
-invalidation and career callbacks do not execute. Existing contracts remain
-read-only inputs. No signing calculation reconstructs dates, duration or money.
-
-The current career clock stays unchanged. Preparing a different season requires
-an explicit evaluation season, checked with the retained native calendar. Team
-and supplier references identify original game owners. Missing, ambiguous or
-unprojectable due agreements reject preparation without live changes; a stored
-staff owner key shared by a team and supplier cannot identify a unique employer.
-Kinds are checked independently, so staff preparation needs no driver imports.
-
-The planner itself does not validate or activate contracts. The private
-`ActivationCoordinator` in `../regulations/activation_coordinator.py` now validates
-the complete due set, checks policy and input staleness, and runs the retained
-native activation bodies on live people. Its personnel reservation covers the
-initial snapshot through execution. `ActivationSnapshot` checks calendar, roster,
-person/contract data and employer identities without serializing game data.
-
-This coordinator is main-thread only and does not advance the week. An enclosing
-caller must invoke it before unrelated career mutations, check its boolean result
-and handle `last_outcome` on refusal. Native exceptions propagate once; already
-performed native effects retain native failure behavior. Week/load/rollover hooks,
-worker admission and startup wiring retain their later gates.
+Regulation validation applies when a new contract is signed or renewed, including
+an agreement starting in a future season. Once accepted, that stored agreement is
+not submitted for another custom approval when loaded or activated. The native
+weekly activation methods retain contract promotion, normalization, team setters,
+cache invalidation and career callbacks. There is no activation planner or guard.
+New signings initiated during recovery or rollover still need signing coverage.
 
 `caller_targets.py` includes the shared methods plus driver-specific proposal and
 query methods when driver support is active. `preparation_methods.py` checks their
@@ -138,9 +108,10 @@ native nine-row limit or dropping rows at the panel edge. Native action controls
 keep their positions. Feedback is held by weak screen references; no UI methods,
 objects or registration API are exposed to mods. Academy feedback is separate.
 
-Enclosing market batches, recovery, takeover/merge, load/activation/rollover and
-academy behavior remain separate coverage gates. This package installs nothing
-on import and grants no callable-target access to mods.
+Enclosing market batches, recovery, takeover/merge, new signings during load or
+rollover, and academy behavior remain separate coverage gates. Carrying forward
+accepted contracts remains native. This package installs nothing on import and
+grants no callable-target access to mods.
 
 ## Remaining caller boundaries
 

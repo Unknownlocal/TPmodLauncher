@@ -5,9 +5,9 @@ from ...manager import HookError
 
 
 def regulation_context(scope, prepared, *, initiator="unknown", operation="commit"):
-    # Activation checks describe a stored agreement taking effect. The private
-    # validator envelope already recognizes that operation alongside new commits.
-    if initiator not in ("player", "ai", "system", "unknown") or operation not in ("preview", "commit", "activate"):
+    # These adapters check proposed actions. An accepted employment agreement
+    # taking effect later is native lifecycle work, not another proposal.
+    if initiator not in ("player", "ai", "system", "unknown") or operation not in ("preview", "commit"):
         raise HookError("Unsupported regulation proposal context")
     # Native planners own the calculations and returned data. Add only invocation
     # metadata here; every subscribing rule receives the same prepared proposal.

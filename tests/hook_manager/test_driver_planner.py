@@ -68,6 +68,8 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     proposal["proposed"]["bonuses_m"]["point"] = 99
     preview = regulation_context("personnel.contract", planner.prepare(arguments), operation="preview")
     assert preview["operation"] == "preview" and preview["proposal"]["proposed"]["bonuses_m"]["point"] == .1
+    with pytest.raises(HookError, match="Unsupported regulation proposal context"):
+        regulation_context("personnel.contract", prepared, operation="activate")
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"])
 
     class CustomBonus:

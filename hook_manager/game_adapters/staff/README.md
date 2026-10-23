@@ -92,8 +92,8 @@ inspection provenance only. No compiled engine or executable is modified.
 | `StaffManager.onboard_joining_team_staff` (1614) | Uses signing and checks its result, but can create candidates beforehand. Enclosing transaction coverage remains required. |
 | `StaffManager.ensure_active_teams_have_staff` (1701) | Uses signing without checking its result. A signing refusal alone cannot cancel recovery bookkeeping. |
 | `StaffManager.transfer_head_of_engine_contract` (752) | Reassigns current/future contract owners directly. Called by `GameState._apply_engine_takeover` and `EngineManager._merge_external_supplier_into_works_team`; needs enclosing transaction coverage. |
-| `StaffManager.load` (300), `rollover_season` (1433) | Direct contract writes; rollover changes age/skills before activation. Require load/rollover preflight before mutations. |
-| `GameState._activate_future_staff_contracts` (11953), `finalize_and_rollover_season` (13396) | Activation and fallback writes bypass signing. Shared preparation and private regulation coordination now validate weekly activation before native effects; enclosing week/load/rollover hooks and fallback writes remain release gates. |
+| `StaffManager.load` (300), `rollover_season` (1433) | Restore/advance existing records and update age/skills natively. Enclosing recovery can initiate new signings, which still need guarded caller handling. |
+| `GameState._activate_future_staff_contracts` (11953), `finalize_and_rollover_season` (13396) | Weekly activation promotes accepted agreements without another custom approval. Rollover can also create new employment; its signing and fallback caller coverage remain pending. |
 | `StaffManager.enforce_head_of_engine_eligibility` (727) | Can remove agreements during load/season/engine-plant configuration. Must be included in enclosing transition checks. |
 
 `PersonnelAdapter.create` in `../regulations/personnel_adapter.py` consumes this

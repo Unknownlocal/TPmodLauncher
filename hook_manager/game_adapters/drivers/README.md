@@ -19,9 +19,9 @@ The mapping below was re-read from the current installed archive.
 | `PersonnelNegotiationManager.accept_player_driver_proposal`, line 1702 | Converts proposal fields and requests next-season signing. It handles `False` before accepted/viewed/save writes at 1766 onward. Entry-specific branches belong to Oval, outside this mapper. |
 | `PersonnelNegotiationManager._execute_offer`, line 4136 | Normalizes rookie offer duration before signing. It returns the signing boolean and records a final-validation reason on refusal. Enclosing offer resolution still needs transaction/caller checks. |
 | `submit_offer`, line 2182; `ai_manage_drivers`, line 3435 | Offer/market flows converge through negotiation execution. A submitted offer is not a final contract, and incomplete approaches cannot authorize signing. |
-| `GameState._activate_future_driver_contracts`, line 11939 | Activates contracts directly during week advancement, bypassing signing. Shared preparation and private regulation coordination now validate the due set before native activation; enclosing week/load/rollover hooks remain pending. |
+| `GameState._activate_future_driver_contracts`, line 11939 | Promotes already accepted agreements during week advancement. Remains native, including normalization, team changes and cache/callback effects; no second custom approval. |
 | `GameState.finalize_and_rollover_season`, line 13396 | Contains fallback signing and direct active/future assignments. Return values, roster recovery and decorator/worker mutations remain later acceptance work. |
-| Initial/load/exit paths | `DriverManager.load_initial` 668 and `load` 832 restore records directly. Retirement, fatalities, firing and expiration remove agreements; status scheduling also modifies records outside signing. Restore/activation and reassignment coverage remain release gates. |
+| Initial/load/exit paths | `DriverManager.load_initial` 668 and `load` 832 restore records directly. Retirement, fatalities, firing and expiration remove agreements; status scheduling also modifies records outside signing. Restoring accepted records remains native; genuinely new signings in enclosing lifecycle paths still need caller coverage. |
 
 ## Preparing terms
 
@@ -79,8 +79,9 @@ Player acceptance uses private cancellation before native backup/decision-closin
 writes. Native failures and explicit declines keep native fallback behavior.
 The consumers own subscriptions, dispatch and the decision to allow or deny.
 
-The wider market-resolution batch, week/season activation, rollover, restore,
-academy paths and direct staff ownership transfers remain release gates for regulation integration.
+The wider market-resolution batch, new signings during load/rollover, academy
+paths and direct staff ownership transfers remain release gates for regulation
+integration. Accepted-contract activation itself needs no custom validation.
 See [the regulation consumer](../regulations/README.md) for current guard behavior.
 
 Optional ignored `tools/regulations/check_driver_plans.py` and

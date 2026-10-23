@@ -44,7 +44,7 @@ paths and signatures. Native archive tooling and evidence stay local/ignored.
 | `AcademyManager.ai_sign_drivers` (922) | Academy normalization, `ai_last_sign_season`, query inputs and random draws use private preparation state. Each signing attempt crosses the live guard; refused local pool removal cannot change career data. |
 | `AcademyManager.ai_renew_contracts` (1138) | Its ignored result is safe because all preparation is private; only the guarded live renewal can change membership. |
 | `AcademyManager.progress_season` (778), `sync_driver_links` (819) | Normalize/expire membership, bill retainers and restore links directly. Initial/load/rollover admission needs enclosing preflight. |
-| `AcademyManager.arrange_seat` (587), `apply_main_series_placements` (431) | Write placements and employment contracts directly, bypassing ordinary signing. Must join later employment/activation transaction coverage. |
+| `AcademyManager.arrange_seat` (587), `apply_main_series_placements` (431) | Write placements and employment contracts directly, bypassing ordinary signing. Newly created employment needs later signing integration; carrying forward accepted agreements remains native. |
 | `AcademyManager.release_driver` (716), `_clear_driver` (747), `release_team` (765) | Remove membership/placement links; release can charge a remaining-term penalty. These are separate lifecycle transitions. |
 
 `../regulations/academy_adapter.py` composes this support with shared regulation

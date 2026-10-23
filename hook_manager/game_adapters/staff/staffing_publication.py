@@ -17,8 +17,8 @@ from ..personnel.market_graph import MarketGraph
 class StaffingPublication:
     def __init__(self, state):
         self.state, self.manager = state, state.staff_manager
-        # Native-value comparison is shared with activation staleness checks.
-        # The existing market helper also preserves shared staff dicts/lists;
+        # Compare live values and container identities before publishing writes.
+        # The existing market helper preserves shared staff dicts/lists;
         # there is no need to copy the whole career or introduce a second copier.
         self.graph = MarketGraph()
         # Both original and private person IDs resolve to the same saved pair.
