@@ -113,7 +113,7 @@ def test_phase_call_budgets_refresh_without_restarting_the_action_watchdog(guest
                 # Fresh fuel/host-call counts cannot replace the phase deadline;
                 # epoch interruption still stops a loop with effectively ample fuel.
                 sandbox.call("loop", fuel=2**62)
-        assert sandbox.closed and sandbox._phase_timer is None
+        assert sandbox.closed
         assert healthy.call("counter") == 1
 
 

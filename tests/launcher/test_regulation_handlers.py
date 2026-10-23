@@ -3,7 +3,6 @@
 
 from copy import deepcopy
 from contextlib import contextmanager
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -33,18 +32,19 @@ def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(m
     bound = session(mod, [validator("b"), validator("a", "rules.mutate")])
     ctx = context()
     before = deepcopy(ctx)
-    timers, timer_class = [], threading.Timer
+    deadlines = []
+    watchdog = mod.sandbox._code.watchdog
+    arm = watchdog.arm
 
-    def watchdog(*args, **kwargs):
-        timer = timer_class(*args, **kwargs)
-        timers.append(timer)
-        return timer
+    def arm_deadline(deadline):
+        deadlines.append(deadline)
+        return arm(deadline)
 
-    monkeypatch.setattr("launcher.sandbox.threading.Timer", watchdog)
+    monkeypatch.setattr(watchdog, "arm", arm_deadline)
     results = bound.evaluate([ctx], [selection()], {mod.manifest.id: [["a", 0, 0]] + [["b", 0, 0]] * 31})
     assert results[mod.manifest.id] == [{"decision": "allow"}] + [{"decision": "deny", "message": "\U0001f600" * 160}] * 31
     assert ctx == before and not mod.sandbox.closed
-    assert len(timers) == 1 and not timers[0].is_alive()
+    assert len(deadlines) == 1 and watchdog.token is None
 
 
 @pytest.mark.parametrize("fault", ["signature", "foreign_function", "import_budget"])

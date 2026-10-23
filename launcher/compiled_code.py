@@ -12,6 +12,8 @@ import hashlib
 import threading
 import weakref
 
+from launcher.deadline_watchdog import DeadlineWatchdog
+
 
 class CompiledCode:
     _local = threading.local()
@@ -21,6 +23,9 @@ class CompiledCode:
         self.cache, self.key = cache, key
         self.thread = threading.get_ident()
         self.users, self.owner, self.depth = 0, None, 0
+        self.watchdog = DeadlineWatchdog(engine)
+        # Close the watchdog before the Component and Engine already in this stack.
+        self.resources.callback(self.watchdog.close)
 
     @classmethod
     def adopt(cls, data, engine, component, resources):

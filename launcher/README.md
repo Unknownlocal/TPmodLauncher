@@ -62,6 +62,10 @@ The last sandbox using a component releases it. Each mod keeps its own Store,
 permissions, memory and limits. A whole execution phase belongs to one mod at a
 time, so its timeout cannot interrupt another mod using the shared Engine.
 
+`deadline_watchdog.py` reuses one waiting thread per shared Engine. It interrupts
+overdue guest execution and clears each finished call's deadline before another
+mod can run. The thread stops before that Engine is freed.
+
 `sandbox.py` owns each mod's linker, Store, reference to shared code and cleanup scope. It
 validates imports and exports, serialises guest entry on the owning thread, and
 enforces memory, fuel, deadline and host-call limits. Source initialisation uses

@@ -95,9 +95,13 @@ Running out stops execution with a Wasmtime trap. Trusted host callbacks do not
 spend guest fuel; elapsed time and host-call counts have separate limits.
 See [Wasmtime's fuel definition](https://docs.rs/wasmtime/49.0.0/wasmtime/struct.Store.html#method.set_fuel).
 
-An epoch timer interrupts guest execution when its deadline expires.
-The timer is cancelled and joined before the engine
-can be freed. A trap, invalid call/value, host failure or exhausted budget closes
+`DeadlineWatchdog` interrupts guest execution when its deadline expires by
+advancing the Engine's epoch counter. One waiting thread per shared Engine is
+reused across calls and phases, avoiding thread creation during each short check.
+Cancellation waits for an interruption already in progress before another owner
+can arm its deadline. An old cancellation token cannot clear a newer deadline.
+The last code lease stops and joins the watchdog before freeing the Engine.
+A trap, invalid call/value, host failure or exhausted budget closes
 the affected instance, revokes its grants and runs cleanup once. Unrelated
 instances remain usable. Calls made from an unsupported thread or during another
 entry are rejected before accessing the store.

@@ -38,14 +38,6 @@ def _message(error):
     return text if len(text) <= 512 else text[:128] + "\n...\n" + text[-379:]
 
 
-def _cancel_timer(timer):
-    """Stop and join before Engine cleanup can free the timer's native target."""
-    if timer is not None:
-        timer.cancel()
-        if timer.ident is not None:
-            timer.join()
-
-
 @dataclass(frozen=True)
 class Limits:
     """Resource budgets chosen by the launcher, not by mod manifests.
@@ -212,7 +204,7 @@ class Sandbox:
         self._instance = None
         self._limits = limits
         self._phase_deadline = None
-        self._phase_timer = None
+        self._phase_watchdog = None
         if cleanup is not None:
             self._resources.callback(cleanup)
         try:
@@ -317,9 +309,7 @@ class Sandbox:
         try:
             self._store.set_fuel(fuel)
             self._store.set_epoch_deadline(1)
-            self._phase_timer = threading.Timer(seconds, self._engine.increment_epoch)
-            self._phase_timer.daemon = True
-            self._phase_timer.start()
+            self._phase_watchdog = self._code.watchdog.arm(self._phase_deadline)
             yield
             if time.monotonic() >= self._phase_deadline:
                 raise SandboxError("Sandbox phase exceeded its deadline")
@@ -328,8 +318,8 @@ class Sandbox:
             self.close()
             raise
         finally:
-            _cancel_timer(self._phase_timer)
-            self._phase_timer = None
+            self._code.watchdog.cancel(self._phase_watchdog)
+            self._phase_watchdog = None
             self._phase_deadline = None
             self._code.unclaim(self)
 
@@ -393,7 +383,7 @@ class Sandbox:
             self._deadline = time.monotonic() + seconds
         else:
             self._deadline = self._phase_deadline
-        timer = None
+        watchdog = None
         try:
             if time.monotonic() >= self._deadline:
                 raise SandboxError("Guest execution exceeded its deadline")
@@ -404,15 +394,13 @@ class Sandbox:
                 self._store.set_fuel(fuel)
                 self._calls = 0
             # Unspecified phase calls still share the aggregate source allowance.
-            # Only ordinary calls own a separate timer: phase calls use the one
+            # Only ordinary calls arm a deadline: phase calls use the one
             # watchdog already armed by phase(), without changing its epoch.
             if self._phase_deadline is None:
                 budget = self._limits.initialization_fuel if initialize else None
                 self._store.set_fuel(budget or self._limits.fuel)
                 self._store.set_epoch_deadline(1)
-                timer = threading.Timer(max(0, self._deadline - time.monotonic()), self._engine.increment_epoch)
-                timer.daemon = True
-                timer.start()
+                watchdog = self._code.watchdog.arm(self._deadline)
             result = action()
             if self.failure is not None or time.monotonic() >= self._deadline:
                 raise SandboxError(
@@ -426,7 +414,7 @@ class Sandbox:
                 raise
             raise SandboxError(self.failure) from None
         finally:
-            _cancel_timer(timer)
+            self._code.watchdog.cancel(watchdog)
             self._busy = False
             _ENTRY_LOCK.release()
             self._code.unclaim(self)
@@ -460,8 +448,9 @@ class Sandbox:
             return
         self._check_entry()
         self._closed = True
-        _cancel_timer(self._phase_timer)
-        self._phase_timer = None
+        if self._phase_watchdog is not None:
+            self._code.watchdog.cancel(self._phase_watchdog)
+            self._phase_watchdog = None
         self._instance = None
         self._exports.clear()
         self._capabilities.clear()
