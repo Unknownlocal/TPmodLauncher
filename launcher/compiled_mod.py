@@ -5,6 +5,7 @@ from contextlib import ExitStack
 from wasmtime import Config, Engine
 from wasmtime.component import Component
 from launcher.load_timing import measure
+from launcher.compiled_code import CompiledCode
 
 
 class CompiledMod:
@@ -15,6 +16,7 @@ class CompiledMod:
         self.resources = ExitStack()
         self.closed = False
         self.cache_status = None
+        self.code = None
         try:
             if (
                 type(data) is not bytes
@@ -51,16 +53,21 @@ class CompiledMod:
             raise
 
     def take(self, data):
-        """Transfer ownership once, and only for the exact portable bytes compiled here."""
+        """Adopt code on the Store's thread, with a lease instead of another copy."""
         # Clearing data marks both a transferred result and a closed result as unavailable.
         if self.data is None or data is not self.data:
             raise ValueError("Compiler result is closed, already adopted or mismatched")
+        self.code, lease = CompiledCode.adopt(
+            data, self.engine, self.component, self.resources
+        )
+        self.engine, self.component = self.code.engine, self.code.component
         self.data = None
-        return self.resources.pop_all()
+        return lease
 
     def close(self):
         """Release resources that have not been transferred to a sandbox."""
         if not self.closed:
             self.closed = True
             self.data = None
+            self.code = None
             self.resources.close()

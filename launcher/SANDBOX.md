@@ -14,8 +14,10 @@ Frida channel outside guest execution. General game callbacks remain later work.
 
 ## Calls and grants
 
-Each `Sandbox` owns an Engine, Store, Linker, copied operation table and guest
-instance. Its store cannot share memory with another instance. Each imported
+Each `Sandbox` owns a Store, Linker, copied operation table and guest instance.
+Identical portable components share compiled code and its Engine on the same
+execution thread. The last sandbox releases those shared resources. Stores keep
+their own memory and state. Each imported
 function must match an explicitly granted `Operation` name and scalar signature
 before initialization can execute. The initial profile supports booleans, signed
 and unsigned 32/64-bit integers, strings and void results. It rejects resources,
@@ -41,7 +43,8 @@ through the binding's C callback trampoline.
 
 Wasmtime's compiler uses native worker threads to compile functions in parallel.
 This does not enable guest threads or concurrent guest calls. Each instance
-still owns its Engine, Store and grants; no compilation cache is enabled.
+still owns its Store and grants. Persistent compilation caching and reuse of
+already-loaded code are separate from that private instance state.
 
 Trusted callers may pass a `timings` dictionary to collect compilation and
 initialization durations in seconds. Failed phases retain their elapsed time.
@@ -53,6 +56,10 @@ limits or expose the dictionary to the component.
 `Sandbox.phase(fuel=..., seconds=...)` lets trusted infrastructure share one fuel
 allowance, absolute deadline and host-call count across multiple exports. Work
 between calls counts against that deadline; post-return work uses the same fuel.
+The shared Engine belongs to that sandbox for the complete phase, including host
+work between calls. Another sandbox using the same code cannot enter a call or
+arm its own phase until the owner releases it. This keeps an Engine-wide timeout
+from interrupting another owner's Store. Rejection leaves healthy instances usable.
 Phase failures close the sandbox, and subsequent ordinary calls again use their
 usual per-call limits. This supports source transfer/import without resetting
 the allowance for every chunk. Mods cannot select budgets through their manifest
@@ -117,8 +124,10 @@ need measurements before changing these approved profiles.
 The host is not an OS process sandbox or a guarantee against runtime/host bugs.
 
 Normal startup reads and compiles one mod at a time on a background worker.
-`CompiledMod` owns that Engine/Component until the controller transfers them into
-a Sandbox or discards them. Compilation creates no Store and executes no guest
+`CompiledMod` owns a compiler result until the controller adopts or discards it.
+Adoption reuses identical code already on the execution thread and discards the
+duplicate compiler result, or transfers the first result into shared ownership.
+Each sandbox holds a lease until cleanup. Compilation creates no Store and executes no guest
 code; initialization, activation, later calls and sandbox cleanup retain the
 controller's thread checks and shared entry lock. A cancelled session cannot
 adopt a late result. Native compilation itself cannot be interrupted, and Python
@@ -130,8 +139,10 @@ Player startup uses Wasmtime's built-in cache at
 `modLauncher/bin/wasmtime-cache/artifacts/`. The generated config sits beside
 artifacts, so Wasmtime's cleanup cannot remove the config itself. Wasmtime owns
 the cache keys for portable code, compiler configuration and runtime compatibility;
-the launcher does not deserialize author-supplied native binaries or maintain a
-second cache-key format. Each load still reads the current manifest and portable
+the launcher does not deserialize author-supplied native binaries. A separate,
+temporary in-memory lookup identifies already-loaded identical portable code by
+its content digest, on each execution thread. It never uses an author path as
+code identity or keeps a second on-disk native cache. Each load still reads the current manifest and portable
 component, checks imports/exports, and creates a fresh Store, grants and guest
 instance. Readiness, activation and execution budgets remain unchanged.
 

@@ -57,9 +57,14 @@ diagnostic and UI resource identity. `source_mod.py` applies that lifecycle and
 event contract to the Python runner. `runner_host.py` binds the complete typed interface
 to per-mod providers or permission-denial callbacks.
 
-`sandbox.py` owns the compiled component, linker, Store and cleanup scope. It
-validates imports and exports, serializes guest entry on the owning thread, and
-enforces memory, fuel, deadline and host-call limits. Source initialization uses
+`compiled_code.py` shares identical compiled components on each execution thread.
+The last sandbox using a component releases it. Each mod keeps its own Store,
+permissions, memory and limits. A whole execution phase belongs to one mod at a
+time, so its timeout cannot interrupt another mod using the shared Engine.
+
+`sandbox.py` owns each mod's linker, Store, reference to shared code and cleanup scope. It
+validates imports and exports, serialises guest entry on the owning thread, and
+enforces memory, fuel, deadline and host-call limits. Source initialisation uses
 an aggregate loading phase; activation and events use ordinary call budgets.
 A failure closes the affected mod and revokes its owned registrations.
 
@@ -69,12 +74,12 @@ menu acknowledgement. Session closure releases active mods in reverse order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
 
 [`regulations/`](regulations/README.md) stages enabled-source regulation
-definitions and binds owned Python handlers inside Wasm through a private,
-one-shot pack preparation seam. A persistent authenticated channel queues calls
-for controller-thread execution under an absolute deadline. Required owners
-fence readiness until trusted native acknowledgement. It preserves native fields
-and keeps condition logic in mod source. Native mappings, policy publication and
-public capability admission remain gated by later steps.
+definitions and binds Python handlers inside Wasm through a private preparation
+step that runs once per pack. A persistent authenticated channel queues calls for
+controller-thread execution under an absolute deadline. The private runtime waits
+for confirmation from the trusted game adapter before the rules become ready.
+Native fields are preserved and condition logic stays in mod source. This private
+loader entry point does not admit regulation permissions through the public mod API.
 
 [`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
 field selection and explicit duplicate policies. Document-specific adapters own
@@ -139,10 +144,9 @@ Proton prefix and game arguments while substituting the bundled Windows Python.
 entry point, retaining its target validation. This route is tested with owned
 process fixtures; actual Proton mod loading remains untested.
 
-Maintainers run `Package-Release.ps1 -Version <version>` from the repository root.
-It coordinates developer setup and `release_workflow.py`: pinned Frida source
+`Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency
 preparation, and ZIP assembly. No pre-existing binary cache is required; the
 checkout's selected dependencies and active runtime are preserved.
-`-Platform linux` selects the Linux/Proton archive and a separate candidate
-record; `-PrepareOnly` and `-CheckOnly` apply to the selected platform.
+Its platform selection keeps the Windows and Linux/Proton archives and candidate
+records separate, including during preparation and verification.

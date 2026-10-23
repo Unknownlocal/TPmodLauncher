@@ -188,7 +188,7 @@ def _values(kinds, values):
 
 
 class Sandbox:
-    """Own one component, store, capability table and cleanup scope on its creating thread."""
+    """Own one private Store and grants, plus a lease on shared compiled code."""
 
     def __init__(
         self,
@@ -238,6 +238,7 @@ class Sandbox:
             if type(prepared) is not CompiledMod:
                 raise SandboxError("Expected a trusted compiler result")
             self._resources.enter_context(prepared.take(component))
+            self._code = prepared.code
             self._engine, compiled = prepared.engine, prepared.component
             with compiled.type as interface:
                 imports = interface.imports(self._engine)
@@ -310,6 +311,7 @@ class Sandbox:
         self._check_entry()
         if self._phase_deadline is not None:
             raise SandboxError("Nested sandbox phases are unsupported")
+        self._claim_code()
         self._phase_deadline = time.monotonic() + seconds
         self._calls = 0
         try:
@@ -329,6 +331,14 @@ class Sandbox:
             _cancel_timer(self._phase_timer)
             self._phase_timer = None
             self._phase_deadline = None
+            self._code.unclaim(self)
+
+    def _claim_code(self):
+        """Reject another owner's phase without disabling either healthy instance."""
+        try:
+            self._code.claim(self)
+        except RuntimeError as error:
+            raise SandboxError(str(error)) from None
 
     def _host_function(self, operation):
         """Wrap a trusted operation with this instance's call budget and value checks."""
@@ -369,7 +379,10 @@ class Sandbox:
     def _run(self, action, *, initialize=False, fuel=None):
         """Bound one initialization/call, including host callbacks and post-return work."""
         self._check_entry()
+        self._claim_code()
         if not _ENTRY_LOCK.acquire(blocking=False):
+            # Failed global entry must not leave this runtime claimed.
+            self._code.unclaim(self)
             raise SandboxError("Nested or concurrent sandbox entry is unsupported")
         self._busy = True
         if self._phase_deadline is None:
@@ -416,6 +429,7 @@ class Sandbox:
             _cancel_timer(timer)
             self._busy = False
             _ENTRY_LOCK.release()
+            self._code.unclaim(self)
             if self.failure is not None:
                 self.close()
 
