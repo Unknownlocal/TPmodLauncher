@@ -34,19 +34,10 @@ class _Candidate:
     timings: dict
 
 
-def _prepare(manifest, timings, cache=None):
-    """Read and compile on a worker; no Store, guest entry or native registration occurs here."""
+def _read_component(manifest, timings):
+    """Read bounded portable bytes; compilation is coordinated by the controller."""
     with measure(timings, "component_read"):
-        data = manifest.read_component()
-    return CompiledMod(data, timings, cache=cache)
-
-
-def _discard(future):
-    """Release an abandoned compiler result; cancellation needs no guest or bridge work."""
-    try:
-        future.result().close()
-    except Exception:
-        pass  # Failed/cancelled preparations own no usable compiler result.
+        return manifest.read_component()
 
 
 class PackMods:
@@ -485,16 +476,16 @@ class PackMods:
                     timings.update(source_result.timings)
                     prepared = source_result.compiled
                 elif self.background:
-                    self.pending = self._executor().submit(
-                        _prepare, manifest, timings, self.cache
-                    )
+                    self.pending = self._executor().submit(_read_component, manifest, timings)
                     while not self.pending.done():
                         yield
                     future = self.pending
                     self.pending = None
-                    prepared = future.result()
+                    prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
+                    while not prepared.poll():
+                        yield
                 elif self.cache is not None:
-                    prepared = _prepare(manifest, timings, self.cache)
+                    prepared = CompiledMod(_read_component(manifest, timings), timings, cache=self.cache)
                 if prepared is not None and prepared.cache_status is not None:
                     self._log("CACHE", id=manifest.id, **prepared.cache_status)
                 if "ui-settings" in manifest.capabilities:
@@ -604,18 +595,19 @@ class PackMods:
         if self.pending is not None:
             if self.pending.running():
                 self._log(
-                    "COMPILER DRAINING",
-                    detail="Guest loading cancelled; releasing compiler result when it returns",
+                    "READ DRAINING",
+                    detail="Guest loading cancelled; discarding component bytes when the read returns",
                 )
             self.pending.cancel()
-            self.pending.add_done_callback(_discard)
             self.pending = None
         if self.loading is not None:
             self.loading.close()
             self.loading = None
         if self.executor is not None:
-            # A native compiler cannot be interrupted by Future.cancel(); dispose its late result.
-            self.executor.shutdown(wait=False, cancel_futures=True)
+            # Read jobs and this scope's code requests were cancelled individually.
+            # Another session may still need a compilation queued on this executor;
+            # only the registry's last requester can cancel that shared job.
+            self.executor.shutdown(wait=False)
         failed = False
         if self.regulations is not None:
             try:

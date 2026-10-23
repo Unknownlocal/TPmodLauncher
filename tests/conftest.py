@@ -54,7 +54,7 @@ def python_compilation_cache(tmp_path_factory):
 def cached_python_components(request, monkeypatch):
     """Give Python integration tests the same cache used by normal launcher entry.
 
-    Keep the real class and a fresh Engine/Component for every construction.
+    Keep real compilation and the normal ready/pending code-sharing behaviour.
     Explicit cache instances (including cache-policy tests) retain their own setup.
     """
     if not {"runner_bundle", "built_python_mod", "built_menu_mod"}.intersection(request.fixturenames):
@@ -62,9 +62,9 @@ def cached_python_components(request, monkeypatch):
     shared_cache = request.getfixturevalue("python_compilation_cache")
     from launcher.compiled_mod import CompiledMod
     original = CompiledMod.__init__
-    def cached(instance, data, timings=None, *, cache=None):
+    def cached(instance, data, timings=None, *, cache=None, executor=None):
         return original(instance, data, timings,
-                        cache=shared_cache if cache is None else cache)
+                        cache=shared_cache if cache is None else cache, executor=executor)
     monkeypatch.setattr(CompiledMod, "__init__", cached)
 
 
@@ -75,13 +75,15 @@ def disposable_source_compiler(monkeypatch):
     These tests never admit the result to a Store. Real compilation and adoption
     are exercised separately by the preparation integration test.
     """
-    from mod_runtime import preparation
+    from launcher import compilation_registry
     class DisposableCompilation:
         def __init__(self, *args, **kwargs):
             self.closed = False
+            self.engine = self.component = None
+            self.cache_status = None
         def close(self):
             self.closed = True
-    monkeypatch.setattr(preparation, "CompiledMod", DisposableCompilation)
+    monkeypatch.setattr(compilation_registry, "CompiledComponent", DisposableCompilation)
 
 
 @pytest.fixture

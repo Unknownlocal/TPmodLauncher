@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: MPL-2.0
 """Real runner compilation, controller adoption and deterministic cancellation races."""
 
-from concurrent.futures import CancelledError, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor, wait
 import shutil
 import threading
 
 import pytest
 
+from launcher import compilation_registry
 from launcher.compilation_cache import CompilationCache
 from launcher.source_mod import SourceMod
 from mod_runtime.bundle import BundleError, RunnerBundle
@@ -39,14 +40,19 @@ capabilities = ["diagnostics"]
 
 
 def completed(job):
-    # Test synchronization only: production controllers poll take(), never wait.
+    # Test synchronization only: production controllers poll both stages.
     assert wait([job._future], timeout=30).done, "Preparation did not finish"
+    result = job.take()
+    if result is None:
+        assert wait([job._result.compiled._entry.future], timeout=30).done, "Compiler did not finish"
+        result = job.take()
+    return result
 
 
 def test_real_preparation_runs_off_thread_then_adopts_on_controller(runner_bundle, source_folder, tmp_path, monkeypatch):
     owner = threading.get_ident()
     phases, compiled_results = [], []
-    read, component, compile_runner = SourceSnapshot.read, runner_bundle.component, preparation.CompiledMod
+    read, component, compile_runner = SourceSnapshot.read, runner_bundle.component, compilation_registry.CompiledComponent
     def snapshot(folder):
         phases.append(("snapshot", threading.get_ident()))
         return read(folder)
@@ -60,12 +66,11 @@ def test_real_preparation_runs_off_thread_then_adopts_on_controller(runner_bundl
         return result
     monkeypatch.setattr(SourceSnapshot, "read", snapshot)
     monkeypatch.setattr(runner_bundle, "component", runner_bytes)
-    monkeypatch.setattr(preparation, "CompiledMod", compile_bytes)
+    monkeypatch.setattr(compilation_registry, "CompiledComponent", compile_bytes)
     reports, cleaned = [], []
     with ThreadPoolExecutor(max_workers=1) as executor:
         with SourcePreparation(executor, runner_bundle, source_folder, cache=CompilationCache(tmp_path)) as job:
-            completed(job)
-            with job.take() as result:
+            with completed(job) as result:
                 assert all(thread != owner for _, thread in phases)
                 assert [phase for phase, _ in phases] == ["snapshot", "runner", "compile"]
                 assert result.compiled.cache_status["state"] == "enabled"
@@ -85,7 +90,9 @@ def test_real_preparation_runs_off_thread_then_adopts_on_controller(runner_bundl
                     assert mod.event("owned.event", {"ok": True}) == {"ok": True}
                 assert result.timings["initialize"] >= 0
     assert reports == [("owned.prepared", "prepared source")] and cleaned == [True]
-    assert result.snapshot is None and compiled_results[0].closed
+    assert result.snapshot is None and result.compiled.closed
+    with pytest.raises(ValueError, match="closed"):
+        compiled_results[0].engine.ptr()
 
 
 def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder, monkeypatch):
@@ -113,29 +120,31 @@ def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder
             release.set()
 
 
-def test_cancel_during_compilation_closes_result_at_checkpoint(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
+def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     results = []
-    original = preparation.CompiledMod
+    original = compilation_registry.CompiledComponent
     def blocked(*args, **kwargs):
         result = original(*args, **kwargs)
         results.append(result)
         entered.set()
         assert release.wait(10), "Test did not release compiler"
         return result
-    monkeypatch.setattr(preparation, "CompiledMod", blocked)
+    monkeypatch.setattr(compilation_registry, "CompiledComponent", blocked)
     with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
-        future = job._future
         try:
+            assert wait([job._future], timeout=30).done
+            assert job.take() is None
+            future = job._result.compiled._entry.future
             assert entered.wait(30)
             job.close()
             assert future.running() and not results[0].closed
         finally:
             release.set()
-    assert isinstance(future.exception(), CancelledError) and results[0].closed
+    assert future.exception() is None and results[0].closed
 
 
-def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
+def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, source_folder, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     results = []
     original = preparation._prepare
@@ -155,7 +164,7 @@ def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, sourc
         finally:
             release.set()
     assert future.exception() is None
-    assert results[0].snapshot is None and results[0].compiled.closed
+    assert results[0].snapshot is None and results[0].component is None and results[0].compiled is None
 
 
 @pytest.mark.parametrize("failure", ["compile", "interrupt"])
@@ -171,9 +180,8 @@ def test_worker_errors_propagate_and_close_the_job(runner_bundle, source_folder,
             raise KeyboardInterrupt("owned worker interruption")
         monkeypatch.setattr(SourceSnapshot, "read", interrupt)
     with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
-        completed(job)
         with pytest.raises(expected):
-            job.take()
+            completed(job)
         with pytest.raises(RuntimeError, match="closed"):
             job.take()
 
@@ -183,8 +191,7 @@ def test_changed_runner_is_rejected_when_prepared_result_is_adopted(runner_bundl
     bundle = RunnerBundle(tmp_path / "bundle")
     cleaned = []
     with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, bundle, source_folder) as job:
-        completed(job)
-        with job.take() as result:
+        with completed(job) as result:
             (bundle.directory / "runner.wasm").write_bytes(b"changed after preparation")
             with pytest.raises(BundleError):
                 SourceMod(bundle, result.snapshot, prepared=result.compiled,

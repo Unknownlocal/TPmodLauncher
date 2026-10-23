@@ -37,11 +37,18 @@ bounds discovery, validates manifests and rejects every candidate sharing a
 duplicate ID before activating valid mods in ID order. Normal entry enables
 Python source mods and mods with prebuilt Wasm components.
 
-For Python mods, `mod_runtime.preparation` snapshots source, checks it against the
-admitted metadata and compiles verified runner bytes on a worker. Wasm components
-use `compiled_mod.py`. Preparation creates no Store or game registration; the
-controller adopts completed work. Closing a loading scope cancels queued work
-and disposes completed or late results.
+For Python mods, `mod_runtime.preparation` snapshots source and checks the admitted
+metadata and runner bytes on a worker. Prebuilt Wasm components also read on a
+worker during normal startup. The controller then requests compiled code through
+`compiled_mod.py` and polls for completion without waiting on a compiler.
+
+`compilation_registry.py` keeps loaded code and pending compilations for each
+execution thread. Identical bytes and compiler settings reuse one entry before
+another Engine or Component is created. `compiled_component.py` performs the
+actual compilation on a worker. Preparation creates no Store or game registration.
+Each request can be cancelled independently; the last reference frees the code,
+or disposes an abandoned compiler result when it finishes.
+Closing one loading scope lets compilation still needed by another scope finish.
 
 `compilation_cache.py` configures Wasmtime's local cache under
 `bin/wasmtime-cache` after checking ownership and access. Failed cache checks fall
@@ -57,10 +64,10 @@ diagnostic and UI resource identity. `source_mod.py` applies that lifecycle and
 event contract to the Python runner. `runner_host.py` binds the complete typed interface
 to per-mod providers or permission-denial callbacks.
 
-`compiled_code.py` shares identical compiled components on each execution thread.
-The last sandbox using a component releases it. Each mod keeps its own Store,
-permissions, memory and limits. A whole execution phase belongs to one mod at a
-time, so its timeout cannot interrupt another mod using the shared Engine.
+`compiled_code.py` holds the shared Engine and compiled component after adoption.
+Each mod keeps its own Store, permissions, memory and limits. A whole execution
+phase belongs to one mod at a time, so its timeout cannot interrupt another mod
+using the shared Engine.
 
 `deadline_watchdog.py` reuses one waiting thread per shared Engine. It interrupts
 overdue guest execution and clears each finished call's deadline before another

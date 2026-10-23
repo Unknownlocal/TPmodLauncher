@@ -301,7 +301,7 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == 2
 
 
-def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch, disposable_source_compiler):
+def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch):
     from mod_runtime import preparation
     device, controller, messages, _ = rig
     game = Path(controller.game).parent
@@ -332,12 +332,12 @@ def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsi
         first.is_detached = True
         first.handlers["detached"]("process-terminated")
         controller.poll()
-        assert scope.closed and 10 not in controller.pack_mods and not results[0].compiled.closed
+        assert scope.closed and 10 not in controller.pack_mods and results[0].snapshot is not None
     finally:
         release.set()
         controller.close()
         if scope is not None:
             scope.executor.shutdown(wait=True)
-    assert results[0].snapshot is None and results[0].compiled.closed
+    assert results[0].snapshot is None and results[0].component is None and results[0].compiled is None
     assert not any("CODE MOD ACTIVE:" in line or "CODE MOD REPORT:" in line for line in messages)
     assert not controller.cleanup_failed

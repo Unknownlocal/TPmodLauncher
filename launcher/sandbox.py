@@ -229,6 +229,9 @@ class Sandbox:
                 prepared = CompiledMod(component, timings)
             if type(prepared) is not CompiledMod:
                 raise SandboxError("Expected a trusted compiler result")
+            # Own the request even when adoption fails (for example while a
+            # matching background compilation is still pending).
+            self._resources.callback(prepared.close)
             self._resources.enter_context(prepared.take(component))
             self._code = prepared.code
             self._engine, compiled = prepared.engine, prepared.component

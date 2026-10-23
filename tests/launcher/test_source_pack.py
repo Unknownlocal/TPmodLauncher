@@ -17,13 +17,14 @@ from hook_manager.menu import MenuAdapter
 from hook_manager.settings import SettingsAdapter
 from hook_manager.themes import THEME_ROLES
 from launcher.pack_mods import PackMods
+from launcher.compiled_mod import CompiledMod
 from launcher.sandbox import SandboxError
 from mod_runtime import preparation
 from mod_runtime.source import SourceSnapshot
 
 
-# A pack can cold-compile the Python runner separately for several mods. These
-# behavior checks need headroom on shared CI hosts; this is not a startup benchmark.
+# Cold compilation and loading several private interpreters need headroom on
+# shared CI hosts; these behaviour checks are not a startup benchmark.
 SOURCE_PACK_LOAD_TIMEOUT = 120
 
 
@@ -90,6 +91,52 @@ def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod
         assert not scope.mods
         assert progress[-1] == dict(state="complete", loaded=0, failed=2, total=2)
         assert [item["detail"] for item in records(messages, "REJECTED")] == ["Duplicate mod ID"] * 2
+
+
+def test_closing_session_keeps_a_queued_compilation_needed_by_another_session(pack, source_mod, runner_bundle, monkeypatch):
+    game, folder, record = pack
+    source_mod(folder, "owned.first")
+    other_folder = game / "data/other pack"
+    source_mod(other_folder, "owned.second")
+    other_record = {**record, "id": other_folder.name, "root": str(other_folder.resolve())}
+    entered, release = threading.Event(), threading.Event()
+    requests = []
+    original = CompiledMod.__init__
+
+    def occupy():
+        entered.set()
+        assert release.wait(SOURCE_PACK_LOAD_TIMEOUT)
+
+    def request(self, *args, **kwargs):
+        if not requests:
+            # Put a gate ahead of the first compilation, after its source read.
+            kwargs["executor"].submit(occupy)
+        original(self, *args, **kwargs)
+        requests.append(self)
+
+    monkeypatch.setattr(CompiledMod, "__init__", request)
+    try:
+        with closing(PackMods(game, lambda _: None, runner_bundle=runner_bundle)) as first, closing(
+            PackMods(game, lambda _: None, runner_bundle=runner_bundle)
+        ) as second:
+            for number, scope, pack_record in ((1, first, record), (2, second, other_record)):
+                scope.load(pack_record)
+                end = time.monotonic() + SOURCE_PACK_LOAD_TIMEOUT
+                while len(requests) < number:
+                    assert time.monotonic() < end
+                    scope.poll()
+                    threading.Event().wait(.002)
+            assert entered.wait(5)
+            future = requests[1]._entry.future
+            assert future is requests[0]._entry.future and not future.running()
+            first.close()
+            assert not future.cancelled()
+            release.set()
+            finish(second)
+            assert list(second.mods) == ["owned.second"] and not second.failed
+            assert second.mods["owned.second"].event("owned.event", {"ok": True}) == {"ok": True}
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize("failure", ["syntax", "missing"])

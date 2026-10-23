@@ -127,11 +127,17 @@ cost; code is still compiled and validated by Wasmtime. Larger real mods will
 need measurements before changing these approved profiles.
 The host is not an OS process sandbox or a guarantee against runtime/host bugs.
 
-Normal startup reads and compiles one mod at a time on a background worker.
-`CompiledMod` owns a compiler result until the controller adopts or discards it.
-Adoption reuses identical code already on the execution thread and discards the
-duplicate compiler result, or transfers the first result into shared ownership.
-Each sandbox holds a lease until cleanup. Compilation creates no Store and executes no guest
+Normal startup reads one mod at a time on a background worker. `CompiledMod`
+reserves a reference to loaded code or one pending compilation through
+`CompilationRegistry`, before another Engine or Component is created. The key
+contains the portable content digest and actual compiler settings. Identical
+requests on the same execution thread share that entry, including while compilation
+is underway. `CompiledComponent` performs the native compilation on a worker;
+the controller polls readiness and adopts completed code on the Store's thread.
+Each sandbox holds a lease until cleanup. The last request or lease releases the
+code; cancelling one waiter cannot cancel another's compilation. A running
+compiler with no users is disposed when it returns and can be rejoined until then.
+Compilation creates no Store and executes no guest
 code; initialization, activation, later calls and sandbox cleanup retain the
 controller's thread checks and shared entry lock. A cancelled session cannot
 adopt a late result. Native compilation itself cannot be interrupted, and Python
@@ -144,8 +150,8 @@ Player startup uses Wasmtime's built-in cache at
 artifacts, so Wasmtime's cleanup cannot remove the config itself. Wasmtime owns
 the cache keys for portable code, compiler configuration and runtime compatibility;
 the launcher does not deserialize author-supplied native binaries. A separate,
-temporary in-memory lookup identifies already-loaded identical portable code by
-its content digest, on each execution thread. It never uses an author path as
+temporary in-memory registry identifies loaded or pending identical portable code by
+its content digest and compiler settings, on each execution thread. It never uses an author path as
 code identity or keeps a second on-disk native cache. Each load still reads the current manifest and portable
 component, checks imports/exports, and creates a fresh Store, grants and guest
 instance. Readiness, activation and execution budgets remain unchanged.
@@ -160,8 +166,9 @@ compilation proceeds without persistent caching. No guest receives cache paths o
 filesystem access. This assumes the launcher and its local cache remain trusted;
 it cannot protect against an account able to replace trusted launcher/native code.
 
-`CODE MOD CACHE` reports `enabled` when configuration succeeded, or `disabled`
-with a reason for cold fallback. Enabled does not claim a cache hit: Wasmtime's
+`CODE MOD CACHE` reports `enabled` when disk-cache configuration succeeded, `disabled`
+with a reason for cold fallback, or `reused` when a request joins existing ready
+or pending code without configuring another compiler. Enabled does not claim a cache hit: Wasmtime's
 Python API provides no per-compilation hit counter. Existing compile timings show
 the observed cost. Wasmtime manages its own misses and writes after configuration.
 The 128 MiB and 4,096-file settings are soft cleanup targets, not hard disk quotas;
