@@ -72,7 +72,13 @@ def measure(value, *, encoded=None):
             if kind is not float or not math.isfinite(item):
                 raise ValueError("Expected finite plain resident JSON")
 
-    visit(value)
+    try:
+        visit(value)
+    finally:
+        # The recursive helper holds a reference to itself. Release it on both
+        # success and rejection so repeated checks do not accumulate garbage
+        # and trigger collection at the same action in every sandbox.
+        visit = None
     # Trusted host preparation can retain the encoding it just made. Guest
     # verification always omits this argument and measures received values itself.
     return len((encode(value) if encoded is None else encoded).encode("utf-8")), nodes, deepest, work

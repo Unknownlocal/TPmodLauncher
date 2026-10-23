@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Exact component arithmetic and preservation of warm-path canonical records."""
+"""Check value measurements, copied records and temporary helper cleanup."""
+
+import gc
+from types import FunctionType
 
 import pytest
 
@@ -17,3 +20,19 @@ def test_component_metrics_match_expanded_encoding_with_unicode_depth_and_big_in
             assert values.encode(values.clone(FrozenValue(payload))) == values.encode(payload)
     with pytest.raises(ValueError, match="keys must be strings"):
         values.measure({"valid": [{}], 1: "invalid"})
+
+
+def test_measure_releases_temporary_helpers_without_waiting_for_gc():
+    # Disable automatic cleanup so it cannot conceal a reference cycle. Other
+    # tests may have left objects behind; only inspect functions created here.
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        previous = {id(item) for item in gc.get_objects() if type(item) is FunctionType}
+        values.measure({"nested": [{}, 1]})
+        retained = [item for item in gc.get_objects() if type(item) is FunctionType
+                    and item.__module__ == values.__name__ and id(item) not in previous]
+        assert not retained
+    finally:
+        if enabled:
+            gc.enable()
