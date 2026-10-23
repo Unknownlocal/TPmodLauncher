@@ -10,6 +10,35 @@ selection and validation; this package owns native preparation and cancellation.
 Driver-specific query isolation remains in `../drivers/queries.py`. Common contract
 formatting remains in `../employment.py`; the two native planners stay separate.
 
+## Preparing future employment activation
+
+`ActivationPlanner(state, kinds=("driver", "staff"))` prepares proposals for the
+native weekly future-contract activation methods. Construct it after native
+imports complete and before those methods are intercepted. `prepare(week,
+evaluation_season=...)` returns `ContractActivation` records containing canonical
+people and owned `clock`, `effective` and `proposal` data. Each proposal's action
+is `activate`; the regulation consumer can supply that same operation in its
+context. This metadata is already supported by the private validator envelope.
+
+Native activation decides which stored agreements are due and normalizes driver
+status, including its caught-error behavior. It runs on a plain private state
+view, shallow person copies and shared copies of future agreement containers.
+Setters are observed to capture the contracts; actual team setters, cache
+invalidation and career callbacks do not execute. Existing contracts remain
+read-only inputs. No signing calculation reconstructs dates, duration or money.
+
+The current career clock stays unchanged. Preparing a different season requires
+an explicit evaluation season, checked with the retained native calendar. Team
+and supplier references identify original game owners. Missing, ambiguous or
+unprojectable due agreements reject preparation without live changes; a stored
+staff owner key shared by a team and supplier cannot identify a unique employer.
+Kinds are checked independently, so staff preparation needs no driver imports.
+
+This support does not validate, activate or publish contracts. The enclosing
+caller must protect the native read lifetime and validate current proposals before
+any week/load/rollover mutations. Transaction admission, stale-state checks,
+activation execution, workers and startup wiring retain their later gates.
+
 `caller_targets.py` includes the shared methods plus driver-specific proposal and
 query methods when driver support is active. `preparation_methods.py` checks their
 exposed call signatures. Inspected staff commitment and prestige-skill queries
