@@ -9,6 +9,17 @@ from ..drivers.methods import _DRIVER_GROUPS
 from ..staff.methods import _STAFF_GROUPS
 
 
+# Proposal preparation replaces these setters with observers. Check them only
+# when a trusted coordinator also intends to execute native activation live.
+_ACTIVATION_EXECUTION = {
+    "driver": {
+        "set_team": "(self, driver: managers.driver.Driver, team_name: Optional[str])",
+        "_invalidate_ai_signing_query_cache": "(self) -> None",
+    },
+    "staff": {"set_team": "(self, staff: 'Staff', team_name: 'Optional[str]')"},
+}
+
+
 def activation_methods(state, kinds):
     """Retain activation helpers by call signature after native imports finish."""
     modules = {"state": "game_state", **{kind: "managers." + ("driver" if kind == "driver" else "staff_manager")
@@ -42,3 +53,9 @@ def activation_methods(state, kinds):
             name: _STAFF_GROUPS["staff"][name] for name in ("normalize_role", "_supplier_by_id")
         })
     return result
+
+
+def check_activation_execution(state, kinds):
+    """Check the setters needed only when activation will run on live people."""
+    for kind in kinds:
+        method_group(getattr(state, kind + "_manager"), _ACTIVATION_EXECUTION[kind])

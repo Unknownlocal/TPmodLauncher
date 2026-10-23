@@ -64,6 +64,18 @@ owners stop participating. For main-thread calls with no staff validators,
 channel readiness is not required; native completeness and stale-input checks
 still apply.
 
+`ActivationCoordinator` validates every native-selected driver/staff future
+agreement with operation `activate` before running either live activation body.
+It shares the personnel reservation with signing/staffing, captures native inputs
+before preparation, and checks them plus acknowledged policy again before the
+first native effect. Canonical contracts, normalization, setters, cache changes
+and team callbacks remain native code. Denial/unavailability returns `False`
+without activation effects; `last_outcome` retains the structured reason. Native
+exceptions propagate once, without retry or rollback of native effects. Main-thread
+calls with removed validators use native execution without requiring the channel.
+No proposals due is a successful no-op. This is private callable coordination;
+no enclosing week/load/rollover or worker hooks are installed by this component.
+
 `publish(native=..., custom=...)` streams a finite policy plan, bounded ordered
 pages, then a seal. Native entries describe the complete adopted choices for each
 changed rule; custom entries are admitted option keys. A `None` value advances

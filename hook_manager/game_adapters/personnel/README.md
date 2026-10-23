@@ -34,10 +34,18 @@ unprojectable due agreements reject preparation without live changes; a stored
 staff owner key shared by a team and supplier cannot identify a unique employer.
 Kinds are checked independently, so staff preparation needs no driver imports.
 
-This support does not validate, activate or publish contracts. The enclosing
-caller must protect the native read lifetime and validate current proposals before
-any week/load/rollover mutations. Transaction admission, stale-state checks,
-activation execution, workers and startup wiring retain their later gates.
+The planner itself does not validate or activate contracts. The private
+`ActivationCoordinator` in `../regulations/activation_coordinator.py` now validates
+the complete due set, checks policy and input staleness, and runs the retained
+native activation bodies on live people. Its personnel reservation covers the
+initial snapshot through execution. `ActivationSnapshot` checks calendar, roster,
+person/contract data and employer identities without serializing game data.
+
+This coordinator is main-thread only and does not advance the week. An enclosing
+caller must invoke it before unrelated career mutations, check its boolean result
+and handle `last_outcome` on refusal. Native exceptions propagate once; already
+performed native effects retain native failure behavior. Week/load/rollover hooks,
+worker admission and startup wiring retain their later gates.
 
 `caller_targets.py` includes the shared methods plus driver-specific proposal and
 query methods when driver support is active. `preparation_methods.py` checks their
