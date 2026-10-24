@@ -22,6 +22,7 @@ spec.loader.exec_module(ci)
     [
         ("tests/launcher/test_new_feature.py", "launcher"),
         ("tests/hook_manager/test_menu.py", "hook_manager"),
+        ("tests/hook_manager/career/test_discovery.py", "career_discovery"),
         ("tests/callables/test_validation.py", "callables"),
         ("tests/mod_runtime/test_source.py", "mod_runtime"),
         ("tests/mod_runtime/loading/test_shared_sources.py", "mod_runtime_loading"),
@@ -92,7 +93,7 @@ def test_callable_coverage_is_separate_from_parent_hook_manager(monkeypatch):
     config_file = next(arg.removeprefix("--cov-config=") for arg in calls[1] if arg.startswith("--cov-config="))
     from coverage import Coverage
     config = Coverage(config_file=config_file)
-    assert config.get_option("run:omit") == ["*/hook_manager/callables/*"]
+    assert config.get_option("run:omit") == ["*/hook_manager/callables/*", "*/hook_manager/career_discovery.py"]
     assert config.get_option("run:branch") and config.get_option("run:relative_files")
 
 

@@ -72,6 +72,12 @@ def installation(host, monkeypatch):
     game = ModuleType("game_state")
     game.GameState = type("GameState", (), {})
     monkeypatch.setitem(sys.modules, "game_state", game)
+    career = game.GameState()
+    def current(generation):
+        if generation != 1:
+            raise HookError("The requested career is no longer current")
+        return career
+    host.career = SimpleNamespace(current=current)
     channel = SimpleNamespace(closed=False)
     def close():
         # Connections and installed objects must stop before definitions vanish.
@@ -87,7 +93,7 @@ def installation(host, monkeypatch):
     adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=SimpleNamespace(create=lambda *a: personnel))
     adapters.academy_adapter = SimpleNamespace(AcademyAdapter=SimpleNamespace(create=lambda *a: None))
     adapters.project_adapter = SimpleNamespace(ProjectAdapter=SimpleNamespace(create=lambda *a: projects))
-    yield modules, game.GameState(), channel, adapters, (native, personnel, projects)
+    yield modules, career, channel, adapters, (native, personnel, projects)
     assert modules.close()
     # A factory skipped by a test still owns its unreturned stand-in.
     for hook in (native, personnel, projects):
@@ -95,8 +101,8 @@ def installation(host, monkeypatch):
 
 
 def install(installation):
-    modules, career, channel, _, _ = installation
-    return modules.install_regulations(career, channel, lambda *a: None,
+    modules, _, channel, _, _ = installation
+    return modules.install_current_regulations(1, channel, lambda *a: None,
         native_rules={"rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
 
 
@@ -105,6 +111,9 @@ def test_installation_reports_components_without_claiming_full_scope(installatio
     with pytest.raises(HookError, match="native GameState"):
         modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
     assert not channel.closed and modules.channel is None
+    with pytest.raises(HookError, match="no longer current"):
+        modules.install_current_regulations(0, channel, lambda *a: None, native_rules={}, report=pytest.fail)
+    assert not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": False, "academy_signing": False,
         "development_projects": True, "rookie_contract_length_check": "disabled",

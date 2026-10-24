@@ -3,4 +3,4 @@
 [tool.coverage.run]
 branch = true
 relative_files = true
-omit = ["*/hook_manager/callables/*"]
+omit = ["*/hook_manager/callables/*", "*/hook_manager/career_discovery.py"]

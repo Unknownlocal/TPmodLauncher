@@ -47,6 +47,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
     try:
         assert pulse("status")["adapters"] == {"state": "idle", "modules": 0}
         host = sys.modules[name]
+        assert host.career.status() == {"state": "pending", "generation": 0}
         finders, paths, before = tuple(sys.meta_path), tuple(sys.path), set(sys.modules)
         assert pulse("adapters")["adapters"]["state"] == "loaded"
         prefix = host.adapters.prefix
@@ -85,6 +86,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         guard._active = 0
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
+        assert host.career.status()["state"] == "stopped"
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:

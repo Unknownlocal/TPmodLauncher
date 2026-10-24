@@ -121,6 +121,22 @@ def rig(tmp_path):
     return device, controller, messages, now
 
 
+def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig):
+    device, controller, messages, _ = rig
+    controller.start()
+    try:
+        session = controller.sessions[10]
+        detail = "REGULATIONS COMPATIBILITY FAILED career.discovery; continuing native game"
+        controller.events.put(("bridge", (10, session, {
+            "type": "send", "payload": {"event": "compatibility", "detail": detail}})))
+        controller.poll()
+        assert any(detail in message for message in messages)
+        assert controller.sessions[10] is session and not session.is_detached
+        assert not controller.stopping
+    finally:
+        controller.close()
+
+
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):
     device, controller, _, _ = rig
     try:

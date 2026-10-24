@@ -16,6 +16,7 @@ let settingsWatching = false;
 let settingsState = null;
 let themesPending = false;
 let themesState = null;
+let careerFailureReported = false;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -125,6 +126,11 @@ observer = Process.attachModuleObserver({
                         }
                         // Startup can finish after manager readiness; report its pack once per process.
                         const pack = response.status.pack;
+                        const career = response.status.career;
+                        if (!careerFailureReported && career && career.state === 'unavailable') {
+                            careerFailureReported = true;
+                            send({ event: 'compatibility', detail: career.detail });
+                        }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;
                             send({ event: 'pack', pack });

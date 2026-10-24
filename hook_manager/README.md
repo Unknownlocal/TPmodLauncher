@@ -19,6 +19,12 @@ adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
+`career_discovery.py` reads which career the game's main loop is displaying.
+It adds no game hooks and keeps no career alive. Bridge replies include a
+number that changes when the career changes or closes, so delayed setup can
+check that it still concerns the same save. Discovery failures are reported
+without stopping the game.
+
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
 and callable classes. It leaves the game's import path alone,

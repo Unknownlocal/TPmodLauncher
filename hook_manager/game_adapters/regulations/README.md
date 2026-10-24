@@ -70,6 +70,8 @@ code. Mods cannot choose native targets or call the private callable adapter.
 
 The private `AdapterModules.install_regulations` method owns the signing and
 project adapters and native switches for a career supplied by trusted setup.
+`install_current_regulations` checks that the currently displayed career still
+matches the number from the launcher's earlier status request before setup.
 It reports each installed component separately. Its report does not acknowledge
 whole-team staffing coverage or make policy ready. If validation is active,
 removal leaves the installation intact for a later retry. Once idle, it restores

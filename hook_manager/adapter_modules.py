@@ -98,6 +98,15 @@ class AdapterModules:
             self.stop_regulations()
             raise
 
+    def install_current_regulations(self, generation, channel, select, *, native_rules, report):
+        """Bind trusted setup to the career named in a previous bridge reply.
+
+        Refresh before installing anything: a save reload or return to the menu
+        must not attach a delayed setup request to a different career.
+        """
+        state = self.host.career.current(generation)
+        return self.install_regulations(state, channel, select, native_rules=native_rules, report=report)
+
     def stop_regulations(self):
         """Restore the whole installation, or return False without changing it.
 

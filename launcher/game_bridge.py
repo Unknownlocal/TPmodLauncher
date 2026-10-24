@@ -20,7 +20,7 @@ PYTHON_SOURCES = (
     # Transport stays in the flat core. Complete adapters load separately into
     # their own module namespaces through the trusted adapters operation.
     "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",
-    "pack_discovery", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "career_discovery", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even

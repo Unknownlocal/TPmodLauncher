@@ -12,14 +12,16 @@ PORTABLE = "not embedded and not native and not frida_build and not legacy and n
 SUITES = {
     "launcher": "tests/launcher/",
     "hook_manager": "tests/hook_manager/",
+    "career_discovery": "tests/hook_manager/career/",
     # This package has its own test owner even though its source is under hook_manager.
     "callables": "tests/callables/",
     "mod_runtime": "tests/mod_runtime/",
     "mod_runtime_loading": "tests/mod_runtime/loading/",
     "ci": "tests/ci/",
 }
-# The parent keeps its direct tests; the loading child has its own workflow.
-EXCLUDES = {"mod_runtime": ("tests/mod_runtime/loading/",)}
+# Parent suites exclude tests that run in their child workflows.
+EXCLUDES = {"mod_runtime": ("tests/mod_runtime/loading/",),
+            "hook_manager": ("tests/hook_manager/career/",)}
 
 
 def suite_for(path, root):
@@ -74,7 +76,8 @@ def main(argv=None):
         # Test-area names and import paths differ for the private package. Keep
         # its measurements in its own artifact instead of the parent's report.
         source = {"callables": "hook_manager.callables", "ci": ".github",
-                  "mod_runtime_loading": "mod_runtime"}.get(options.suite, options.suite)
+                  "mod_runtime_loading": "mod_runtime",
+                  "career_discovery": "hook_manager.career_discovery"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
