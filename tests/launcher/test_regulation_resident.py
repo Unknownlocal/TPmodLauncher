@@ -10,7 +10,8 @@ from launcher.sandbox import SandboxError
 from mod_runtime._regulations import values as values
 from mod_runtime._regulations.action import RegulationAction
 from mod_runtime._regulations.catalog import RegulationCatalog
-from regulation_support import make_mod, validator
+from mod_runtime._regulations.contexts import RegulationContexts
+from regulation_support import context, make_mod, validator
 from resident_support import packet, policy
 
 
@@ -29,7 +30,8 @@ def test_reused_components_are_neither_remeasured_nor_encoded_during_action_prep
     # test. Shared dispatch integration tests execute actual author source in Wasm.
     manifest, records = policy("owned.rules")
     handlers = [(lambda c, r: {"decision": "allow"}, "personnel.contract", "native")]
-    catalog = RegulationCatalog(manifest, handlers, None)
+    cache = {}
+    catalog = RegulationCatalog(manifest, handlers, cache=cache)
     for slot, value in enumerate(records):
         catalog.install(slot, value)
     catalog.seal()
@@ -41,10 +43,10 @@ def test_reused_components_are_neither_remeasured_nor_encoded_during_action_prep
         return original(value)
 
     monkeypatch.setattr(values, "encode", encoding)
-    reused = RegulationCatalog(manifest, handlers, catalog)
+    reused = RegulationCatalog(manifest, handlers, cache=cache)
     reused.seal()
     assert reused.records[0] is catalog.records[0]
-    action = RegulationAction(packet(manifest, 8), reused, "policy")
+    action = RegulationAction(packet(manifest, 8), reused, "policy", contexts=RegulationContexts(1, [context()]))
     for _ in range(2):
         for slot in range(4):
             function, ctx, rule = action.take(slot)

@@ -3,8 +3,8 @@
 
 from functools import partial
 
-from mod_runtime.contract import RUNNER_HOST_OPERATIONS, SOURCE_HOST_OPERATIONS
-from launcher.runner_host import _unowned, bind_owner_operations
+from mod_runtime.contract import RUNNER_HOST_OPERATIONS
+from launcher.runner_host import bind_owner_operations
 from launcher.sandbox import Operation, SandboxError
 
 
@@ -19,8 +19,7 @@ def bind_shared_operations(capabilities, providers):
     if providers.keys() != capabilities.keys():
         raise SandboxError("Shared providers must match the admitted source owners")
     tables = {owner: bind_owner_operations(grants, providers[owner]) for owner, grants in capabilities.items()}
-    operations = {name: Operation(spec.parameters, spec.result, partial(_unowned, name))
-                  for name, spec in RUNNER_HOST_OPERATIONS.items()}
+    operations = {}
 
     def route(name, owner, *arguments):
         table = tables.get(owner)
@@ -28,7 +27,7 @@ def bind_shared_operations(capabilities, providers):
             raise SandboxError("Host call names a source outside this runtime group")
         return table[name].callback(*arguments)
 
-    for name, spec in SOURCE_HOST_OPERATIONS.items():
+    for name, spec in RUNNER_HOST_OPERATIONS.items():
         operations[name] = Operation(spec.parameters, spec.result,
                                      partial(route, name.removeprefix("source-")))
     return operations

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Career/policy/action lifecycle for one sandbox's private regulation adapter."""
+"""Keep one mod's policy and action state inside the shared regulation group."""
 
 from .action import RegulationAction
 from .catalog import RegulationCatalog
@@ -9,7 +9,7 @@ from .values import integer, loads
 
 
 class RegulationResident:
-    def __init__(self, handlers, *, cache=None):
+    def __init__(self, handlers, *, cache):
         self.handlers = handlers
         self.cache = cache
         self.identity, self.active, self.staged = None, None, None
@@ -77,7 +77,7 @@ class RegulationResident:
 
     def seal_manifest(self):
         packet = loads(self.finish("manifest"))
-        self.staged = RegulationCatalog(packet, self.bindings, self.active, cache=self.cache)
+        self.staged = RegulationCatalog(packet, self.bindings, cache=self.cache)
         # Bindings anchor the first owner's identity. Once admitted, that source
         # revision survives policy updates and career resets for this Store.
         if self.staged.identity[0] != self.handlers.owner:
@@ -153,11 +153,11 @@ class RegulationResident:
         self.contexts = None
         self.epoch, self.generation, self.required = epoch, 0, 0
         self.staged_ready = False
-        # Action IDs remain monotonic across epochs: an old discard must never
-        # match and discard a new career's action. Bindings/owner identity survive.
+        # Keep action IDs increasing across careers so an old request cannot
+        # match a new career's action. Bindings and owner identity also survive.
         return self.ack("reset")
 
-    def begin_action(self, action, epoch, generation, length, first, *, contexts=None):
+    def begin_action(self, action, epoch, generation, length, first, *, contexts):
         self.check()
         integer(action, 64, positive=True)
         # Both the active and required generations must match: an old active view
@@ -169,7 +169,7 @@ class RegulationResident:
         if integer(length, positive=True) > 384 * 1024:
             raise ValueError("Resident action packet exceeds its bound")
         self.last_action = action
-        if contexts is not None and contexts.action != action:
+        if contexts.action != action:
             raise ValueError("Foreign shared regulation context action")
         self.contexts = contexts
         self.transfer = RegulationTransfer("action", length)
@@ -201,14 +201,3 @@ class RegulationResident:
         if self.action.finished:
             self.action = None  # Release action-owned canonicals before author code.
         return {"action": action, "slot": slot, "result": decision(function(context, rule))}
-
-    def discard(self, action):
-        self.check()
-        # Discarding the latest completed action is harmless; an older ID must
-        # never discard a newer action. Policy transfers have a separate lifetime.
-        if action != self.last_action or not action:
-            raise ValueError("Stale resident discard")
-        if self.transfer is not None and self.transfer.kind != "action":
-            raise ValueError("Cannot discard a policy transfer as an action")
-        self.action = self.transfer = None
-        self.contexts = None

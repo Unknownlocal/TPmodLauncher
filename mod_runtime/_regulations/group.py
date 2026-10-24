@@ -66,8 +66,6 @@ class RegulationGroup:
     def call(self, method, *arguments):
         """Apply the selected owner's operation without interleaving lifetimes."""
         resident = self.resident()
-        if method == "reset":
-            raise ValueError("Reset the shared regulation group together")
         if method == "begin_action":
             return self.begin_action(*arguments)
         if method == "begin_policy" and (self.contexts is not None or self.transfer is not None):

@@ -29,9 +29,7 @@ def source_author_api(owner, import_mod):
 
 
 def install_author_api():
-    """Expose the author class and existing host operations under wit_world."""
+    """Reserve the common module; each source module gets its own bound host API."""
     api = ModuleType("wit_world")
     api.WitWorld = AuthorWorld
-    for name in ("report", "add_menu_button", "register_settings", "save_settings", "register_theme"):
-        setattr(api, name, getattr(_bindings, name))
     sys.modules["wit_world"] = api

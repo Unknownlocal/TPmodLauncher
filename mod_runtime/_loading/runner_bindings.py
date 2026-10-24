@@ -3,39 +3,25 @@
 
 import runner_bindings as _bindings
 
-from _regulations.handlers import RegulationHandlers
-from _regulations.resident import RegulationResident
 from _regulations.group import RegulationGroup
 from _regulations.policy import encode as _encode_regulation
-from .source_loader import SourceLoader
 from .source_group import SourceGroup
 
 
 # Each instantiated runner starts with its own copy of these frozen objects.
 # Keeping them at module scope preserves state across separate export calls.
-_loader = SourceLoader()
-_regulations = RegulationHandlers(_loader.sources)
-_resident = RegulationResident(_regulations)
 _group = SourceGroup()
 _shared_regulations = RegulationGroup(_group)
-
-
-def _single_source():
-    if _group.owners:
-        raise RuntimeError("Cannot mix individual and shared source protocols")
 
 
 def _resident_call(method, *arguments):
     # Author lifecycle events never dispatch these operations. A bad private
     # operation poisons resident state before the host sees its error reply.
     try:
-        if not _group.owners and not _loader.activated:
-            raise RuntimeError("Activate before resident regulation setup")
-        result = (_shared_regulations.call(method, *arguments) if _group.owners
-                  else getattr(_resident, method)(*arguments))
+        result = _shared_regulations.call(method, *arguments)
         return "" if result is None else _encode_regulation(result)
     except BaseException:
-        (_shared_regulations if _group.owners else _resident).fail()
+        _shared_regulations.fail()
         return '{"error":"Resident regulation failed"}'
 
 
@@ -60,25 +46,7 @@ def _shared_call(method, *arguments):
 class RunnerBindings(_bindings.RunnerBindings):
     """Keep the fixed private exports separate from their loading/policy state."""
 
-    def put_source(self, path, chunk):
-        _single_source()
-        _loader.put_source(path, chunk)
-
-    def load_source(self, entry):
-        _single_source()
-        return _loader.load_source(entry)
-
-    def activate(self):
-        _single_source()
-        _loader.activate()
-
-    def on_event(self, name, payload):
-        _single_source()
-        return _loader.on_event(name, payload)
-
     def declare_source(self, owner, entry):
-        if _loader.sources or _loader.sealed:
-            raise RuntimeError("Cannot mix individual and shared source protocols")
         _group.declare(owner, entry)
 
     def put_owner_source(self, owner, path, chunk):
@@ -95,17 +63,6 @@ class RunnerBindings(_bindings.RunnerBindings):
 
     def on_source_event(self, owner, name, payload):
         return _group.on_event(owner, name, payload)
-
-    def bind_regulation(self, index, declaration):
-        if not _loader.activated:
-            raise RuntimeError("Activate before binding regulation handlers")
-        try:
-            _regulations.bind(index, declaration)
-        except BaseException as error:
-            # As with source loading, return a short error without formatting
-            # a traceback through unsupported WASI file/stat calls.
-            return (type(error).__name__ + ": " + str(error))[:512]
-        return ""
 
     def begin_regulation_policy(self, epoch, generation, manifest_bytes):
         return _resident_call("begin_policy", epoch, generation, manifest_bytes)
@@ -134,9 +91,6 @@ class RunnerBindings(_bindings.RunnerBindings):
     def commit_regulation_policy(self, epoch, generation):
         return _resident_call("commit_policy", epoch, generation)
 
-    def reset_regulation_career(self, epoch):
-        return _resident_call("reset", epoch)
-
     def begin_regulation_action(self, action, epoch, generation, bytes, first):
         return _resident_call("begin_action", action, epoch, generation, bytes, first)
 
@@ -152,9 +106,6 @@ class RunnerBindings(_bindings.RunnerBindings):
     def validate_resident_regulation(self, action, slot):
         return _resident_call("validate", action, slot)
 
-    def discard_regulation_action(self, action):
-        _resident_void("discard", action)
-
     def bind_source_regulation(self, index, declaration):
         try:
             if not _group.owners:
@@ -162,8 +113,8 @@ class RunnerBindings(_bindings.RunnerBindings):
             _shared_regulations.bind(index, declaration)
         except BaseException as error:
             _shared_regulations.fail()
-            # Binding failures use the same short reply as individual binding,
-            # avoiding traceback formatting through unsupported WASI file calls.
+            # Return a short load error without formatting a traceback through
+            # unsupported WASI file calls. The host closes the failed runner.
             return (type(error).__name__ + ": " + str(error))[:512]
         return ""
 

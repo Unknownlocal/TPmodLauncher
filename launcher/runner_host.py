@@ -11,10 +11,6 @@ def _deny(name, capability, *arguments):
     raise SandboxError(f"Capability {capability!r} is required for {name!r}")
 
 
-def _unowned(name, *arguments):
-    raise SandboxError(f"An admitted source owner is required for {name!r}")
-
-
 def bind_owner_operations(capabilities, providers):
     """Fix one source mod's permissions and callbacks before shared routing.
 

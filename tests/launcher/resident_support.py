@@ -4,7 +4,6 @@
 import hashlib
 
 from mod_runtime._regulations.values import measure
-from regulation_support import context
 
 
 def policy(owner, values=None):
@@ -21,8 +20,8 @@ def policy(owner, values=None):
             "totals": {key: sum(row[key] for row in descriptors) for key in ("bytes", "nodes", "integer_work")}}, records
 
 
-def packet(manifest, count=1, ctx=None, *, selected=0):
+def packet(manifest, count=1, *, selected=0):
     return {"owner": manifest["owner"], "revision": manifest["revision"],
-            "contexts": [context() if ctx is None else ctx],
+            "contexts": [0],
             "selections": [{"rule": 0, "evaluation_season": 2026, "selected": "current",
                             "current": [selected, 2026], "upcoming": None}], "calls": [[0, 0, 0]] * count}

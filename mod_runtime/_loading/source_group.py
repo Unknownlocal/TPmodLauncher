@@ -81,7 +81,7 @@ class SourceGroup:
             groups[namespace] = (loader.sources, SourceImports(namespace, loader.sources, api))
         # One finder selects a member by its qualified prefix in a dictionary.
         # Importing a module must not scan every other mod's source finder.
-        sys.meta_path.insert(0, MemoryImporter({}, groups))
+        sys.meta_path.insert(0, MemoryImporter(groups))
 
     def load(self, owner):
         loader = self._owner(owner)

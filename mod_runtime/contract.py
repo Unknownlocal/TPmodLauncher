@@ -24,11 +24,10 @@ HOST_OPERATIONS = MappingProxyType({
 
 # Shared calls carry an admitted source ID. The ordinary author methods still
 # take the same arguments; their per-mod facade supplies this private field.
-SOURCE_HOST_OPERATIONS = MappingProxyType({
+RUNNER_HOST_OPERATIONS = MappingProxyType({
     "source-" + name: HostOperation(spec.capability, ("string", *spec.parameters), spec.result)
     for name, spec in HOST_OPERATIONS.items()
 })
-RUNNER_HOST_OPERATIONS = MappingProxyType({**HOST_OPERATIONS, **SOURCE_HOST_OPERATIONS})
 
 # Source manifests select an exact public version, independently of the runner ABI.
 SOURCE_CAPABILITIES = MappingProxyType({

@@ -5,7 +5,6 @@ import importlib
 import sys
 
 from _source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, SOURCE_NAMESPACE, source_path
-from .memory_importer import MemoryImporter
 
 
 def reject_source_file_reads(event, arguments):
@@ -31,7 +30,7 @@ class SourceLoader:
         self.sealed = False
         self.instance = None
         self.activated = False
-        self.namespace = ""
+        self.namespace = None
 
     def put_source(self, path, chunk):
         if self.sealed:
@@ -45,7 +44,7 @@ class SourceLoader:
         self.sources.setdefault(path, []).append(chunk)
         self.bytes += size
 
-    def seal(self, namespace=""):
+    def seal(self, namespace):
         """Finish inert transfer before any mod can import another mod's files."""
         if self.sealed:
             raise RuntimeError("Source snapshot is sealed")
@@ -53,13 +52,6 @@ class SourceLoader:
         self.namespace = namespace
         for path, chunks in self.sources.items():
             self.sources[path] = "".join(chunks)
-
-    def load_source(self, entry):
-        if self.sealed:
-            raise RuntimeError("Invalid or repeated source load")
-        self.seal()
-        sys.meta_path.insert(0, MemoryImporter(self.sources))
-        return self.load_entry(entry)
 
     def load_entry(self, entry):
         """Construct one entry object from sealed source, without activating it."""
@@ -70,7 +62,7 @@ class SourceLoader:
             raise ValueError("Entry module is missing")
         # Source transfer is inert; author code starts only at this import.
         try:
-            module = importlib.import_module(self.namespace + "." + entry if self.namespace else entry)
+            module = importlib.import_module(self.namespace + "." + entry)
             self.instance = module.WitWorld()
         except BaseException as error:
             # Avoid traceback formatting, which tries unsupported WASI stat calls.

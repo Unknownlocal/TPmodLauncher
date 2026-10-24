@@ -17,17 +17,12 @@ from types import MappingProxyType
 ABI_VERSION = "0.4.0"
 COMPONENTIZE_VERSION = "0.25.1"
 EXPORTS = MappingProxyType({
-    "put-source": (("string", "string"), None),
-    "load-source": (("string",), "string"),
-    "activate": ((), None),
-    "on-event": (("string", "string"), "string"),
     "declare-source": (("string", "string"), None),
     "put-owner-source": (("string", "string", "string"), None),
     "seal-sources": ((), None),
     "load-owner-source": (("string",), "string"),
     "activate-source": (("string",), None),
     "on-source-event": (("string", "string", "string"), "string"),
-    "bind-regulation": (("u32", "string"), "string"),
     "bind-source-regulation": (("u32", "string"), "string"),
     "select-regulation-owner": (("string",), None),
     "begin-regulation-contexts": (("u64", "u32", "string"), "string"),
@@ -45,13 +40,11 @@ EXPORTS = MappingProxyType({
     "seal-regulation-record": ((), "string"),
     "seal-regulation-policy": ((), "string"),
     "commit-regulation-policy": (("u64", "u64"), "string"),
-    "reset-regulation-career": (("u64",), "string"),
     "begin-regulation-action": (("u64", "u64", "u64", "u32", "string"), "string"),
     "put-regulation-action": (("string",), None),
     "seal-regulation-action": ((), "string"),
     "prepare-regulation-slots": (("u64",), "string"),
     "validate-resident-regulation": (("u64", "u32"), "string"),
-    "discard-regulation-action": (("u64",), None),
 })
 SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
            "source/_loading/__init__.py", "source/_loading/author_world.py",

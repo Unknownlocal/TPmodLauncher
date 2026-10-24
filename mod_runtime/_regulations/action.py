@@ -7,12 +7,12 @@ memory. Copying happens outside each handler's allowance; mods can keep or chang
 their arguments without affecting later calls or cached rules.
 """
 
-from .policy import _integer, context_fields, fields
-from .values import bounded, clone, integer, measure, object_measure, scalar
+from .policy import _integer, fields
+from .values import bounded, clone, integer, object_measure, scalar
 
 
 class RegulationAction:
-    def __init__(self, packet, catalog, revision, *, contexts=None):
+    def __init__(self, packet, catalog, revision, *, contexts):
         fields(packet, ("owner", "revision", "contexts", "selections", "calls"))
         if (packet["owner"], packet["revision"]) != catalog.identity:
             raise ValueError("Foreign resident action owner/revision")
@@ -20,22 +20,14 @@ class RegulationAction:
             if type(packet[key]) is not list or not 1 <= len(packet[key]) <= 32:
                 raise ValueError("Invalid resident action dimensions")
         self.contexts, context_metrics, metadata = [], [], []
-        # Measure each supplied context once, even when several calls reuse it.
-        # The expanded context-plus-rule bound is checked below after resolution.
+        # The group has already checked and measured the proposals. Resolve each
+        # index here, then check the full context-plus-rule size below.
         for context in packet["contexts"]:
-            if contexts is None:
-                context_fields(context)
-                self.contexts.append(context)
-                context_metrics.append(bounded(measure(context)))
-                metadata.append((context["scope"], context["effective"]["season"]))
-            else:
-                # Shared packets carry indices, never another copy of the
-                # proposal. Measurements and applicability were checked once.
-                value, metric, scope, season = contexts.get(context)
-                self.contexts.append(value)
-                context_metrics.append(metric)
-                metadata.append((scope, season))
-        if contexts is not None and len(set(packet["contexts"])) != len(self.contexts):
+            value, metric, scope, season = contexts.get(context)
+            self.contexts.append(value)
+            context_metrics.append(metric)
+            metadata.append((scope, season))
+        if len(set(packet["contexts"])) != len(self.contexts):
             raise ValueError("Repeated shared regulation context reference")
         self.rules, rule_metrics = [], []
         for selection in packet["selections"]:

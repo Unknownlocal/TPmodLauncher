@@ -26,7 +26,9 @@ permissions. `launcher/runner_host.py` supplies a separate operation table for
 each mod. Ungranted operations reject calls before a provider runs. The sandbox
 checks signatures and enforces memory, execution and host-call limits.
 Shared runners use `launcher/shared_runner_host.py` to select an admitted mod's
-table by ID; the private source calls add that ID to the same five operations.
+table by ID. The runner imports only those five operations, each carrying the
+mod ID. The author methods keep their usual arguments; their module supplies
+the ID before crossing into the launcher.
 
 ## Source admission
 
@@ -114,8 +116,9 @@ one for ordinary `import wit_world` and `from wit_world import ...` statements.
 A peer's imported function keeps its original module's host identity, including
 when another entry calls it later. No mutable global current-mod value is needed.
 Fetching the global module directly through `sys.modules` or
-`importlib.import_module("wit_world")` bypasses this selection and cannot make
-ownerless host calls in a shared runner.
+`importlib.import_module("wit_world")` bypasses this selection. That common module
+contains the base class and import helper; it has no host methods. Source modules
+receive their own bound API through the import resolver.
 
 `launcher/shared_runner_host.py` checks that every call names an admitted group
 member and selects that member's fixed provider table. Diagnostics, menus,
@@ -193,7 +196,9 @@ all residents unavailable. These private operations are separate from lifecycle
 events and expose no generic callable API.
 
 The host selects a mod's stored regulation state before calling it. These calls
-run one at a time. Author host-call identity remains bound to the source module's
+run one at a time. All owners use the group's record cache and proposal table;
+each keeps its own bindings and policy state. Career reset clears the whole
+group together. Author host-call identity remains bound to the source module's
 mod ID.
 `ValidationDispatch` connects shared bindings to publication and execution through
 `launcher/regulations/validation/group.py`. It installs each group's common records
