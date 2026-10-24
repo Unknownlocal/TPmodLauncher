@@ -78,7 +78,7 @@ def test_instructions_link_fork_pr_head_to_workflow_without_claiming_or_passing_
     assert check["details_url"] == "https://github.com/owner/repo/actions/workflows/tests.yml"
     assert check["conclusion"] == "neutral"
     assert check["name"] != ci.CONTEXT
-    assert "**main**" in summary and "**7** as the PR number" in summary
+    assert "**main** or another repository branch" in summary and "**7** as the PR number" in summary
     assert check["output"]["summary"] == summary
     assert states(api) == []
     assert api.ref is None
@@ -180,8 +180,7 @@ def test_pr_input_cannot_inject_output_or_change_api_paths(value):
     assert api.calls == []
 
 
-@pytest.mark.parametrize("ref,attempt", [("refs/heads/main", "2"), ("refs/heads/feature", "1"),
-                                        ("refs/tags/main", "1")])
+@pytest.mark.parametrize("ref,attempt", [("refs/heads/main", "2"), ("refs/tags/main", "1")])
 def test_reruns_and_other_workflow_refs_are_refused(ref, attempt):
     with pytest.raises(ValueError):
         ci.require_first_attempt(ref, attempt)
@@ -196,10 +195,11 @@ def test_corrupt_marker_fails_closed():
     assert states(api) == ["pending"]
 
 
-def test_claim_cli_writes_only_validated_sha_and_pr(monkeypatch, tmp_path):
+@pytest.mark.parametrize("ref", ["refs/heads/main", "refs/heads/feature"])
+def test_claim_cli_accepts_repository_branches_and_writes_validated_sha_and_pr(monkeypatch, tmp_path, ref):
     api = FakeGitHub()
     monkeypatch.setattr(ci, "GitHub", lambda *args: api)
-    for key, value in {"GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1",
+    for key, value in {"GITHUB_REF": ref, "GITHUB_RUN_ATTEMPT": "1",
                        "GITHUB_REPOSITORY": api.repository, "GH_TOKEN": "not-a-real-token",
                        "GITHUB_RUN_ID": "42", "GITHUB_SHA": WORKFLOW_SHA, "PR_NUMBER": "7",
                        "GITHUB_OUTPUT": str(tmp_path / "output"),
