@@ -68,14 +68,14 @@ enabled sections are rejected; native fields use the last value, as in the game.
   An option may lack that key; a literal must be a positive integer or null.
   A missing declaration leaves the native rule unchanged; `{"value": null}`
   explicitly declares no rookie cap.
-- `staff_required_prestige`, also under `native_rules`, names an owned `handler`
-  and an optional `data` list of native or owned category keys. The list has at
-  most 32 distinct keys. Each named replacement can have only one enabled owner;
-  conflicts reject the whole preparation. These declarations have separate
-  models and cannot name arbitrary game functions.
+- `staff_prestige_check`, also under `native_rules`, accepts only a boolean.
+  Missing or true keeps the native prestige requirement; false requests that
+  this minimum be disabled. Custom refusals use ordinary validators. Each named
+  native rule can have only one enabled owner; conflicts reject preparation.
+  Declarations cannot name arbitrary game functions.
 
-Bridge declarations are checked and included in rule revisions, but execution
-is not installed. `RegulationRuntime.bind()` rejects a candidate containing
+Bridge declarations are checked and included in rule revisions, but automatic
+installation is not connected. `RegulationRuntime.bind()` rejects a candidate containing
 them before binding handlers or opening transport. It cannot report an
 unenforced replacement as ready.
 

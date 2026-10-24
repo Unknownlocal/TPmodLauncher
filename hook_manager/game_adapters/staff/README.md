@@ -21,6 +21,13 @@ mod checks and permission to apply changes.
 - [staffing_publication.py](staffing_publication.py): `StaffingPublication` checks
   that the relevant career inputs still match, then applies prepared changes to
   the game's original people and containers.
+- [prestige_switch.py](prestige_switch.py): `StaffPrestigeSwitch` supplies the
+  private boolean hook for the native prestige minimum. Enabled is the default
+  and installs nothing. Disabled returns zero from the career's
+  `required_prestige` helper without evaluating its formula. Other careers use
+  their original helper, and cleanup restores only the wrapper this hook owns.
+  This hook leaves other staff restrictions and `bypass_requirements` unchanged.
+  Automatic regulation installation remains disconnected.
 
 ## Contract and staffing flow
 

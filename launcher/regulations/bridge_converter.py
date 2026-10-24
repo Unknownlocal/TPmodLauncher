@@ -4,7 +4,6 @@
 from . import schema
 from .rookie_contract_limit import RookieContractLimit, rookie_maximum
 from .rule_parameter import RuleParameter
-from .staff_prestige_formula import StaffPrestigeFormula
 
 
 def _rookie(value, accessible):
@@ -23,21 +22,15 @@ def _rookie(value, accessible):
     return RookieContractLimit(RuleParameter(rule, value["parameter"], source))
 
 
-def _prestige(value, source, accessible, index):
-    schema.fields(value, ("handler",), ("data",))
-    schema.handler(value["handler"], index.source_paths(source))
-    rules = tuple(schema.rule(rule, accessible) for rule in schema.rows(value.get("data", []), 32))
-    if len(set(rules)) != len(rules):
-        raise ValueError("Duplicate staff prestige data reference")
-    return StaffPrestigeFormula(value["handler"], rules)
-
-
-def convert_bridges(value, source, accessible, index):
+def convert_bridges(value, accessible):
     """Convert closed declarations; JSON cannot select native targets or models."""
-    schema.fields(value, (), ("rookie_contract_max_years", "staff_required_prestige"))
+    schema.fields(value, (), ("rookie_contract_max_years", "staff_prestige_check"))
     result = {}
     if "rookie_contract_max_years" in value:
         result["rookie_contract_max_years"] = _rookie(value["rookie_contract_max_years"], accessible)
-    if "staff_required_prestige" in value:
-        result["staff_required_prestige"] = _prestige(value["staff_required_prestige"], source, accessible, index)
+    if "staff_prestige_check" in value:
+        enabled = value["staff_prestige_check"]
+        if type(enabled) is not bool:
+            raise ValueError("Staff prestige check must be a boolean")
+        result["staff_prestige_check"] = enabled
     return result
