@@ -23,11 +23,10 @@ helper. The dispatcher uses already checked definitions and fallback rules;
 public readers still receive independent copies. No author Python is loaded in
 the host.
 
-For individual source runners, each value is its owner's `HandlerRunner`. For
-shared source runners, every owner in a group maps to the same
-`SharedHandlerRunner`. Its complete binding table must be present. A physical
-runner binds once and can belong to only one dispatcher. `ValidationRunner`
-retains each owner's generation and view; `ValidationGroup` coordinates the
+Every owner in a source group maps to the same `SharedHandlerRunner`. Its complete
+binding table must be present. A physical runner binds once and can belong to
+only one dispatcher. `ValidationRunner` retains each owner's generation and
+view; `ValidationGroup` coordinates the
 shared Store without combining the original owner IDs.
 
 `publish(native={rule: [effective_option, ...]}, custom={rule: [option_key, ...]})`
@@ -71,26 +70,23 @@ above. The caller owns native season/selection semantics; this layer checks
 authority, order, freshness and full logical limits. Every owner packet is
 prepared before author execution, with no stable payload encoding or traversal.
 Contexts are encoded/measured once globally. Each shared Store receives one table
-of the contexts it uses; owner packets carry numbered references. Individual
-Stores retain their filtered context packets. Full limits are checked before
-replacing contexts with references. Guest arguments remain independent ordinary
-copies. Owner execution order is preserved even when shared and individual Stores
-are interleaved. A group opens its table at its first requested owner and checks
+of the contexts it uses; owner packets carry numbered references. Full limits are
+checked before replacing contexts with references. Guest arguments remain
+independent ordinary copies. Owner execution order is preserved when several shared groups are
+interleaved. A group opens its table at its first requested owner and checks
 completion after its last, before any results can leave the dispatcher.
 
 Entry has counted framework fuel; later four-slot copying retains 64M, handlers
 retain 5M/64 host calls, and all owners share the original 100 ms action deadline.
 Failure makes every owner in the failed physical Store unavailable, including
 peers not named in that action or update. Other groups with unfinished action
-state also close; earlier approvals cannot become a partial success. Individual
+state also close; earlier approvals cannot become a partial success. Other
 Stores that remain usable retain their status. Required owners stay in the model.
 `reset(new_epoch)` clears policy views while preserving bindings and monotonically
 increasing action/record identities. Reset runs once per physical group, requires
 new publication before use, and cannot revive a failed Store.
 
 Native transport and pack readiness use this package through the runtime.
-[Owned-process performance measurements](../../../benchmarks/regulations/RESULTS.md)
-cover the individual-runner path. `PackMods` supplies shared source groups through
-`RegulationRuntime`; direct trusted callers can also supply individual handlers.
+`PackMods` supplies its shared source group through `RegulationRuntime`.
 The published limits on packet size and item count do not guarantee arbitrary
 workloads finish within 100 ms.

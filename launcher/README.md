@@ -37,10 +37,10 @@ bounds discovery, validates manifests and rejects every candidate sharing a
 duplicate ID before activating valid mods in ID order. Normal entry enables
 Python source mods and mods with prebuilt Wasm components.
 
-For Python mods, `SourcePreparation.for_group()` copies every source member and
-checks its admitted metadata and the combined size before reading runner bytes
-once. Prebuilt Wasm components also read on a
-worker during normal startup. The controller then requests compiled code through
+For Python mods, `SourcePreparation` copies every source member, checks its
+previously accepted manifest and limits the combined size before reading runner
+bytes once. Prebuilt Wasm components also read on a worker during normal startup.
+The controller then requests compiled code through
 `compiled_mod.py` and polls for completion without waiting on a compiler.
 
 `compilation_registry.py` keeps loaded code and pending compilations for each
@@ -69,8 +69,8 @@ member rejects the whole fixed group; the loader does not retry with fewer mods.
 `mod_api.py` records public API versions, permissions and lifecycle signatures;
 `mod_contract.py` supplies prebuilt Wasm component admission, bounded JSON events and host-owned
 diagnostic and UI resource identity. `shared_source_mod.py` applies that lifecycle
-and event contract to each shared entry. `runner_host.py` binds the complete typed interface
-to per-mod providers or permission-denial callbacks.
+and event contract to each shared entry. `runner_host.py` checks each owner's
+permissions and fixes its host callbacks before shared routing is created.
 
 `compiled_code.py` holds the shared Engine and compiled component after adoption.
 `PackMods` uses one Store for the source group and separate Stores for prebuilt

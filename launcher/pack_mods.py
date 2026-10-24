@@ -15,7 +15,6 @@ from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod, _host_operations
 from launcher.pack_candidate import PackCandidate
 from launcher.shared_source_mod import SharedSourceMod
-from launcher.source_mod import SourceMod
 from launcher.ui_settings import SettingsRequests
 from hook_manager.menu import MenuRequests
 from hook_manager.themes import ThemeRequests
@@ -113,7 +112,7 @@ class PackMods:
         try:
             for owner in self._regulation_owners:
                 mod = self.mods.get(owner)
-                if type(mod) not in (SourceMod, SharedSourceMod) or not mod._active or mod.sandbox.closed:
+                if type(mod) is not SharedSourceMod or not mod._active or mod.sandbox.closed:
                     raise ManifestError("Required regulation owner became unavailable before binding")
             definitions = self.prepare_regulations(scopes=scopes, native_categories=native_categories)
             if definitions is None:
@@ -158,7 +157,7 @@ class PackMods:
         if self.closed or not self.finished or self._pack_root is None or self._regulations_prepared:
             raise ValueError("Regulations require a completed pack and one preparation per session")
         sources = {owner: mod.snapshot for owner, mod in self.mods.items()
-                   if type(mod) in (SourceMod, SharedSourceMod) and mod._active and not mod.sandbox.closed
+                   if type(mod) is SharedSourceMod and mod._active and not mod.sandbox.closed
                    and "regulations" in mod.manifest.capabilities}
         # Freeze preparation even on failure: editing a live pack cannot silently
         # repair/redefine an enabled rule; recovery needs a fresh admission.
@@ -471,7 +470,7 @@ class PackMods:
         timings = {}
         try:
             members = tuple((item.root, item.manifest) for item in self._sources.values())
-            with SourcePreparation.for_group(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
+            with SourcePreparation(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
                 result = None
                 with measure(timings, "source_prepare"):
                     while result is None:

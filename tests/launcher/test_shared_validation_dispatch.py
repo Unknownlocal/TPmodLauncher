@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Shared production dispatch, including interleaved individual Store execution."""
+"""Shared production dispatch, including owners interleaved across runtime groups."""
 
 from contextlib import ExitStack
 import json
@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.handler_runner import HandlerRunner
 from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.regulations.validation import group as group_module
 from launcher.regulations.validation.dispatch import ValidationDispatch
@@ -50,8 +49,8 @@ def make_shared_dispatch(runner_bundle, make_mod):
                                                            cleanup=lambda: cleaned.append(True)))
             for member in group.members.values():
                 member.activate()
-            individual = make_mod(CODE.format(owner="b.rules"), owner="b.rules", report=lambda owner, text: calls.append((owner, text)))
-            sources["b.rules"] = individual.snapshot
+            peer = make_mod(CODE.format(owner="b.rules"), owner="b.rules", report=lambda owner, text: calls.append((owner, text)))
+            sources["b.rules"] = peer.snapshot
             sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],
                                "option_data": {"native": {"open": {"owner": owner}}}} for owner in sources}
             private = "a.rules.private"
@@ -63,9 +62,9 @@ def make_shared_dispatch(runner_bundle, make_mod):
             model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), sources, scopes={"personnel.contract"})
             binding = SharedHandlerRunner.bind(group, {owner: model.validators[owner] for owner in group.members})
             handlers = {owner: binding for owner in group.members}
-            handlers["b.rules"] = HandlerRunner.bind(individual.runner, model.validators["b.rules"])
+            handlers["b.rules"] = SharedHandlerRunner.bind(peer.runner, {"b.rules": model.validators["b.rules"]})
             session = ValidationDispatch(model, handlers)
-            return session, group, individual, calls, cleaned, model, handlers
+            return session, group, peer, calls, cleaned, model, handlers
         yield create
 
 
@@ -80,7 +79,7 @@ def publish(session):
 
 
 def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_updates_and_reset(make_shared_dispatch, monkeypatch):
-    session, group, individual, calls, _, model, handlers = make_shared_dispatch(count=20)
+    session, group, peer, calls, _, model, handlers = make_shared_dispatch(count=20)
     traffic = []
     original = group.sandbox.call
     def record(name, *args, **kwargs):
@@ -128,14 +127,14 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_upda
     traffic.clear()
     session.reset(2)
     assert sum(name == "reset-regulation-group" for name, _ in traffic) == 1
-    assert not session.ready and not group.closed and not individual.sandbox.closed
+    assert not session.ready and not group.closed and not peer.sandbox.closed
     publish(session)
     assert session.evaluate([proposal()], [selection()], {"c.rules": [["v00", 0, 0]]}) == {"c.rules": [{"decision": "allow"}]}
     assert session.action > action and session.ready
 
 
 def test_failed_shared_publication_fences_unaffected_peers_and_preserves_host_view(make_shared_dispatch, monkeypatch):
-    session, group, individual, _, cleaned, _, _ = make_shared_dispatch()
+    session, group, peer, _, cleaned, _, _ = make_shared_dispatch()
     publish(session)
     before = session.catalog.views
     original = group.sandbox.call
@@ -147,14 +146,14 @@ def test_failed_shared_publication_fences_unaffected_peers_and_preserves_host_vi
         session.publish(custom={"a.rules.private": None})
     assert session.catalog.views is before and not session.ready and group.closed and cleaned == [True]
     assert session.states == {"a.rules": "unavailable", "b.rules": "active", "c.rules": "unavailable"}
-    assert not individual.sandbox.closed
+    assert not peer.sandbox.closed
     with pytest.raises(RuntimeError, match="revive"):
         session.reset(2)
 
 
 @pytest.mark.parametrize("failure", ["handler", "context-reply", "completion-reply"])
 def test_failed_shared_execution_closes_all_members_without_returning_partial_approval(make_shared_dispatch, monkeypatch, failure):
-    session, group, individual, calls, cleaned, _, _ = make_shared_dispatch()
+    session, group, peer, calls, cleaned, _, _ = make_shared_dispatch()
     publish(session)
     original = group.sandbox.call
     def fail(name, *args, **kwargs):
@@ -170,7 +169,7 @@ def test_failed_shared_execution_closes_all_members_without_returning_partial_ap
     with pytest.raises(Exception):
         session.evaluate([proposal(error="c.rules" if failure == "handler" else "")], [selection()],
                          {owner: [["v00", 0, 0]] for owner in session.runners})
-    assert group.closed and cleaned == [True] and not session.ready and not individual.sandbox.closed
+    assert group.closed and cleaned == [True] and not session.ready and not peer.sandbox.closed
     assert session.states == {"a.rules": "unavailable", "b.rules": "active", "c.rules": "unavailable"}
     if failure != "context-reply":
         assert calls[:2] == [("a.rules", "native"), ("b.rules", "native")]

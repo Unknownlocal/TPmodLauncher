@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Checked resident exports for one bound source runner on its controller thread."""
+"""Checked resident exports for one owner's view within a shared runner."""
 
 import time
 
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import decode, decision, fields
-from mod_runtime._regulations.values import entry_fuel, install_fuel, integer
-from mod_runtime.runtime import _chunks
+from mod_runtime._regulations.values import entry_fuel, integer
+from mod_runtime.source_transfer import _chunks
 from .install import PolicyInstall
 
 
 class ValidationRunner:
-    def __init__(self, handler, *, owner=None):
+    def __init__(self, handler, *, owner):
         self.handler, self.active, self.staged = handler, None, None
         self.owner = owner
         self.epoch, self.generation, self.required = 0, 0, 0
@@ -24,10 +24,9 @@ class ValidationRunner:
         return self.handler.runner.sandbox.phase(fuel=fuel, seconds=remaining, deadline=deadline)
 
     def _select(self):
-        if self.owner is not None:
-            # Selection addresses private resident state. Author host calls
-            # retain the identity bound into each imported source module.
-            self.handler.runner.sandbox.call("select-regulation-owner", self.owner)
+        # Selection addresses private resident state. Author host calls
+        # retain the identity bound into each imported source module.
+        self.handler.runner.sandbox.call("select-regulation-owner", self.owner)
 
     def _ack(self, name, args, state, epoch, generation):
         result = self.handler.runner.sandbox.call(name, *args)
@@ -50,14 +49,13 @@ class ValidationRunner:
             self.required = generation
             # The host fences the old generation before any transfer starts,
             # including failures during plan construction or binding comparison.
-            owner = self.handler.runner.manifest.id if self.owner is None else self.owner
-            validators = self.handler.validators if self.owner is None else self.handler.validators[owner]
-            if (self.staged is not None or view.owner != owner or view.validators != validators):
+            validators = self.handler.validators[self.owner]
+            if (self.staged is not None or view.owner != self.owner or view.validators != validators):
                 raise ValueError("Resident view differs from admitted handler bindings")
             plan = PolicyInstall(view, self.active, epoch, generation, known=known)
             # Shared phases first select the owner's stored regulation state.
             # Count that extra export in both staging and commit allowances.
-            crossing = 250_000 if self.owner is not None else 0
+            crossing = 250_000
             self._commit_fuel = plan.commit_fuel + crossing
             with self._phase(plan.fuel - plan.commit_fuel + crossing, 5 - (time.monotonic() - started), deadline):
                 self._select()
@@ -86,26 +84,13 @@ class ValidationRunner:
             self.handler.runner.close()
             raise
 
-    def reset(self, epoch, deadline):
-        try:
-            nodes = self.active.retirement_nodes() if self.active is not None else 0
-            if self.staged is not None and self.staged is not self.active:
-                nodes += self.staged.retirement_nodes()
-            with self._phase(install_fuel(0, nodes, 0, 1, 0), 5, deadline):
-                self._ack("reset-regulation-career", (epoch,), "reset", epoch, 0)
-            self.active = self.staged = None
-            self.epoch, self.generation, self.required = epoch, 0, 0
-        except BaseException:
-            self.handler.runner.close()
-            raise
-
     def evaluate(self, packet, action, deadline):
         try:
             if self.active is None or self.staged is not None or self.required != self.generation:
                 raise ValueError("Resident owner has no current published view")
             text, metric, remaining = packet
             chunks = list(_chunks(text.encode("utf-8")))
-            fuel = entry_fuel(metric[0], metric[1], len(chunks) + 2 + (self.owner is not None), metric[3])
+            fuel = entry_fuel(metric[0], metric[1], len(chunks) + 3, metric[3])
             results = []
             with self._phase(fuel, .1, deadline):
                 self._select()

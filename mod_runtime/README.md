@@ -60,11 +60,11 @@ menu, UI settings and palette operations. Trusted host providers own native
 registration and persistence. Source transfer and loading remain private host
 operations.
 
-The individual `PythonRunner` in `runtime.py` transfers one checked source
-snapshot in bounded UTF-8 chunks, then imports it inside Wasm. Transfer and import
-share an aggregate fuel, elapsed-time and host-call allowance. Initialisation has its own startup allowance;
-activation and later events retain ordinary call budgets. Activation is explicit.
-A failure closes the instance and releases its owned registrations.
+`source_transfer.py` holds the loading limits and splits source into bounded
+UTF-8 chunks. Each owner's transfer and entry import have separate allowances;
+sealing the complete group has another. Initialisation has its own startup
+limits. Activation is explicit, and activation and events use ordinary call
+budgets. A failure closes the shared runner and releases its registrations.
 
 `launcher/shared_source_mod.py` applies the launcher's lifecycle and bounded JSON
 events to each member of the shared runner. Prepared code is used
@@ -135,9 +135,6 @@ remain in force.
 failure closes all source peers, including members not yet activated. UI
 declarations remain staged until startup completes. Shared regulation storage
 uses its own private operations. The runner interface remains private.
-
-Direct trusted callers can also construct an individual `PythonRunner` through
-`runtime.py` and `launcher/source_mod.py`; the pack loader uses the shared path.
 
 ## Resident regulation validation
 
@@ -215,13 +212,13 @@ snapshot and compilation request until the controller takes them once.
 Cancellation releases that request; another mod can keep the same compilation.
 Abandoned reads or running compilations finish before their results are disposed.
 
-`SourcePreparation.for_group()` prepares an ordered group against its already
-checked manifests. It reads every member without importing Python, checks the
+`SourcePreparation` prepares an ordered group against its already checked
+manifests. It reads every member without importing Python, checks the
 combined source limits, then reads the verified runner once. Any failed member
 rejects the group before compilation. `PreparedSources` owns those snapshots and
 one compiler request, which a `SharedPythonRunner` can adopt. Closing the result
 drops its source copies and releases its request; a running interpreter keeps
-its code. Both preparation forms use the same polling and cancellation code.
+its code. A group with one member uses this same preparation and loading path.
 
 `launcher/pack_mods.py` uses grouped preparation for Python source mods and keeps
 prebuilt Wasm components independent after checking duplicate IDs. It owns

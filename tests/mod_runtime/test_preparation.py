@@ -9,8 +9,6 @@ import threading
 import pytest
 
 from launcher import compilation_registry
-from launcher.compilation_cache import CompilationCache
-from launcher.source_mod import SourceMod
 from mod_runtime.bundle import BundleError, RunnerBundle
 from mod_runtime import preparation
 from mod_runtime.preparation import SourcePreparation
@@ -61,52 +59,6 @@ def completed(job):
     return result
 
 
-def test_real_preparation_runs_off_thread_then_adopts_on_controller(runner_bundle, source_folder, tmp_path, monkeypatch):
-    owner = threading.get_ident()
-    phases, compiled_results = [], []
-    read, component, compile_runner = SourceSnapshot.read, runner_bundle.component, compilation_registry.CompiledComponent
-    def snapshot(folder):
-        phases.append(("snapshot", threading.get_ident()))
-        return read(folder)
-    def runner_bytes():
-        phases.append(("runner", threading.get_ident()))
-        return component()
-    def compile_bytes(*args, **kwargs):
-        phases.append(("compile", threading.get_ident()))
-        result = compile_runner(*args, **kwargs)
-        compiled_results.append(result)
-        return result
-    monkeypatch.setattr(SourceSnapshot, "read", snapshot)
-    monkeypatch.setattr(runner_bundle, "component", runner_bytes)
-    monkeypatch.setattr(compilation_registry, "CompiledComponent", compile_bytes)
-    reports, cleaned = [], []
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        with SourcePreparation(executor, runner_bundle, source_folder, cache=CompilationCache(tmp_path)) as job:
-            with completed(job) as result:
-                assert all(thread != owner for _, thread in phases)
-                assert [phase for phase, _ in phases] == ["snapshot", "runner", "compile"]
-                assert result.compiled.cache_status["state"] == "enabled"
-                assert set(result.timings) == {"source_snapshot", "runner_read", "compile"}
-                assert all(seconds >= 0 for seconds in result.timings.values())
-                job.close()  # Ownership already belongs to result, not the job.
-                assert not result.compiled.closed
-                with pytest.raises(RuntimeError, match="already taken"):
-                    job.take()
-                (source_folder / "src/mod.py").write_text('raise AssertionError("changed on disk")')
-                with SourceMod(runner_bundle, result.snapshot, prepared=result.compiled, timings=result.timings,
-                               report=lambda *args: reports.append(args), cleanup=lambda: cleaned.append(True)) as mod:
-                    assert mod.sandbox._thread == owner
-                    assert result.compiled.data is None and reports == []
-                    assert phases[-1] == ("runner", owner)  # Reverification at admission.
-                    mod.activate()
-                    assert mod.event("owned.event", {"ok": True}) == {"ok": True}
-                assert result.timings["initialize"] >= 0
-    assert reports == [("owned.prepared", "prepared source")] and cleaned == [True]
-    assert result.snapshot is None and result.compiled.closed
-    with pytest.raises(ValueError, match="closed"):
-        compiled_results[0].engine.ptr()
-
-
 def test_group_preparation_reads_runner_once_and_feeds_one_shared_store(runner_bundle, source_group, monkeypatch):
     owner = threading.get_ident()
     phases, reports = [], []
@@ -127,7 +79,7 @@ def test_group_preparation_reads_runner_once_and_feeds_one_shared_store(runner_b
     entry.write_text("import wit_world\nPEER = wit_world.import_mod('owned.peer', 'mod')\n"
                      "wit_world.report('source-import')\n" + CODE, encoding="utf-8")
     with ThreadPoolExecutor(max_workers=1) as executor, ExitStack() as runtime:
-        with SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
+        with SourcePreparation(executor, runner_bundle, source_group) as job:
             with completed(job) as result:
                 assert [phase for phase, _ in phases] == ["snapshot", "snapshot", "runner", "request"]
                 assert all(thread != owner for _, thread in phases[:3]) and phases[-1][1] == owner
@@ -171,7 +123,7 @@ def test_group_admission_failure_never_reads_or_compiles_runner(runner_bundle, s
         monkeypatch.setattr(preparation, limit, first.total_bytes if failure == "bytes" else len(first.files))
         message = "group exceeds its budget"
     with ThreadPoolExecutor(max_workers=1) as executor:
-        with SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
+        with SourcePreparation(executor, runner_bundle, source_group) as job:
             with pytest.raises(SourceError, match=message):
                 completed(job)
             with pytest.raises(RuntimeError, match="closed"):
@@ -181,10 +133,10 @@ def test_group_admission_failure_never_reads_or_compiles_runner(runner_bundle, s
 def test_duplicate_group_members_are_rejected_before_submission(source_group):
     # No executor is needed: ambiguous identities fail before any work is queued.
     with pytest.raises(SourceError, match="Duplicate shared source owner"):
-        SourcePreparation.for_group(None, None, (source_group[0], source_group[0]))
+        SourcePreparation(None, None, (source_group[0], source_group[0]))
 
 
-def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder, monkeypatch):
+def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_group, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     def occupy():
         entered.set()
@@ -196,7 +148,7 @@ def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder
         blocker = executor.submit(occupy)
         assert entered.wait(5)
         try:
-            with SourcePreparation(executor, None, source_folder) as job:
+            with SourcePreparation(executor, None, source_group) as job:
                 future = job._future
                 monkeypatch.setattr(future, "result", forbidden)
                 assert job.take() is None
@@ -209,7 +161,7 @@ def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder
             release.set()
 
 
-def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_folder, monkeypatch, disposable_source_compiler):
+def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_group, monkeypatch, disposable_source_compiler):
     entered, release = threading.Event(), threading.Event()
     results = []
     original = compilation_registry.CompiledComponent
@@ -220,7 +172,7 @@ def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_fo
         assert release.wait(10), "Test did not release compiler"
         return result
     monkeypatch.setattr(compilation_registry, "CompiledComponent", blocked)
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
+    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_group) as job:
         try:
             assert wait([job._future], timeout=30).done
             assert job.take() is None
@@ -244,7 +196,7 @@ def test_cancel_after_last_checkpoint_disposes_entire_late_group(runner_bundle, 
         assert release.wait(10), "Test did not release prepared result"
         return result
     monkeypatch.setattr(preparation, "_prepare_group", blocked)
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
+    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_group) as job:
         future = job._future
         try:
             assert entered.wait(30)
@@ -257,7 +209,7 @@ def test_cancel_after_last_checkpoint_disposes_entire_late_group(runner_bundle, 
 
 
 @pytest.mark.parametrize("failure", ["compile", "interrupt"])
-def test_worker_errors_propagate_and_close_the_job(runner_bundle, source_folder, monkeypatch, failure):
+def test_worker_errors_propagate_and_close_the_job(runner_bundle, source_group, monkeypatch, failure):
     if failure == "compile":
         # Pass the bounded Component header check and fail the native validator.
         from wasmtime import WasmtimeError
@@ -268,21 +220,23 @@ def test_worker_errors_propagate_and_close_the_job(runner_bundle, source_folder,
         def interrupt(*args):
             raise KeyboardInterrupt("owned worker interruption")
         monkeypatch.setattr(SourceSnapshot, "read", interrupt)
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
+    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_group) as job:
         with pytest.raises(expected):
             completed(job)
         with pytest.raises(RuntimeError, match="closed"):
             job.take()
 
 
-def test_changed_runner_is_rejected_when_prepared_result_is_adopted(runner_bundle, source_folder, tmp_path):
+def test_changed_runner_is_rejected_when_prepared_result_is_adopted(runner_bundle, source_group, tmp_path):
     shutil.copytree(runner_bundle.directory, tmp_path / "bundle")
     bundle = RunnerBundle(tmp_path / "bundle")
     cleaned = []
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, bundle, source_folder) as job:
+    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, bundle, source_group) as job:
         with completed(job) as result:
             (bundle.directory / "runner.wasm").write_bytes(b"changed after preparation")
             with pytest.raises(BundleError):
-                SourceMod(bundle, result.snapshot, prepared=result.compiled,
-                          report=lambda *_: pytest.fail("No guest should run"), cleanup=lambda: cleaned.append(True))
+                SharedPythonRunner(bundle, result.snapshots,
+                                   {item.manifest.id: {'report': lambda _: pytest.fail('No guest should run')}
+                                    for item in result.snapshots}, prepared=result.compiled,
+                                   cleanup=lambda: cleaned.append(True))
             assert result.compiled.closed and cleaned == [True]

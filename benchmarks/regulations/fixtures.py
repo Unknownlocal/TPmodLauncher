@@ -112,8 +112,15 @@ def inputs(name):
     return case, owners, native, sections, data
 
 
-def files(case):
-    result = (("mod.py", ENTRY), ("rules.py", HANDLERS[case.get("rule", "trivial")]))
+def files(case, *, owner=None):
+    entry = ENTRY
+    if owner is not None:
+        # Inspect this owner's retained view inside the shared physical runner.
+        # The legacy comparison keeps its separate, explicitly selected source.
+        entry = entry.replace("state=getattr(sys.modules['runner_guest'],'_resident',None)",
+                              "from _loading.runner_bindings import _shared_regulations\n"
+                              f"  state=_shared_regulations.residents[{owner!r}]")
+    result = (("mod.py", entry), ("rules.py", HANDLERS[case.get("rule", "trivial")]))
     if case.get("full_source"):
         remaining = 1024 * 1024 - sum(len(text.encode()) for _, text in result)
         result += (("padding.py", "#" + "x" * (remaining - 1)),)

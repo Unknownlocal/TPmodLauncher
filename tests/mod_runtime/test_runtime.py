@@ -6,8 +6,8 @@ from dataclasses import replace
 import pytest
 
 from launcher.sandbox import SandboxError
-from mod_runtime import runtime
-from mod_runtime.runtime import PythonRunner
+from mod_runtime import shared_sources
+from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 
@@ -36,39 +36,14 @@ def test_multibyte_source_crosses_chunk_boundaries_and_dotted_entry_loads(runner
     data = snapshot("", **{"pkg/__init__.py": "", "pkg/entry.py": text})
     data = replace(data, manifest=replace(MANIFEST, entry="pkg.entry"))
     messages = []
-    with PythonRunner(runner_bundle, data, {"report": messages.append}) as runner:
-        runner.activate()
+    with SharedPythonRunner(runner_bundle, (data,), {MANIFEST.id: {"report": messages.append}}) as runner:
+        runner.members[MANIFEST.id].activate()
     assert messages == ["ready"]
 
 
-@pytest.mark.parametrize("code,pattern", [
-    ("def broken(:\n", "SyntaxError"),
-    ('raise ValueError("owned import failure")', "owned import failure"),
-], ids=["syntax", "import"])
-def test_source_load_errors_close_and_clean_before_returning(runner_bundle, code, pattern):
-    cleaned = []
-    with pytest.raises(SandboxError, match=pattern):
-        PythonRunner(runner_bundle, snapshot(code), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True))
-    assert cleaned == [True]
-
-
 def test_source_budget_stops_import_loop_and_cleans(runner_bundle, monkeypatch):
-    monkeypatch.setattr(runtime, "SOURCE_FUEL", 5_000_000)
+    monkeypatch.setattr(shared_sources, "SOURCE_FUEL", 5_000_000)
     cleaned = []
     with pytest.raises(SandboxError, match="fuel"):
-        PythonRunner(runner_bundle, snapshot("while True: pass"), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True))
+        SharedPythonRunner(runner_bundle, (snapshot("while True: pass"),), {MANIFEST.id: {"report": lambda _: None}}, cleanup=lambda: cleaned.append(True))
     assert cleaned == [True]
-
-
-def test_callback_loops_keep_normal_budget_and_fail_independently(runner_bundle):
-    code = CODE.replace("return payload", "exec('while True: pass')")
-    cleaned = []
-    with PythonRunner(runner_bundle, snapshot(code), {"report": lambda _: None}, cleanup=lambda: cleaned.append(True)) as failed, PythonRunner(
-        runner_bundle, snapshot(), {"report": lambda _: None}
-    ) as healthy:
-        with pytest.raises(SandboxError, match="fuel"):
-            failed.activate()
-            failed.on_event("probe", "{}")
-        assert failed.closed and cleaned == [True]
-        healthy.activate()
-        assert healthy.on_event("probe", "{}") == "{}"

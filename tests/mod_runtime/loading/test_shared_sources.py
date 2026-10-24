@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from launcher.runner_host import bind_operations
+from launcher.shared_runner_host import bind_shared_operations
 from launcher.sandbox import Sandbox, SandboxError
 from mod_runtime.bundle import EXPORTS
-from mod_runtime.runtime import RUNNER_LIMITS, SOURCE_FUEL
+from mod_runtime.source_transfer import RUNNER_LIMITS, SOURCE_FUEL
 from mod_runtime import shared_sources
 from mod_runtime.shared_sources import SharedSources
 from mod_runtime.source import SourceManifest, SourceSnapshot
@@ -53,7 +53,7 @@ def snapshot(owner, value, *, entry="mod", code=ENTRY):
 
 
 def sandbox(bundle, cleaned):
-    return Sandbox(bundle.component(), bind_operations(set(), {}), limits=RUNNER_LIMITS,
+    return Sandbox(bundle.component(), bind_shared_operations({}, {}), limits=RUNNER_LIMITS,
                    required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True))
 
 

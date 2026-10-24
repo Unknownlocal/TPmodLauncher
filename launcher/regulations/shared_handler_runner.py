@@ -2,10 +2,22 @@
 """Bind distinct regulation owners inside one trusted shared Python runner."""
 
 from launcher.sandbox import SandboxError
-from mod_runtime._regulations.policy import encode
-from mod_runtime.runtime import SOURCE_FUEL, SOURCE_SECONDS
+from mod_runtime._regulations.policy import encode, fields
+from mod_runtime.source_transfer import SOURCE_FUEL, SOURCE_SECONDS
 from mod_runtime.shared_runtime import SharedPythonRunner
-from .handler_runner import ordered_bindings
+
+
+def ordered_bindings(validators):
+    """Keep each owner's admitted IDs in the same order as its private slots."""
+    if type(validators) is not list or len(validators) > 32:
+        raise ValueError("Invalid regulation binding count")
+    for row in validators:
+        fields(row, ("id", "rule", "scope", "handler"))
+    ordered = sorted(validators, key=lambda row: row["id"])
+    if len({row["id"] for row in ordered}) != len(ordered):
+        raise ValueError("Duplicate regulation validator ID")
+    return {row["id"]: (index, {key: row[key] for key in ("rule", "scope", "handler")})
+            for index, row in enumerate(ordered)}
 
 
 class SharedHandlerRunner:

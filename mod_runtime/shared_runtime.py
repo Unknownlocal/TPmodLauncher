@@ -8,7 +8,7 @@ from launcher.compiled_mod import CompiledMod
 from launcher.sandbox import Sandbox, SandboxError
 from launcher.shared_runner_host import bind_shared_operations
 from .bundle import EXPORTS, RunnerBundle
-from .runtime import RUNNER_LIMITS
+from .source_transfer import RUNNER_LIMITS
 from .shared_sources import SharedSources
 from .source import SourceSnapshot
 from .source_handle import SourceHandle

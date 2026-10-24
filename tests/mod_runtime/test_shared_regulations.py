@@ -129,8 +129,7 @@ def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False):
         assert reply(group, "seal-regulation-contexts")["contexts"] == (2 if extra_context else 1)
         for owner, view in catalog.views.items():
             calls = [[validator, 0, 0] for validator in list(view.validators)[:count]]
-            packet = json.loads(frame.for_owner(view, calls, f"{view.revision}:1:1")[0])
-            packet["contexts"] = [0]  # The table itself crossed the boundary once.
+            packet = json.loads(frame.for_owner(view, calls, f"{view.revision}:1:1", shared={})[0])
             text = encode(packet)
             reply(group, "select-regulation-owner", owner)
             assert reply(group, "begin-regulation-action", action, 1, 1, len(text.encode()), text) == {

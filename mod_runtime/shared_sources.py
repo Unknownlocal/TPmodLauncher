@@ -12,7 +12,7 @@ from ._source_policy import (
     MAX_GROUP_SOURCE_BYTES, MAX_GROUP_SOURCE_FILES, MAX_SOURCE_OWNERS,
     MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_owner, source_path,
 )
-from .runtime import MAX_TRANSFER_CALLS, SOURCE_FUEL, SOURCE_SECONDS, _chunks
+from .source_transfer import MAX_TRANSFER_CALLS, SOURCE_FUEL, SOURCE_SECONDS, _chunks
 from .source import SourceSnapshot
 
 

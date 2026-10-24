@@ -2,7 +2,7 @@
 """Finite owner installation plan assembled from cached JSON record fragments."""
 
 from mod_runtime._regulations.values import install_fuel
-from mod_runtime.runtime import _chunks
+from mod_runtime.source_transfer import _chunks
 
 
 class PolicyInstall:

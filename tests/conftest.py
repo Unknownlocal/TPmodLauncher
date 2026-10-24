@@ -2,6 +2,7 @@
 """Create temporary projects, test wheels and copies of bundled runtime files."""
 
 from textwrap import dedent
+from contextlib import ExitStack
 import base64
 import csv
 import hashlib
@@ -48,6 +49,22 @@ def python_compilation_cache(tmp_path_factory):
     """Reuse native code within this test process, never guest state or grants."""
     from launcher.compilation_cache import CompilationCache
     return CompilationCache(tmp_path_factory.mktemp("python-native-cache"))
+
+
+@pytest.fixture
+def make_source_group(runner_bundle):
+    """Construct ordinary shared source members with launcher-owned host identities."""
+    from launcher.mod_contract import _host_operations
+    from launcher.shared_source_mod import SharedSourceMod
+    from mod_runtime.shared_runtime import SharedPythonRunner
+    with ExitStack() as stack:
+        def create(snapshots, *, report=None, menu=None, settings=None, theme=None, cleanup=None):
+            providers = {snapshot.manifest.id: {name: operation.callback for name, operation in
+                         _host_operations(snapshot.manifest, report, menu, settings, theme).items()}
+                         for snapshot in snapshots}
+            runner = stack.enter_context(SharedPythonRunner(runner_bundle, snapshots, providers, cleanup=cleanup))
+            return {snapshot.manifest.id: SharedSourceMod(runner, snapshot) for snapshot in snapshots}
+        yield create
 
 
 @pytest.fixture(autouse=True)

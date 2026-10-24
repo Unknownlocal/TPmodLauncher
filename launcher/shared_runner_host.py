@@ -3,8 +3,8 @@
 
 from functools import partial
 
-from mod_runtime.contract import HOST_OPERATIONS, RUNNER_HOST_OPERATIONS, SOURCE_HOST_OPERATIONS
-from launcher.runner_host import _unowned, bind_operations
+from mod_runtime.contract import RUNNER_HOST_OPERATIONS, SOURCE_HOST_OPERATIONS
+from launcher.runner_host import _unowned, bind_owner_operations
 from launcher.sandbox import Operation, SandboxError
 
 
@@ -18,11 +18,7 @@ def bind_shared_operations(capabilities, providers):
     providers = dict(providers)
     if providers.keys() != capabilities.keys():
         raise SandboxError("Shared providers must match the admitted source owners")
-    tables = {
-        owner: {name: operation for name, operation in bind_operations(grants, providers[owner]).items()
-                if name in HOST_OPERATIONS}
-        for owner, grants in capabilities.items()
-    }
+    tables = {owner: bind_owner_operations(grants, providers[owner]) for owner, grants in capabilities.items()}
     operations = {name: Operation(spec.parameters, spec.result, partial(_unowned, name))
                   for name, spec in RUNNER_HOST_OPERATIONS.items()}
 

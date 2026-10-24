@@ -34,10 +34,16 @@ def main():
     from launcher.compiled_mod import CompiledMod
     from launcher.regulations import RegulationDefinitions
     from launcher.regulations.runtime import RegulationRuntime
-    from launcher.source_mod import SourceMod
     from mod_runtime import RunnerBundle
     from mod_runtime.bundle import ABI_VERSION, SOURCES
     from mod_runtime.source import SourceManifest, SourceSnapshot
+    if args.mode == "legacy":
+        # This branch targets only the explicitly exported historical checkout.
+        # Current production has no individual Python runner or fallback mode.
+        from launcher.source_mod import SourceMod
+    else:
+        from launcher.shared_source_mod import SharedSourceMod
+        from mod_runtime.shared_runtime import SharedPythonRunner
     bundle = RunnerBundle(args.bundle.resolve())
     for name in SOURCES:
         relative = Path(name).relative_to("source")
@@ -59,13 +65,22 @@ def main():
             meter.catalog(catalog)
         mods, snapshots = {}, {}
         for owner in owners:
-            source_files = files(case)
+            source_files = files(case, owner=owner if args.mode == "resident" else None)
             manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset({"regulations"}))
             snapshots[owner] = SourceSnapshot(manifest, source_files, sum(len(text.encode()) for _, text in source_files))
+            if args.mode == "legacy":
+                prepared = CompiledMod(bundle.component(), cache=cache)
+                mods[owner] = stack.enter_context(closing(SourceMod(bundle, snapshots[owner], prepared=prepared)))
+                mods[owner].activate()
+                meter.bind(mods[owner].sandbox)
+        if args.mode == "resident":
             prepared = CompiledMod(bundle.component(), cache=cache)
-            mods[owner] = stack.enter_context(closing(SourceMod(bundle, snapshots[owner], prepared=prepared)))
-            mods[owner].activate()
-            meter.bind(mods[owner].sandbox)
+            group = stack.enter_context(SharedPythonRunner(bundle, tuple(snapshots.values()),
+                                                           {owner: {} for owner in owners}, prepared=prepared))
+            mods = {owner: SharedSourceMod(group, snapshot) for owner, snapshot in snapshots.items()}
+            for mod in mods.values():
+                mod.activate()
+            meter.bind(group.sandbox)
         if args.diagnostics:
             tracemalloc.start()
         definitions = RegulationDefinitions.from_bytes(content, snapshots, scopes={"personnel.contract"})
@@ -138,7 +153,7 @@ def main():
                         nodes = sum(record.metric[1] for record in view.records) if view else 0
                         budget = 8_000_000 + 64_000 * nodes
                         with mod.sandbox.phase(fuel=budget, seconds=5):
-                            value = json.loads(mod.sandbox.call("on-event", "benchmark.memory", "{}"))
+                            value = mod.event("benchmark.memory", {})
                             value["inspection_fuel"] = budget - mod.sandbox._store.get_fuel()
                             report[label][owner] = value
 

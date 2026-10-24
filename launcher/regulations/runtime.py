@@ -3,10 +3,8 @@
 
 import threading
 
-from launcher.source_mod import SourceMod
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime._regulations.values import integer
-from .handler_runner import HandlerRunner
 from .shared_handler_runner import SharedHandlerRunner
 from .publication import PolicyPublication
 from .server import RegulationServer
@@ -40,14 +38,11 @@ class RegulationRuntime:
         try:
             for owner, validators in self.definitions.validators.items():
                 mod = self._mods[owner]
-                if (type(mod) not in (SourceMod, SharedSourceMod) or not mod._active
+                if (type(mod) is not SharedSourceMod or not mod._active
                         or mod.sandbox.closed or mod.manifest.id != owner):
                     raise ValueError("Regulation source owner is no longer active")
                 if validators:
-                    if type(mod) is SharedSourceMod:
-                        groups.setdefault(mod.runner, {})[owner] = validators
-                    else:
-                        self._handlers[owner] = HandlerRunner.bind(mod.runner, validators)
+                    groups.setdefault(mod.runner, {})[owner] = validators
             # Bind once per physical runner. Empty tables need no guest resident,
             # but their owners still participate in readiness and group failure.
             for runner, tables in groups.items():
@@ -107,9 +102,9 @@ class RegulationRuntime:
         # A shared Store can fail through a non-regulation peer too. Expand any
         # affected owner to every required owner of that same physical runner.
         runners = {self._mods[owner].runner for owner in owners
-                   if type(self._mods[owner]) in (SourceMod, SharedSourceMod)}
+                   if type(self._mods[owner]) is SharedSourceMod}
         for owner, mod in self._mods.items():
-            if type(mod) not in (SourceMod, SharedSourceMod) or mod.runner in runners:
+            if type(mod) is not SharedSourceMod or mod.runner in runners:
                 self._states[owner] = "unavailable"
         for runner in runners:
             runner.close()

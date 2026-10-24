@@ -6,7 +6,7 @@ import time
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import decode, fields
 from mod_runtime._regulations.values import entry_fuel, install_fuel, integer
-from mod_runtime.runtime import _chunks
+from mod_runtime.source_transfer import _chunks
 from .runner import ValidationRunner
 
 

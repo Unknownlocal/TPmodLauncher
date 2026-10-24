@@ -73,8 +73,8 @@ from the 1 MiB file limit. Failed preparation returns no partial owner set.
 `PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
 tables once per shared source runner through `SharedHandlerRunner`. Each owner
 keeps its own IDs, declarations and generations. Owners declaring data without
-validators stay required but need no guest handler table. Direct trusted callers
-can also supply individual source runners through `HandlerRunner`.
+validators stay required but need no guest handler table. A group with one source
+mod uses the same binding path.
 
 Handlers are synchronous two-argument functions from the accepted owner source.
 Owned re-exports are supported; Python is never imported into the launcher.
