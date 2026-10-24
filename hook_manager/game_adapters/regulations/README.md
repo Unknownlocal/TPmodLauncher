@@ -17,6 +17,9 @@ These are private launcher adapters, not a direct game-function API for mods.
   complete team-staffing plans before applying their prepared changes.
 - [guards.py](guards.py): `RegulationGuards` manages checks around the game
   functions selected by these adapters.
+- [native_rules.py](native_rules.py): installs the fixed rookie-length and staff
+  prestige switches from admitted booleans. Missing settings keep the
+  game's checks. Trusted setup owns the returned hooks and their removal.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
   policy updates over an authenticated connection to the launcher on the same
   computer. The game waits for its reply.
@@ -64,3 +67,9 @@ Incompatibility is reported in command-line output and logs, and the affected in
 is skipped. Failed installation restores changes already made. Importing these
 modules installs nothing; installation and removal belong to trusted launcher
 code. Mods cannot choose native targets or call the private callable adapter.
+
+The native switches only enable or disable their named checks. Custom restrictions
+use ordinary validators and the regulations adopted for the proposed contract's
+season. Driver proposals include the original game's rookie-check applicability,
+even when its native cap is disabled. Setup does not declare a policy ready for
+use. The normal launcher does not activate these hooks.

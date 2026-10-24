@@ -23,6 +23,9 @@ class CombinedCatalog:
             raise ValueError("Expected admitted regulation definitions")
         native, owners, revisions = definitions._catalog_inputs()
         self.native = native
+        # Admission has already rejected competing owners for each fixed bridge.
+        # Keep the small declarations, not another owner/revision lifecycle.
+        self._native_rules = {name: value for model in owners.values() for name, value in model.native_rules.items()}
         self.owners = {owner: (revisions[owner], tuple(sorted(model.validators, key=lambda row: row["id"])), model)
                        for owner, model in owners.items() if model.validators}
         self.custom = {row["key"]: (owner, {option["key"]: option for option in row["options"]})
@@ -31,47 +34,27 @@ class CombinedCatalog:
         for owner, (_, validators, _) in self.owners.items():
             for rule in {row["rule"] for row in validators}:
                 self.subscribers.setdefault(rule, set()).add(owner)
-        # Admission guarantees at most one cap owner. Borrow its checked model
-        # and overlay rather than maintaining another policy owner or revision.
-        model = next((model for model in owners.values() if "rookie_contract_max_years" in model.native_rules), None)
-        self._rookie = model.native_rules["rookie_contract_max_years"] if model else None
-        self._rookie_data = model.option_data if model else {}
-        self._rookie_rule = next(iter(self._rookie.rules), None) if self._rookie else None
-        if self._rookie_rule is not None:
-            # A bridge-only rule still needs membership, but does not invent an
-            # allow/deny handler or guest owner. Runtime installation stays gated.
-            self.subscribers.setdefault(self._rookie_rule, set())
         self.views, self._choices, self._records = {}, {}, {}
         self._next = 0
         self._staged = None
-        self._rookie_values, self._failed = None, False
+        self._published, self._failed = False, False
 
     @property
     def native_values_ready(self):
-        """Include literal-only caps in readiness even without a guest handler."""
-        return self._rookie is None or (not self._failed and self._rookie_values is not None and self._staged is None)
+        """Include native-only declarations even without a guest handler."""
+        return not self._native_rules or (not self._failed and self._published and self._staged is None)
 
-    def rookie_limit(self, choice=None):
-        """Select a committed scalar; the dispatcher checks live policy identities."""
-        if self._rookie is None:
-            return None
-        if self._failed:
-            raise RuntimeError("Rookie limit policy is unavailable")
-        if self._rookie_values is None:
-            raise RuntimeError("Rookie limit policy is not published")
-        if self._rookie_rule is None:
-            if choice is not None:
-                raise ValueError("Literal rookie maximum needs no rule choice")
-            return self._rookie_values[0]
-        if type(choice) is not int or not 0 <= choice < len(self._rookie_values):
-            raise ValueError("Rookie maximum needs a published rule choice")
-        return self._rookie_values[choice]
+    def native_rules(self):
+        """Copy fixed switches only after a complete policy publication."""
+        if not self.native_values_ready:
+            raise RuntimeError("Native rule policy is unavailable")
+        return dict(self._native_rules)
 
     def fail_native_values(self):
-        # Literal-only rules have no guest state to fence. Retire their values
+        # Native-only rules have no guest state to fence. Retire their values
         # too, including when a deadline expires after catalogue commit.
-        if self._rookie is not None:
-            self._rookie_values, self._failed = None, True
+        if self._native_rules:
+            self._published, self._failed = False, True
 
     def affected(self, native, custom):
         if type(native) is not dict or type(custom) is not dict or set(native) & set(custom):
@@ -128,7 +111,7 @@ class CombinedCatalog:
 
     def stage(self, native, custom):
         if self._failed:
-            raise RuntimeError("Rookie limit policy is unavailable")
+            raise RuntimeError("Native rule policy is unavailable")
         if self._staged is not None:
             raise ValueError("A catalog publication is already staged")
         affected = self.affected(native, custom)
@@ -171,27 +154,25 @@ class CombinedCatalog:
             view = OwnerView(owner, revision, validators, owned)
             previous = self.views.get(owner)
             views[owner] = previous if previous is not None and previous.signature == view.signature else view
-        rookie = self._rookie.resolve(choices, self._rookie_data) if self._rookie else None
-        self._staged = choices, views, cache, rookie
+        self._staged = choices, views, cache
         return {owner: views[owner] for owner in sorted(affected)}
 
     def commit(self):
         if self._staged is None:
             raise ValueError("No staged catalog publication")
-        self._choices, self.views, cache, self._rookie_values = self._staged
+        self._choices, self.views, cache = self._staged
         reachable = {record.identity for view in self.views.values() for record in view.records}
-        if self._rookie_rule is not None:
-            reachable.update(record.identity for _, record in self._choices[self._rookie_rule])
         self._records = {key: record for key, record in cache.items() if record.identity in reachable}
         self._staged = None
+        self._published = True
 
     def abort(self):
         self._staged = None
 
     def reset(self):
         if self._failed:
-            raise RuntimeError("Reset cannot revive an unavailable rookie limit policy")
-        self._rookie_values = None
+            raise RuntimeError("Reset cannot revive an unavailable native rule policy")
+        self._published = False
         self.views, self._choices, self._records = {}, {}, {}
         self._staged = None
         # IDs never repeat, even across a career reset or an aborted publication.

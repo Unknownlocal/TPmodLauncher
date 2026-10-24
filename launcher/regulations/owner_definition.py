@@ -3,8 +3,6 @@
 
 from dataclasses import dataclass, field
 
-from .rookie_contract_limit import RookieContractLimit
-
 
 @dataclass(frozen=True, slots=True)
 class OwnerDefinition:
@@ -20,29 +18,23 @@ class OwnerDefinition:
     option_data: dict[str, dict]
     validators: list[dict[str, str]]
     scripted_changes: list[dict]
-    native_rules: dict[str, RookieContractLimit | bool] = field(default_factory=dict)
+    native_rules: dict[str, bool] = field(default_factory=dict)
 
     def rule_keys(self):
         """List categories needed for payload checks and revision tracking."""
-        keys = self.option_data.keys() | {row["rule"] for row in self.validators}
-        for declaration in self.native_rules.values():
-            if isinstance(declaration, RookieContractLimit):
-                keys.update(declaration.rules)
-        return keys
+        return self.option_data.keys() | {row["rule"] for row in self.validators}
 
     def declarations(self):
         """Build a borrowed schema-1 view for internal copying/serialization.
 
-        Category/validator containers are borrowed; bridge models produce small
-        plain declarations. The aggregate copies this view before returning it
-        to consumers, avoiding a deep copy of rule data just for hashing.
+        Declaration containers are borrowed. The aggregate copies this view
+        before returning it, avoiding a deep copy of rule data just for hashing.
         """
         result = {"schema": 1, "categories": self.categories,
                   "option_data": self.option_data, "validators": self.validators,
                   "scripted_changes": self.scripted_changes}
         # Keep old declarations/revision bytes unchanged when neither bridge is
-        # present. Explicit null is retained inside its model's value object.
+        # present. The two switches have no rule-data dependencies of their own.
         if self.native_rules:
-            result["native_rules"] = {name: value.declaration() if isinstance(value, RookieContractLimit) else value
-                                      for name, value in self.native_rules.items()}
+            result["native_rules"] = self.native_rules
         return result

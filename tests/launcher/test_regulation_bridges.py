@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Private bridge admission; no game process or guest compilation is needed."""
+"""Private native switches, admission and publication fences; no game needed."""
 
 import json
 from unittest.mock import Mock
@@ -7,19 +7,19 @@ from unittest.mock import Mock
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.rookie_contract_limit import RookieContractLimit
-from launcher.regulations.rule_parameter import RuleParameter
 from launcher.regulations.runtime import RegulationRuntime
+from launcher.regulations.validation.dispatch import ValidationDispatch
+from launcher.regulations.validation import dispatch as dispatch_module
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 OWNER = "example.rules"
-ROOKIE = "rookie_contract_max_years"
+ROOKIE = "rookie_contract_length_check"
 PRESTIGE = "staff_prestige_check"
 
 
 def source(owner=OWNER):
-    # API 0.4.0 remains private. Importing this source on the host would fail.
+    # Admission must not import author Python on the host.
     text = "raise AssertionError('author code imported during admission')"
     manifest = SourceManifest(owner, "1.0.0", "0.4.0", "rules", frozenset({"regulations"}))
     return SourceSnapshot(manifest, (("rules.py", text),), len(text))
@@ -35,99 +35,87 @@ def prepare(data, sources=None):
         {OWNER: source()} if sources is None else sources, scopes=set())
 
 
-def test_literal_models_keep_missing_unlimited_and_capped_declarations_distinct():
+@pytest.mark.parametrize("name", [ROOKIE, PRESTIGE])
+def test_switches_keep_false_and_change_revisions_without_rule_dependencies(name):
     absent = prepare(document({}))
     assert absent.native_rules == {} and "native_rules" not in absent.owners[OWNER]
-    for value in (None, 3):
-        result = prepare(document({ROOKIE: {"value": value}}))
-        assert result.native_rules == {OWNER: {ROOKIE: RookieContractLimit(value)}}
-        assert result.owners[OWNER]["native_rules"] == {ROOKIE: {"value": value}}
-        assert result.document == absent.document  # These are not native JSON fields.
-        bindings = result.native_rules
-        bindings[OWNER].clear()
-        assert result.native_rules[OWNER][ROOKIE].value == value
-
-
-def test_rule_models_admit_references_without_importing_code():
-    data = document({ROOKIE: {"rule": "native", "parameter": "Maximum years"}})
-    result = prepare(data)
-    assert result.native_rules[OWNER] == {
-        ROOKIE: RookieContractLimit(RuleParameter("native", "Maximum years"))}
-    # Missing optional parameters are admitted; resolution belongs to publication.
-    reference = data["mod_extensions"][OWNER]["native_rules"][ROOKIE]
-    reference["source"] = "option_data"
-    reference["parameter"] = "max_years"
-    extra = prepare(data)
-    assert extra.native_rules[OWNER][ROOKIE].value.source == "option_data"
-    outward = extra.owners
-    outward[OWNER]["native_rules"][ROOKIE]["source"] = "changed"
-    assert extra.native_rules[OWNER][ROOKIE].value.source == "option_data"
-
-
-def test_staff_prestige_switch_keeps_false_and_changes_revision_without_rule_dependencies():
-    absent = prepare(document({}))
     revisions = []
     for enabled in (True, False):
-        result = prepare(document({PRESTIGE: enabled}))
-        assert result.native_rules == {OWNER: {PRESTIGE: enabled}}
-        assert result.owners[OWNER]["native_rules"] == {PRESTIGE: enabled}
+        result = prepare(document({name: enabled}))
+        assert result.native_rules == {OWNER: {name: enabled}}
+        assert result.owners[OWNER]["native_rules"] == {name: enabled}
         assert result.document == absent.document
         assert result._catalog_inputs()[1][OWNER].rule_keys() == set()
+        outward = result.native_rules
+        outward[OWNER].clear()
+        assert result.native_rules[OWNER][name] is enabled
         revisions.append(result.revisions)
     assert revisions[0] != revisions[1]
 
 
-@pytest.mark.parametrize("value", [0, None, {"handler": "rules.prestige"}])
-def test_staff_prestige_switch_requires_a_boolean(value):
+@pytest.mark.parametrize("name,value", [(ROOKIE, None), (PRESTIGE, 0), (ROOKIE, {"value": 3})])
+def test_switches_require_exact_booleans(name, value):
     with pytest.raises(ValueError, match="must be a boolean"):
-        prepare(document({PRESTIGE: value}))
+        prepare(document({name: value}))
 
 
-@pytest.mark.parametrize("value", [True, 2.0, "2", 0])
-def test_literal_rookie_maximum_requires_a_positive_exact_integer_or_null(value):
-    with pytest.raises(ValueError, match="positive integer or null"):
-        prepare(document({ROOKIE: {"value": value}}))
+@pytest.mark.parametrize("name", ["rookie_contract_max_years", "arbitrary.native.target"])
+def test_scalar_replacements_and_arbitrary_targets_are_not_declarations(name):
+    with pytest.raises(ValueError, match="declaration fields"):
+        prepare(document({name: {"value": 3}}))
 
 
-@pytest.mark.parametrize("bridges, message", [
-    ({"arbitrary.native.target": {"value": 3}}, "declaration fields"),
-    ({ROOKIE: {"value": 3, "rule": "native", "parameter": "max_years"}}, "declaration fields"),
-    ({ROOKIE: {"rule": "native", "parameter": "max_years", "source": "state"}}, "parameter source"),
-    ({"staff_required_prestige": {"handler": "rules.prestige"}}, "declaration fields"),
-])
-def test_bridge_structure_and_owned_references_are_closed(bridges, message):
-    with pytest.raises(ValueError, match=message):
-        prepare(document(bridges))
-
-
-@pytest.mark.parametrize("name, declaration", [(ROOKIE, {"value": None}), (PRESTIGE, False)])
-def test_conflicts_are_rejected_per_bridge_and_disabled_owners_do_not_reserve_it(name, declaration):
-    data = document({name: declaration})
-    data["mod_extensions"]["other.rules"] = {"schema": 1, "native_rules": {name: declaration}}
+@pytest.mark.parametrize("name", [ROOKIE, PRESTIGE])
+def test_conflicts_are_per_switch_and_disabled_owners_do_not_reserve_it(name):
+    data = document({name: False})
+    data["mod_extensions"]["other.rules"] = {"schema": 1, "native_rules": {name: False}}
+    sources = {OWNER: source(), "other.rules": source("other.rules")}
     with pytest.raises(ValueError, match=f"other.rules.*Conflicting native rule {name}.*{OWNER}"):
-        prepare(data, {OWNER: source(), "other.rules": source("other.rules")})
+        prepare(data, sources)
     assert prepare(data).owner_ids == (OWNER,)
-    # Different bridges can have different owners; there is no pack-wide winner.
     other = PRESTIGE if name == ROOKIE else ROOKIE
-    data["mod_extensions"]["other.rules"]["native_rules"] = {
-        other: False if other == PRESTIGE else {"value": 2}}
-    assert len(prepare(data, {OWNER: source(), "other.rules": source("other.rules")}).native_rules) == 2
+    data["mod_extensions"]["other.rules"]["native_rules"] = {other: False}
+    assert len(prepare(data, sources).native_rules) == 2
 
 
-def test_bridge_only_references_participate_in_revisions_and_payload_limits():
-    data = document({ROOKIE: {"rule": "native", "parameter": "max_years"}})
-    before = prepare(data).revisions
-    data["categories"][0]["options"][0]["parameters"] = {"max_years": 3}
-    after = prepare(data).revisions
-    assert before != after
-    data["categories"][0]["options"][0]["parameters"] = {"text": "x" * 4096}
-    with pytest.raises(ValueError, match="bytes"):
-        prepare(data)
+def test_switch_preparation_uses_existing_policy_identity_and_requires_republication():
+    expected = {ROOKIE: False, PRESTIGE: False}
+    dispatch = ValidationDispatch(prepare(document(expected)), {}, epoch=7)
+    assert not dispatch.ready
+    dispatch.publish()
+    values = dispatch.native_rules(epoch=7, generation=1)
+    assert values == expected
+    values.clear()
+    assert dispatch.native_rules(epoch=7, generation=1) == expected
+    dispatch.publish()
+    for epoch, generation in ((7, 1), (8, 2)):
+        with pytest.raises(ValueError, match="Stale"):
+            dispatch.native_rules(epoch=epoch, generation=generation)
+    dispatch.reset(8)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        dispatch.native_rules(epoch=8, generation=2)
+    dispatch.publish()
+    assert dispatch.native_rules(epoch=8, generation=3) == expected
 
 
-@pytest.mark.parametrize("declaration", [{ROOKIE: {"value": 3}}, {PRESTIGE: False}])
-def test_bridge_binding_cannot_be_reported_ready_before_execution_support_exists(declaration):
-    definitions = prepare(document(declaration))
+def test_late_publication_fences_switch_only_owners_without_guest_handlers(monkeypatch):
+    dispatch = ValidationDispatch(prepare(document({ROOKIE: False})), {}, epoch=7)
+    clock = iter((0, 0, 2))
+    monkeypatch.setattr(dispatch_module.time, "monotonic", lambda: next(clock))
+    with pytest.raises(RuntimeError, match="Late resident publication"):
+        dispatch.publish()
+    assert not dispatch.ready
+    with pytest.raises(RuntimeError, match="unavailable"):
+        dispatch.native_rules(epoch=7, generation=1)
+    monkeypatch.setattr(dispatch_module.time, "monotonic", lambda: 0)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        dispatch.publish()
+    with pytest.raises(RuntimeError, match="cannot revive"):
+        dispatch.reset(8)
+
+
+def test_switch_binding_remains_gated_before_normal_native_installation_exists():
+    definitions = prepare(document({ROOKIE: False, PRESTIGE: False}))
     mod = SharedSourceMod.__new__(SharedSourceMod)
     mod.runner = Mock()
     runtime = RegulationRuntime(definitions, {OWNER: mod})

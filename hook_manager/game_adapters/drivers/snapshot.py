@@ -6,6 +6,7 @@ Calendar/entry helpers borrow team definitions and adopted regulation data
 read-only. Nothing from those borrowed objects is returned to a mod.
 """
 
+from copy import copy
 from types import MethodType, SimpleNamespace
 
 from ...manager import HookError, data_copy
@@ -36,6 +37,23 @@ def _person(original):
 def _bind(owner, methods):
     for name, (function, static) in methods.items():
         setattr(owner, name, function if static else MethodType(function, owner))
+
+
+def rookie_check_applies(manager, driver, employer, role, native_limit):
+    """Keep the native eligibility test, without calculating an unused year cap.
+
+    All native exclusions use read-only history, role and employer data. Only
+    after those pass does team ranking choose one or two years; either result
+    means the check applies. Ranking can initialise live engines, so supply a
+    harmless rank on a shallow working manager. No ranking, engine/parts calls
+    or whole-career copy is needed to obtain the applicability boolean.
+    """
+    private = copy(manager)
+    private._team_competitiveness_rank = lambda team: 1
+    limit = native_limit(private, employer, driver, role)
+    if limit is not None and (type(limit) is not int or limit < 1):
+        raise HookError("Native rookie helper must return a positive integer or None")
+    return limit is not None
 
 
 class DriverContractSnapshot:

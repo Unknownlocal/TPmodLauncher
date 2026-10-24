@@ -64,21 +64,22 @@ class ValidationDispatch:
         return self.catalog.native_values_ready and all(state == "active" and not self.runners[owner].handler.runner.closed
                    for owner, state in self.states.items())
 
-    def rookie_limit(self, *, epoch, generation, choice=None):
-        """Prepare a selected scalar for native setup, using this dispatcher's identity.
+    def native_rules(self, *, epoch, generation):
+        """Prepare fixed switches for native setup, using this dispatcher's identity.
 
-        Native hook data can retain that scalar under the existing policy
-        acknowledgement. Game queries must not make a new transport call here.
+        The game retains these booleans under its policy acknowledgement; queries
+        must not make a transport call here. Custom conditions and seasonal data
+        selection belong to ordinary validators, not to these native switches.
         """
         self._enter()
         try:
             integer(epoch, 64, positive=True)
             integer(generation, 64, positive=True)
             if (epoch, generation) != (self.epoch, self.generation):
-                raise ValueError("Stale rookie limit policy")
+                raise ValueError("Stale native rule policy")
             if not self.ready:
-                raise RuntimeError("Rookie limit policy is unavailable")
-            return self.catalog.rookie_limit(choice)
+                raise RuntimeError("Native rule policy is unavailable")
+            return self.catalog.native_rules()
         finally:
             self._busy = False
 

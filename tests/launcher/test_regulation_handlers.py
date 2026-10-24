@@ -27,6 +27,31 @@ def session(mod, rows=None):
     return dispatch
 
 
+def test_custom_rookie_validator_uses_native_applicability_and_adopted_rule_data(make_mod):
+    mod = make_mod("""def validate(context, regulation):
+ proposal = context['proposal']
+ maximum = regulation['current']['parameters']['max_years']
+ if (proposal['native_checks']['rookie_contract_length_applies']
+     and proposal['proposed']['length_weeks'] > maximum * 52):
+  return {'decision':'deny', 'message':'Rookie contract too long'}
+ return {'decision':'allow'}
+""")
+    bound = session(mod)
+    bound.publish(native={"native": [{"key": "open", "parameters": {"max_years": 3}}]})
+    ctx = context()
+    ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
+                       "proposed": {"length_weeks": 208}}
+    calls = {mod.manifest.id: [["check", 0, 0]]}
+    def decision():
+        return bound.evaluate([ctx], [selection()], calls)[mod.manifest.id][0]
+    assert decision() == {"decision": "deny", "message": "Rookie contract too long"}
+    ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = False
+    assert decision() == {"decision": "allow"}
+    ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = True
+    bound.publish(native={"native": [{"key": "open", "parameters": {"max_years": 5}}]})
+    assert decision() == {"decision": "allow"}
+
+
 def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(make_mod, monkeypatch):
     mod = make_mod("from helpers import validate\ndef mutate(c,r):\n c['proposal']['leaked']=True\n r['current']['option_data']['leaked']=True\n return {'decision':'allow'}\n",
                    extra=(("helpers.py", "def validate(c,r):\n assert 'leaked' not in c['proposal'] and 'leaked' not in r['current']['option_data']\n return {'decision':'deny','message':'\U0001f600'*160}\n"),))

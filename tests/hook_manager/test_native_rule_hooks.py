@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Fixed native switches preserve the game's rookie test for custom validators."""
+
+import inspect
+import sys
+from types import ModuleType, SimpleNamespace
+from typing import Optional
+
+import pytest
+
+from hook_manager.game_adapters.regulations import native_rules
+from hook_manager.game_adapters.drivers import rookie_check
+from hook_manager.manager import HookError
+
+
+@pytest.fixture
+def native(monkeypatch):
+    driver = ModuleType("managers.driver")
+    driver.Optional = Optional
+    exec('''class DriverManager:
+ def formula_rookie_contract_year_limit(self, team_name: str, driver: object, role: str = 'main') -> Optional[int]:
+  self.calls += 1
+  return 2 if driver.rookie and role == "main" else None
+''', driver.__dict__)
+    staff = ModuleType("managers.staff_manager")
+    exec('''class StaffManager:
+ def required_prestige(self, staff: 'Staff') -> 'int':
+  return 15
+''', staff.__dict__)
+    for module in (driver, staff):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    # Portable annotations differ across Python versions. The local archive
+    # probe checks the exact native signature with the game's Python version.
+    target = rookie_check.rookie_check_target()
+    target.signature = str(inspect.signature(driver.DriverManager.formula_rookie_contract_year_limit))
+    monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: target)
+    state = SimpleNamespace(driver_manager=driver.DriverManager(), staff_manager=staff.StaffManager())
+    state.driver_manager.state = state.staff_manager.state = state
+    state.driver_manager.calls = 0
+    return state, driver.DriverManager, staff.StaffManager
+
+
+def test_default_switches_need_no_rookie_hook_or_inspection(native, monkeypatch):
+    state, drivers, staff = native
+    originals = drivers.formula_rookie_contract_year_limit, staff.required_prestige
+    monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: pytest.fail("Default inspected"))
+    for values in ({}, {"rookie_contract_length_check": True, "staff_prestige_check": True}):
+        assert native_rules.install_native_rules(state, values, report=pytest.fail) == ()
+        assert (drivers.formula_rookie_contract_year_limit, staff.required_prestige) == originals
+
+
+def test_switch_keeps_original_applicability_available_and_restores_owned_helper(native):
+    state, drivers, staff = native
+    original = rookie_check.native_rookie_limit(state.driver_manager)
+    hooks = native_rules.install_native_rules(state, {
+        "rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
+    escaped = state.driver_manager.formula_rookie_contract_year_limit
+    rookie, veteran = SimpleNamespace(rookie=True), SimpleNamespace(rookie=False)
+    try:
+        assert len(hooks) == 2
+        assert escaped("Team", rookie) is None and state.driver_manager.calls == 0
+        assert state.staff_manager.required_prestige(object()) == 0
+        # Disabling the native cap must not erase the game's applicability test.
+        retained = rookie_check.native_rookie_limit(state.driver_manager)
+        assert retained is original
+        assert retained(state.driver_manager, "Team", rookie) == 2
+        assert retained(state.driver_manager, "Team", veteran) is None
+        assert retained(state.driver_manager, "Team", rookie, "reserve") is None
+        other = drivers()
+        other.state, other.calls = SimpleNamespace(), 0
+        assert other.formula_rookie_contract_year_limit("Team", rookie) == 2
+        owned = state.driver_manager
+        state.driver_manager = other
+        assert escaped("Team", rookie) == 2
+        state.driver_manager = owned
+        hooks[0].remove("drivers.rookie-check")
+        assert escaped("Team", rookie) == 2
+    finally:
+        for hook in reversed(hooks):
+            hook.stop()
+    assert drivers.formula_rookie_contract_year_limit is original
+    assert escaped("Team", rookie) == 2
+    assert state.staff_manager.required_prestige(object()) == 15
+
+
+def test_incompatible_rookie_helper_is_skipped_independently_of_staff(native):
+    state, drivers, staff = native
+    def changed(self, team_name, driver, extra):
+        return 7
+    drivers.formula_rookie_contract_year_limit = changed
+    reports = []
+    hooks = native_rules.install_native_rules(state, {
+        "rookie_contract_length_check": False, "staff_prestige_check": False}, report=reports.append)
+    try:
+        assert len(hooks) == 1 and len(reports) == 1
+        assert "COMPATIBILITY FAILED drivers.rookie-check" in reports[0]
+        assert "continuing native" in reports[0]
+        assert drivers.formula_rookie_contract_year_limit is changed
+        assert state.staff_manager.required_prestige(object()) == 0
+    finally:
+        for hook in hooks:
+            hook.stop()
+
+
+def test_invalid_switches_are_rejected_before_installing_either_hook(native):
+    state, drivers, staff = native
+    original = drivers.formula_rookie_contract_year_limit
+    for values in ({"rookie_contract_max_years": {"value": 3}},
+                   {"rookie_contract_length_check": None},
+                   {"rookie_contract_length_check": False, "staff_prestige_check": 0}):
+        with pytest.raises(HookError):
+            native_rules.install_native_rules(state, values, report=pytest.fail)
+        assert drivers.formula_rookie_contract_year_limit is original
+
+
+def test_unexpected_setup_failure_restores_previously_installed_hook(native, monkeypatch):
+    state, drivers, staff = native
+    original = drivers.formula_rookie_contract_year_limit
+    def fail(*args, **kwargs):
+        raise RuntimeError("Setup interrupted")
+    monkeypatch.setattr(native_rules.StaffPrestigeSwitch, "create", fail)
+    with pytest.raises(RuntimeError, match="Setup interrupted"):
+        native_rules.install_native_rules(state, {"rookie_contract_length_check": False}, report=pytest.fail)
+    assert drivers.formula_rookie_contract_year_limit is original

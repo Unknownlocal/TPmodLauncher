@@ -16,7 +16,9 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     contract = {"team": "target", "role": "main", "status": "lead", "start_week": 105,
                 "length_weeks": 52, "salary_m": 1.5}
     driver = SimpleNamespace(name="Driver", nationality="GB", age=25, team="target", contract=contract, future_contract=None)
-    manager = SimpleNamespace(drivers=[driver], _ai_signing_query_cache={"live": "untouched"})
+    manager = SimpleNamespace(drivers=[driver], _ai_signing_query_cache={"live": "untouched"},
+                              _ai_car_package_components_cache={"live": "untouched"},
+                              normalize_contract_status=lambda record: record)
     state = SimpleNamespace(driver_manager=manager, teams={"target": {"entry_count": 2}},
                             game_mode="formula", player_team="target", season_no=3, week_index=9)
     manager.state = state
@@ -25,6 +27,15 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
         raise AssertionError("Proposal preparation must never sign")
 
     manager.sign_driver = MethodType(sign_driver, manager)
+
+    def native_rookie_limit(self, employer, person, role):
+        assert self is not manager
+        # The real helper ranks only to choose a positive one/two-year maximum.
+        # Applicability must not reach that rank's live engine/parts services.
+        self._team_competitiveness_rank(employer)
+        return 2 if role == "main" else None
+
+    manager._team_competitiveness_rank = lambda team: pytest.fail("Live ranking/services reached")
 
     def query(self, record, week):
         assert self._ai_signing_query_cache is None and record is not contract
@@ -49,11 +60,13 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     # These stand-ins make ownership/effect checks portable. Actual native
     # calendar, capacity, reserve and hierarchy bodies run in the local probe.
     monkeypatch.setattr(implementation, "driver_methods", lambda state: methods)
+    monkeypatch.setattr(implementation, "native_rookie_limit", lambda manager: native_rookie_limit)
     planner = implementation.DriverContractPlanner(state)
     arguments = {"self": manager, "team_name": "target", "driver": driver, "salary_m": 2.5, "years": 2,
                  "cost_points": 0, "role": "main", "priority": "lead", "bonuses": {"bonus_per_point_m": .1},
                  "entry_id": None, "contract_start_week": None}
-    before = deepcopy((state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"]))
+    before = deepcopy((state.teams, vars(driver), manager._ai_signing_query_cache,
+                       manager._ai_car_package_components_cache, arguments["bonuses"]))
     prepared = planner.prepare(arguments)
     assert set(prepared) == {"clock", "effective", "proposal"}
     result = regulation_context("personnel.contract", prepared, initiator="player")
@@ -62,6 +75,7 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     assert result["clock"] == {"season": 3, "absolute_week": 114}
     assert result["effective"] == {"season": 4, "start_week": 157, "end_week": 261}
     assert proposal["action"] == "renew" and proposal["person"]["nationality"] == "GB"
+    assert proposal["native_checks"] == {"rookie_contract_length_applies": True}
     assert proposal["person"]["role"] is None and proposal["proposed"]["role"] == "main"
     assert proposal["existing"]["status"] == proposal["proposed"]["status"] == "equal"
     proposal["person"]["nationality"] = "changed"
@@ -70,7 +84,8 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     assert preview["operation"] == "preview" and preview["proposal"]["proposed"]["bonuses_m"]["point"] == .1
     with pytest.raises(HookError, match="Unsupported regulation proposal context"):
         regulation_context("personnel.contract", prepared, operation="activate")
-    assert before == (state.teams, vars(driver), manager._ai_signing_query_cache, arguments["bonuses"])
+    assert before == (state.teams, vars(driver), manager._ai_signing_query_cache,
+                      manager._ai_car_package_components_cache, arguments["bonuses"])
 
     class CustomBonus:
         def __float__(self):

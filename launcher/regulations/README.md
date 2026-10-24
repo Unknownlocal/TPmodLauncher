@@ -61,34 +61,29 @@ enabled sections are rejected; native fields use the last value, as in the game.
   optional `id`. `new_regulation` contains the option's `key`. Scripts target
   owned categories. IDs are owner-qualified; omitted IDs use declaration order.
   Native scripts are preserved; duplicate IDs or category/season pairs fail.
-- `native_rules` accepts two named replacements. `rookie_contract_max_years`
-  accepts `{"value": 3}`, `{"value": null}`, or a reference containing `rule`
-  and `parameter`. A reference names one key in the adopted option's
-  `parameters`, or this owner's `option_data` when `source` is `"option_data"`.
-  An option may lack that key; a literal must be a positive integer or null.
-  A missing declaration leaves the native rule unchanged; `{"value": null}`
-  explicitly declares no rookie cap.
-- `staff_prestige_check`, also under `native_rules`, accepts only a boolean.
-  Missing or true keeps the native prestige requirement; false requests that
-  this minimum be disabled. Custom refusals use ordinary validators. Each named
+- `native_rules` accepts two boolean switches: `rookie_contract_length_check`
+  and `staff_prestige_check`. Missing or true keeps the corresponding native
+  check; false requests that it be disabled. Custom restrictions and seasonal
+  maxima use ordinary validators and their regulation data. Each named
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
 
-Bridge declarations are checked and included in rule revisions, but automatic
-installation is not connected. `RegulationRuntime.bind()` rejects a candidate containing
-them before binding handlers or opening transport. It cannot report an
-unenforced replacement as ready.
+Native switches are checked and included in rule revisions, but automatic
+installation is not connected. `RegulationRuntime.bind()` rejects a candidate
+containing them before binding handlers or opening transport. It cannot report
+an unenforced switch as ready.
 
-Rookie maxima share the catalogue's existing stage, commit, abort and reset.
-`RookieContractLimit.resolve()` reads scalar values from the retained records
-once per publication. A missing value keeps the native maximum; explicit null
-removes that rookie cap. `ValidationDispatch.rookie_limit()` checks its existing
-career epoch, generation and readiness before selecting a published value for
-native setup. No second policy identity or binding lifecycle is maintained.
-The scalar application helper preserves native rookie applicability without
-JSON work or mod calls. Normal native wrapper installation remains disconnected.
-Dispatch failure makes the retained cap unavailable, even after host commit;
-career reset cannot revive it.
+`ValidationDispatch.native_rules()` copies the fixed booleans for private game
+setup after checking the current career, publication and readiness. Publication
+failure makes them unavailable; career reset cannot revive a failed policy.
+The game keeps these values between lookups.
+
+Driver contexts include `proposal.native_checks.rookie_contract_length_applies`.
+The original game helper determines that boolean for the proposed person, role
+and employer, even when the native length check is disabled. A mod validator can
+use it with a maximum in its adopted rule data, without copying the game's
+definition of a rookie. The [driver adapter](../../hook_manager/game_adapters/drivers/README.md)
+skips the unrelated cap-ranking calculation so it cannot initialise live engines.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.

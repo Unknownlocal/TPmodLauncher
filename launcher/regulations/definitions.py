@@ -63,7 +63,7 @@ class RegulationDefinitions:
 
     @property
     def native_rules(self):
-        """Copy the binding maps; their model values cannot be changed."""
+        """Copy the native check switches for each admitted owner."""
         return {owner: dict(data.native_rules) for owner, data in self._owners.items() if data.native_rules}
 
     @property

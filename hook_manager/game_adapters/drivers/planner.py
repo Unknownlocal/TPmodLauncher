@@ -5,7 +5,8 @@ import math
 
 from ...manager import HookError, data_copy
 from .methods import driver_methods
-from .snapshot import DriverContractSnapshot
+from .snapshot import DriverContractSnapshot, rookie_check_applies
+from .rookie_check import native_rookie_limit
 from ..employment import BONUS_KEYS, contract_terms, person_identity
 from .terms import return_owner_loans
 
@@ -18,6 +19,7 @@ class DriverContractPlanner:
             raise HookError("Driver employment planning supports Formula mode")
         self.state, self.manager = state, state.driver_manager
         self.methods = driver_methods(state)
+        self.rookie_limit = native_rookie_limit(self.manager)
 
     def prepare(self, arguments):
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
@@ -35,6 +37,9 @@ class DriverContractPlanner:
         # money fields, which contract_terms deliberately preserves as null.
         if type(arguments["salary_m"]) not in (int, float) or not math.isfinite(arguments["salary_m"]):
             raise HookError("Driver contract money needs finite native numbers")
+        # Capture applicability before predicting any contract changes. The
+        # original helper remains available even while its native cap is disabled.
+        rookie = rookie_check_applies(self.manager, original, employer, role, self.rookie_limit)
         scratch = DriverContractSnapshot(self.state, original, employer, self.methods)
         manager, driver, state = scratch.manager, scratch.driver, scratch.state
         current_start, next_start = state.current_season_start_week(), state.next_season_start()
@@ -107,5 +112,6 @@ class DriverContractPlanner:
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "renew" if prior and prior.get("team") == employer else "sign", "person": person,
                          "employer": {"ref": "team:" + str(id(self.state.teams[employer])), "name": employer, "kind": "team"},
+                         "native_checks": {"rookie_contract_length_applies": rookie},
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
         })
