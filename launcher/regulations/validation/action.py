@@ -46,7 +46,7 @@ class PreparedAction:
         encoded = encode(wire)
         return encoded, measure(wire, encoded=encoded), object_measure(metrics), rule, season
 
-    def for_owner(self, view, calls, revision):
+    def for_owner(self, view, calls, revision, *, shared=None):
         if type(calls) is not list or not 1 <= len(calls) <= 32:
             raise ValueError("Invalid resident owner call count")
         contexts, selections, rows = {}, {}, []
@@ -72,6 +72,11 @@ class PreparedAction:
             if context not in contexts:
                 # Keep the encoding made at aggregate entry. Owner filtering
                 # changes local indexes, without re-encoding the context itself.
+                if shared is not None:
+                    # One group table owns the original encoded proposal. Owner
+                    # envelopes carry only its number, with their own local slots.
+                    index = shared.setdefault(context, len(shared))
+                    text, metric = encode(index), scalar(index)
                 contexts[context] = len(contexts), text, metric
             rows.append([binding, contexts[context][0], selections[selection][0]])
             self.used_contexts.add(context)
@@ -89,6 +94,15 @@ class PreparedAction:
         metric = object_measure((key, metric) for key, _, metric in parts)
         if metric[0] > 384 * 1024:
             raise ValueError("Resident owner packet exceeds its bound")
+        return packet, metric, len(rows)
+
+    def for_group(self, references):
+        """Join cached context fragments once for one physical runner's action."""
+        rows = [self.contexts[index] for index in references]
+        packet = "[" + ",".join(text for _, text, _ in rows) + "]"
+        metric = array_measure(metric for _, _, metric in rows)
+        if not rows or metric[0] > 4 * 1024 * 1024:
+            raise ValueError("Shared regulation context table exceeds its bound")
         return packet, metric, len(rows)
 
     def seal(self):

@@ -133,14 +133,14 @@ remain in force.
 
 The current `PackMods` path continues to use individual `PythonRunner` instances.
 Shared regulation storage has its own private operations; the current launcher
-dispatcher still uses individual residents. Public source admission accepts API
-0.2.0/0.3.0; the extended runner interface remains private.
+dispatcher supports individual residents and shared groups. The runner interface
+remains private.
 
 ## Resident regulation validation
 
 The private 0.4.0 interface binds and evaluates regulation handlers inside Wasm.
 Public source admission accepts API 0.2.0/0.3.0. The resident exports provide no
-new author facade methods or host imports and do not route through lifecycle events.
+new mod-facing methods or host imports and do not route through lifecycle events.
 A matching built bundle is required whenever its trusted guest sources change.
 
 Handler bindings become fixed when resident setup begins. Each owner keeps checked
@@ -192,11 +192,14 @@ keeping bindings and the last action ID. Any failed resident operation makes
 all residents unavailable. These private operations are separate from lifecycle
 events and expose no generic callable API.
 
-Owner selection addresses serial private resident calls. It does not change
-author host-call identity, which remains bound to the source module's mod ID.
-The current pack loader and `ValidationDispatch` use the individual-runner path;
-the shared binding and storage operations are independently available to trusted
-launcher code.
+The host selects a mod's stored regulation state before calling it. These calls
+run one at a time. Author host-call identity remains bound to the source module's
+mod ID.
+`ValidationDispatch` connects shared bindings to publication and execution through
+`launcher/regulations/validation/group.py`. It installs each group's common records
+once, sends a shared proposal table and checks completion under the original
+deadline. Generations and status remain per owner, while failure and reset follow
+the physical Store. The current pack loader still constructs individual runners.
 
 ## Preparation and session ownership
 

@@ -13,6 +13,14 @@ class SharedHandlerRunner:
 
     def __init__(self, runner, validators):
         self.runner, self.validators = runner, validators
+        self._validation = None
+
+    def validation(self):
+        """Return the one trusted coordinator for this physical resident group."""
+        if self._validation is None:
+            from .validation.group import ValidationGroup
+            self._validation = ValidationGroup(self)
+        return self._validation
 
     @classmethod
     def bind(cls, runner, validators):
@@ -24,6 +32,8 @@ class SharedHandlerRunner:
         try:
             if type(runner) is not SharedPythonRunner or runner.closed:
                 raise SandboxError("Expected an admitted shared Python runner")
+            if getattr(runner, "_regulation_handlers", None) is not None:
+                raise ValueError("Shared regulation handlers must bind once per runner")
             if type(validators) is not dict or not validators or not validators.keys() <= runner.members.keys():
                 raise ValueError("Expected admitted shared regulation owners")
             tables = {}
@@ -43,7 +53,11 @@ class SharedHandlerRunner:
                                                     encode({"owner": owner, **declaration}))
                         if error:
                             raise SandboxError((f"Regulation binding failed for {owner}: " + error)[:512])
-            return cls(runner, tables)
+            binding = cls(runner, tables)
+            # One physical Store cannot host independent catalogs/action IDs
+            # through separate binding wrappers, even for disjoint owner sets.
+            runner._regulation_handlers = binding
+            return binding
         except BaseException:
             if type(runner) is SharedPythonRunner:
                 runner.close()

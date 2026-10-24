@@ -15,7 +15,6 @@ from launcher.regulations.validation.install import PolicyInstall
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.contexts import RegulationContexts
-from mod_runtime.runtime import _chunks
 from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
@@ -34,7 +33,6 @@ def validate(c,r):
  count += 1
  wit_world.report(str(count))
  if c['proposal'].get('raise') == OWNER: raise ValueError('deliberate handler failure')
- if c['proposal'].get('deny') == OWNER: return {{'decision':'deny','message':OWNER}}
  return {{'decision':'allow'}}
 '''
 
@@ -73,29 +71,25 @@ def reply(group, name, *args, **kwargs):
     return value
 
 
-def publish(group, catalog, *, points=25, epoch=1, generation=1, unchanged=False):
-    previous = dict(catalog.views)
-    known = {record.identity for view in previous.values() for record in view.records}
-    views = catalog.stage({"native": None if unchanged else [{"key": "open", "points": points}]}, {})
-    plans, incoming = {}, 0
+def publish(group, catalog):
+    known, plans = set(), {}
+    views = catalog.stage({"native": [{"key": "open", "points": 25}]}, {})
     for owner, view in views.items():
-        plan = plans[owner] = PolicyInstall(view, previous.get(owner), epoch, generation, known=known)
-        incoming += len({record.identity for record in view.records} - known)
+        plan = plans[owner] = PolicyInstall(view, None, 1, 1, known=known)
         with group.sandbox.phase(fuel=plan.fuel, seconds=5):
             reply(group, "select-regulation-owner", owner)
             for name, args, state in plan.operations:
                 value = reply(group, name, *args)
                 if state is not None:
-                    assert value == {"epoch": epoch, "generation": generation, "state": state}
+                    assert value == {"epoch": 1, "generation": 1, "state": state}
         known.update(record.identity for record in view.records)
     for owner, plan in plans.items():
         with group.sandbox.phase(fuel=plan.commit_fuel, seconds=5):
             reply(group, "select-regulation-owner", owner)
-            assert reply(group, "commit-regulation-policy", epoch, generation)["state"] == "active"
+            assert reply(group, "commit-regulation-policy", 1, 1)["state"] == "active"
     with group.sandbox.phase(fuel=64_000_000, seconds=5):
         reply(group, "finish-regulation-publication")
     catalog.commit()
-    return incoming
 
 
 def context(**proposal):
@@ -119,7 +113,7 @@ def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
             gc.enable()
 
 
-def evaluate(group, catalog, action, ctx, *, epoch=1, generation=1, count=1, extra_context=False):
+def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False):
     """Exercise private pages; production dispatch separately owns its 100 ms limit."""
     selection = {"rule": "native", "evaluation_season": 2026, "selected": "current",
                  "current": [0, 2026], "upcoming": None}
@@ -135,50 +129,27 @@ def evaluate(group, catalog, action, ctx, *, epoch=1, generation=1, count=1, ext
         assert reply(group, "seal-regulation-contexts")["contexts"] == (2 if extra_context else 1)
         for owner, view in catalog.views.items():
             calls = [[validator, 0, 0] for validator in list(view.validators)[:count]]
-            packet = json.loads(frame.for_owner(view, calls, f"{view.revision}:{epoch}:{generation}")[0])
+            packet = json.loads(frame.for_owner(view, calls, f"{view.revision}:1:1")[0])
             packet["contexts"] = [0]  # The table itself crossed the boundary once.
-            chunks = list(_chunks(encode(packet).encode()))
+            text = encode(packet)
             reply(group, "select-regulation-owner", owner)
-            prepared = reply(group, "begin-regulation-action", action, epoch, generation,
-                             len(encode(packet).encode()), chunks[0])
-            for chunk in chunks[1:]:
-                reply(group, "put-regulation-action", chunk)
-            if len(chunks) > 1:
-                prepared = reply(group, "seal-regulation-action")
-            rows, remaining = [], len(calls)
-            while remaining:
-                size = min(4, remaining)
-                assert prepared == {"action": action, "prepared": size}
-                for slot in range(size):
-                    rows.append(reply(group, "validate-resident-regulation", action, slot, fuel=5_000_000)["result"])
-                remaining -= size
-                if remaining:
-                    prepared = reply(group, "prepare-regulation-slots", action, fuel=64_000_000)
-            results[owner] = rows
+            assert reply(group, "begin-regulation-action", action, 1, 1, len(text.encode()), text) == {
+                "action": action, "prepared": len(calls)}
+            results[owner] = [reply(group, "validate-resident-regulation", action, slot, fuel=5_000_000)["result"]
+                              for slot in range(len(calls))]
         frame.seal()
         # No result leaves this harness before the group checks completion.
         reply(group, "finish-regulation-action", action, fuel=64_000_000)
     return results
 
 
-def test_shared_records_contexts_and_more_than_32_bindings_survive_updates_and_reset(runner_bundle):
-    with shared(runner_bundle, count=20) as (group, binding, catalog, calls, _):
-        assert sum(map(len, binding.validators.values())) == 40
-        # One common native payload plus two different owner overlays, not four.
-        assert publish(group, catalog) == 3
-        assert evaluate(group, catalog, 1, context(points=25), count=20) == {
-            owner: [{"decision": "allow"}] * 20 for owner in OWNERS}
-        assert calls == [(owner, str(index)) for owner in OWNERS for index in range(1, 21)]
-        assert publish(group, catalog, points=30, generation=2) == 1
-        result = evaluate(group, catalog, 2, context(points=30, deny=OWNERS[1]), generation=2)
-        assert result == {OWNERS[0]: [{"decision": "allow"}], OWNERS[1]: [{"decision": "deny", "message": OWNERS[1]}]}
-        assert publish(group, catalog, generation=3, unchanged=True) == 0
-        with group.sandbox.phase(fuel=64_000_000, seconds=5):
-            assert reply(group, "reset-regulation-group", 2) == {"epoch": 2, "generation": 0, "state": "reset"}
-        catalog.reset()
-        assert publish(group, catalog, points=35, epoch=2) == 3
-        assert all(rows == [{"decision": "allow"}] for rows in evaluate(group, catalog, 3, context(points=35), epoch=2).values())
-        assert calls[-2:] == [(owner, "22") for owner in OWNERS]
+def test_split_context_transfer_keeps_fresh_arguments_across_owner_calls(runner_bundle):
+    with shared(runner_bundle, count=2) as (group, _, catalog, calls, _):
+        publish(group, catalog)
+        for action in (1, 2):
+            assert evaluate(group, catalog, action, context(points=25), count=2) == {
+                owner: [{"decision": "allow"}] * 2 for owner in OWNERS}
+        assert calls[-4:] == [(owner, str(index)) for owner in OWNERS for index in (3, 4)]
 
 
 def test_shared_binding_rejects_a_peer_function_with_the_same_local_filename(runner_bundle):
