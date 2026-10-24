@@ -1,10 +1,11 @@
 # Mod runtime architecture
 
 `mod_runtime` owns the trusted Python runner and source loading. It runs author
-Python inside Wasm in the external launcher. Each mod has its own Wasmtime Store,
-which holds its Python interpreter, memory and execution state. Mods have separate
-permissions, while identical compiled runner code is shared on the execution
-thread. Author source is never imported into the launcher or game interpreter.
+Python inside Wasm in the external launcher. The current `PackMods` path gives
+each mod its own Wasmtime Store, holding its Python interpreter, memory and
+execution state. That path keeps permissions separate and shares identical
+compiled runner code on the execution thread. Author source is never imported
+into the launcher or game interpreter.
 
 ## Runner files and verification
 
@@ -50,8 +51,9 @@ exports. Modules under `_loading/` handle source and lifecycle state inside Wasm
 | `source_loader.py` | Limit source transfer, load the entry object and track activation |
 | `runner_bindings.py` | Route private exports to the loader and retained regulations |
 
-Each Store retains one `SourceLoader` with its source table and entry object.
-`MemoryImporter` reads that same table. The `wit_world` API exposes diagnostics,
+The individual-source protocol retains one `SourceLoader` per Store, with its
+source table and entry object. `MemoryImporter` reads that same table.
+The `wit_world` API exposes diagnostics,
 menu, UI settings and palette operations. Trusted host providers own native
 registration and persistence. Source transfer and loading remain private host
 operations.
@@ -65,6 +67,40 @@ A failure closes the instance and releases its owned registrations.
 `launcher/source_mod.py` applies the launcher's lifecycle, bounded JSON events
 and host-owned diagnostic/UI identity to the runner. Prepared code is used
 only when its portable bytes match a fresh read of the verified runner.
+
+## Shared source loading
+
+`shared_sources.py` supplies a private loading adapter for a runner created by
+its caller. It transfers several verified snapshots, then loads a separate entry
+object for each original mod ID. Transfer completes for every member before
+the first entry is imported. Loading does not activate entries; activation and
+events address each entry by its mod ID. A loading failure closes the whole
+shared runner. The adapter creates no Store and binds no host providers.
+
+Under `_loading/`, `source_group.py` holds the members and their entry names.
+Each member uses its own `SourceLoader` and a module-name prefix derived from
+its ID. `source_imports.py` resolves ordinary absolute imports such as
+`import rules` within that member's source. Relative imports use Python's real
+package names. This avoids collisions between two mods' `rules.py` files without
+rewriting source or replacing the global import table between calls.
+
+`wit_world.import_mod(mod_id, module_name)` explicitly imports another member's
+module, returning the same Python object that member uses. It also supports
+dynamic imports that specify the mod ID. Dynamic relative imports through
+`importlib` work with the module's `__package__`; an absolute
+`importlib.import_module("rules")`
+cannot choose between members and must use the helper instead. Module names
+organise loading; they do not prevent mods accessing one another's Python state.
+
+Each mod retains its 1 MiB/256-file source limit. A shared group separately caps
+source at 8 MiB, 4096 files and 128 owners. Transfer chunks remain at most 4096
+bytes; this is not a file-size limit. The Store's memory and execution limits
+still apply after admission.
+
+The current `PackMods` path continues to use individual `PythonRunner` instances.
+The shared loading adapter is separate from routing host calls to the correct
+mod and from resident regulation dispatch. Public source admission still accepts
+API 0.2.0/0.3.0; the extended runner interface remains private.
 
 ## Resident regulation validation
 

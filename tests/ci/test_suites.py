@@ -24,6 +24,7 @@ spec.loader.exec_module(ci)
         ("tests/hook_manager/test_menu.py", "hook_manager"),
         ("tests/callables/test_validation.py", "callables"),
         ("tests/mod_runtime/test_source.py", "mod_runtime"),
+        ("tests/mod_runtime/loading/test_shared_sources.py", "mod_runtime_loading"),
         ("tests/ci/test_suites.py", "ci"),
     ],
 )

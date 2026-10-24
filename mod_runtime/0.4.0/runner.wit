@@ -13,6 +13,14 @@ world code-runner {
     export load-source: func(entry: string) -> string;
     export activate: func();
     export on-event: func(name: string, payload: string) -> string;
+    // Shared source loading uses stable mod IDs, not one synthetic pack owner.
+    // Transfer every snapshot before seal; loading never activates an entry.
+    export declare-source: func(owner: string, entry: string);
+    export put-owner-source: func(owner: string, path: string, chunk: string);
+    export seal-sources: func();
+    export load-owner-source: func(owner: string) -> string;
+    export activate-source: func(owner: string);
+    export on-source-event: func(owner: string, name: string, payload: string) -> string;
     export bind-regulation: func(index: u32, declaration: string) -> string;
 
     // Resident policy/action operations are private, not author capabilities.

@@ -24,7 +24,7 @@ def run_workflow_script(filename):
 def reports(tmp_path, monkeypatch):
     names = [
         f"python-coverage-{suite}-{platform}"
-        for suite in ("launcher", "hook_manager", "callables", "mod_runtime", "ci")
+        for suite in ("launcher", "hook_manager", "callables", "mod_runtime", "mod_runtime_loading", "ci")
         for platform in ("windows", "linux")
     ] + ["python-coverage-acceptance-windows"]
     for covered, name in enumerate(names, start=1):
@@ -51,7 +51,7 @@ def test_reports_every_suite_and_platform_separately(reports):
     run_workflow_script("coverage.yml")
     summary = (directory / "summary.md").read_text(encoding="utf-8")
     rows = [line for line in summary.splitlines() if "x64 |" in line]
-    assert len(rows) == len(names) == 11
+    assert len(rows) == len(names) == 13
     for covered, row in enumerate(rows, start=1):
         assert f"{covered / 20:.2%} ({covered}/20)" in row
         assert "50.00% (1/2)" in row

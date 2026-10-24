@@ -15,13 +15,18 @@ SUITES = {
     # This package has its own test owner even though its source is under hook_manager.
     "callables": "tests/callables/",
     "mod_runtime": "tests/mod_runtime/",
+    "mod_runtime_loading": "tests/mod_runtime/loading/",
     "ci": "tests/ci/",
 }
+# The parent keeps its direct tests; the loading child has its own workflow.
+EXCLUDES = {"mod_runtime": ("tests/mod_runtime/loading/",)}
 
 
 def suite_for(path, root):
     relative = Path(path).relative_to(root).as_posix()
-    matches = [suite for suite, prefix in SUITES.items() if relative.startswith(prefix)]
+    matches = [suite for suite, prefix in SUITES.items()
+               if relative.startswith(prefix)
+               and not relative.startswith(EXCLUDES.get(suite, ()))]
     if len(matches) != 1:
         raise pytest.UsageError(
             f"Portable test module {relative!r} must have exactly one CI suite; "
@@ -68,7 +73,8 @@ def main(argv=None):
     elif options.coverage:
         # Test-area names and import paths differ for the private package. Keep
         # its measurements in its own artifact instead of the parent's report.
-        source = {"callables": "hook_manager.callables", "ci": ".github"}.get(options.suite, options.suite)
+        source = {"callables": "hook_manager.callables", "ci": ".github",
+                  "mod_runtime_loading": "mod_runtime"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
