@@ -2,7 +2,7 @@
 """Admit only the two named native rule replacements, without binding either."""
 
 from . import schema
-from .rookie_contract_limit import RookieContractLimit
+from .rookie_contract_limit import RookieContractLimit, rookie_maximum
 from .rule_parameter import RuleParameter
 from .staff_prestige_formula import StaffPrestigeFormula
 
@@ -10,11 +10,8 @@ from .staff_prestige_formula import StaffPrestigeFormula
 def _rookie(value, accessible):
     if type(value) is dict and "value" in value:
         schema.fields(value, ("value",))
-        maximum = value["value"]
         # bool is an int subclass; accepting it would turn true into a year cap.
-        if maximum is not None and (type(maximum) is not int or maximum < 1):
-            raise ValueError("Rookie maximum must be a positive integer or null")
-        return RookieContractLimit(maximum)
+        return RookieContractLimit(rookie_maximum(value["value"]))
     schema.fields(value, ("rule", "parameter"), ("source",))
     rule = schema.rule(value["rule"], accessible)
     schema.label(value["parameter"])

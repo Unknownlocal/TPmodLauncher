@@ -11,6 +11,7 @@ from collections import ChainMap
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.values import bounded, clone, integer, measure, text
 from ..definitions import RegulationDefinitions
+from ..rookie_limit_policy import RookieLimitPolicy
 from .record import CatalogRecord
 from .view import OwnerView
 
@@ -26,11 +27,16 @@ class CombinedCatalog:
         self.owners = {owner: (revisions[owner], tuple(sorted(model.validators, key=lambda row: row["id"])), model)
                        for owner, model in owners.items() if model.validators}
         self.custom = {row["key"]: (owner, {option["key"]: option for option in row["options"]})
-                       for owner, (_, _, model) in self.owners.items() for row in model.categories}
+                       for owner, model in owners.items() for row in model.categories}
         self.subscribers = {}
         for owner, (_, validators, _) in self.owners.items():
             for rule in {row["rule"] for row in validators}:
                 self.subscribers.setdefault(rule, set()).add(owner)
+        self.rookie = RookieLimitPolicy(definitions)
+        if self.rookie.rule is not None:
+            # A bridge-only rule still needs membership, but does not invent an
+            # allow/deny handler or guest owner. Runtime installation stays gated.
+            self.subscribers.setdefault(self.rookie.rule, set())
         self.views, self._choices, self._records = {}, {}, {}
         self._next = 0
         self._staged = None
@@ -88,7 +94,7 @@ class CombinedCatalog:
             result.append((key, record))
         return tuple(result)
 
-    def stage(self, native, custom):
+    def stage(self, native, custom, *, epoch=None, generation=None):
         if self._staged is not None:
             raise ValueError("A catalog publication is already staged")
         affected = self.affected(native, custom)
@@ -131,6 +137,7 @@ class CombinedCatalog:
             view = OwnerView(owner, revision, validators, owned)
             previous = self.views.get(owner)
             views[owner] = previous if previous is not None and previous.signature == view.signature else view
+        self.rookie.stage(choices, epoch=epoch, generation=generation)
         self._staged = choices, views, cache
         return {owner: views[owner] for owner in sorted(affected)}
 
@@ -139,13 +146,18 @@ class CombinedCatalog:
             raise ValueError("No staged catalog publication")
         self._choices, self.views, cache = self._staged
         reachable = {record.identity for view in self.views.values() for record in view.records}
+        if self.rookie.rule is not None:
+            reachable.update(record.identity for _, record in self._choices[self.rookie.rule])
         self._records = {key: record for key, record in cache.items() if record.identity in reachable}
+        self.rookie.commit()
         self._staged = None
 
     def abort(self):
         self._staged = None
+        self.rookie.abort()
 
     def reset(self):
+        self.rookie.reset()
         self.views, self._choices, self._records = {}, {}, {}
         self._staged = None
         # IDs never repeat, even across a career reset or an aborted publication.

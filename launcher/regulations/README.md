@@ -79,6 +79,17 @@ is not installed. `RegulationRuntime.bind()` rejects a candidate containing
 them before binding handlers or opening transport. It cannot report an
 unenforced replacement as ready.
 
+`RookieLimitPolicy` resolves rookie maxima from the shared catalogue when a
+policy is staged. Commit publishes an immutable `RookieLimitBinding`; abort
+discards the candidate and career reset clears it. Missing optional values keep
+the native maximum, while explicit null removes only the rookie cap. Bindings
+check the caller's career epoch and policy generation and use an explicit
+published choice index. They preserve the native helper's applicability and
+retain no game objects or rule payloads. This prepares values only; it does not
+install a native wrapper or enable bridge-bearing packs.
+Dispatch failure makes the retained cap unavailable, even if host commit already
+finished. Career reset cannot revive a failed binding.
+
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.
 Each validator's complete context and rule together must fit 4,096 UTF-8 bytes,

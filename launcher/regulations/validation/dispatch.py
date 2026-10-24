@@ -46,6 +46,7 @@ class ValidationDispatch:
         self._busy = True
 
     def _fail(self, owners):
+        self.catalog.rookie.fail()
         # A shared Store cannot retain one healthy member after another fails.
         # Keep the original IDs in status, and close each physical runner once.
         affected = set(owners)
@@ -60,7 +61,7 @@ class ValidationDispatch:
 
     @property
     def ready(self):
-        return all(state == "active" and not self.runners[owner].handler.runner.closed
+        return self.catalog.rookie.ready and all(state == "active" and not self.runners[owner].handler.runner.closed
                    for owner, state in self.states.items())
 
     def publish(self, *, native=None, custom=None, deadline=None):
@@ -82,7 +83,7 @@ class ValidationDispatch:
             for owner in affected:
                 self.states[owner] = "dirty"
                 self.runners[owner].required = self.generation
-            views = self.catalog.stage(native, custom)
+            views = self.catalog.stage(native, custom, epoch=self.epoch, generation=self.generation)
             groups = dict.fromkeys(self.groups[owner] for owner in views)
             for group in groups:
                 group.begin_publication(tuple(owner for owner in views if self.groups[owner] is group))

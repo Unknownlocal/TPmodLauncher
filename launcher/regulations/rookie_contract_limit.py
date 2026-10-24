@@ -6,6 +6,13 @@ from dataclasses import dataclass
 from .rule_parameter import RuleParameter
 
 
+def rookie_maximum(value):
+    """Check a configured maximum without converting booleans or decimals."""
+    if value is not None and (type(value) is not int or value < 1):
+        raise ValueError("Rookie maximum must be a positive integer or null")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RookieContractLimit:
     """Retain a literal maximum or a reference resolved on policy publication.
