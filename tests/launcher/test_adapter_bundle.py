@@ -5,6 +5,7 @@ import builtins
 import json
 from pathlib import Path
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def bridge():
     session = SimpleNamespace(create_script=lambda source, **kw: SimpleNamespace(
-        source=source, on=lambda *args: None), is_detached=False)
+        source=source, on=lambda *args: None, is_destroyed=False), is_detached=False)
     return factory(ROOT, None)(session, 0, lambda *args: None)
 
 
@@ -32,9 +33,9 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         return system if name == "sys" else builtins.__import__(name, *args, **kwargs)
     namespace = {"__builtins__": dict(vars(builtins), __import__=importing)}
     started = False
-    def pulse(operation):
+    def pulse(operation, **data):
         nonlocal started
-        request = json.dumps(json.dumps({"operation": operation}))
+        request = json.dumps(json.dumps({"operation": operation, **data}))
         expression = (config["repeat_prefix"] + request + ")" if started
                       else config["prefix"] + request + config["suffix"])
         result = json.loads(eval(expression, namespace))
@@ -70,12 +71,23 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         monkeypatch.setitem(sys.modules, "game_state", game)
         channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))
-        monkeypatch.setattr(host.career, "current", lambda generation: game.GameState())
+        career = game.GameState()
+        monkeypatch.setattr(host.career, "current", lambda generation: career)
         coverage = host.adapters.install_current_regulations(1, channel, native_rules={}, report=pytest.fail)
         assert host.adapters.policy is not None
         assert coverage == {"driver_signing": False, "staff_signing": False, "academy_signing": False,
             "development_projects": False, "rookie_contract_length_check": "native",
             "staff_prestige_check": "native", "staffing": False}
+        assert host.adapters.stop_regulations()
+        closed.clear()
+        published = []
+        channel.publish = lambda **data: published.append(data)
+        monkeypatch.setattr(host, "RegulationChannel", lambda endpoint: channel)
+        prepared = pulse("prepare-regulations", regulations={"generation": 1,
+            "endpoint": {"port": 1, "token": "0" * 64}})
+        assert prepared["regulation_notices"] == []
+        assert prepared["adapters"]["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
+        assert published == [{"native": {}, "custom": {}}] and host.adapters.regulations == []
         guard = host.CallableAdapters()
         host.adapters.regulations.append(guard)
         # The worker behaviour itself is tested with a real thread in the
@@ -108,3 +120,27 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
     assert sent[0]["operation"] == "adapters"
     with pytest.raises(BridgeError, match="no menu declarations"):
         client.request("adapters", buttons=[])
+
+
+def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch):
+    client, sent, threads, closed = bridge(), [], [], []
+    monkeypatch.setattr(client, "_post", lambda record, timeout: sent.append(record))
+    def service():
+        threads.append(threading.get_ident())
+        client._message({"type": "send", "payload": {
+            "event": "reply", "id": sent[-1]["id"], "status": {"prepared": True}}}, lambda *args: None)
+    runtime = SimpleNamespace(definitions=SimpleNamespace(owner_ids=("owned",)),
+        endpoint={"port": 1, "token": "0" * 64}, poll=service, close=lambda: closed.append(True))
+    assert client.prepare_regulations(runtime, 1) == {"prepared": True}
+    assert threads == [threading.get_ident()] and closed == []
+    assert set(sent[0]) == {"type", "id", "operation", "regulations"}
+    assert sent[0]["regulations"] == {"generation": 1, "endpoint": runtime.endpoint}
+    with pytest.raises(BridgeError, match="bounded regulation setup"):
+        client.request("prepare-regulations", regulations={"generation": 1, "endpoint": {}, "target": "arbitrary"}, _service=service)
+    def fail():
+        raise RuntimeError("Controller service failed")
+    runtime.poll = fail
+    with pytest.raises(RuntimeError, match="Controller service failed"):
+        client.prepare_regulations(runtime, 1)
+    assert closed == [True] and client.waiters == {}
+    assert sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}

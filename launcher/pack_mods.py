@@ -138,6 +138,31 @@ class PackMods:
             self._progress("complete")
         return self.regulations
 
+    def prepare_native_regulations(self, bridge, generation):
+        """Send the loaded career's rule data before installing its game hooks.
+
+        Store cleanup can remove mod UI even when only transport is polled.
+        Defer those updates while the game is waiting on this bridge request;
+        they may use the bridge again only after its reply has arrived.
+        """
+        if (self.closed or self._regulation_failed or self.regulations is None
+                or self._regulation_dispatching):
+            raise RuntimeError("Regulations are not available for native preparation")
+        self._regulation_dispatching = True
+        try:
+            status = bridge.prepare_regulations(self.regulations, generation)
+        except BaseException:
+            self._regulation_failed = True
+            raise
+        finally:
+            self._regulation_dispatching = False
+        if status.get("adapters", {}).get("regulations", {}).get("state") != "prepared":
+            self._regulation_failed = True
+            self.regulations.close()
+        self._publish_ui()
+        self._progress("complete")
+        return status
+
     def confirm_regulations(self, components):
         """Check trusted installation coverage before releasing the pack's UI."""
         if self._regulation_failed or self.regulations is None:

@@ -12,7 +12,7 @@ integration through fixed bridge operations and declarative data.
 sources to each tracked game session. The transport waits for CPython 3.13 and
 enters Python on its main thread with the GIL held. Requests run one at a time
 with deadlines, covering status, shutdown, native UI registration, loading
-progress and private adapter-definition loading.
+progress, private adapter-definition loading and regulation preparation.
 
 `bootstrap.py` creates a private manager, pack discovery, menu, settings and theme
 adapters. A source digest and session token identify their owner and prevent
@@ -32,6 +32,12 @@ removes its temporary importer after loading and removes owned definitions on
 shutdown. Failed imports roll back their definitions. Loading installs no game
 hooks and does not declare regulations ready.
 
+The private `prepare-regulations` request supplies a career number and an
+authenticated local connection. It loads the fixed bundle and publishes a
+snapshot of the career's rule data without installing game hooks. Prepared data
+and its connection stay owned until cleanup. A failed preparation closes its
+connection and reports a compatibility notice without stopping the game.
+
 ### Hooks, discovery and native UI
 
 `manager.py` provides approved target descriptors, bounded plain-value copying,
@@ -40,18 +46,17 @@ targets and signatures. The manager observes normal imports, installs wrappers
 when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
-[`callables/`](callables/README.md) adds a private synchronous guard layer using
-the same import watcher and restoration journal. Trusted adapters approve native paths and call signatures,
-provide read-only projections and structural denial contracts, and register owned
-bindings. One wrapper multiplexes all owners of a target. Native refusals survive
-query extensions; identified validator failures latch only that owner unavailable
-and retain guards until explicit removal. Main-thread binding changes are rejected
-during active operations; polling defers pending installation until idle. Trusted
-native workers require enrolment and an operation scope.
-Decorator chains are verified and called intact. The bootstrap owns polling and
-cleanup, retrying shutdown through the bounded bridge request while operations
-finish; no bridge request, manifest capability or guest operation
-exposes registration or native calls.
+[`callables/`](callables/README.md) adds checks around selected game methods.
+Trusted adapters choose the methods and expected arguments, supply copied inputs
+and define how a refusal returns to the game. One wrapper runs every registered
+check for its method. The game's own refusals stay intact. Failed mod checks
+remain unavailable until removed; their wrappers stay installed to prevent
+unchecked actions. Only the main thread changes registrations, and changes wait
+until active operations finish. Game worker threads must register before using
+an `operation()` block.
+Existing decorators are checked and called intact. The bootstrap polls pending
+work and retries shutdown while operations finish. These registration and native
+call facilities are private; no mod permission or bridge request exposes them.
 
 [`game_adapters/`](game_adapters/README.md) separates native contract/project
 calculations from regulation selection, proposal formatting and dispatch.

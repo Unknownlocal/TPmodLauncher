@@ -151,6 +151,45 @@ def test_incompatible_rule_selection_reports_skip_before_taking_channel(installa
     assert all(not hook.closed for hook in hooks) and not channel.closed
 
 
+def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
+    modules, career, channel, _, hooks = installation
+    channel._rules, channel._custom = set(), set()
+    published = []
+    channel.publish = lambda **data: published.append(data)
+    modules.host.RegulationChannel = lambda endpoint: channel
+    request = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
+    with pytest.raises(HookError, match="preparation fields"):
+        modules.prepare_regulations(dict(request, target="arbitrary"), report=pytest.fail)
+    result = modules.prepare_regulations(request, report=pytest.fail)
+    assert result["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
+    assert published == [{"native": {}, "custom": {}}]
+    assert modules.policy.state is career and modules.policy._published
+    assert modules.channel is channel and modules.regulations == []
+    assert all(not hook.closed for hook in hooks)
+    with pytest.raises(HookError, match="already owns"):
+        modules.prepare_regulations(request, report=pytest.fail)
+    assert modules.stop_regulations() and channel.closed
+    assert modules.policy is None and modules.regulation_generation is None
+
+
+@pytest.mark.parametrize("failure", ["publication", "career_change"])
+def test_preparation_failure_closes_candidate_and_reports_native_fallback(installation, failure):
+    modules, _, channel, _, hooks = installation
+    channel._rules, channel._custom = set(), set()
+    modules.host.RegulationChannel = lambda endpoint: channel
+    def publish(**data):
+        if failure == "publication":
+            raise HookError("Publication failed")
+        modules.host.career.current = lambda generation: object()
+    channel.publish = publish
+    notices = []
+    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=notices.append)
+    assert result["regulations"]["state"] == "unavailable"
+    assert len(notices) == 1 and "continuing native game" in notices[0]
+    assert modules.channel is None and modules.policy is None and channel.closed
+    assert modules.regulations == [] and all(not hook.closed for hook in hooks)
+
+
 @contextmanager
 def active_worker(guard):
     entered, release = threading.Event(), threading.Event()

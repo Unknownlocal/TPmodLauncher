@@ -31,9 +31,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons, loading, settings, themes) {
+function enqueue(operation, id, buttons, loading, settings, themes, regulations) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters', 'prepare-regulations'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -42,7 +42,7 @@ function enqueue(operation, id, buttons, loading, settings, themes) {
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, resolve, reject }; });
+    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, resolve, reject }; });
 }
 
 send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
@@ -99,6 +99,7 @@ observer = Process.attachModuleObserver({
                         if (request.operation === 'loading') record.loading = request.loading;
                         if (request.operation === 'settings') record.settings = request.settings;
                         if (request.operation === 'themes') record.themes = request.themes;
+                        if (request.operation === 'prepare-regulations') record.regulations = request.regulations;
                         const requestJson = JSON.stringify(JSON.stringify(record));
                         const expression = ready
                             ? config.repeat_prefix + requestJson + ')'
@@ -127,6 +128,9 @@ observer = Process.attachModuleObserver({
                         // Startup can finish after manager readiness; report its pack once per process.
                         const pack = response.status.pack;
                         const career = response.status.career;
+                        for (const detail of response.status.regulation_notices || []) {
+                            send({ event: 'compatibility', detail });
+                        }
                         if (!careerFailureReported && career && career.state === 'unavailable') {
                             careerFailureReported = true;
                             send({ event: 'compatibility', detail: career.detail });
@@ -154,7 +158,10 @@ observer = Process.attachModuleObserver({
                             themesState = JSON.stringify(themes);
                             send({ event: 'themes', status: themes });
                         }
-                        if (pending) {
+                        // Cancellation may queue another request while Python
+                        // waits on publication. Its reply belongs to a later
+                        // entry, not to the operation captured above.
+                        if (pending === request) {
                             const completed = pending;
                             pending = null;
                             if (completed.operation === 'shutdown') {
@@ -182,7 +189,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
             );

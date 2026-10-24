@@ -73,13 +73,48 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
                     scope.confirm_regulations(dict(PERSONNEL_COMPONENTS, staffing=staffing))
             assert not runtime.ready and not menus and progress[-1]["state"] == "loading"
             assert not mod.sandbox.closed
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
-            assert not runtime.ready  # Complete hooks still need committed rule data.
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            assert runtime._dispatch.ready and not runtime.ready and not menus
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
             assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
             with pytest.raises(ValueError, match="coverage: academy_signing"):
                 scope.confirm_regulations({"driver_signing": True, "staff_signing": True, "staffing": True})
             assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
+
+
+def test_published_data_cannot_run_a_validator_before_native_acknowledgement(make_mod, tmp_path):
+    executed = []
+    mod = make_mod("import wit_world\ndef validate(c,r):\n wit_world.report('unexpected')\n return {'decision':'allow'}\n",
+                   report=lambda *args: executed.append(args))
+    scope, runtime, wake, _, _ = prepare_scope(tmp_path, {mod.manifest.id: mod})
+    with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+        pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        assert runtime._dispatch.ready and not runtime.ready
+        action = worker.submit(channel, [context()], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
+        with pytest.raises(HookError, match="unavailable"):
+            pump(scope, wake, action)
+        assert not executed and mod.sandbox.closed and not runtime.ready
+
+
+def test_native_preparation_defers_cleanup_ui_until_bridge_reply(make_mod, tmp_path):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    owner = mod.manifest.id
+    scope, runtime, _, progress, menus = prepare_scope(tmp_path, {owner: mod})
+    # Model the pack's physical runner ownership, including group cleanup.
+    scope._sources = {owner: SimpleNamespace(root=tmp_path)}
+    scope._source_runner = mod.runner
+    mod.sandbox._resources.callback(scope._remove_sources)
+    scope.applied_menu = [{"owner": owner}]
+    count = len(progress)
+    def prepare(received, generation):
+        assert received is runtime and generation == 1 and scope._regulation_dispatching
+        mod.close()
+        assert not menus and len(progress) == count
+        return {"adapters": {"regulations": {"state": "unavailable"}}}
+    with closing(scope):
+        scope.prepare_native_regulations(SimpleNamespace(prepare_regulations=prepare), 1)
+        assert not scope._regulation_dispatching and scope._regulation_failed and runtime.closed
+        assert menus[-1] == [] and progress[-1]["state"] == "error"
 
 
 def test_unmapped_native_scope_is_rejected_before_guest_binding(make_mod, tmp_path, monkeypatch):
@@ -122,6 +157,8 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
     state.regulation_manager.regulations = {"native": {"current": "open", "upcoming": None}}
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         policy = NativeRegulationPolicy(state, channel)
+        pump(scope, wake, worker.submit(policy.publish))
+        assert not runtime.ready and module.start is native
         engine = RegulationGuards(channel, policy.select, "development.project")
         engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native))))
         codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
@@ -130,7 +167,6 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
                 engine.register(owner, [CallBinding("project", "project", project, codec)])
             scope.confirm_regulations({"development_projects": engine.groups["project"]["state"] == "active",
                                        "staffing": False})
-            pump(scope, wake, worker.submit(policy.publish))
             thread = worker.submit(threading.current_thread).result(timeout=1)
             engine.enroll(thread)
 

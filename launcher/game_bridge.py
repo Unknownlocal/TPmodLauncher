@@ -94,9 +94,10 @@ class Bridge:
         finally:
             timer.cancel()
 
-    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None):
-        """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters"):
+    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
+                regulations=None, _service=None):
+        """Await a fixed operation; preparation also services its bounded publication."""
+        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters", "prepare-regulations"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -118,6 +119,14 @@ class Bridge:
                 raise BridgeError("Expected bounded theme declarations")
         elif themes is not None:
             raise BridgeError("This operation accepts no theme declarations")
+        if operation == "prepare-regulations":
+            if (type(regulations) is not dict or set(regulations) != {"generation", "endpoint"}
+                    or type(regulations["generation"]) is not int or regulations["generation"] < 1
+                    or type(regulations["endpoint"]) is not dict or set(regulations["endpoint"]) != {"port", "token"}
+                    or len(json.dumps(regulations).encode("utf-8")) > 512 or not callable(_service)):
+                raise BridgeError("Expected bounded regulation setup and controller service")
+        elif regulations is not None or _service is not None:
+            raise BridgeError("This operation accepts no regulation setup or service")
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
@@ -138,8 +147,21 @@ class Bridge:
                 message["settings"] = settings
             if operation == "themes":
                 message["themes"] = themes
+            if operation == "prepare-regulations":
+                message["regulations"] = regulations
             self._post(message, timeout)
-            response = waiter.get(timeout=max(0, deadline - time.monotonic()))
+            while True:
+                remaining = max(0, deadline - time.monotonic())
+                try:
+                    response = waiter.get(timeout=min(.005, remaining) if _service else remaining)
+                    break
+                except queue.Empty:
+                    if _service is None or time.monotonic() >= deadline:
+                        raise
+                    # The game waits for policy acknowledgements before replying
+                    # here. Service only regulation transport/guest work: PackMods
+                    # polling could send nested UI requests to this busy bridge.
+                    _service()
             answered = True
             if "error" in response:
                 raise BridgeError(response["error"])
@@ -161,6 +183,20 @@ class Bridge:
                     self._post({"type": "manager-cancel", "id": token}, 0.25)
                 except Exception:
                     pass  # close() still unloads the script after a failed cleanup request.
+
+    def prepare_regulations(self, runtime, generation):
+        """Publish rule data without hooks, servicing Wasm on its owning thread."""
+        try:
+            # Match the channel's five-second publication allowance per owner,
+            # plus authentication and time to enter the game's main thread.
+            return self.request("prepare-regulations", timeout=3 + 5 * len(runtime.definitions.owner_ids),
+                                regulations={"generation": generation, "endpoint": runtime.endpoint},
+                                _service=runtime.poll)
+        except BaseException:
+            # Cancelling a queued bridge request cannot interrupt an operation
+            # already inside Python. Closing transport releases its socket wait.
+            runtime.close()
+            raise
 
     def set_menu(self, buttons):
         """Apply a complete declarative registry; an exited game needs no native restoration."""

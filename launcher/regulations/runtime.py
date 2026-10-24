@@ -155,9 +155,14 @@ class RegulationRuntime:
         # catalog-derived affected set; execution narrows it to failed Stores.
         affected = set(message["generations"]) & self._states.keys()
         try:
-            if self.closed or not self._native:
-                raise RuntimeError("Native regulation guards are not acknowledged")
             operation = message["op"]
+            if self.closed:
+                raise RuntimeError("Regulation runtime is closed")
+            # Setup publishes rule data before installing any live game hooks.
+            # Only data publication can precede coverage acknowledgement; an
+            # action or career reset still needs acknowledged native ownership.
+            if not self._native and operation not in ("policy-begin", "policy-page", "policy-seal"):
+                raise RuntimeError("Native regulation guards are not acknowledged")
             if operation != "reset" and message["epoch"] != self._dispatch.epoch:
                 raise ValueError("Foreign regulation career epoch")
             if operation == "policy-begin":

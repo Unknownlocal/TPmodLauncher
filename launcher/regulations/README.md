@@ -127,6 +127,13 @@ Its I/O thread receives requests and wakes the controller; only controller
 request numbers, career numbers (`epoch`) and acknowledged rule-data versions.
 Socket data cannot supply Python code or native function targets.
 
+`PackMods.prepare_native_regulations()` uses the bridge's fixed preparation
+request to publish the loaded career's rule data before any game hooks install.
+While waiting for the game's reply, the bridge services regulation requests on
+the controller thread. Mod cleanup defers UI updates until that reply arrives,
+so it cannot start a second bridge request during preparation. This private
+setup step is separate from normal startup and does not approve hook coverage.
+
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
 ordered `policy-page` rows and `policy-seal`. Native publications supply complete
 adopted options; custom publications contain admitted option keys. `None` keeps
@@ -134,6 +141,7 @@ installed options while advancing their generation. Private overlays stay in the
 launcher. One control deadline covers all pages and commits. Readiness stays
 blocked until commit acknowledgement. `reset(epoch)` clears policy while keeping
 bindings; a new publication is required and a failed Store cannot be revived.
+Data publication can precede hook approval; actions and career resets cannot.
 
 Actions carry shared contexts/selections and owner binding-slot references.
 Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up to

@@ -87,6 +87,13 @@ def pulse(sources, digest, instance, game_root, request_json):
         elif request == {"operation": "adapters"}:
             module.adapters.load()
             response = module.manager.request({"operation": "status"})
+        elif type(request) is dict and request.get("operation") == "prepare-regulations":
+            if set(request) != {"operation", "regulations"}:
+                raise ValueError("Invalid regulation control fields")
+            notices = []
+            module.adapters.prepare_regulations(request["regulations"], report=notices.append)
+            response = module.manager.request({"operation": "status"})
+            response["regulation_notices"] = notices
         else:
             if request == {"operation": "shutdown"}:
                 if not module.callables.try_stop():

@@ -31,20 +31,71 @@ class AdapterModules:
         self.coverage = {}
         self.regulation_error = None
         self.policy = None
+        self.regulation_generation = None
 
     def status(self):
-        """Report loaded definitions and initial hook coverage, not policy readiness."""
+        """Distinguish prepared data, installed hooks and unfinished cleanup.
+
+        Successful publication alone supplies no hook coverage or readiness.
+        Failed installation can still own hooks; failed preparation owns none.
+        """
         result = {"state": self.state, "modules": len(self.sources) if self.state == "loaded" else 0}
         if self.error is not None:
             result["detail"] = self.error
-        if self.channel is not None:
+        if self.channel is not None or self.regulation_error:
             # Installation coverage is not policy readiness. In particular,
             # signing adapters do not install whole-team staffing callers.
-            result["regulations"] = {"state": "cleanup_pending" if self.regulation_error else "installed",
+            state = ("cleanup_pending" if self.channel is not None else "unavailable") if self.regulation_error else (
+                "installed" if self.coverage else "prepared")
+            result["regulations"] = {"state": state,
                                      "components": dict(self.coverage)}
+            if self.regulation_generation is not None:
+                result["regulations"]["career_generation"] = self.regulation_generation
             if self.regulation_error:
                 result["regulations"]["detail"] = self.regulation_error
         return result
+
+    def prepare_regulations(self, request, *, report):
+        """Publish a career snapshot through a fixed endpoint, without game hooks.
+
+        Only trusted bridge setup calls this. Pack data cannot supply a module,
+        callback or native target. The controller must service publication while
+        waiting for this main-thread operation; a socket connection is not enough.
+        """
+        self.host.manager._main()
+        if (type(request) is not dict or set(request) != {"generation", "endpoint"}
+                or type(request["generation"]) is not int or request["generation"] < 1):
+            raise HookError("Invalid regulation preparation fields")
+        if self.channel is not None:
+            raise HookError("Regulation preparation already owns a channel")
+        self.regulation_error = None
+        channel = None
+        try:
+            self.load()
+            if self.state != "loaded":
+                raise HookError(self.error or "Adapter modules are not loaded")
+            generation = request["generation"]
+            state = self.host.career.current(generation)
+            channel = self.host.RegulationChannel(request["endpoint"])
+            native = self.host.adapter_code.game_adapters.regulations.native_policy
+            policy = native.NativeRegulationPolicy(state, channel)
+            policy.publish()
+            # Publication releases the GIL while waiting. A delayed reply must
+            # not associate the old snapshot with a newly loaded career.
+            if self.host.career.current(generation) is not state:
+                raise HookError("The prepared regulation career is no longer current")
+            self.channel, self.policy = channel, policy
+            self.regulation_generation = generation
+        except Exception as error:
+            self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
+            report("REGULATIONS COMPATIBILITY FAILED preparation: " + self.regulation_error
+                   + "; regulation setup skipped; continuing native game")
+        finally:
+            # Keep successful preparation until explicit activation or cleanup.
+            # Any failed candidate closes before reporting its unavailable state.
+            if channel is not None and self.channel is not channel:
+                channel.close()
+        return self.status()
 
     def install_regulations(self, state, channel, select, *, native_rules, report):
         """Own the fixed adapters for a career supplied by trusted native setup.
@@ -154,6 +205,7 @@ class AdapterModules:
             self.coverage.clear()
             self.regulation_error = None
             self.policy = None
+            self.regulation_generation = None
         return True
 
     def load(self):
