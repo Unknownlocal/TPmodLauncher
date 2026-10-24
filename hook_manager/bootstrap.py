@@ -93,10 +93,13 @@ def pulse(sources, digest, instance, game_root, request_json):
                     # Waiting here would pin the main thread needed by the game;
                     # raising would abandon restoration through the fatal path.
                     return "WAIT: native callable operation is active"
+                if not module.adapters.close():
+                    # Regulation guards own separate registries. Retain their
+                    # modules/channel until every admitted operation finishes.
+                    return "WAIT: native regulation operation is active"
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
-                module.adapters.close()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()

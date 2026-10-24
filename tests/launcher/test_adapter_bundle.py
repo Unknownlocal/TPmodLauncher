@@ -20,7 +20,7 @@ def bridge():
     return factory(ROOT, None)(session, 0, lambda *args: None)
 
 
-def test_generated_bridge_loads_private_adapters_once_and_cleans_up():
+def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch):
     client = bridge()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]
     # Only emulate bootstrap's supported-version check on the portable host.
@@ -63,7 +63,28 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up():
         loaded = dict(host.adapters.modules)
         assert pulse("adapters")["adapters"]["state"] == "loaded"
         assert host.adapters.modules == loaded
+        closed = []
+        game = ModuleType("game_state")
+        game.GameState = type("GameState", (), {})
+        monkeypatch.setitem(sys.modules, "game_state", game)
+        channel = SimpleNamespace(closed=False, bindings=lambda scope: {},
+            close=lambda: closed.append(prefix in sys.modules))
+        coverage = host.adapters.install_regulations(game.GameState(), channel, lambda *a: None,
+            native_rules={}, report=pytest.fail)
+        assert coverage == {"driver_signing": False, "staff_signing": False, "academy_signing": False,
+            "development_projects": False, "rookie_contract_length_check": "native",
+            "staff_prestige_check": "native", "staffing": False}
+        guard = host.CallableAdapters()
+        host.adapters.regulations.append(guard)
+        # The worker behaviour itself is tested with a real thread in the
+        # loader suite. Here check the generated bridge's WAIT/retry protocol.
+        guard._active = 1
+        request = json.dumps(json.dumps({"operation": "shutdown"}))
+        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert host.adapters.modules == loaded and not guard.closed and closed == []
+        guard._active = 0
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
+        assert guard.closed and closed == [True]
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:

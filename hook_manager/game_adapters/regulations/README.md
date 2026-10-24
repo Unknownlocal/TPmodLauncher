@@ -68,6 +68,15 @@ is skipped. Failed installation restores changes already made. Importing these
 modules installs nothing; installation and removal belong to trusted launcher
 code. Mods cannot choose native targets or call the private callable adapter.
 
+The private `AdapterModules.install_regulations` method owns the signing and
+project adapters and native switches for a career supplied by trusted setup.
+It reports each installed component separately. Its report does not acknowledge
+whole-team staffing coverage or make policy ready. If validation is active,
+removal leaves the installation intact for a later retry. Once idle, it restores
+all owned hooks and closes their connection before unloading the definitions.
+Failed setup uses the same cleanup path; status reports `cleanup_pending` while
+that cleanup is deferred.
+
 The native switches only enable or disable their named checks. Custom restrictions
 use ordinary validators and the regulations adopted for the proposed contract's
 season. Driver proposals include the original game's rookie-check applicability,
