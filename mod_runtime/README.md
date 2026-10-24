@@ -132,9 +132,9 @@ be accepted as success. The Store's existing fuel, memory and host-call limits
 remain in force.
 
 The current `PackMods` path continues to use individual `PythonRunner` instances.
-Shared runtime ownership and source loading are independent of resident
-regulation dispatch. Public source admission still accepts API 0.2.0/0.3.0;
-the extended runner interface remains private.
+Shared regulation storage has its own private operations; the current launcher
+dispatcher still uses individual residents. Public source admission accepts API
+0.2.0/0.3.0; the extended runner interface remains private.
 
 ## Resident regulation validation
 
@@ -157,6 +157,8 @@ Invalid operations disable the affected resident state.
 | `action.py` | Resolve a proposal's rules and prepare bounded groups of calls |
 | `transfer.py` | Check complete UTF-8 transfers before decoding JSON |
 | `resident.py` | Control setup, staged publication, action lifetime and failure |
+| `group.py` | Share records and action inputs across distinct owner residents |
+| `contexts.py` | Check a shared proposal table and resolve its numbered references |
 | `policy.py` and `values.py` | Check shared field rules and calculate resource bounds |
 
 Each handler receives its own ordinary dictionaries and lists. Stable regulation
@@ -165,6 +167,36 @@ up to four invocations has a separate allowance; each handler keeps its own
 5 million fuel / 64 host-call allowance. Every phase shares the original 100 ms
 action deadline. Framework storage and cleanup count towards their relevant budgets.
 Trusted launcher adapters own publication across mods and native readiness.
+
+For a shared runner, `launcher/regulations/shared_handler_runner.py` binds each
+owner's admitted functions within that owner's source package. A peer's function
+cannot stand in for an owned handler merely because its local filename matches.
+Each table keeps its 32-binding limit; there is no 32-binding limit for the whole
+shared runner. Source-owner and regulation-session admission limits still apply.
+
+`RegulationGroup` holds those residents and one cache keyed by the existing
+record IDs. Owner catalogues borrow common records, while their rules, revisions,
+bindings and option data retain their original identities. Installation plans
+can receive already installed record IDs, avoiding another transfer for a second
+owner. Finishing a publication removes records no active owner needs.
+
+One action transfers its context table once. Owner call packets contain context
+indices and their own rule selections; each prepares at most four argument pairs
+at a time. Context preparation handles the cached data's first garbage-collector
+scan, keeping that work outside later handler allowances.
+The shared table holds up to 1024 contexts, with a 4 MiB transfer ceiling
+and 4 KiB chunks. The ordinary limit for the combined context and rule still applies.
+Finishing the group action checks that no calls remain prepared and every input
+context was used. Group reset clears cached records and contexts together while
+keeping bindings and the last action ID. Any failed resident operation makes
+all residents unavailable. These private operations are separate from lifecycle
+events and expose no generic callable API.
+
+Owner selection addresses serial private resident calls. It does not change
+author host-call identity, which remains bound to the source module's mod ID.
+The current pack loader and `ValidationDispatch` use the individual-runner path;
+the shared binding and storage operations are independently available to trusted
+launcher code.
 
 ## Preparation and session ownership
 

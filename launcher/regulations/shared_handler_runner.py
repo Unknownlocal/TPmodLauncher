@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Bind distinct regulation owners inside one trusted shared Python runner."""
+
+from launcher.sandbox import SandboxError
+from mod_runtime._regulations.policy import encode
+from mod_runtime.runtime import SOURCE_FUEL, SOURCE_SECONDS
+from mod_runtime.shared_runtime import SharedPythonRunner
+from .handler_runner import ordered_bindings
+
+
+class SharedHandlerRunner:
+    """Keep original owner/validator IDs while the group owns execution and closure."""
+
+    def __init__(self, runner, validators):
+        self.runner, self.validators = runner, validators
+
+    @classmethod
+    def bind(cls, runner, validators):
+        """Admit all tables before policy setup freezes the group's bindings.
+
+        Source activation is checked again inside the guest. No function paths
+        reach native code: these declarations resolve only transferred sources.
+        """
+        try:
+            if type(runner) is not SharedPythonRunner or runner.closed:
+                raise SandboxError("Expected an admitted shared Python runner")
+            if type(validators) is not dict or not validators or not validators.keys() <= runner.members.keys():
+                raise ValueError("Expected admitted shared regulation owners")
+            tables = {}
+            for owner in sorted(validators):
+                manifest = runner.members[owner].manifest
+                if manifest.api != "0.4.0" or "regulations" not in manifest.capabilities:
+                    raise SandboxError("Expected an admitted regulation source owner")
+                tables[owner] = ordered_bindings(validators[owner])
+                if not tables[owner]:
+                    raise ValueError("Shared regulation owners need at least one validator")
+            # Each owner retains its source-import allowance. Binding a larger
+            # pack must not quietly reduce every mod's admitted startup budget.
+            for owner, table in tables.items():
+                with runner.sandbox.phase(fuel=SOURCE_FUEL, seconds=SOURCE_SECONDS):
+                    for index, declaration in table.values():
+                        error = runner.sandbox.call("bind-source-regulation", index,
+                                                    encode({"owner": owner, **declaration}))
+                        if error:
+                            raise SandboxError((f"Regulation binding failed for {owner}: " + error)[:512])
+            return cls(runner, tables)
+        except BaseException:
+            if type(runner) is SharedPythonRunner:
+                runner.close()
+            raise

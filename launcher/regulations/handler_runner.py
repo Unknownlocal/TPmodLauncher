@@ -6,6 +6,19 @@ from mod_runtime._regulations.policy import encode, fields
 from mod_runtime.runtime import PythonRunner, SOURCE_FUEL, SOURCE_SECONDS
 
 
+def ordered_bindings(validators):
+    """Keep each owner's admitted IDs in the same order as its private slots."""
+    if type(validators) is not list or len(validators) > 32:
+        raise ValueError("Invalid regulation binding count")
+    for row in validators:
+        fields(row, ("id", "rule", "scope", "handler"))
+    ordered = sorted(validators, key=lambda row: row["id"])
+    if len({row["id"] for row in ordered}) != len(ordered):
+        raise ValueError("Duplicate regulation validator ID")
+    return {row["id"]: (index, {key: row[key] for key in ("rule", "scope", "handler")})
+            for index, row in enumerate(ordered)}
+
+
 class HandlerRunner:
     """Own a binding table for one activated source runner on its creating thread.
 
@@ -32,22 +45,13 @@ class HandlerRunner:
             if (type(runner) is not PythonRunner or not runner._active or runner.closed
                     or runner.manifest.api != "0.4.0" or "regulations" not in runner.manifest.capabilities):
                 raise SandboxError("Expected an activated admitted regulation source runner")
-            if type(validators) is not list or len(validators) > 32:
-                raise ValueError("Invalid regulation binding count")
-            ordered = sorted(validators, key=lambda row: row["id"])
-            if len({row["id"] for row in ordered}) != len(ordered):
-                raise ValueError("Duplicate regulation validator ID")
-            declarations = []
-            for row in ordered:
-                fields(row, ("id", "rule", "scope", "handler"))
-                declarations.append({key: row[key] for key in ("rule", "scope", "handler")})
+            bindings = ordered_bindings(validators)
             with runner.sandbox.phase(fuel=SOURCE_FUEL, seconds=SOURCE_SECONDS):
-                for index, declaration in enumerate(declarations):
+                for index, declaration in bindings.values():
                     error = runner.sandbox.call("bind-regulation", index, encode({"owner": runner.manifest.id, **declaration}))
                     if error:
                         raise SandboxError(("Regulation binding failed: " + error)[:512])
-            return cls(runner, {row["id"]: (index, declaration) for index, (row, declaration)
-                                in enumerate(zip(ordered, declarations))})
+            return cls(runner, bindings)
         except BaseException:
             if type(runner) is PythonRunner:
                 runner.close()
