@@ -49,6 +49,8 @@ class AdapterModules:
                 "installed" if self.coverage else "prepared")
             result["regulations"] = {"state": state,
                                      "components": dict(self.coverage)}
+            if self.regulation_generation is not None and self.coverage and not self.regulation_error:
+                result["regulations"]["state"] = "active" if self.channel.validation_ready else "installed"
             if self.regulation_generation is not None:
                 result["regulations"]["career_generation"] = self.regulation_generation
             if self.regulation_error:
@@ -77,6 +79,7 @@ class AdapterModules:
             generation = request["generation"]
             state = self.host.career.current(generation)
             channel = self.host.RegulationChannel(request["endpoint"])
+            channel.validation_ready = False
             native = self.host.adapter_code.game_adapters.regulations.native_policy
             policy = native.NativeRegulationPolicy(state, channel)
             policy.publish()
@@ -97,6 +100,60 @@ class AdapterModules:
                 channel.close()
         return self.status()
 
+    def control_regulations(self, operation, request, *, report):
+        """Install, enable or stop only this request's prepared career snapshot.
+
+        The endpoint token ties delayed control requests to their own connection.
+        Coverage approval happens in the launcher between installation and enable.
+        Stopping returns False while an admitted operation still needs its hooks.
+        """
+        self.host.manager._main()
+        if (operation not in ("install-regulations", "activate-regulations", "stop-regulations")
+                or type(request) is not dict or set(request) != {"generation", "endpoint"}
+                or type(request["generation"]) is not int or request["generation"] < 1
+                or type(request["endpoint"]) is not dict or set(request["endpoint"]) != {"port", "token"}):
+            raise HookError("Invalid regulation control fields")
+        if operation == "stop-regulations" and self.channel is None:
+            return True  # Failed installation may already have restored everything.
+        if (self.channel is None or request["generation"] != self.regulation_generation
+                or type(request["endpoint"]["token"]) is not str
+                or request["endpoint"]["token"] != self.channel._token):
+            raise HookError("Regulation control does not own this prepared connection")
+        if operation == "stop-regulations":
+            self.channel.validation_ready = False
+            return self.stop_regulations()
+        try:
+            policy, channel = self.policy, self.channel
+            if self.host.career.current(self.regulation_generation) is not policy.state:
+                raise HookError("The prepared regulation career is no longer current")
+            policy._current()
+            if not policy._published or any(policy._adoption(rule) != row for rule, row in policy._adopted.items()):
+                raise HookError("Native regulation choices need a new preparation")
+            if operation == "install-regulations":
+                if self.coverage:
+                    raise HookError("Prepared regulation hooks are already installed")
+                self.install_regulations(policy.state, channel, policy.select, native_rules={}, report=report)
+            else:
+                if not self.coverage or channel.validation_ready:
+                    raise HookError("Regulation activation needs a pending installation")
+                for hook in self.regulations:
+                    if hook.closed or any(row["state"] != "active" for row in hook.groups.values()):
+                        raise HookError("Regulation hooks are no longer installed")
+                    for row in hook.groups.values():
+                        if any(vars(owner).get(attribute) is not installed
+                               for owner, attribute, _, installed, _ in row["changes"]):
+                            raise HookError("Another owner replaced a regulation hook")
+                channel.validation_ready = True
+            return True
+        except Exception as error:
+            # Block new wrapped attempts before trying to restore the group.
+            # Busy cleanup retains ownership until the stop request can retry.
+            if self.channel is not None:
+                self.channel.validation_ready = False
+            self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
+            self.stop_regulations()
+            raise
+
     def install_regulations(self, state, channel, select, *, native_rules, report):
         """Own the fixed adapters for a career supplied by trusted native setup.
 
@@ -107,7 +164,8 @@ class AdapterModules:
         Automatic career selection and policy publication are separate steps.
         """
         self.host.manager._main()
-        if self.state != "loaded" or self.channel is not None:
+        if self.state != "loaded" or (self.channel is not None and (
+                self.channel is not channel or self.coverage or self.regulations)):
             raise HookError("Regulation installation needs an unused loaded adapter bundle")
         game = sys.modules.get("game_state")
         career = getattr(game, "GameState", None)

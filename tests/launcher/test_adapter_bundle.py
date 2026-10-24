@@ -81,6 +81,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert host.adapters.stop_regulations()
         closed.clear()
         published = []
+        channel._token = "0" * 64
         channel.publish = lambda **data: published.append(data)
         monkeypatch.setattr(host, "RegulationChannel", lambda endpoint: channel)
         prepared = pulse("prepare-regulations", regulations={"generation": 1,
@@ -88,6 +89,13 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert prepared["regulation_notices"] == []
         assert prepared["adapters"]["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
         assert published == [{"native": {}, "custom": {}}] and host.adapters.regulations == []
+        control = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
+        rejected = pulse("install-regulations", regulations=dict(control, generation=2))
+        assert rejected["regulation_control"] is False and rejected["regulation_notices"]
+        assert host.adapters.channel is channel
+        assert pulse("install-regulations", regulations=control)["regulation_control"] is True
+        active = pulse("activate-regulations", regulations=control)
+        assert active["regulation_control"] is True and active["adapters"]["regulations"]["state"] == "active"
         guard = host.CallableAdapters()
         host.adapters.regulations.append(guard)
         # The worker behaviour itself is tested with a real thread in the
@@ -97,6 +105,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
+        assert pulse("stop-regulations", regulations=control)["regulation_control"] is True
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None

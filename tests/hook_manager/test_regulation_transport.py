@@ -118,12 +118,12 @@ def test_unauthenticated_connection_cannot_latch_a_required_owner_or_retain_comp
         requests.append(weakref.ref(request))
         return request
 
-    def track_idle(connection, deadline):
+    def track_idle(connection, deadline, **options):
         if deadline is None:
             idle_reads.append(True)
             if len(idle_reads) == 2:
                 retired.set()
-        return read(connection, deadline)
+        return read(connection, deadline, **options)
 
     def track_encoding(value, **options):
         if type(value) is dict and value.get("op") == "action" and "contexts" in value:

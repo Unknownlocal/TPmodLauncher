@@ -32,6 +32,7 @@ class RegulationRuntime:
         self._handlers, self._server, self._dispatch = {}, None, None
         self._publication, self._action = None, 0
         self._native = self.closed = self._attempted = self._bound = False
+        self._activation_pending = False
         self._required_components = set()
 
     def _owning_thread(self):
@@ -101,7 +102,7 @@ class RegulationRuntime:
         # Bound definition-only owners need no execution policy. For validator
         # owners, dispatch.ready separately requires an active committed view.
         # Neither native guard acknowledgement nor a socket handshake proves it.
-        return (self._native and self._publication is None and self._dispatch.ready
+        return (self._native and not self._activation_pending and self._publication is None and self._dispatch.ready
                 and self._server.connected.is_set() and not self._server.failed.is_set()
                 and all(state in ("bound", "active") and not self._mods[owner].sandbox.closed
                         for owner, state in self._states.items()))
@@ -110,13 +111,15 @@ class RegulationRuntime:
     def status(self):
         return {"ready": self.ready, "owners": dict(self._states)}
 
-    def confirm_native(self, components):
+    def confirm_native(self, components, *, pending=False):
         """Accept installation coverage for every scope used by this pack.
 
         Trusted setup supplies the AdapterModules installation report. Signing
         alone cannot cover personnel staffing operations. Other components in
         the report are irrelevant to this pack; policy publication still has
         its own readiness check. Source mods cannot call this acknowledgement.
+        With pending=True, coverage is approved but pack readiness stays held
+        until the game replies that its installed hooks have been enabled.
         """
         self._owning_thread()
         # A rejected replacement report must not retain a previous approval.
@@ -129,7 +132,20 @@ class RegulationRuntime:
         missing = sorted(key for key in self._required_components if components.get(key) is not True)
         if missing:
             raise ValueError("Incomplete native regulation coverage: " + ", ".join(missing))
+        if pending and not self._dispatch.ready:
+            raise RuntimeError("Native activation needs committed regulation data")
+        self._activation_pending = pending
         self._native = True
+
+    def finish_native_activation(self):
+        """Release pack readiness only after the game confirms its hooks enabled."""
+        self._owning_thread()
+        if not self._native or not self._activation_pending:
+            raise RuntimeError("No native regulation activation is pending")
+        self._activation_pending = False
+        if not self.ready:
+            self._native = False
+            raise RuntimeError("Native regulation activation became unavailable")
 
     def _unavailable(self, owners):
         # A shared Store can fail through a non-regulation peer too. Expand any

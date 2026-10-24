@@ -153,6 +153,7 @@ def test_incompatible_rule_selection_reports_skip_before_taking_channel(installa
 
 def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     modules, career, channel, _, hooks = installation
+    channel._token = "0" * 64
     channel._rules, channel._custom = set(), set()
     published = []
     channel.publish = lambda **data: published.append(data)
@@ -168,8 +169,39 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     assert all(not hook.closed for hook in hooks)
     with pytest.raises(HookError, match="already owns"):
         modules.prepare_regulations(request, report=pytest.fail)
+    with pytest.raises(HookError, match="does not own"):
+        modules.control_regulations("install-regulations", dict(request, generation=2), report=pytest.fail)
+    assert modules.channel is channel and not channel.closed
+    assert modules.control_regulations("install-regulations", request, report=pytest.fail)
+    assert not channel.validation_ready and modules.status()["regulations"]["state"] == "installed"
+    assert modules.policy.state is career and modules.policy._published
+    assert modules.control_regulations("activate-regulations", request, report=pytest.fail)
+    assert channel.validation_ready and modules.status()["regulations"]["state"] == "active"
     assert modules.stop_regulations() and channel.closed
     assert modules.policy is None and modules.regulation_generation is None
+
+
+@pytest.mark.parametrize("failure", ["career_change", "replaced_hook"])
+def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation, failure):
+    modules, _, channel, _, hooks = installation
+    channel._rules, channel._custom, channel._token = set(), set(), "0" * 64
+    channel.publish = lambda **data: None
+    modules.host.RegulationChannel = lambda endpoint: channel
+    request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
+    modules.prepare_regulations(request, report=pytest.fail)
+    modules.control_regulations("install-regulations", request, report=pytest.fail)
+    owner, installed, foreign = SimpleNamespace(), object(), object()
+    if failure == "career_change":
+        modules.host.career.current = lambda generation: object()
+    else:
+        owner.method = foreign
+        hooks[0].groups["drivers.rookie-check"]["changes"].append((owner, "method", object(), installed, True))
+    with pytest.raises(HookError, match="no longer current|replaced a regulation hook"):
+        modules.control_regulations("activate-regulations", request, report=pytest.fail)
+    assert not channel.validation_ready and channel.closed and modules.channel is None
+    assert all(hook.closed for hook in hooks)
+    if failure == "replaced_hook":
+        assert owner.method is foreign
 
 
 @pytest.mark.parametrize("failure", ["publication", "career_change"])

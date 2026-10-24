@@ -64,6 +64,10 @@ class RegulationGuards(CallableAdapters):
         deadline = time.monotonic() + self.seconds
         acquired = False
         try:
+            if not getattr(self.channel, "validation_ready", True):
+                # Installation is incomplete, not a broken validator. Do not
+                # project inputs, dispatch or permanently disable its owners.
+                return ValidationOutcome("unavailable", "Validation unavailable")
             if (getattr(self._local, "dispatching", False)
                     or threading.current_thread() is not threading.main_thread()
                     and not getattr(self._local, "operation", False)):
@@ -88,6 +92,10 @@ class RegulationGuards(CallableAdapters):
             # Trusted integrations can reuse an operation's policy refusal here;
             # admission/readiness and deadline checks still surround that path.
             refusal = self._refusal(context, selections, calls, deadline)
+            # Cleanup may close the shared gate while this reply is in flight.
+            # Decline the write without treating that pause as a mod failure.
+            if not getattr(self.channel, "validation_ready", True):
+                return ValidationOutcome("unavailable", "Validation unavailable")
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:

@@ -15,6 +15,9 @@ if __package__:
 class RegulationChannel:
     def __init__(self, endpoint):
         self._connection, self.closed = None, False
+        # Direct trusted users retain their explicit acknowledgement path.
+        # Prepared career setup closes this gate before installing any hooks.
+        self.validation_ready = True
         self._lock, self._sequence, self._action = threading.Lock(), 0, 0
         # _generation numbers publications across the session; _generations
         # records each owner's last acknowledged publication. A rule update may

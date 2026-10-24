@@ -94,6 +94,23 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.adapters.prepare_regulations(request["regulations"], report=notices.append)
             response = module.manager.request({"operation": "status"})
             response["regulation_notices"] = notices
+        elif type(request) is dict and request.get("operation") in (
+                "install-regulations", "activate-regulations", "stop-regulations"):
+            notices = []
+            try:
+                if set(request) != {"operation", "regulations"}:
+                    raise ValueError("Invalid regulation control fields")
+                completed = module.adapters.control_regulations(request["operation"], request["regulations"],
+                                                               report=notices.append)
+                if not completed:
+                    return "WAIT: native regulation operation is active"
+            except Exception as error:
+                completed = False
+                notices.append("REGULATIONS COMPATIBILITY FAILED control: "
+                               + " ".join(str(error).split())[:512] + "; regulation control skipped")
+            response = module.manager.request({"operation": "status"})
+            response["regulation_control"] = completed
+            response["regulation_notices"] = notices
         else:
             if request == {"operation": "shutdown"}:
                 if not module.callables.try_stop():

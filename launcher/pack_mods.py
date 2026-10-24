@@ -153,6 +153,7 @@ class PackMods:
             status = bridge.prepare_regulations(self.regulations, generation)
         except BaseException:
             self._regulation_failed = True
+            self._regulation_status = None  # Refresh deferred UI on the next safe poll.
             raise
         finally:
             self._regulation_dispatching = False
@@ -161,6 +162,23 @@ class PackMods:
             self.regulations.close()
         self._publish_ui()
         self._progress("complete")
+        return status
+
+    def activate_native_regulations(self, bridge, generation):
+        """Keep UI held until prepared hooks are installed, checked and enabled."""
+        if (self.closed or self._regulation_failed or self.regulations is None
+                or self._regulation_dispatching):
+            raise RuntimeError("Regulations are not available for native activation")
+        self._regulation_dispatching = True
+        try:
+            status = bridge.activate_regulations(self.regulations, generation)
+        except BaseException:
+            self._regulation_failed = True
+            self._regulation_status = None
+            raise
+        finally:
+            self._regulation_dispatching = False
+        self.poll()
         return status
 
     def confirm_regulations(self, components):

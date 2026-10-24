@@ -20,6 +20,7 @@ from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
 from launcher.pack_mods import PackMods
+from launcher.game_bridge import Bridge
 from launcher.sandbox import SandboxError
 from mod_runtime import source
 from regulation_support import context, make_mod, selection, validator
@@ -55,6 +56,18 @@ def pump(scope, wake, future):
         wake.clear()
         scope.poll()
     return future.result(timeout=.1)
+
+
+def control_bridge(monkeypatch, control):
+    """Reply through the real Bridge waiter; only native control is simulated."""
+    session = SimpleNamespace(is_detached=False, create_script=lambda *a, **kw:
+                              SimpleNamespace(on=lambda *a: None, is_destroyed=False))
+    client = Bridge(None, session, "", lambda *a: None)
+    def post(record, timeout):
+        status = control(record["operation"])
+        client._message({"type": "send", "payload": {"event": "reply", "id": record["id"], "status": status}}, lambda *a: None)
+    monkeypatch.setattr(client, "_post", post)
+    return client
 
 
 def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path):
@@ -158,6 +171,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         policy = NativeRegulationPolicy(state, channel)
         pump(scope, wake, worker.submit(policy.publish))
+        channel.validation_ready = False
         assert not runtime.ready and module.start is native
         engine = RegulationGuards(channel, policy.select, "development.project")
         engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native))))
@@ -165,8 +179,16 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
         try:
             for owner in mods:
                 engine.register(owner, [CallBinding("project", "project", project, codec)])
-            scope.confirm_regulations({"development_projects": engine.groups["project"]["state"] == "active",
-                                       "staffing": False})
+            def control(operation):
+                assert not runtime.ready and scope._regulation_dispatching
+                assert module.start(2) is False and not projections and not writes
+                assert set(engine.owners.values()) == {"ready"}
+                if operation == "activate-regulations":
+                    channel.validation_ready = True
+                return {"regulation_control": True, "adapters": {"regulations": {
+                    "state": "active" if channel.validation_ready else "installed", "career_generation": 1,
+                    "components": {"development_projects": engine.groups["project"]["state"] == "active", "staffing": False}}}}
+            scope.activate_native_regulations(control_bridge(monkeypatch, control), 1)
             thread = worker.submit(threading.current_thread).result(timeout=1)
             engine.enroll(thread)
 
@@ -182,6 +204,30 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
         finally:
             engine.stop()
         assert module.start is native
+
+
+@pytest.mark.parametrize("failure", ["coverage", "enable"])
+def test_failed_native_activation_closes_transport_and_requests_cleanup(make_mod, tmp_path, monkeypatch, failure):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod})
+    operations = []
+    with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+        pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        def control(operation):
+            operations.append(operation)
+            if operation == "stop-regulations":
+                assert runtime.closed and not runtime.ready
+                return {"regulation_control": True}
+            return {"regulation_control": operation == "install-regulations", "adapters": {"regulations": {
+                "state": "installed" if operation == "install-regulations" else "unavailable", "career_generation": 1,
+                "components": dict(PERSONNEL_COMPONENTS, staffing=failure != "coverage")}}}
+        with pytest.raises((ValueError, RuntimeError), match="coverage: staffing|activation was not confirmed"):
+            scope.activate_native_regulations(control_bridge(monkeypatch, control), 1)
+        assert operations == (["install-regulations"] + (["activate-regulations"] if failure == "enable" else [])
+                              + ["stop-regulations"])
+        assert not runtime.ready and not menus and not scope._regulation_dispatching
+        scope.poll()
+        assert progress[-1]["state"] == "error"
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])

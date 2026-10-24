@@ -68,9 +68,22 @@ def guarded(monkeypatch):
     assert module.start is native
 
 
+def test_closing_activation_during_a_reply_refuses_without_disabling_owners(monkeypatch):
+    with guarded(monkeypatch) as (module, engine, channel, _, writes):
+        channel.before_reply = lambda: setattr(channel, "validation_ready", False)
+        assert module.start(1) is False and not writes
+        assert engine.last_outcome.status == "unavailable" and set(engine.owners.values()) == {"ready"}
+
+
 def test_shared_projection_ordering_native_execution_and_identified_owner_failure(monkeypatch):
     with guarded(monkeypatch) as (module, engine, channel, projections, writes):
         assert engine.last_outcome is None
+        channel.validation_ready = False
+        engine.poll()
+        assert module.start(9) is False and engine.last_outcome.status == "unavailable"
+        assert not writes and not projections and not channel.actions
+        assert set(engine.owners.values()) == {"ready"}
+        channel.validation_ready = True
         channel.mode = "deny"
         assert module.start(12) is False and not writes and engine.last_refusal == "a.rules"
         assert engine.last_outcome.status == "deny"

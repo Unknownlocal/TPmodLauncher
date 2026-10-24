@@ -30,15 +30,24 @@ class RegulationServer:
         self._stop, self.failed, self.connected = threading.Event(), threading.Event(), threading.Event()
         self._connection, self._pending_request = None, None
         self._listener = socket.socket()
+        self._interrupt_read = self._interrupt_write = None
         try:
             self._listener.bind(("127.0.0.1", 0))
             self._listener.listen(1)
             self._listener.settimeout(0.05)
+            # Windows need not wake a local select() when its socket shuts down
+            # from another thread. A readable peer makes idle/partial reads stop
+            # immediately, without adding a periodic idle polling loop.
+            self._interrupt_read, self._interrupt_write = socket.socketpair()
+            self._interrupt_write.setblocking(False)
             self._token = secrets.token_hex(32)
             self._thread = threading.Thread(target=self._serve, name="regulation-transport", daemon=True)
             self._thread.start()
         except BaseException:
             self._listener.close()
+            for connection in (self._interrupt_read, self._interrupt_write):
+                if connection is not None:
+                    connection.close()
             raise
 
     @property
@@ -61,7 +70,7 @@ class RegulationServer:
                         return
                     connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     connection.setblocking(False)
-                    hello = regulation_read(connection, time.monotonic() + 1)
+                    hello = regulation_read(connection, time.monotonic() + 1, interrupt=self._interrupt_read)
                     if (type(hello) is not dict or set(hello) != {"version", "op", "token", "id"}
                             or type(hello["version"]) is not int or hello["version"] != 2 or hello["op"] != "hello"
                             or type(hello["id"]) is not int or hello["id"] != 0
@@ -77,7 +86,8 @@ class RegulationServer:
                     regulation_write(connection, {**hello, **self._metadata}, time.monotonic() + 1)
                     sequence, pending = 0, None
                     while not self._stop.is_set():
-                        message = regulation_read(connection, None if pending is None else pending["deadline"])
+                        message = regulation_read(connection, None if pending is None else pending["deadline"],
+                                                  interrupt=self._interrupt_read)
                         header = regulation_header(message)
                         if not secrets.compare_digest(message["token"], self._token):
                             raise ValueError("Foreign regulation session")
@@ -163,6 +173,10 @@ class RegulationServer:
 
     def close(self):
         self._stop.set()
+        try:
+            self._interrupt_write.send(b"x")
+        except OSError:
+            pass
         self._listener.close()
         request = self._pending_request
         if request is not None:
@@ -178,6 +192,8 @@ class RegulationServer:
         self._thread.join(timeout=1)
         if self._thread.is_alive():
             raise RuntimeError("Regulation transport did not stop")
+        self._interrupt_read.close()
+        self._interrupt_write.close()
         try:
             self._requests.get_nowait()  # Retire a queued operation never polled.
         except queue.Empty:

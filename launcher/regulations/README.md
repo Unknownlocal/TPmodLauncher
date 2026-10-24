@@ -134,6 +134,12 @@ the controller thread. Mod cleanup defers UI updates until that reply arrives,
 so it cannot start a second bridge request during preparation. This private
 setup step is separate from normal startup and does not approve hook coverage.
 
+`PackMods.activate_native_regulations()` installs hooks with validation held off,
+checks the installation report, then asks the game to enable them. Readiness and
+mod UI remain held until that final reply. Failure closes transport and requests
+native cleanup. Healthy validators are not permanently disabled by a temporary
+refusal during installation. These fixed controls cannot name arbitrary methods.
+
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
 ordered `policy-page` rows and `policy-seal`. Native publications supply complete
 adopted options; custom publications contain admitted option keys. `None` keeps
@@ -149,6 +155,8 @@ Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up t
 also use bounded fragments. All fragments share the original action deadline.
 An identified group failure can keep the connection open; broken transport makes
 every required owner unavailable. There is no reconnection or stale approval reuse.
+The server has a private wakeup connection so shutdown can interrupt an idle read
+even while the native client remains connected; it needs no idle polling loop.
 
 `RegulationRuntime` retains required owner identities even after pack cleanup
 removes their live entries. Failure expands to every required owner sharing the

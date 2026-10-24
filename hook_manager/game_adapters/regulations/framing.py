@@ -49,7 +49,7 @@ def regulation_decisions(values, count):
     return values
 
 
-def _regulation_transfer(connection, count, deadline, outgoing=None):
+def _regulation_transfer(connection, count, deadline, outgoing=None, interrupt=None):
     result, offset = bytearray(), 0
     while offset < count:
         # Recompute from one absolute deadline: short TCP reads/writes must not
@@ -57,8 +57,11 @@ def _regulation_transfer(connection, count, deadline, outgoing=None):
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise TimeoutError("Regulation absolute deadline expired")
-        readable, writable, _ = select.select([connection] if outgoing is None else [],
+        readers = ([connection] if outgoing is None else []) + ([interrupt] if interrupt is not None else [])
+        readable, writable, _ = select.select(readers,
                                              [connection] if outgoing is not None else [], [], remaining)
+        if interrupt is not None and interrupt in readable:
+            raise ConnectionError("Regulation connection interrupted")
         if outgoing is not None and writable:
             sent = connection.send(memoryview(outgoing)[offset:])
             if not sent:
@@ -84,12 +87,13 @@ def regulation_write_encoded(connection, data, deadline):
     _regulation_transfer(connection, len(framed), deadline, outgoing=framed)
 
 
-def regulation_read(connection, deadline):
+def regulation_read(connection, deadline, *, interrupt=None):
+    """Read a frame; a private wakeup socket can cancel the server's network wait."""
     # After an authenticated idle wait, a started frame still has a bounded body
     # transfer. Exact lengths avoid assuming TCP packets are message boundaries.
-    size, = struct.unpack("!I", _regulation_transfer(connection, 4, deadline))
+    size, = struct.unpack("!I", _regulation_transfer(connection, 4, deadline, interrupt=interrupt))
     if not 1 <= size <= REGULATION_FRAME_BYTES:
         raise ValueError("Invalid regulation frame length")
     body_deadline = time.monotonic() + 0.1 if deadline is None else deadline
-    data = _regulation_transfer(connection, size, body_deadline)
+    data = _regulation_transfer(connection, size, body_deadline, interrupt=interrupt)
     return json.loads(data, object_pairs_hook=_regulation_pairs, parse_constant=_regulation_constant)

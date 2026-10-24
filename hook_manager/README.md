@@ -38,6 +38,13 @@ snapshot of the career's rule data without installing game hooks. Prepared data
 and its connection stay owned until cleanup. A failed preparation closes its
 connection and reports a compatibility notice without stopping the game.
 
+Fixed installation and activation requests reuse that prepared snapshot. Wrapped
+actions are refused temporarily while the launcher checks complete hook coverage;
+this does not disable healthy validators. Activation rechecks the career, rule
+choices and installed wrappers before enabling them together. Control requests
+must match the prepared connection and career. A stop request restores owned
+hooks, waiting for admitted operations to finish before removing them.
+
 ### Hooks, discovery and native UI
 
 `manager.py` provides approved target descriptors, bounded plain-value copying,
