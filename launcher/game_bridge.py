@@ -17,11 +17,26 @@ import uuid
 PYTHON_SOURCES = (
     "manager", "callables/signatures", "callables/target",
     "callables/result_contract", "callables/binding", "callables/adapters",
-    # Relocation does not activate native driver/project guards. Only the same
-    # four transport sources are admitted into this fixed flat namespace.
+    # Transport stays in the flat core. Complete adapters load separately into
+    # their own module namespaces through the trusted adapters operation.
     "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",
-    "pack_discovery", "menu", "settings", "themes",
+    "pack_discovery", "menu", "settings", "themes", "adapter_modules",
 )
+
+# Closed source groups, not a filesystem scan: adding a file to a pack or even
+# this folder cannot extend what the game loads. Python resolves dependencies
+# inside this bundle using the modules' existing relative imports.
+ADAPTER_SOURCES = {
+    "": "__init__ employment native_values",
+    "ui": "__init__ bindings scroll_text dialog",
+    "drivers": "__init__ targets methods snapshot terms query_inputs queries planner rookie_check",
+    "staff": "__init__ targets methods planner prestige_switch staff_signing staffing_methods staffing_plan staffing_publication staffing",
+    "personnel": "__init__ caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation",
+    "personnel/feedback": "__init__ bindings notice adapter",
+    "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
+    "projects": "__init__ targets methods snapshot planner caller_targets callers",
+    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules",
+}
 
 
 class BridgeError(RuntimeError):
@@ -81,7 +96,7 @@ class Bridge:
 
     def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None):
         """Send a fixed operation, waiting at most timeout seconds for a safe Python entry."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes"):
+        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -207,15 +222,27 @@ def factory(root, frida):
         f"modLauncher/hook_manager/{name}.py": read(f"hook_manager/{name}.py")
         for name in PYTHON_SOURCES
     }
+    adapters = {}
+    for folder, names in ADAPTER_SOURCES.items():
+        for name in names.split():
+            relative = "/".join(part for part in ("game_adapters", folder, name) if part)
+            package = name == "__init__"
+            module = relative.removesuffix("/__init__").replace("/", ".")
+            filename = "modLauncher/hook_manager/" + relative + ".py"
+            adapters[module] = (filename, read("hook_manager/" + relative + ".py"), package)
+    # Keep bundled source as data in the bootstrap namespace. It is imported
+    # only by the trusted 'adapters' operation, after normal bootstrap is ready.
+    sources["modLauncher/hook_manager/adapter_modules.py"] += "\nADAPTER_SOURCES = " + repr(adapters) + "\n"
     bootstrap_source = read("hook_manager/bootstrap.py")
     script = read("hook_manager/bridge.js")
     digest = hashlib.sha256(json.dumps(sources).encode("utf-8")).hexdigest()
 
     def create(session, pid, on_message, *, bootstrap=True):
         # Each process gets a distinct owner token; only the trusted controller constructs this source.
+        instance = uuid.uuid4().hex
         arguments = ",".join(
             json.dumps(value)
-            for value in (sources, digest, uuid.uuid4().hex, str(root.parent))
+            for value in (sources, digest, instance, str(root.parent))
         )
         # Build one fixed expression; the transport can append only a quoted JSON request.
         prefix = (
@@ -226,9 +253,13 @@ def factory(root, frida):
             + ","
         )
         suffix = '))[1])({"__builtins__": __builtins__})'
+        # Once the private owner exists, source strings are unnecessary. Keep
+        # the same digest/instance checks in pulse, with an empty source argument.
+        repeat_prefix = "__import__('sys').modules['_tpm_hook_manager_host'].pulse(" + ",".join(
+            json.dumps(value) for value in ({}, digest, instance, str(root.parent))) + ","
         # A fork transition loads the script engine for exec gating, but must not enter inherited Python.
         config = json.dumps(
-            {"prefix": prefix, "suffix": suffix, "bootstrap": bootstrap}
+            {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap}
         )
         return Bridge(
             frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message

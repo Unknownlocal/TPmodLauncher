@@ -1,48 +1,51 @@
 # Private game adapters
 
-Game integration lives here, below the launcher-owned callable infrastructure.
-Source mods cannot import these modules or select native targets. Importing a
-package installs nothing; explicit trusted career initialization owns installation.
+This package contains the launcher's game-specific support. Mod source runs in
+Wasm and cannot import these modules or select native game functions. Importing
+an adapter defines its code; trusted setup owns installation and removal.
 
-```text
-hook_manager/
-  callables/                    wrapper ownership, execution and restoration
-  game_adapters/
-    drivers/                    native driver contracts and caller behavior
-    projects/                   native aero/chassis proposals and callers
-    ui/                         shared native bindings, scrollable text and dialogs
-    regulations/                rule selection, validator contexts and dispatch
-```
+## Main parts
 
-`drivers` and `projects` know how the game calculates terms and which reads/writes
-must stay private before an action is allowed. Their strict planners return owned
-`clock`, `effective` and `proposal` data. They do not assemble regulation invocation
-metadata, load mod definitions, import the regulation integration or dispatch a
-mod handler. Native game regulation values can still determine native seat or
-project capacity; reading those game inputs is part of mapping the game behavior.
+- `drivers`, `staff` and `academy` prepare proposed contracts and handle the
+  game-specific calculations and records.
+- `personnel` handles shared negotiations, working market records and feedback.
+- `projects` prepares aero and chassis development proposals.
+- `ui` supplies shared game UI bindings, scrollable text and dialogs.
+- `regulations` adds rule selection, validator contexts and communication with
+  the launcher to those game-specific calculations.
 
-`regulations` composes that support with adopted-rule selection and the resident
-validation channel. It adds `schema`, `scope`, `operation` and `initiator`, reports
-initialization incompatibility through the trusted CLI/file reporter, and binds
-native guards. Driver/project support can be reused by another trusted adapter
-without depending on regulation dispatch.
+Planners return `clock`, `effective` and `proposal` data without applying the
+proposed action. Native regulation data can still affect the game's seat or
+project capacity. Ordinary mod validators receive copied descriptions rather
+than live game objects. A successful mod check still leaves the game's own
+remaining checks in place.
 
-[Shared UI support](ui/README.md) provides native helper bindings and reusable
-scrollable text/dialog components. Consumers supply their wording and data, own
-their hooks and lifecycle, and check any additional screen-specific helpers.
+The direction is `regulations -> game-specific support -> callable/manager`.
+Internal names such as `drivers.sign` identify trusted targets; they are not
+mod declarations. The external `launcher/regulations` package owns enabled-mod
+JSON definitions and stored rule data. `mod_runtime/_regulations` executes the
+mod's Python handlers inside Wasm.
 
-The direction is `regulations -> drivers/projects -> private callable/manager
-infrastructure`. Internal target names use `drivers.*` and `projects.*`; they are
-not mod declarations. No compatibility imports remain at the former
-`hook_manager.regulations` path because this integration has not been published.
+## Loading and ownership
 
-The existing `launcher/regulations` package still owns enabled-owner JSON ingest,
-rule definitions and launcher dispatch; `mod_runtime/_regulations` still executes
-mod Python inside Wasm. Moving host integration does not change either API or the
-closed public-admission/readiness gates. The bridge's fixed source list changes
-only the four transport file locations; native planner/guard activation remains
-separate work. No source mod can extend that source list.
+`launcher/game_bridge.py` carries a fixed list of adapter sources. The trusted
+`adapters` operation asks `hook_manager/adapter_modules.py` to load that bundle
+under the bridge's private module name. Each module keeps its own functions and
+variables, so helpers with the same name cannot replace one another. Relative
+imports use only bundled definitions; the manager and callable classes are
+shared with the running bridge.
 
-See [driver support](drivers/README.md), [project support](projects/README.md) and
-[regulation integration](regulations/README.md). Developer archive generalization
-remains deferred until the functional regulations framework is complete.
+Loading uses a temporary importer and leaves the game's file search path alone.
+All bundled definitions load once; later requests reuse them. A failed load
+removes its partially loaded modules and reports a failed status. Shutdown
+removes only definitions still owned by that bridge. Packs and control requests
+cannot add sources to the bundle.
+
+Definition loading does not install hooks, acknowledge native regulation
+coverage or enable the public regulation permission. Those operations remain
+closed in normal launcher startup.
+
+See [driver support](drivers/README.md), [staff support](staff/README.md),
+[academy support](academy/README.md), [project support](projects/README.md),
+[shared UI support](ui/README.md) and
+[regulation integration](regulations/README.md).

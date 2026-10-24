@@ -6,7 +6,7 @@ import threading
 import time
 
 if __package__:
-    from hook_manager.manager import HookError
+    from ...manager import HookError
     from .framing import regulation_decisions, regulation_read, regulation_write
     from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value
     from .action_transfer import regulation_receive_action, regulation_send_action

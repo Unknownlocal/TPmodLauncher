@@ -10,13 +10,21 @@ integration through fixed bridge operations and declarative data.
 
 `launcher/game_bridge.py` supplies `bridge.js` and the fixed Python adapter
 sources to each tracked game session. The transport waits for CPython 3.13 and
-enters Python on its main thread with the GIL held. Requests are serialized and
-bounded, covering status, shutdown, native UI registration and loading progress.
+enters Python on its main thread with the GIL held. Requests run one at a time
+with deadlines, covering status, shutdown, native UI registration, loading
+progress and private adapter-definition loading.
 
 `bootstrap.py` creates a private manager, pack discovery, menu, settings and theme
 adapters. A source digest and session token identify their owner and prevent
-another active controller from replacing them. The bridge loads trusted adapter source; it does
-not import author Python into the game.
+another active controller from replacing them. Later requests reuse the stored
+bootstrap function without resending its source. Author Python runs in Wasm.
+
+`adapter_modules.py` handles the private `adapters` operation. It imports only
+the launcher's fixed bundle as separate modules, sharing the existing manager
+and callable classes. It leaves the game's import path alone,
+removes its temporary importer after loading and removes owned definitions on
+shutdown. Failed imports roll back their definitions. Loading installs no game
+hooks and does not declare regulations ready.
 
 ### Hooks, discovery and native UI
 
@@ -33,16 +41,16 @@ bindings. One wrapper multiplexes all owners of a target. Native refusals surviv
 query extensions; identified validator failures latch only that owner unavailable
 and retain guards until explicit removal. Main-thread binding changes are rejected
 during active operations; polling defers pending installation until idle. Trusted
-native workers require enrollment and an operation scope.
+native workers require enrolment and an operation scope.
 Decorator chains are verified and called intact. The bootstrap owns polling and
 cleanup, retrying shutdown through the bounded bridge request while operations
 finish; no bridge request, manifest capability or guest operation
 exposes registration or native calls.
 
-[`game_adapters/`](game_adapters/README.md) separates native driver/project
-knowledge from regulation binding, context assembly and dispatch. These are
-private sibling integrations above the callable mechanism; moving them adds no
-mod imports, native targets or public capability.
+[`game_adapters/`](game_adapters/README.md) separates native contract/project
+calculations from regulation selection, proposal formatting and dispatch.
+Trusted code owns hook installation; mods cannot load these definitions or
+select native targets.
 
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
@@ -164,7 +172,7 @@ without overwriting the file. Schema migrations are not automatic.
 
 `save_settings` accepts and returns the complete `schema`/`values` document.
 Every registered field must appear exactly once; additional fields are rejected.
-Colours accept either letter case and normalize to uppercase, retaining each
+Colours accept either letter case and normalise to uppercase, retaining each
 field's RGB or RGBA width. Saving the declared defaults implements reset.
 The launcher owns the fixed mod-local `settings.json` path, rejects linked,
 shared or special files, and saves by atomic replacement. Failed writes preserve
@@ -201,21 +209,24 @@ describes how these operations cross the guest, host and native boundaries.
 
 ### Execution boundary
 
-Each mod has its own Store, permissions and guest state, with a 64 MiB guest
-linear-memory limit. The trusted Python runner has a private loading protocol;
-its source-transfer operations are not public mod capabilities.
+Python source mods in one pack share a Python interpreter and Wasm Store. They
+can share Python objects; permissions and resources are still attributed to
+individual mods. A shared runner failure closes the whole source group. Mods
+with prebuilt Wasm components have separate Stores. Each Store has a 64 MiB
+guest linear-memory limit. The trusted Python runner's source-transfer
+operations are private loading support, not public mod capabilities.
 
 | Execution phase | Fuel | Deadline |
 | --- | ---: | ---: |
-| Python interpreter initialization | 20,000,000 | 5 seconds |
+| Shared Python interpreter initialisation | 20,000,000 | 5 seconds |
 | Python source transfer and import, shared across loading calls | 256,000,000 | 5 seconds |
-| Wasm component initialization | 5,000,000 | 1 second |
+| Wasm component initialisation | 5,000,000 | 1 second |
 | Activation or one event | 5,000,000 | 1 second |
 
 Each phase or ordinary call permits 64 host calls. Fuel counts Wasm execution
 work, including the guest Python interpreter. Deadline checks include host work
 and post-return cleanup. Trusted handlers are not preempted; returns after the
 deadline are rejected.
-Guest entry is serialized. Traps and limit failures close the affected instance
+Guest calls run in order. Traps and limit failures close the affected instance
 and release its owned resources. Components receive no host WASI filesystem,
 network or process environment.
