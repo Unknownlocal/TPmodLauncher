@@ -308,14 +308,14 @@ def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsi
     mod = source_mod(game / "data/owned pack", "owned.pending")
     entered, release = threading.Event(), threading.Event()
     results = []
-    original = preparation._prepare
+    original = preparation._prepare_group
     def blocked(*args):
         result = original(*args)
         results.append(result)
         entered.set()
         assert release.wait(10)
         return result
-    monkeypatch.setattr(preparation, "_prepare", blocked)
+    monkeypatch.setattr(preparation, "_prepare_group", blocked)
     controller.mods_factory = lambda report, bridge: PackMods(game, report, runner_bundle=runner_bundle)
     controller.start()
     scope = None
@@ -332,12 +332,12 @@ def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsi
         first.is_detached = True
         first.handlers["detached"]("process-terminated")
         controller.poll()
-        assert scope.closed and 10 not in controller.pack_mods and results[0].snapshot is not None
+        assert scope.closed and 10 not in controller.pack_mods and results[0].snapshots is not None
     finally:
         release.set()
         controller.close()
         if scope is not None:
             scope.executor.shutdown(wait=True)
-    assert results[0].snapshot is None and results[0].component is None and results[0].compiled is None
+    assert results[0].snapshots is None and results[0].component is None and results[0].compiled is None
     assert not any("CODE MOD ACTIVE:" in line or "CODE MOD REPORT:" in line for line in messages)
     assert not controller.cleanup_failed

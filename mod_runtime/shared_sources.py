@@ -2,8 +2,9 @@
 """Transfer several checked snapshots into an already-owned runner.
 
 This private adapter neither creates a Store nor binds host providers. Runtime
-ownership and owner-attributed host callbacks belong to the caller. It provides
-source loading/lifecycle transport before pack loading switches to shared Stores.
+ownership and owner-attributed host callbacks belong to the caller. PackMods
+uses it within its shared runner. Each owner's transfer and entry import has a
+separate source-loading allowance; sealing the complete table has another.
 """
 
 from launcher.sandbox import SandboxError

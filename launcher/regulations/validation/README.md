@@ -90,7 +90,7 @@ new publication before use, and cannot revive a failed Store.
 
 Native transport and pack readiness use this package through the runtime.
 [Owned-process performance measurements](../../../benchmarks/regulations/RESULTS.md)
-cover the individual-runner path. Current `PackMods` loading uses that path;
-the dispatcher also accepts shared groups supplied by trusted launcher code.
+cover the individual-runner path. `PackMods` supplies shared source groups through
+`RegulationRuntime`; direct trusted callers can also supply individual handlers.
 The published limits on packet size and item count do not guarantee arbitrary
 workloads finish within 100 ms.

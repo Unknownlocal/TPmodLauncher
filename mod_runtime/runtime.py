@@ -10,7 +10,8 @@ from ._source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, source_path
 from .bundle import EXPORTS, RunnerBundle
 from .source import SourceSnapshot
 
-# Transfer and import share this allowance; activation/events keep 5M/one second.
+# Individual transfer/import share this allowance. SharedSources uses it for
+# each owner's transfer and import separately; activation/events keep 5M/one second.
 SOURCE_FUEL = 256_000_000
 SOURCE_SECONDS = 5.0
 RUNNER_LIMITS = Limits(initialization_fuel=20_000_000, initialization_seconds=5.0, instances=64)

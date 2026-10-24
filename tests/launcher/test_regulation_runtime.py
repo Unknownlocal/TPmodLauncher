@@ -2,7 +2,7 @@
 """Dedicated real-Wasm handler dispatch and controller-owned transport lifetime."""
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, closing, nullcontext
+from contextlib import ExitStack, closing
 import json
 import inspect
 from pathlib import Path
@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 
@@ -19,7 +19,8 @@ from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from launcher.pack_mods import PackMods
-from mod_runtime.source import SourceManifest
+from launcher.sandbox import SandboxError
+from mod_runtime import source
 from regulation_support import context, make_mod, selection, validator
 
 
@@ -95,36 +96,71 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])
-def test_later_regulation_owner_fences_earlier_ui_until_binding_or_rejection(tmp_path, monkeypatch, activation_fails):
-    manifests = {owner: SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset({cap}))
-                 for owner, cap in (("a.ui", "main-menu"), ("b.rules", "regulations"))}
-    publications = []
-    with closing(PackMods(tmp_path, lambda _: None, set_menu=publications.append)) as scope:
-        monkeypatch.setattr(scope, "_folder", lambda _: tmp_path)
-        monkeypatch.setattr(scope, "_candidates", lambda _: [tmp_path / owner for owner in manifests])
-        monkeypatch.setattr(scope, "_manifest", lambda path: (path, manifests[path.name]))
-
-        def preparation(executor, bundle, root, **kwargs):
-            result = SimpleNamespace(snapshot=manifests[root.name], compiled=None, timings={}, close=lambda: None)
-            return nullcontext(SimpleNamespace(take=lambda: result))
-
-        def source_mod(bundle, manifest, **options):
-            def activate():
-                if manifest.id == "a.ui":
-                    options["menu"](manifest.id, "open", "Open", "Message")
-                    assert not publications  # A later owner is already reserved.
-                elif activation_fails:
-                    raise ValueError("Regulation owner activation failed")
-            return SimpleNamespace(activate=activate, close=options["cleanup"])
-
-        # Only control source construction: the real pack activation/publication
-        # order is exercised without guest builds or public API 0.4 admission.
-        monkeypatch.setattr("launcher.pack_mods.SourcePreparation", preparation)
-        monkeypatch.setattr("launcher.pack_mods.SourceMod", source_mod)
-        scope.load({"id": "owned"})
-        assert scope.finished
-        assert scope._regulation_owners == (set() if activation_fails else {"b.rules"})
-        assert publications == ([scope.menu.buttons] if activation_fails else [])
+def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, source_mod, runner_bundle, monkeypatch, activation_fails):
+    # Enable private fixture admission only for this test; the public parser still
+    # rejects 0.4.0 outside this scope. File reads, pack loading and Wasm are real.
+    monkeypatch.setattr(source, "SOURCE_CAPABILITIES", {**source.SOURCE_CAPABILITIES,
+                                                       "0.4.0": frozenset({"main-menu", "regulations", "diagnostics"})})
+    folder = tmp_path / "data/owned"
+    code = "class WitWorld:\n def activate(self): pass\n def on_event(self,n,p): return p\n"
+    source_mod(folder, "a.ui", api="0.4.0", capabilities=("main-menu",), code=(
+        "import wit_world\n" + code.replace("pass", "wit_world.add_menu_button('open','Open','Message')")))
+    for owner in ("b.rules", "c.rules", "d.data"):
+        entry = code.replace("pass", "raise ValueError('Regulation owner activation failed')") if activation_fails and owner == "b.rules" else code
+        path = source_mod(folder, owner, api="0.4.0", capabilities=("regulations", "diagnostics"), code=entry)
+        (path / "src/rules.py").write_text("import wit_world\ndef validate(c,r):\n wit_world.report('validated')\n return {'decision':'allow'}\n")
+    (folder / "regulations.json").write_text(json.dumps({"categories": [{"key": "native", "options": [{"key": "open"}]}],
+        "mod_extensions": {owner: {"schema": 1, "validators": [validator()] if owner != "d.data" else []}
+                           for owner in ("b.rules", "c.rules", "d.data")}}), encoding="utf-8")
+    publications, progress, messages, threads = [], [], [], []
+    wake = threading.Event()
+    def report(line):
+        messages.append(line)
+        if "CODE MOD REPORT:" in line:
+            threads.append(threading.get_ident())
+    with closing(PackMods(tmp_path, report, runner_bundle=runner_bundle, wake=wake.set,
+                          set_menu=publications.append, set_loading=progress.append)) as scope:
+        scope.load(dict(state="ready", series="formula", id="owned", root=str(folder.resolve())))
+        stop = time.monotonic() + 120
+        while scope.loading is not None:
+            assert time.monotonic() < stop, messages
+            scope.poll()
+            time.sleep(.002)
+        assert scope.finished and not publications
+        assert scope._regulation_owners == {"b.rules", "c.rules", "d.data"}
+        if activation_fails:
+            assert not scope.mods and scope.failed == 4 and scope.menu.buttons == []
+            assert progress[-1]["state"] == "error"
+            with pytest.raises(ValueError, match="Required regulation owner"):
+                scope.bind_regulations(scopes={"personnel.contract"})
+            return
+        mods = dict(scope.mods)
+        assert len({id(mod.sandbox) for mod in mods.values()}) == 1
+        runtime = scope.bind_regulations(scopes={"personnel.contract"})
+        assert runtime._handlers["b.rules"] is runtime._handlers["c.rules"]
+        assert "d.data" not in runtime._handlers and mods["a.ui"].snapshot is None
+        with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+            scope.confirm_regulations()
+            pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            assert runtime.ready and progress[-1]["state"] == "complete" and len(publications) == 1
+            assert runtime.status["owners"]["d.data"] == "bound"
+            future = worker.submit(channel, [context()], [selection()], {owner: [[0, 0, 0]] for owner in ("b.rules", "c.rules")},
+                                   time.monotonic() + .1)
+            assert pump(scope, wake, future) == {owner: [{"decision": "allow"}] for owner in ("b.rules", "c.rules")}
+            assert threads == [threading.get_ident()] * 2
+            assert [json.loads(line.split(": ", 1)[1])["id"] for line in messages if "CODE MOD REPORT:" in line] == ["b.rules", "c.rules"]
+            # A non-regulation peer can close the same interpreter. Required
+            # owners remain visible, including the one with no callable table.
+            with pytest.raises(SandboxError, match="identifier"):
+                mods["a.ui"].event("invalid/event", None)
+            scope.poll()
+            assert not runtime.ready and not scope.mods and scope.failed == 4
+            assert runtime.status["owners"] == dict.fromkeys(("b.rules", "c.rules", "d.data"), "unavailable")
+            assert publications[-1] == [] and progress[-1]["state"] == "error"
+            future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
+            with pytest.raises(HookError, match="unavailable"):
+                pump(scope, wake, future)
+            assert channel._unavailable == {"b.rules", "c.rules"}
 
 
 @pytest.mark.parametrize("fault", ["definitions", "listener"])
@@ -152,7 +188,8 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         assert progress[-1]["state"] == "error" and not menus
         # Repairing a live file cannot restart admission or publish staged UI.
         path.write_text(json.dumps(data), encoding="utf-8")
-        with pytest.raises(ValueError, match="one preparation"):
+        assert mod.sandbox.closed
+        with pytest.raises(ValueError, match="Required regulation owner"):
             scope.bind_regulations(scopes={"personnel.contract"})
         with pytest.raises(RuntimeError):
             scope.confirm_regulations()

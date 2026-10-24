@@ -1,11 +1,11 @@
 # Mod runtime architecture
 
 `mod_runtime` owns the trusted Python runner and source loading. It runs author
-Python inside Wasm in the external launcher. The current `PackMods` path gives
-each mod its own Wasmtime Store, holding its Python interpreter, memory and
-execution state. That path keeps permissions separate and shares identical
-compiled runner code on the execution thread. Author source is never imported
-into the launcher or game interpreter.
+Python inside Wasm in the external launcher. `PackMods` creates one Wasmtime
+Store for all source mods in its selected pack, holding their shared Python
+interpreter and memory. Each prebuilt Wasm component has a separate Store.
+Identical compiled code is shared on the execution thread. Author source is
+never imported into the launcher or game interpreter.
 
 ## Runner files and verification
 
@@ -53,21 +53,21 @@ exports. Modules under `_loading/` handle source and lifecycle state inside Wasm
 | `source_loader.py` | Limit source transfer, load the entry object and track activation |
 | `runner_bindings.py` | Route private exports to the loader and retained regulations |
 
-The individual-source protocol retains one `SourceLoader` per Store, with its
-source table and entry object. `MemoryImporter` reads that same table.
+Each source owner has a `SourceLoader`, holding its files and entry object.
+`MemoryImporter` reads that same table.
 The `wit_world` API exposes diagnostics,
 menu, UI settings and palette operations. Trusted host providers own native
 registration and persistence. Source transfer and loading remain private host
 operations.
 
-`runtime.py` transfers one checked source snapshot in bounded UTF-8 chunks,
-then imports it inside Wasm. Transfer and import share an aggregate fuel,
-elapsed-time and host-call allowance. Initialisation has its own startup allowance;
+The individual `PythonRunner` in `runtime.py` transfers one checked source
+snapshot in bounded UTF-8 chunks, then imports it inside Wasm. Transfer and import
+share an aggregate fuel, elapsed-time and host-call allowance. Initialisation has its own startup allowance;
 activation and later events retain ordinary call budgets. Activation is explicit.
 A failure closes the instance and releases its owned registrations.
 
-`launcher/source_mod.py` applies the launcher's lifecycle, bounded JSON events
-and host-owned diagnostic/UI identity to the runner. Prepared code is used
+`launcher/shared_source_mod.py` applies the launcher's lifecycle and bounded JSON
+events to each member of the shared runner. Prepared code is used
 only when its portable bytes match a fresh read of the verified runner.
 
 ## Shared source loading
@@ -131,10 +131,13 @@ operation that exceeds its allowance closes the group; a late host return cannot
 be accepted as success. The Store's existing fuel, memory and host-call limits
 remain in force.
 
-The current `PackMods` path continues to use individual `PythonRunner` instances.
-Shared regulation storage has its own private operations; the current launcher
-dispatcher supports individual residents and shared groups. The runner interface
-remains private.
+`PackMods` owns the shared runner for the game session. Import or activation
+failure closes all source peers, including members not yet activated. UI
+declarations remain staged until startup completes. Shared regulation storage
+uses its own private operations. The runner interface remains private.
+
+Direct trusted callers can also construct an individual `PythonRunner` through
+`runtime.py` and `launcher/source_mod.py`; the pack loader uses the shared path.
 
 ## Resident regulation validation
 
@@ -199,7 +202,8 @@ mod ID.
 `launcher/regulations/validation/group.py`. It installs each group's common records
 once, sends a shared proposal table and checks completion under the original
 deadline. Generations and status remain per owner, while failure and reset follow
-the physical Store. The current pack loader still constructs individual runners.
+the physical Store. Pack/session binding groups handlers by their physical
+runner and keeps definition-only owners required without creating empty tables.
 
 ## Preparation and session ownership
 
@@ -219,9 +223,10 @@ one compiler request, which a `SharedPythonRunner` can adopt. Closing the result
 drops its source copies and releases its request; a running interpreter keeps
 its code. Both preparation forms use the same polling and cancellation code.
 
-`launcher/pack_mods.py` dispatches Python source mods and mods with prebuilt Wasm
-components after checking duplicate IDs. It owns preparation and executor lifetime
-with the game session, using the existing progress, readiness and cleanup rules.
+`launcher/pack_mods.py` uses grouped preparation for Python source mods and keeps
+prebuilt Wasm components independent after checking duplicate IDs. It owns
+preparation and executor lifetime with the game session, using the existing
+progress, readiness and cleanup rules.
 It cancels its own jobs before closing the executor, allowing compilation needed
 by another session to finish.
 Source loading does not fall back to author-supplied Wasm.

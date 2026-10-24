@@ -1,7 +1,5 @@
 # modLauncher
 
-Mainly a learning exercise in Frida, architecting a design and trying to optimise both code and repo management policies. Side effect is the below.
-
 ## Licence and attribution
 
 - [Licence](LICENCE)
@@ -50,10 +48,6 @@ until code loading and menu registration settle.
 
 ### Linux through Proton/Wine (experimental, untested)
 
-This is experimental, and untested. All Linux functionality is something I've tested
-with WSL, but I don't have an environment to actually run and check this against,
-so I haven't done that. Please raise any issues with as much detail as you can.
-
 Use the Windows release bundle to run bundled Windows Python and the game in the
 same Proton/Wine environment. This approach needs no native Linux Python, and none
 is included. Game support under Proton does not confirm launcher support: Frida
@@ -80,12 +74,9 @@ and starts bundled Windows Python in that environment. Enable Proton for the gam
 in Steam. Fixture tests cover this launch route; actual Proton injection and mod
 loading remain untested. The helper does not configure plain Wine outside Steam.
 
-### MacOS
+### macOS
 
-I haven't explicitly supported MacOS in any form here. I don't have a MacOS environment,
-and testing against it was eating into my CI budget more than I thought. Please do still
-submit any errors you have here, with as much detail as possible. I will try and look into
-them, but I cannot guarantee anything for the reasons mentioned above.
+macOS is unsupported and untested.
 
 ### Package a Windows or Linux/Proton release
 
@@ -220,6 +211,16 @@ extensions are not bundled. The frozen guest standard library includes `json`,
 `math`, `os` and their runtime dependencies. A module's availability does not
 grant access to host files, networking or processes.
 
+All Python source mods in a selected pack share one interpreter and memory.
+Ordinary imports resolve within your own `src/`. To share another enabled mod's
+module, use `wit_world.import_mod("other.mod", "module_name")`; it returns that
+mod's existing module object. Mod authors are responsible for compatibility
+between shared Python objects. All source files are available before any entry
+imports, and activation runs in mod-ID order alongside prebuilt components.
+The group accepts at most 8 MiB of source across 4,096 files; the pack admits
+at most 32 code mods. A failed source member closes all Python source mods in
+that pack. Mods with prebuilt Wasm components keep separate runtime instances.
+
 ### Mods with prebuilt Wasm components
 
 Authors build and distribute the component; the launcher loads the binary
@@ -241,7 +242,7 @@ Component Model toolchain follows the same contract-based build steps:
    A core Wasm module alone will not work. If your compiler emits one, use your
    toolchain's component packaging stage. Omit or stub unused WASI dependencies
    at build time: the launcher supplies no WASI imports. Components must fit the
-   32 MiB file and 64 MiB guest-memory limits, and initialize within 5,000,000
+   32 MiB file and 64 MiB guest-memory limits, and initialise within 5,000,000
    fuel units and one second.
 5. Supply this `mod.toml`, matching `api` and `capabilities` to the contract and
    features used for the build:
@@ -282,20 +283,24 @@ through the launcher and check the log for acceptance and activation.
 Several code mods can share a data pack. Valid mods activate in ascending mod-ID
 order; all mods with a duplicate ID are rejected. Discovery accepts up to 4,096
 direct pack entries and 32 candidate mod folders. Linked folders and files are
-rejected or skipped. Manifests can be up to 16 KiB. A source manifest or loading
-failure rejects that mod without falling back to `mod.wasm`.
+rejected or skipped. Manifests can be up to 16 KiB. Source loading never falls
+back to `mod.wasm`. Invalid manifests are rejected before grouping; a failure
+loading an admitted source member rejects its whole group.
 
 Check the launcher log for `CODE MOD ACTIVE`, `CODE MOD REPORT` and
 `CODE MOD MENU` records. Rejections name the affected mod. Each process gets fresh
 mod state; shutdown or process replacement releases its mod instances.
 
-Each mod has separate guest state and a 64 MiB guest linear-memory limit. Python
-initialization allows 20,000,000 fuel units and five seconds. Source transfer and
-import share 256,000,000 units and five seconds; activation and each event allow
-5,000,000 units and one second. Each phase allows up to 64 host calls. Standard
-Wasm components also use the smaller budget for initialization. Fuel measures
-Wasm work, including the guest Python interpreter. A budget overrun or trap closes
-the mod and removes its registrations. Guest components have no host WASI
+The source group shares Python state and one 64 MiB guest linear-memory limit.
+Each prebuilt component has its own state and 64 MiB limit. Python initialisation
+allows 20,000,000 fuel units and five seconds. Each owner's source transfer and
+entry import have separate allowances of 256,000,000 units and five seconds;
+sealing the complete source table has another allowance of that size. Activation
+and each event allow 5,000,000 units and one second. Each phase allows up to
+64 host calls. Prebuilt components use that smaller budget for initialisation.
+Fuel measures Wasm work, including the guest Python interpreter. A budget overrun
+or trap closes the affected runtime and removes all its registrations, including
+every source peer sharing it. Guest components have no host WASI
 filesystem, network or process environment.
 
 ### Use the theme example
@@ -322,7 +327,7 @@ a trusted bridge supplies the in-game adapters.
 | --- | --- |
 | [launcher](launcher/README.md) | Startup checks, game-process tracking, pack loading, compilation cache, mod lifetimes and release preparation. |
 | [hook_manager](hook_manager/README.md) | Main-thread game integration, owned hooks, pack discovery, native menu/settings/theme adapters and the current mod API. |
-| [mod_runtime](mod_runtime/README.md) | Prebuilt Python runner, source checks, worker preparation and per-mod execution state. |
+| [mod_runtime](mod_runtime/README.md) | Prebuilt Python runner, source checks, worker preparation and shared Python execution. |
 | [tests](tests/README.md) | Behaviour checks, real Wasm execution, owned native helper processes, bundled-runtime checks and CI coverage. |
 
 `launcher/entry.py` checks bundled Python, the dependency inventory and trusted
@@ -336,21 +341,21 @@ Status, loading, menu declarations, settings and palettes cross this boundary;
 mod authors' Python runs inside Wasmtime in the external launcher.
 
 The pack loader checks manifests and duplicate IDs before execution. A worker
-snapshots Python source and compiles verified runner bytes, or prepares an
-explicit Wasm component. The controller takes the result and creates fresh
-permissions, a Store and guest state. Wasmtime can reuse compiled code from
-`bin/wasmtime-cache`; every load still checks inputs and creates fresh instance
-ownership.
+copies all source mods and prepares one verified runner compilation request,
+or prepares an explicit Wasm component. The controller creates one shared
+Python interpreter per pack and a separate Store for each prebuilt component.
+Wasmtime can reuse compiled code from `bin/wasmtime-cache`; every load still
+checks inputs and creates fresh instance ownership.
 
-One prebuilt runner serves separate Python instances for each mod. It imports
-source from guest memory and provides diagnostics, menu declarations, UI settings
-and palettes through permitted host functions. The launcher saves settings and
-sends save notifications; native adapters handle the editor and apply palettes
+The shared runner imports source from guest memory and provides diagnostics,
+menu declarations, UI settings and palettes through permitted host functions.
+The launcher saves settings and sends save notifications; native adapters handle
+the editor and apply palettes
 on restart. The sandbox enforces signatures, fuel, deadlines, host-call counts
 and guest linear-memory limits. Loading progress and native registration
 acknowledgements control startup readiness. Closing a session cancels unfinished
-preparation, closes mods in reverse activation order, removes their native UI
-registrations and restores owned hooks.
+preparation, closes owned runtimes, removes their native UI registrations and
+restores owned hooks. Logical mod closure is reported in reverse activation order.
 
 Release tools build the fixed runner with the pinned developer componentizer,
 prepare bundled Python and dependencies, and keep trusted sources and upstream
