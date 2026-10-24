@@ -23,6 +23,10 @@ These are private launcher adapters, not a direct game-function API for mods.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
   policy updates over an authenticated connection to the launcher on the same
   computer. The game waits for its reply.
+- [native_policy.py](native_policy.py): `NativeRegulationPolicy` prepares the
+  subscribed choices from the career's loaded regulations. It sends this data
+  once, then uses the game's own method to choose a rule for each proposal's
+  season. Later checks send small references to the prepared data.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -72,12 +76,24 @@ The private `AdapterModules.install_regulations` method owns the signing and
 project adapters and native switches for a career supplied by trusted setup.
 `install_current_regulations` checks that the currently displayed career still
 matches the number from the launcher's earlier status request before setup.
-It reports each installed component separately. Its report does not acknowledge
-whole-team staffing coverage or make policy ready. If validation is active,
-removal leaves the installation intact for a later retry. Once idle, it restores
-all owned hooks and closes their connection before unloading the definitions.
+It prepares `NativeRegulationPolicy` as the selector, so callers do not supply a
+selection function. The stored policy belongs to the installed adapters and is
+released with them. Setup reports which connections succeeded; this does not
+mean every staffing path is connected or that the mod checks are ready to run.
+If validation is active, removal leaves the installation intact for a later
+retry. Once idle, it restores the game methods it changed and closes their
+connection before unloading the definitions.
 Failed setup uses the same cleanup path; status reports `cleanup_pending` while
 that cleanup is deferred.
+
+Rule choices must be prepared again if the adopted choices, career season,
+native manager or rule definitions are replaced.
+The current choice's season records when setup observed it in force; native
+saves do not record its original adoption year. Upcoming dates use the native
+record, or the following season when the record has no date.
+Setup skips saved replacement choices, such as custom future calendar actions,
+whose data cannot be resolved by the loaded option name alone. These cases are
+reported through the same compatibility message.
 
 The native switches only enable or disable their named checks. Custom restrictions
 use ordinary validators and the regulations adopted for the proposed contract's

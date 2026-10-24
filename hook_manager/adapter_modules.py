@@ -30,6 +30,7 @@ class AdapterModules:
         self.channel = None
         self.coverage = {}
         self.regulation_error = None
+        self.policy = None
 
     def status(self):
         """Report loaded definitions and initial hook coverage, not policy readiness."""
@@ -98,14 +99,34 @@ class AdapterModules:
             self.stop_regulations()
             raise
 
-    def install_current_regulations(self, generation, channel, select, *, native_rules, report):
+    def install_current_regulations(self, generation, channel, *, native_rules, report):
         """Bind trusted setup to the career named in a previous bridge reply.
 
         Refresh before installing anything: a save reload or return to the menu
         must not attach a delayed setup request to a different career.
+        The selector comes from the fixed adapter bundle, not a caller callback.
         """
+        self.host.manager._main()
+        if self.state != "loaded" or self.channel is not None:
+            raise HookError("Regulation installation needs an unused loaded adapter bundle")
         state = self.host.career.current(generation)
-        return self.install_regulations(state, channel, select, native_rules=native_rules, report=report)
+        native = self.host.adapter_code.game_adapters.regulations.native_policy
+        try:
+            policy = native.NativeRegulationPolicy(state, channel)
+        except Exception as error:
+            report("REGULATIONS COMPATIBILITY FAILED rule selection: "
+                   + " ".join(str(error).split())[:512]
+                   + "; regulation setup skipped; continuing native game")
+            return None  # The caller still owns the channel; no hooks were installed.
+        # Keep a partially installed policy with its owned guards until busy
+        # cleanup can finish; successful stop_regulations clears both together.
+        self.policy = policy
+        try:
+            return self.install_regulations(state, channel, policy.select, native_rules=native_rules, report=report)
+        except BaseException:
+            if self.channel is None:
+                self.policy = None
+            raise
 
     def stop_regulations(self):
         """Restore the whole installation, or return False without changing it.
@@ -132,6 +153,7 @@ class AdapterModules:
             self.channel = None
             self.coverage.clear()
             self.regulation_error = None
+            self.policy = None
         return True
 
     def load(self):

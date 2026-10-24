@@ -68,10 +68,11 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         game = ModuleType("game_state")
         game.GameState = type("GameState", (), {})
         monkeypatch.setitem(sys.modules, "game_state", game)
-        channel = SimpleNamespace(closed=False, bindings=lambda scope: {},
+        channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))
-        coverage = host.adapters.install_regulations(game.GameState(), channel, lambda *a: None,
-            native_rules={}, report=pytest.fail)
+        monkeypatch.setattr(host.career, "current", lambda generation: game.GameState())
+        coverage = host.adapters.install_current_regulations(1, channel, native_rules={}, report=pytest.fail)
+        assert host.adapters.policy is not None
         assert coverage == {"driver_signing": False, "staff_signing": False, "academy_signing": False,
             "development_projects": False, "rookie_contract_length_check": "native",
             "staff_prestige_check": "native", "staffing": False}
@@ -86,6 +87,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         guard._active = 0
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
+        assert host.adapters.policy is None
         assert host.career.status()["state"] == "stopped"
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:

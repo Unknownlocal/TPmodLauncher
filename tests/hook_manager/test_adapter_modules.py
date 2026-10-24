@@ -10,6 +10,7 @@ import pytest
 
 from hook_manager.adapter_modules import AdapterModules
 from hook_manager.callables import CallableAdapters
+from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
 from hook_manager.manager import HookError, Manager
 
 
@@ -89,6 +90,7 @@ def installation(host, monkeypatch):
     personnel, projects = CallableAdapters(), CallableAdapters()
     personnel.planners = {"driver": object()}
     adapters = host.adapter_code.game_adapters.regulations
+    adapters.native_policy = SimpleNamespace(NativeRegulationPolicy=NativeRegulationPolicy)
     adapters.native_rules = SimpleNamespace(install_native_rules=lambda *a, **kw: (native,))
     adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=SimpleNamespace(create=lambda *a: personnel))
     adapters.academy_adapter = SimpleNamespace(AcademyAdapter=SimpleNamespace(create=lambda *a: None))
@@ -101,8 +103,8 @@ def installation(host, monkeypatch):
 
 
 def install(installation):
-    modules, _, channel, _, _ = installation
-    return modules.install_current_regulations(1, channel, lambda *a: None,
+    modules, career, channel, _, _ = installation
+    return modules.install_regulations(career, channel, lambda *a: None,
         native_rules={"rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
 
 
@@ -112,7 +114,7 @@ def test_installation_reports_components_without_claiming_full_scope(installatio
         modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
     assert not channel.closed and modules.channel is None
     with pytest.raises(HookError, match="no longer current"):
-        modules.install_current_regulations(0, channel, lambda *a: None, native_rules={}, report=pytest.fail)
+        modules.install_current_regulations(0, channel, native_rules={}, report=pytest.fail)
     assert not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": False, "academy_signing": False,
@@ -137,6 +139,16 @@ def test_setup_exception_restores_prior_components_and_closes_channel(installati
     assert hooks[0].closed and hooks[1].closed and not hooks[2].closed
     assert channel.closed and modules.channel is None and modules.coverage == {}
     assert modules.prefix in sys.modules
+
+
+def test_incompatible_rule_selection_reports_skip_before_taking_channel(installation):
+    modules, _, channel, _, hooks = installation
+    channel._rules, channel._custom = {"missing.native.rule"}, set()
+    reports = []
+    assert modules.install_current_regulations(1, channel, native_rules={}, report=reports.append) is None
+    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
+    assert modules.channel is None and modules.policy is None and modules.regulations == []
+    assert all(not hook.closed for hook in hooks) and not channel.closed
 
 
 @contextmanager

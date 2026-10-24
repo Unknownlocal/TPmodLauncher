@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -18,6 +18,7 @@ from hook_manager.manager import HookError
 from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
+from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
 from launcher.pack_mods import PackMods
 from launcher.sandbox import SandboxError
 from mod_runtime import source
@@ -69,15 +70,26 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
         return dict(context(), scope="development.project", proposal={"budget": arguments["budget"]})
 
     module.start = native
+    rules = ModuleType("managers.regulation_manager")
+    exec('''class RegulationManager:
+ def _option_key_for_season(self, category_key: 'str', season_no: 'int') -> 'Optional[str]':
+  return self.regulations[category_key]['current']
+''', vars(rules))
+    monkeypatch.setitem(sys.modules, rules.__name__, rules)
+    state = SimpleNamespace(season_no=2026, regulation_manager=rules.RegulationManager())
+    state.regulation_manager.state = state
+    state.regulation_manager.regulation_defs = {"native": {"options": [{"key": "open"}]}}
+    state.regulation_manager.regulations = {"native": {"current": "open", "upcoming": None}}
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
-        engine = RegulationGuards(channel, lambda rule, season: {"selected": "current", "current": [0, 2026], "upcoming": None}, "development.project")
+        policy = NativeRegulationPolicy(state, channel)
+        engine = RegulationGuards(channel, policy.select, "development.project")
         engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native))))
         codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
         try:
             for owner in mods:
                 engine.register(owner, [CallBinding("project", "project", project, codec)])
             scope.confirm_regulations()
-            pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            pump(scope, wake, worker.submit(policy.publish))
             thread = worker.submit(threading.current_thread).result(timeout=1)
             engine.enroll(thread)
 
