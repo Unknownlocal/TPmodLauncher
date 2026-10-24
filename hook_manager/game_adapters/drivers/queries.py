@@ -9,13 +9,17 @@ from .query_inputs import DriverQueryInputs
 
 
 class DriverQueries:
+    def active(self, original, manager, driver, week, frame):
+        """Run the busy active-contract path with ordinary method arguments."""
+        if "query_inputs" not in frame:
+            frame["query_inputs"] = DriverQueryInputs()
+        return frame["query_inputs"].active(original, manager, driver, week)
+
     def run(self, role, original, bound, frame):
         values = bound.arguments
         manager = values["self"]
         if role == "active":
-            if "query_inputs" not in frame:
-                frame["query_inputs"] = DriverQueryInputs()
-            return frame["query_inputs"].active(original, bound)
+            return self.active(original, manager, values["driver"], values.get("week"), frame)
         # These getters fill missing identity fields. Keep their answers
         # available to nested queries on the same private person data.
         if role in ("personalities", "career"):

@@ -17,15 +17,15 @@ class DriverQueryInputs:
     def __init__(self):
         self.managers = {}
         self.drivers = {}
+        self.empty_driver = SimpleNamespace(contract=None)
 
     def clear(self):
         """Expire all inputs around native writes, failures and caller completion."""
         self.managers.clear()
         self.drivers.clear()
+        self.empty_driver = SimpleNamespace(contract=None)
 
-    def active(self, original, bound):
-        values = bound.arguments
-        manager, driver = values["self"], values["driver"]
+    def active(self, original, manager, driver, week):
         manager_key = id(manager)
         if manager_key not in self.managers:
             # This helper only needs the clock and normaliser. Do not borrow a
@@ -34,25 +34,36 @@ class DriverQueryInputs:
                                       normalize_contract_status=manager.normalize_contract_status)
             # Retain originals too, so an object ID cannot be reused here.
             self.managers[manager_key] = manager, private
-        values["self"] = self.managers[manager_key][1]
-        key = manager_key, id(driver)
+        private_manager = self.managers[manager_key][1]
         source = driver.contract
-        entry = self.drivers.get(key)
-        # A source copy detects in-place edits as well as contract replacement.
-        # Most roster members have None here, making this comparison trivial.
-        if entry is None or entry[1] is not source or entry[2] != source:
-            entry = None
-            private_driver = SimpleNamespace(contract=deepcopy(source))
+        if source is None:
+            # No agreement can escape this native lookup, and its private query
+            # cache is disabled. One empty input can serve all such drivers;
+            # native code still checks the requested week on every call.
+            private_driver = self.empty_driver
+            private_driver.contract = None
         else:
-            private_driver = entry[3]
-        values["driver"] = private_driver
+            key = manager_key, id(driver)
+            entry = self.drivers.get(key)
+            # A source copy detects nested edits as well as replacement. The
+            # normalised working copy cannot serve as the untouched baseline.
+            if entry is None or entry[1] is not source or entry[2] != source:
+                entry = None
+                private_driver = SimpleNamespace(contract=deepcopy(source))
+            else:
+                private_driver = entry[3]
         try:
-            result = original(*bound.args, **bound.kwargs)
+            result = original(private_manager, private_driver, week)
         except BaseException:
             # Do not reuse a partly normalised record after a native failure.
             self.clear()
             raise
-        if result is None:
+        if source is None:
+            if result is not None:
+                # Preserve fresh ownership even if native code produces a
+                # record from an initially empty input in a later game build.
+                self.empty_driver = SimpleNamespace(contract=None)
+        elif result is None:
             if entry is None:
                 # Live owner, source identity, untouched source copy, working
                 # driver: keep change detection separate from normalisation.

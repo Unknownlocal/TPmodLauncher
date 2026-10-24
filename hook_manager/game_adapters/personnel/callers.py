@@ -12,7 +12,7 @@ from ..drivers.query_inputs import DriverQueryInputs, discard_query_inputs
 
 # These native entry points return None, including when their work is stopped.
 _MARKET_CALLERS = {"due", "ai_staff", "ai_drivers"}
-_GETTERS = {"active", "count", "status", "entries", "next_entries", "personalities", "career", "prestige"}
+_GETTERS = {"count", "status", "entries", "next_entries", "personalities", "career", "prestige"}
 
 
 class PersonnelCallers:
@@ -21,6 +21,11 @@ class PersonnelCallers:
         self.queries = DriverQueries()
 
     def wrap(self, role, original, signature):
+        if role == "active":
+            # This frequently called method has a checked, fixed signature.
+            # Select its direct wrapper once instead of binding every lookup.
+            return self._active_wrapper(original)
+
         def wrapped(*args, **kwargs):
             guards = self.guards
             if guards.closed or not guards.owners:
@@ -148,6 +153,24 @@ class PersonnelCallers:
                     with guards._lock:
                         guards._active -= 1
         return wrapped
+
+    def _active_wrapper(self, original):
+        """Keep native argument rules without constructing BoundArguments per read."""
+        guards, state, queries = self.guards, self.state, self.queries
+
+        def active(self, driver, week=None):
+            if guards.closed or not guards.owners:
+                return original(self, driver, week)
+            frame = getattr(guards._local, "personnel_caller", None)
+            if frame is None or getattr(guards._local, "committing_personnel", False):
+                return original(self, driver, week)
+            career = getattr(self, "state", None)
+            market = frame["market"]
+            if career is not state and (market is None or career is not market.state):
+                return original(self, driver, week)
+            return queries.active(original, self, driver, week, frame)
+
+        return active
 
     def _ai_failure(self, original, bound, frame):
         if frame is None or frame["role"] != "ai_drivers":

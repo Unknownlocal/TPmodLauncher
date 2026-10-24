@@ -12,10 +12,12 @@ the game's signing method still decides whether an allowed proposal succeeds.
 - [snapshot.py](snapshot.py): copies the candidate and relevant team contracts so
   game helpers can calculate dates and status without editing live records.
 - [queries.py](queries.py): protects live contract records and the signing-query
-  cache when game callers ask about eligibility or contract status.
+  cache when game callers ask about eligibility or contract status. Frequent
+  active-contract reads pass arguments directly rather than rebuilding them.
 - [query_inputs.py](query_inputs.py): reuses private active-contract inputs within
   one negotiation. Every lookup still checks its requested week. Returned
   agreements leave the reuse store so caller edits cannot affect later reads.
+  Drivers without current contracts share one private empty input.
 - [terms.py](terms.py): handles returned academy loans on the working copies.
   Common person and contract formatting lives in
   [employment.py](../employment.py).

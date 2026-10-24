@@ -30,9 +30,15 @@ def test_getter_fast_path_skips_binding_but_preparation_and_other_careers_keep_t
     assert wrapped(self=manager, driver=driver) is driver.contract
     with pytest.raises(TypeError):
         wrapped(manager, driver, unknown=True)
+    with pytest.raises(TypeError):
+        wrapped(manager)
+    with pytest.raises(TypeError):
+        wrapped(manager, driver, driver=driver)
+    with pytest.raises(TypeError):
+        wrapped(manager, driver, 1, 2)
 
     local.committing_personnel = False
-    wrapped = caller.wrap("active", active, inspect.signature(active))
+    # The direct wrapper must avoid inspect binding during preparation too.
     result = wrapped(manager, driver)
     assert result == driver.contract and result is not driver.contract
     other = SimpleNamespace(state=object())
@@ -46,6 +52,7 @@ def test_active_inputs_reuse_unexposed_copies_but_recheck_weeks_and_live_changes
     observed = []
 
     def active(self, driver, week=None):
+        assert self._ai_signing_query_cache is None
         observed.append((self, driver, week))
         if driver.contract is None:
             return None
@@ -55,9 +62,13 @@ def test_active_inputs_reuse_unexposed_copies_but_recheck_weeks_and_live_changes
 
     signature = inspect.signature(active)
     def run(week):
-        return query.run("active", active, signature.bind(manager, driver, week), frame)
+        return query.active(active, manager, driver, week, frame)
 
     assert run(8) is None and run(9) is None
+    other_empty = SimpleNamespace(contract=None)
+    assert query.active(active, manager, other_empty, 9, frame) is None
+    assert observed[0][1] is observed[2][1] and not frame["query_inputs"].drivers
+    assert driver.contract is other_empty.contract is None
     assert observed[0][0] is observed[1][0] and observed[0][1] is observed[1][1]
     driver.contract = {"team": "Alpine", "start": 10, "length": 2, "terms": {"salary": 2}}
     observed.clear()
