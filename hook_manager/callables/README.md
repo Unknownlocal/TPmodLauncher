@@ -1,0 +1,40 @@
+# Private callable adapters
+
+This package belongs to trusted launcher integrations. Trusted adapters provide
+read-only projections; only copied plain values reach their configured dispatcher.
+Mods cannot register native targets or import this host package.
+
+| File | Responsibility |
+| --- | --- |
+| `target.py` | `CallableTarget`: trusted native path/signature and hook ownership checks. |
+| `result_contract.py` | `ResultContract`: native result structure, success selection and refusal rendering. |
+| `binding.py` | `CallBinding`: trusted projection and target/phase association. |
+| `adapters.py` | `CallableAdapters`: ownership, installation, dispatch, worker admission and cleanup. |
+| `signatures.py` | Readable call-signature checks and retained helper groups. |
+| `__init__.py` | Private host exports; importing installs no hooks. |
+
+`method_group` in `signatures.py` checks a trusted mapping of helper names to
+signature strings and retains those functions for private planning objects. The
+current static/instance binding is retained, not fingerprinted. No mod can supply
+a helper group or approve a native target.
+
+Runtime game compatibility uses paths and exposed signatures, including defaults
+and annotations. Matching signatures accept changed bodies, constants, private
+locals, closures and decorator arrangements. No bytecode or executable hash gates
+game integration. Synchronous Python call support and hook ownership are separate
+execution requirements. Actual outer decorators still run when native code is
+allowed. Developer conformance checks cover preparation and cancellation behavior.
+Failure reporting and skipping an incompatible integration belong to its trusted
+adapter, not mod code.
+
+Normal host imports use package-relative imports. The game bridge executes its
+fixed `PYTHON_SOURCES` list in dependency order in the existing private namespace;
+the implementation files skip package imports on that path. The package adds no
+mod capability or registration operation. `Manager` continues to own normal
+import observation and restoration journals.
+
+The independent [`tests/callables/`](../../tests/callables/) suite contains unit,
+real sandbox and native bridge acceptance tests. Its required CI workflow and
+portable coverage reports are separate from the parent hook-manager suite.
+Native callable acceptance has its own Windows matrix job and reduced-Frida
+steps. Shared root fixtures still prepare the runner and owned native runtime.

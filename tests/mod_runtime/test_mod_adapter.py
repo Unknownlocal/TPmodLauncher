@@ -7,7 +7,6 @@ import pytest
 
 from hook_manager.menu import MenuRequests
 from launcher.sandbox import SandboxError
-from launcher.source_mod import SourceMod
 from mod_runtime.source import SourceSnapshot
 
 
@@ -42,11 +41,12 @@ capabilities = {json.dumps(capabilities)}
     return read
 
 
-def test_source_instances_keep_state_and_host_owned_identity_separate(runner_bundle, source):
+def test_shared_entries_keep_identity_and_state_with_group_owned_closure(make_source_group, source):
     reports = []
-    with SourceMod(runner_bundle, source(), report=lambda *args: reports.append(args)) as first, SourceMod(
-        runner_bundle, source(mod_id="owned.second"), report=lambda *args: reports.append(args)
-    ) as second:
+    mods = make_source_group((source(), source(mod_id="owned.second")), report=lambda *args: reports.append(args))
+    first, second = mods.values()
+    with first:
+        assert first.sandbox is second.sandbox
         with pytest.raises(SandboxError, match="Activate"):
             first.event("owned.event", None)
         first.activate()
@@ -60,26 +60,28 @@ def test_source_instances_keep_state_and_host_owned_identity_separate(runner_bun
         assert first.event("owned.event", None)["count"] == 2
         assert second.event("owned.event", False)["count"] == 1
         first.close()
-        assert second.event("owned.event", None)["count"] == 2
+        assert second.sandbox.closed
+        with pytest.raises(SandboxError):
+            second.event("owned.event", None)
 
 
-def test_invalid_guest_json_disables_source_contract_and_cleans(runner_bundle, source):
+def test_invalid_guest_json_disables_source_contract_and_cleans(make_source_group, source):
     result = "{"
     code = CODE.replace('json.dumps({"count": self.count, "name": name, "value": json.loads(payload)})', repr(result))
     cleaned = []
-    with SourceMod(runner_bundle, source(code), report=lambda *_: None, cleanup=lambda: cleaned.append(True)) as mod:
+    with make_source_group((source(code),), report=lambda *_: None, cleanup=lambda: cleaned.append(True))["owned.source"] as mod:
         mod.activate()
         with pytest.raises(SandboxError):
             mod.event("owned.event", None)
         assert mod.sandbox.failure and mod.sandbox.closed and cleaned == [True]
 
 
-def test_invalid_event_input_closes_before_guest_callback(runner_bundle, source):
+def test_invalid_event_input_closes_before_guest_callback(make_source_group, source):
     name, value = "owned.event", "\u6c34" * 1400
     code = CODE.replace("self.count += 1", 'wit_world.report("event reached")\n        self.count += 1')
     reports, cleaned = [], []
-    with SourceMod(runner_bundle, source(code), report=lambda *args: reports.append(args),
-                   cleanup=lambda: cleaned.append(True)) as mod:
+    with make_source_group((source(code),), report=lambda *args: reports.append(args),
+                               cleanup=lambda: cleaned.append(True))["owned.source"] as mod:
         mod.activate()
         reports.clear()
         with pytest.raises(SandboxError):
@@ -87,7 +89,7 @@ def test_invalid_event_input_closes_before_guest_callback(runner_bundle, source)
         assert reports == [] and cleaned == [True] and mod.sandbox.closed
 
 
-def test_partial_menu_declarations_are_revoked_after_failure(runner_bundle, source):
+def test_partial_menu_declarations_are_revoked_after_failure(make_source_group, source):
     code = '''import wit_world
 class WitWorld:
     def activate(self):
@@ -102,7 +104,7 @@ class WitWorld:
         menu.remove(snapshot.manifest.id)
         cleaned.append(True)
     with pytest.raises(SandboxError):
-        with SourceMod(runner_bundle, snapshot, menu=menu.add, cleanup=cleanup) as mod:
+        with make_source_group((snapshot,), menu=menu.add, cleanup=cleanup)[snapshot.manifest.id] as mod:
             mod.activate()
             mod.event("owned.event", None)
     assert menu.buttons == [] and cleaned == [True]

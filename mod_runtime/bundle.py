@@ -14,15 +14,49 @@ import re
 import stat
 from types import MappingProxyType
 
-ABI_VERSION = "0.3.0"
+ABI_VERSION = "0.4.0"
 COMPONENTIZE_VERSION = "0.25.1"
 EXPORTS = MappingProxyType({
-    "put-source": (("string", "string"), None),
-    "load-source": (("string",), "string"),
-    "activate": ((), None),
-    "on-event": (("string", "string"), "string"),
+    "declare-source": (("string", "string"), None),
+    "put-owner-source": (("string", "string", "string"), None),
+    "seal-sources": ((), None),
+    "load-owner-source": (("string",), "string"),
+    "activate-source": (("string",), None),
+    "on-source-event": (("string", "string", "string"), "string"),
+    "bind-source-regulation": (("u32", "string"), "string"),
+    "select-regulation-owner": (("string",), None),
+    "begin-regulation-contexts": (("u64", "u32", "string"), "string"),
+    "put-regulation-contexts": (("string",), None),
+    "seal-regulation-contexts": ((), "string"),
+    "finish-regulation-action": (("u64",), None),
+    "finish-regulation-publication": ((), None),
+    "reset-regulation-group": (("u64",), "string"),
+    "begin-regulation-policy": (("u64", "u64", "u32"), "string"),
+    "put-regulation-policy": (("string",), None),
+    "seal-regulation-policy-manifest": ((), "string"),
+    "install-regulation-records": (("string",), "string"),
+    "begin-regulation-record": (("u32", "u32"), None),
+    "put-regulation-record": (("string",), None),
+    "seal-regulation-record": ((), "string"),
+    "seal-regulation-policy": ((), "string"),
+    "commit-regulation-policy": (("u64", "u64"), "string"),
+    "begin-regulation-action": (("u64", "u64", "u64", "u32", "string"), "string"),
+    "put-regulation-action": (("string",), None),
+    "seal-regulation-action": ((), "string"),
+    "prepare-regulation-slots": (("u64",), "string"),
+    "validate-resident-regulation": (("u64", "u32"), "string"),
 })
-SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py")
+SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
+           "source/_loading/__init__.py", "source/_loading/author_world.py",
+           "source/_loading/memory_importer.py", "source/_loading/source_loader.py",
+           "source/_loading/runner_bindings.py",
+           "source/_loading/source_group.py", "source/_loading/source_imports.py",
+           "source/_regulations/__init__.py", "source/_regulations/policy.py",
+           "source/_regulations/handlers.py", "source/_regulations/values.py",
+           "source/_regulations/group.py", "source/_regulations/contexts.py",
+           "source/_regulations/transfer.py", "source/_regulations/catalog.py",
+           "source/_regulations/action.py", "source/_regulations/resident.py",
+           "source/_regulations/frozen.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",
@@ -68,6 +102,8 @@ NOTICE_FILES = (
     "notices/NOTICE.PythonChanges.txt",
 )
 FILES = frozenset((*SOURCES, *NOTICE_FILES, "runner.wasm"))
+# Nested trusted packages are allowed only where the fixed inventory needs them.
+DIRECTORIES = frozenset(parent.as_posix() for name in FILES for parent in Path(name).parents if parent != Path("."))
 MANIFEST = "bundle.json"
 DIRECTORY = "libs/mod-runners"
 MAX_COMPONENT_BYTES = 32 * 1024 * 1024
@@ -162,7 +198,7 @@ class RunnerBundle:
                 item = _checked(parent / name)
                 relative = item.relative_to(self.directory).as_posix()
                 if item.is_dir():
-                    if relative not in {"source", "notices"}:
+                    if relative not in DIRECTORIES:
                         raise BundleError("Unexpected runner bundle directory")
                 else:
                     found.add(relative)
@@ -184,7 +220,7 @@ class RunnerBundle:
         for name in sorted(FILES):
             data = self._file(name)
             target = directory / name
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as destination:
                 destination.write(data)
         with (directory / MANIFEST).open("xb") as destination:

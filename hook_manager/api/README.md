@@ -3,7 +3,7 @@
 This directory holds the versioned public WebAssembly Component contracts.
 Each version defines a `code-mod` world with the same lifecycle exports:
 `activate()` and `on-event(name, payload) -> string`. The event payload and result
-are bounded JSON strings validated by the external launcher.
+are JSON strings whose size and contents are checked by the external launcher.
 
 | Contract | Host interface |
 | --- | --- |
@@ -11,16 +11,19 @@ are bounded JSON strings validated by the external launcher.
 | [0.2.0/mod.wit](0.2.0/mod.wit) | `report(message)` and `add-menu-button(id, label, message)`, selected by WIT feature annotations. |
 | [0.3.0/mod.wit](0.3.0/mod.wit) | Adds settings and palette operations under `ui-settings`; see the [contract architecture](0.3.0/README.md). |
 
-`launcher/mod_api.py` records accepted versions, capabilities and lifecycle
-signatures. Prebuilt Wasm component admission checks component imports against manifest
-grants and requires the public export signatures. Feature selection controls
-binding generation; runtime permission checks separately enforce access.
+`launcher/mod_api.py` records accepted versions, permissions and lifecycle method
+types. The launcher checks a prebuilt Wasm component's imported operations against
+its manifest permissions and checks that its exported methods match the public
+contract. WIT features select which bindings are generated; permission checks
+still apply when a mod calls the host.
 
-Python source mods use API 0.2.0 or 0.3.0 through the prebuilt runner's `wit_world`
-facade. That runner has a separate private ABI under `mod_runtime/0.3.0`, including
-source loading. Its host-operation registry keeps scalar signatures and required
-capabilities aligned with the public operations; Python mods do not generate
-bindings or implement the private loading protocol.
+Python source mods use API 0.2.0 or 0.3.0 through the trusted runner's `wit_world`
+module. The runner's private interface is defined in
+[`mod_runtime/0.4.0/runner.wit`](../../mod_runtime/0.4.0/runner.wit). It handles
+source loading and regulation checks, and its host calls carry each mod's ID.
+`mod_runtime/contract.py` records their argument types and required permissions.
+Python mod authors supply source and a manifest; the launcher supplies the runner
+and its bindings.
 
 The [hook manager overview](../README.md) describes native integration and the
 implemented mod API. The WIT files define the callable boundary; they do not

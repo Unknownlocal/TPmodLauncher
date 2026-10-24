@@ -35,8 +35,7 @@ def synthetic(tmp_path):
 def test_runner_returns_verified_bytes_and_relocates(synthetic, tmp_path):
     directory, _ = synthetic
     copied = tmp_path / "relocated \U0001f3ce bundle"
-    shutil.copytree(directory, copied)
-    bundle = RunnerBundle(copied)
+    bundle = RunnerBundle(directory).copy_to(copied)
     assert bundle.component() == (copied / "runner.wasm").read_bytes()
 
 
@@ -49,9 +48,10 @@ def test_component_changed_after_open_is_checked_again(synthetic):
 
 
 def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
-    assert (runner_bundle.directory / "source/guest.py").read_bytes() == (ROOT / "mod_runtime/guest.py").read_bytes()
-    assert (runner_bundle.directory / "source/_source_policy.py").read_bytes() == (ROOT / "mod_runtime/_source_policy.py").read_bytes()
-    assert (runner_bundle.directory / "source/runner.wit").read_bytes() == (ROOT / "mod_runtime" / ABI_VERSION / "runner.wit").read_bytes()
+    for name in artifacts.SOURCES:
+        relative = Path(name).relative_to("source")
+        origin = ROOT / "mod_runtime" / ABI_VERSION / relative if relative == Path("runner.wit") else ROOT / "mod_runtime" / relative
+        assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()
     for name in artifacts.NOTICE_FILES:
         origin = ROOT / "LICENCE" if name.endswith("LICENCE.Project.txt") else ROOT / "notices/mod-runtime" / Path(name).name
         assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()

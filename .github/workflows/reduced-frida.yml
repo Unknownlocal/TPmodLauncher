@@ -92,7 +92,15 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           # Portable suites run in pytest.yml; this job owns the newly built native transport.
-          "$BUILD_PYTHON" -B -m pytest tests -m "native and not embedded and not frida_build" -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest tests --ignore=tests/callables -m "native and not embedded and not frida_build" -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
+      - name: Run Linux private callable native acceptance
+        if: runner.os == 'Linux'
+        env:
+          TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
+          TPM_REQUIRE_NATIVE_TESTS: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          "$BUILD_PYTHON" -B -m pytest tests/callables -m "native and not embedded and not frida_build" -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
       - name: Export matching Frida and SDK sources
         run: |
           "$BUILD_PYTHON" -B launcher/frida_sources.py create --work-dir "$RUNNER_TEMP/fb" --build-output ".cache/reduced-frida/${{ matrix.target }}" --output ".cache/reduced-frida/${{ matrix.target }}-sources"
@@ -119,7 +127,17 @@ jobs:
         run: |
           "$BUILD_PYTHON" -B launcher/prepare_release.py --frida-build ".cache/reduced-frida/${{ matrix.target }}" --frida-sources ".cache/reduced-frida/${{ matrix.target }}-sources" --repository "${{ github.repository }}" --source-digest "${{ github.sha }}"
           .cache/releases/reduced/libs/python-3.13.16-embed-amd64/python.exe -B .cache/releases/reduced/launcher/entry.py --check-only
-          "$BUILD_PYTHON" -B -m pytest tests -m "embedded or native or frida_build" -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
+          "$BUILD_PYTHON" -B -m pytest tests --ignore=tests/callables -m "embedded or native or frida_build" -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
+      - name: Run Windows candidate private callable acceptance
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.release_validation
+        env:
+          TPM_TEST_RELEASE_ROOT: .cache/releases/reduced
+          TPM_REQUIRE_EMBEDDED_TESTS: '1'
+          TPM_REQUIRE_NATIVE_TESTS: '1'
+          TPM_FRIDA_BUILD_OUTPUT: .cache/reduced-frida/${{ matrix.target }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          "$BUILD_PYTHON" -B -m pytest tests/callables -m native -p pytest_cov --cov --cov-append --cov-report=term-missing --cov-report=xml
       - name: Upload build details and test evidence
         # Preserve evidence after failures, but skip when the build produced none.
         if: ${{ !cancelled() && hashFiles(format('.cache/reduced-frida/{0}/build-details.json', matrix.target), 'coverage.xml') != '' }}

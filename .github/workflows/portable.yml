@@ -54,7 +54,7 @@ jobs:
           python -m venv .venv
           "${{ matrix.platform.python }}" -m pip install --no-index --find-links wheelhouse -r requirements-dev.txt
       - name: Download this workflow's portable runner
-        if: ${{ inputs.suite == 'launcher' || inputs.suite == 'mod_runtime' }}
+        if: ${{ inputs.suite == 'launcher' || inputs.suite == 'mod_runtime' || inputs.suite == 'mod_runtime_loading' || inputs.suite == 'callables' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: trusted-python-runner
@@ -64,7 +64,7 @@ jobs:
           TPM_TEST_RUNNER_BUNDLE: ${{ github.workspace }}/libs/mod-runners
           TPM_REQUIRE_SHARED_RUNNER: '1'
         run: |
-          exec "${{ matrix.platform.python }}" -B .github/ci_tests.py --suite "${{ inputs.suite }}" -v --junitxml=junit.xml -p pytest_cov --cov="${{ inputs.suite == 'ci' && '.github' || inputs.suite }}" --cov-report=xml --cov-report=html
+          exec "${{ matrix.platform.python }}" -B .github/ci_tests.py --suite "${{ inputs.suite }}" --coverage -v --junitxml=junit.xml -p pytest_cov --cov-report=xml --cov-report=html
       - name: Preserve raw coverage and test results, including failed runs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

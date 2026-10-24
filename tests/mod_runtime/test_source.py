@@ -7,10 +7,8 @@ import subprocess
 
 import pytest
 
-from launcher.mod_contract import PYTHON_LIMITS
-from launcher.runner_host import bind_operations
-from launcher.sandbox import Sandbox, SandboxError
-from mod_runtime.bundle import EXPORTS
+from launcher.sandbox import SandboxError
+from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime import source
 from mod_runtime.source import SourceError, SourceSnapshot
 
@@ -98,25 +96,20 @@ class WitWorld(wit_world.WitWorld):
     snapshot = SourceSnapshot.read(mod)
     (mod / "src/helpers/__init__.py").write_bytes(b'raise AssertionError("changed after snapshot")')
     messages = []
-    with Sandbox(runner_bundle.component(), bind_operations(snapshot.manifest.capabilities, {"report": messages.append}),
-                 limits=PYTHON_LIMITS, required_exports=dict(EXPORTS)) as guest:
-        for name, text in snapshot.files:
-            guest.call("put-source", name, text)
-        assert guest.call("load-source", snapshot.manifest.entry) == ""
-        guest.call("activate")
-        assert guest.call("on-event", "probe", "{}") == "{}"
+    with SharedPythonRunner(runner_bundle, (snapshot,), {snapshot.manifest.id: {"report": messages.append}}) as group:
+        member = group.members[snapshot.manifest.id]
+        member.activate()
+        assert member.on_event("probe", "{}") == "{}"
     assert messages == ["original snapshot"]
 
 
 def test_guest_rejects_runtime_collisions_during_transfer_before_author_execution(mod, runner_bundle):
-    (mod / "src/json.py").write_bytes(b'import wit_world\nwit_world.report("must not execute")\n')
+    (mod / "src/_regulations").mkdir()
+    (mod / "src/_regulations/__init__.py").write_bytes(b'import wit_world\nwit_world.report("must not execute")\n')
     snapshot = SourceSnapshot.read(mod)
     messages, cleaned = [], []
-    with Sandbox(runner_bundle.component(), bind_operations({"diagnostics"}, {"report": messages.append}),
-                 limits=PYTHON_LIMITS, required_exports=dict(EXPORTS), cleanup=lambda: cleaned.append(True)) as guest:
-        text = dict(snapshot.files)["json.py"]
-        with pytest.raises(SandboxError) as rejected:
-            guest.call("put-source", "json.py", text)
-        assert not any(word in str(rejected.value).lower() for word in ("fuel", "deadline", "interrupt"))
-        assert guest.closed and cleaned == [True] and messages == []
-    assert cleaned == [True]
+    with pytest.raises(SandboxError) as rejected:
+        SharedPythonRunner(runner_bundle, (snapshot,), {snapshot.manifest.id: {"report": messages.append}},
+                           cleanup=lambda: cleaned.append(True))
+    assert not any(word in str(rejected.value).lower() for word in ("fuel", "deadline", "interrupt"))
+    assert cleaned == [True] and messages == []

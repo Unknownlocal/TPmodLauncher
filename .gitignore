@@ -44,6 +44,28 @@ python*/
 /docs/local/
 /docs/*.md
 DEVELOPMENT.md
+# Developer inspection tools stay local and are not distributed with the launcher.
+/tools/
+
+# Codex instructions, configuration and local skills stay local at any depth.
+AGENTS.md
+AGENTS.override.md
+.codex/
+.agents/
+
+# Copilot instructions, prompts, agents, skills and hooks stay local.
+.copilot/
+**/.github/copilot-instructions.md
+**/.github/instructions/
+**/.github/prompts/
+**/.github/agents/
+**/.github/skills/
+**/.github/hooks/
+
+# Claude instructions, settings, memory and local skills stay local.
+CLAUDE.md
+CLAUDE.local.md
+.claude/
 
 # Generated state, logs, temporary files and build output.
 __pycache__/

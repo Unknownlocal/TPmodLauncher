@@ -38,8 +38,15 @@ def pulse(sources, digest, instance, game_root, request_json):
             for filename, source in sources.items():
                 exec(compile(source, filename, "exec"), module.__dict__)
             module.source_digest, module.instance = digest, instance
+            # Later pulses reuse this callable; do not resend/compile the full
+            # infrastructure and adapter source literals for every status poll.
+            module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
+            # Keep the required-validation lifecycle separate from legacy hooks;
+            # no dispatcher or registrations are admitted by bootstrap itself.
+            module.callables = module.CallableAdapters()
+            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
             module.menu = module.MenuAdapter()
             module.themes = module.ThemeAdapter()
@@ -76,14 +83,29 @@ def pulse(sources, digest, instance, game_root, request_json):
                     raise ValueError("Invalid settings request fields")
                 module.settings.update(settings["records"], settings["result"])
             response = module.manager.request({"operation": "status"})
+        elif request == {"operation": "adapters"}:
+            module.adapters.load()
+            response = module.manager.request({"operation": "status"})
         else:
             if request == {"operation": "shutdown"}:
+                if not module.callables.try_stop():
+                    # Preserve the queued bridge request for a bounded retry.
+                    # Waiting here would pin the main thread needed by the game;
+                    # raising would abandon restoration through the fatal path.
+                    return "WAIT: native callable operation is active"
+                if not module.adapters.close():
+                    # Regulation guards own separate registries. Retain their
+                    # modules/channel until every admitted operation finishes.
+                    return "WAIT: native regulation operation is active"
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
+        response["callables"] = (module.callables.status() if module.callables.closed
+                                 else module.callables.poll())
+        response["adapters"] = module.adapters.status()
         response["pack"] = module.discovery.poll()
         response["menu"] = module.menu.poll()
         loading = response["menu"].get("loading", {})

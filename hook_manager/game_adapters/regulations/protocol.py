@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Fixed private v2 envelopes, shared by the controller and injected client."""
+
+import math
+import json
+import time
+
+if __package__:
+    from .framing import regulation_encode
+
+# Up to 1,024 contexts plus 1,024 selections at 4 KiB per entry, with another
+# 512 KiB for owner/call/header metadata. This bounds the logical message;
+# each socket frame has its own smaller limit.
+REGULATION_ACTION_BYTES = 8_912_896
+# Base64 expands these bytes to 260,780 bytes, leaving space for the fixed
+# fragment header inside a 256 KiB frame. Owner tables stay in the inner JSON.
+REGULATION_PART_BYTES = 195_584
+# Replies can contain 32 owners * 32 refusals: up to 160 four-byte characters
+# plus decision JSON, then owner names/metadata and the common envelope.
+REGULATION_RESULT_BYTES = 1024 * (160 * 4 + 64) + 32 * (128 * 4 + 128) + 1024
+
+
+def regulation_policy_value(kind, value):
+    """Normalize only native operational data; custom values are admitted keys."""
+    if kind == "native":
+        if type(value) is not dict or type(value.get("key")) is not str or not 1 <= len(value["key"]) <= 128:
+            raise ValueError("Invalid effective regulation option")
+        parameters = value.get("parameters", {})
+        if type(parameters) is not dict:
+            raise ValueError("Invalid native regulation parameters")
+        # Saved replacements and synthesized choices may add operational fields.
+        # Keep those fields while excluding display-only definition metadata.
+        flat = {key: item for key, item in value.items()
+                if key not in ("id", "key", "name", "summary", "description", "parameters")}
+        if flat.keys() & parameters.keys():
+            raise ValueError("Native parameter collision")
+        flat.update(parameters)
+        payload = flat
+        value = {"key": value["key"], "parameters": flat}
+    elif kind == "custom" and type(value) is str and 1 <= len(value) <= 128:
+        payload = value
+    else:
+        raise ValueError("Invalid custom regulation reference")
+    nodes, pending = 0, [(payload, 0)]
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > 1024 or (type(item) in (dict, list) and depth >= 8):
+            raise ValueError("Regulation record exceeds logical bounds")
+        if type(item) is dict:
+            if any(type(key) is not str for key in item):
+                raise ValueError("Non-string regulation parameter key")
+            pending.extend((child, depth + 1) for child in item.values())
+        elif type(item) is list:
+            pending.extend((child, depth + 1) for child in item)
+        elif type(item) not in (str, int, float, bool, type(None)):
+            raise ValueError("Non-JSON regulation parameter")
+    if len(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 4096:
+        raise ValueError("Regulation record exceeds logical bytes")
+    # Wire bytes include the normalized option wrapper/key; nodes count the
+    # payload selected above. A custom wire entry is only a key: its rule data
+    # comes from admitted definitions rather than this native publication.
+    size = len(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+    return value, size, nodes
+
+
+def regulation_integer(value, *, positive=False):
+    if type(value) is not int or not (int(positive) <= value < 2**64):
+        raise ValueError("Invalid regulation identity")
+    return value
+
+
+def regulation_header(message, *, check_deadline=True, reply=False):
+    """Validate closed operation shapes before queueing or allocating tables."""
+    common = {"version", "token", "id", "op", "epoch", "deadline", "generations"}
+    additions = {
+        "policy-begin": {"plan"}, "policy-page": {"page", "rows"}, "policy-seal": set(),
+        "reset": set(), "action": {"action", "contexts", "selections", "owners"},
+        "action-part": {"action", "index", "parts", "bytes", "data"},
+        "action-result-part": {"action", "index", "parts", "bytes", "data"},
+    }
+    if type(message) is not dict or type(message.get("op")) is not str or message["op"] not in additions:
+        raise ValueError("Unknown regulation operation")
+    if message["op"].endswith("-part"):
+        # Owner tables belong to the completed document. Repeating long owner
+        # names on each fragment would overflow the fixed base64 frame margin.
+        common.remove("generations")
+    elif reply:
+        # Replies echo correlation, not the request's context/policy body. Keep
+        # success and fixed-error shapes closed under the same header checks.
+        identity = {"action"} if message["op"] == "action" else {"page"} if message["op"] == "policy-page" else set()
+        additions[message["op"]] = identity | ({"result"} if "result" in message else {"error", "unavailable"})
+    if set(message) != common | additions[message["op"]] or type(message["version"]) is not int or message["version"] != 2:
+        raise ValueError("Invalid regulation protocol version or fields")
+    for key in ("id", "epoch"):
+        regulation_integer(message[key], positive=True)
+    token = message["token"]
+    if type(token) is not str or len(token) != 64 or any(char not in "0123456789abcdef" for char in token):
+        raise ValueError("Invalid regulation authentication")
+    generations = message.get("generations", {})
+    if type(generations) is not dict or len(generations) > 32:
+        raise ValueError("Invalid regulation owner generations")
+    for owner, generation in generations.items():
+        if type(owner) is not str or not 1 <= len(owner) <= 128:
+            raise ValueError("Invalid regulation owner")
+        # Reset may precede policy installation. Only that operation can refer
+        # to generation zero; actions always require acknowledged positive IDs.
+        regulation_integer(generation, positive=message["op"] != "reset")
+    limit = .1 if message["op"].startswith("action") else 1 + 5 * len(generations)
+    deadline = message["deadline"]
+    # The controller may need to construct an error header for an expired queued
+    # request. Disabling this check validates its shape only; poll() still refuses
+    # expired execution before entering any handler.
+    if (type(deadline) not in (int, float) or not math.isfinite(deadline)
+            or (check_deadline and not 0 < deadline - time.monotonic() <= limit)):
+        raise ValueError("Invalid regulation original deadline")
+    header = {key: message[key] for key in common}
+    if message["op"].startswith("action"):
+        regulation_integer(message["action"], positive=True)
+        header["action"] = message["action"]
+    if message["op"] == "policy-page":
+        regulation_integer(message["page"])
+        header["page"] = message["page"]
+    return header
+
+
+def regulation_pages(rows):
+    """Bound one policy page without serializing the entire publication."""
+    page, size = [], 2
+    for row in rows:
+        length = len(regulation_encode(row)) - 4 + 1
+        if page and size + length > 64 * 1024:
+            yield page
+            page, size = [], 2
+        if length > 64 * 1024:
+            raise ValueError("Regulation policy row exceeds its bound")
+        page.append(row)
+        size += length
+    if page:
+        yield page

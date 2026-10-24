@@ -2,6 +2,7 @@
 """Create temporary projects, test wheels and copies of bundled runtime files."""
 
 from textwrap import dedent
+from contextlib import ExitStack
 import base64
 import csv
 import hashlib
@@ -30,11 +31,10 @@ def runner_bundle(tmp_path_factory):
     if shared:
         bundle = RunnerBundle(shared)
         package = Path(__file__).resolve().parents[1] / "mod_runtime"
-        from mod_runtime.bundle import ABI_VERSION
-        sources = {"source/guest.py": package / "guest.py",
-                   "source/_source_policy.py": package / "_source_policy.py",
-                   "source/runner.wit": package / ABI_VERSION / "runner.wit"}
-        for name, current in sources.items():
+        from mod_runtime.bundle import ABI_VERSION, SOURCES
+        for name in SOURCES:
+            relative = Path(name).relative_to("source")
+            current = package / ABI_VERSION / relative if relative == Path("runner.wit") else package / relative
             if bundle._file(name) != current.read_bytes():
                 pytest.fail(f"Shared runner sources differ from the tested checkout: {name}")
         return bundle
@@ -51,11 +51,27 @@ def python_compilation_cache(tmp_path_factory):
     return CompilationCache(tmp_path_factory.mktemp("python-native-cache"))
 
 
+@pytest.fixture
+def make_source_group(runner_bundle):
+    """Construct ordinary shared source members with launcher-owned host identities."""
+    from launcher.mod_contract import _host_operations
+    from launcher.shared_source_mod import SharedSourceMod
+    from mod_runtime.shared_runtime import SharedPythonRunner
+    with ExitStack() as stack:
+        def create(snapshots, *, report=None, menu=None, settings=None, theme=None, cleanup=None):
+            providers = {snapshot.manifest.id: {name: operation.callback for name, operation in
+                         _host_operations(snapshot.manifest, report, menu, settings, theme).items()}
+                         for snapshot in snapshots}
+            runner = stack.enter_context(SharedPythonRunner(runner_bundle, snapshots, providers, cleanup=cleanup))
+            return {snapshot.manifest.id: SharedSourceMod(runner, snapshot) for snapshot in snapshots}
+        yield create
+
+
 @pytest.fixture(autouse=True)
 def cached_python_components(request, monkeypatch):
     """Give Python integration tests the same cache used by normal launcher entry.
 
-    Keep the real class and a fresh Engine/Component for every construction.
+    Keep real compilation and the normal ready/pending code-sharing behaviour.
     Explicit cache instances (including cache-policy tests) retain their own setup.
     """
     if not {"runner_bundle", "built_python_mod", "built_menu_mod"}.intersection(request.fixturenames):
@@ -63,9 +79,9 @@ def cached_python_components(request, monkeypatch):
     shared_cache = request.getfixturevalue("python_compilation_cache")
     from launcher.compiled_mod import CompiledMod
     original = CompiledMod.__init__
-    def cached(instance, data, timings=None, *, cache=None):
+    def cached(instance, data, timings=None, *, cache=None, executor=None):
         return original(instance, data, timings,
-                        cache=shared_cache if cache is None else cache)
+                        cache=shared_cache if cache is None else cache, executor=executor)
     monkeypatch.setattr(CompiledMod, "__init__", cached)
 
 
@@ -76,13 +92,15 @@ def disposable_source_compiler(monkeypatch):
     These tests never admit the result to a Store. Real compilation and adoption
     are exercised separately by the preparation integration test.
     """
-    from mod_runtime import preparation
+    from launcher import compilation_registry
     class DisposableCompilation:
         def __init__(self, *args, **kwargs):
             self.closed = False
+            self.engine = self.component = None
+            self.cache_status = None
         def close(self):
             self.closed = True
-    monkeypatch.setattr(preparation, "CompiledMod", DisposableCompilation)
+    monkeypatch.setattr(compilation_registry, "CompiledComponent", DisposableCompilation)
 
 
 @pytest.fixture
@@ -221,12 +239,11 @@ def bundled_project(project_factory):
 
 
 @pytest.fixture(scope="module")
-def embedded_project(tmp_path_factory):
+def embedded_project(tmp_path_factory, request):
     """Return a temporary copy of bundled Python, dependencies and launcher files."""
     # An isolated prepared candidate lets the same acceptance tests exercise either binding.
-    source = Path(
-        os.environ.get("TPM_TEST_RELEASE_ROOT", Path(__file__).resolve().parents[1])
-    ).resolve()
+    candidate = os.environ.get("TPM_TEST_RELEASE_ROOT")
+    source = Path(candidate if candidate is not None else Path(__file__).resolve().parents[1]).resolve()
     runtime = source / "libs/python-3.13.16-embed-amd64"
     try:
         directory = dependencies.verify_bundle(source)
@@ -258,7 +275,11 @@ def embedded_project(tmp_path_factory):
     shutil.copytree(source / "mod_runtime", root / "mod_runtime", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(source / "examples", root / "examples", ignore=shutil.ignore_patterns("__pycache__", "*.wasm"))
     shutil.copy2(source / "bundled_packages.toml", root / "bundled_packages.toml")
-    RunnerBundle(source / DIRECTORY).copy_to(root / DIRECTORY)
+    # Explicit release acceptance must exercise that candidate's own artifact.
+    # Checkout tests use freshly built/shared bytes without replacing installed libs.
+    selected_runner = (RunnerBundle(source / DIRECTORY) if candidate is not None
+                       else request.getfixturevalue("runner_bundle"))
+    selected_runner.copy_to(root / DIRECTORY)
     return root
 
 

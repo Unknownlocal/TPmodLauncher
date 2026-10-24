@@ -32,7 +32,7 @@ function fail(error) {
 
 function enqueue(operation, id, buttons, loading, settings, themes) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -98,7 +98,10 @@ observer = Process.attachModuleObserver({
                         if (request.operation === 'loading') record.loading = request.loading;
                         if (request.operation === 'settings') record.settings = request.settings;
                         if (request.operation === 'themes') record.themes = request.themes;
-                        const expression = config.prefix + JSON.stringify(JSON.stringify(record)) + config.suffix;
+                        const requestJson = JSON.stringify(JSON.stringify(record));
+                        const expression = ready
+                            ? config.repeat_prefix + requestJson + ')'
+                            : config.prefix + requestJson + config.suffix;
                         const source = Memory.allocUtf8String(expression);
                         const main = addModule(mainName); // Borrowed: never decrement this reference.
                         if (main.isNull()) throw new Error('No Python main module');

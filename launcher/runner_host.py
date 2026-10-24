@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bind the full trusted-runner interface using one mod's fixed permission set."""
+"""Check one source owner's fixed permissions and host provider callbacks."""
 
 from functools import partial
 
@@ -11,8 +11,8 @@ def _deny(name, capability, *arguments):
     raise SandboxError(f"Capability {capability!r} is required for {name!r}")
 
 
-def bind_operations(capabilities, providers):
-    """Snapshot trusted grants/providers; bind denied operations before instantiation.
+def bind_owner_operations(capabilities, providers):
+    """Fix one source mod's permissions and callbacks before shared routing.
 
     Providers are bounded host callbacks keyed by operation name, supplied by the
     launcher rather than mod code. Missing granted providers are loading errors.
@@ -21,7 +21,9 @@ def bind_operations(capabilities, providers):
     if type(capabilities) not in (set, frozenset) or any(type(name) is not str for name in capabilities):
         raise SandboxError("Expected an explicit capability set")
     capabilities = frozenset(capabilities)
-    if capabilities - {spec.capability for spec in HOST_OPERATIONS.values()}:
+    # The private regulation adapter uses runner exports, never extra host calls.
+    # Public manifest versions cannot request this private capability.
+    if capabilities - {spec.capability for spec in HOST_OPERATIONS.values()} - {"regulations"}:
         raise SandboxError("Unsupported runner capabilities")
     providers = dict(providers)
     if providers.keys() - HOST_OPERATIONS.keys():
