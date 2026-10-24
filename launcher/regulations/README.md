@@ -79,16 +79,16 @@ installation is not connected. `RegulationRuntime.bind()` rejects a candidate co
 them before binding handlers or opening transport. It cannot report an
 unenforced replacement as ready.
 
-`RookieLimitPolicy` resolves rookie maxima from the shared catalogue when a
-policy is staged. Commit publishes an immutable `RookieLimitBinding`; abort
-discards the candidate and career reset clears it. Missing optional values keep
-the native maximum, while explicit null removes only the rookie cap. Bindings
-check the caller's career epoch and policy generation and use an explicit
-published choice index. They preserve the native helper's applicability and
-retain no game objects or rule payloads. This prepares values only; it does not
-install a native wrapper or enable bridge-bearing packs.
-Dispatch failure makes the retained cap unavailable, even if host commit already
-finished. Career reset cannot revive a failed binding.
+Rookie maxima share the catalogue's existing stage, commit, abort and reset.
+`RookieContractLimit.resolve()` reads scalar values from the retained records
+once per publication. A missing value keeps the native maximum; explicit null
+removes that rookie cap. `ValidationDispatch.rookie_limit()` checks its existing
+career epoch, generation and readiness before selecting a published value for
+native setup. No second policy identity or binding lifecycle is maintained.
+The scalar application helper preserves native rookie applicability without
+JSON work or mod calls. Normal native wrapper installation remains disconnected.
+Dispatch failure makes the retained cap unavailable, even after host commit;
+career reset cannot revive it.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.

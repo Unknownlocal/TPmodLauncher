@@ -46,7 +46,7 @@ class ValidationDispatch:
         self._busy = True
 
     def _fail(self, owners):
-        self.catalog.rookie.fail()
+        self.catalog.fail_native_values()
         # A shared Store cannot retain one healthy member after another fails.
         # Keep the original IDs in status, and close each physical runner once.
         affected = set(owners)
@@ -61,8 +61,26 @@ class ValidationDispatch:
 
     @property
     def ready(self):
-        return self.catalog.rookie.ready and all(state == "active" and not self.runners[owner].handler.runner.closed
+        return self.catalog.native_values_ready and all(state == "active" and not self.runners[owner].handler.runner.closed
                    for owner, state in self.states.items())
+
+    def rookie_limit(self, *, epoch, generation, choice=None):
+        """Prepare a selected scalar for native setup, using this dispatcher's identity.
+
+        Native hook data can retain that scalar under the existing policy
+        acknowledgement. Game queries must not make a new transport call here.
+        """
+        self._enter()
+        try:
+            integer(epoch, 64, positive=True)
+            integer(generation, 64, positive=True)
+            if (epoch, generation) != (self.epoch, self.generation):
+                raise ValueError("Stale rookie limit policy")
+            if not self.ready:
+                raise RuntimeError("Rookie limit policy is unavailable")
+            return self.catalog.rookie_limit(choice)
+        finally:
+            self._busy = False
 
     def publish(self, *, native=None, custom=None, deadline=None):
         self._enter()
@@ -83,7 +101,7 @@ class ValidationDispatch:
             for owner in affected:
                 self.states[owner] = "dirty"
                 self.runners[owner].required = self.generation
-            views = self.catalog.stage(native, custom, epoch=self.epoch, generation=self.generation)
+            views = self.catalog.stage(native, custom)
             groups = dict.fromkeys(self.groups[owner] for owner in views)
             for group in groups:
                 group.begin_publication(tuple(owner for owner in views if self.groups[owner] is group))

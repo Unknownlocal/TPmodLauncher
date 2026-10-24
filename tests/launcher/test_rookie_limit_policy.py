@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Retained cap preparation uses admitted records, without a guest or game."""
+"""Rookie values share catalogue transactions and dispatcher policy identities."""
 
 import json
 
 import pytest
 
 from launcher.regulations import RegulationDefinitions
+from launcher.regulations.rookie_contract_limit import RookieContractLimit, apply_rookie_maximum
 from launcher.regulations.validation import catalog as catalog_module
 from launcher.regulations.validation import dispatch as dispatch_module
 from launcher.regulations.validation.catalog import CombinedCatalog
@@ -32,108 +33,108 @@ def definitions(declaration, *, overlays=None, custom=False):
     return RegulationDefinitions.from_bytes(json.dumps(data).encode(), {OWNER: source}, scopes=set())
 
 
-def publish(catalog, native=None, custom=None, *, epoch=1, generation=1):
-    catalog.stage(native or {}, custom or {}, epoch=epoch, generation=generation)
+def publish(catalog, native=None, custom=None):
+    catalog.stage(native or {}, custom or {})
     catalog.commit()
-    return catalog.rookie.binding
 
 
-def test_absent_and_literal_bindings_preserve_native_applicability():
+def test_absent_and_literal_values_preserve_native_applicability():
     absent = CombinedCatalog(definitions(None))
-    assert publish(absent) is None
+    publish(absent)
+    assert absent.rookie_limit() is None
+    assert apply_rookie_maximum(1, absent.rookie_limit()) == 1
     for maximum in (None, 3):
-        model = definitions({"value": maximum})
-        catalog = CombinedCatalog(model)
+        catalog = CombinedCatalog(definitions({"value": maximum}))
         with pytest.raises(RuntimeError, match="not published"):
-            catalog.rookie.binding
-        binding = publish(catalog)
-        assert (binding.owner, binding.revision) == (OWNER, model.revisions[OWNER])
-        assert binding.apply(1, epoch=1, generation=1) == maximum
-        assert binding.apply(None, epoch=1, generation=1) is None
+            catalog.rookie_limit()
+        publish(catalog)
+        limit = catalog.rookie_limit()
+        assert limit == RookieContractLimit(maximum)
+        assert apply_rookie_maximum(1, limit) == maximum
+        assert apply_rookie_maximum(None, limit) is None
 
 
 def test_native_choices_keep_saved_payloads_missing_values_and_explicit_null_distinct():
     catalog = CombinedCatalog(definitions({"rule": "native", "parameter": "maximum"}))
-    binding = publish(catalog, {"native": [
+    publish(catalog, {"native": [
         {"key": "open", "maximum": 3},
         {"key": "open", "parameters": {"maximum": None}},
         {"key": "missing", "name": "Only presentation data"}]})
-    assert [binding.apply(2, epoch=1, generation=1, choice=i) for i in range(3)] == [3, None, 2]
-    assert binding.apply(None, epoch=1, generation=1, choice=0) is None
+    assert [apply_rookie_maximum(2, catalog.rookie_limit(i)) for i in range(3)] == [3, None, 2]
+    assert apply_rookie_maximum(None, catalog.rookie_limit(0)) is None
     for choice in (None, True, -1, 3):
         with pytest.raises(ValueError, match="published rule choice"):
-            binding.apply(2, epoch=1, generation=1, choice=choice)
+            catalog.rookie_limit(choice)
 
 
 def test_option_data_is_the_owners_overlay_without_fallback_to_native_parameters():
     catalog = CombinedCatalog(definitions({"rule": "native", "parameter": "maximum", "source": "option_data"},
                                          overlays={"native": {"open": {"maximum": 5}}}))
-    binding = publish(catalog, {"native": [{"key": "open", "parameters": {"maximum": "unused"}},
-                                         {"key": "saved", "parameters": {"maximum": 9}}]})
-    assert binding.apply(2, epoch=1, generation=1, choice=0) == 5
-    assert binding.apply(2, epoch=1, generation=1, choice=1) == 2
+    publish(catalog, {"native": [{"key": "open", "parameters": {"maximum": "unused"}},
+                                {"key": "saved", "parameters": {"maximum": 9}}]})
+    assert apply_rookie_maximum(2, catalog.rookie_limit(0)) == 5
+    assert apply_rookie_maximum(2, catalog.rookie_limit(1)) == 2
 
 
 def test_custom_bridge_only_choices_reuse_records_and_never_create_guest_handlers(monkeypatch):
     rule = OWNER + ".policy"
     catalog = CombinedCatalog(definitions({"rule": rule, "parameter": "maximum"}, custom=True))
-    binding = publish(catalog, custom={rule: ["capped", "open"]})
+    publish(catalog, custom={rule: ["capped", "open"]})
     assert catalog.owners == {} and catalog.subscribers == {rule: set()}
-    assert binding.apply(1, epoch=1, generation=1, choice=0) == 4
-    assert binding.apply(1, epoch=1, generation=1, choice=1) is None
+    assert apply_rookie_maximum(1, catalog.rookie_limit(0)) == 4
+    assert apply_rookie_maximum(1, catalog.rookie_limit(1)) is None
     records = tuple(catalog._records.values())
     monkeypatch.setattr(catalog_module, "encode", lambda _: pytest.fail("Unchanged data was encoded"))
-    newer = publish(catalog, custom={rule: None}, generation=2)
+    publish(catalog, custom={rule: None})
     assert tuple(catalog._records.values()) == records
-    assert newer.apply(1, epoch=1, generation=2, choice=0) == 4
+    assert apply_rookie_maximum(1, catalog.rookie_limit(0)) == 4
 
 
-def test_commit_abort_and_reset_control_binding_visibility_and_freshness():
+def test_commit_abort_and_reset_control_value_visibility():
     catalog = CombinedCatalog(definitions({"rule": "native", "parameter": "maximum"}))
-    first = publish(catalog, {"native": [{"key": "open", "maximum": 3}]})
-    catalog.stage({"native": [{"key": "open", "maximum": 7}]}, {}, epoch=1, generation=2)
-    assert catalog.rookie.binding is first
+    publish(catalog, {"native": [{"key": "open", "maximum": 3}]})
+    first = catalog.rookie_limit(0)
+    catalog.stage({"native": [{"key": "open", "maximum": 7}]}, {})
+    assert not catalog.native_values_ready and catalog.rookie_limit(0) is first
     catalog.abort()
-    assert catalog.rookie.binding is first
-    second = publish(catalog, {"native": [{"key": "open", "maximum": None}]}, generation=3)
-    assert second.apply(1, epoch=1, generation=3, choice=0) is None
-    for epoch, generation in ((2, 1), (1, 3)):
-        with pytest.raises(ValueError, match="Stale"):
-            first.apply(1, epoch=epoch, generation=generation, choice=0)
-    with pytest.raises(ValueError, match="newer policy"):
-        catalog.stage({"native": None}, {}, epoch=1, generation=3)
+    assert catalog.native_values_ready and catalog.rookie_limit(0) is first
+    publish(catalog, {"native": [{"key": "open", "maximum": None}]})
+    assert apply_rookie_maximum(1, catalog.rookie_limit(0)) is None
     catalog.reset()
     with pytest.raises(RuntimeError, match="not published"):
-        catalog.rookie.binding
-    assert publish(catalog, {"native": [{"key": "open"}]}, epoch=2, generation=4).apply(
-        2, epoch=2, generation=4, choice=0) == 2
+        catalog.rookie_limit(0)
+    publish(catalog, {"native": [{"key": "open"}]})
+    assert apply_rookie_maximum(2, catalog.rookie_limit(0)) == 2
 
 
-def test_invalid_published_maximum_never_becomes_a_native_or_unlimited_binding():
+def test_invalid_published_maximum_never_becomes_a_native_or_unlimited_value():
     catalog = CombinedCatalog(definitions({"rule": "native", "parameter": "maximum"}))
     with pytest.raises(ValueError, match="positive integer or null"):
-        catalog.stage({"native": [{"key": "open", "maximum": -1}]}, {}, epoch=1, generation=1)
+        catalog.stage({"native": [{"key": "open", "maximum": -1}]}, {})
     catalog.abort()
     with pytest.raises(RuntimeError, match="not published"):
-        catalog.rookie.binding
+        catalog.rookie_limit(0)
 
 
-def test_dispatch_supplies_real_publication_epoch_and_generation():
-    # Exercise the private preparation seam only. RegulationRuntime still
-    # refuses bridge-bearing packs until native installation is implemented.
+def test_dispatch_uses_its_existing_epoch_and_generation_for_scalar_preparation():
+    # Runtime installation remains gated. This private seam prepares values for
+    # native setup; it is not a transport request on each game query.
     dispatch = ValidationDispatch(definitions({"value": 4}), {}, epoch=7)
     assert not dispatch.ready
     dispatch.publish()
-    first = dispatch.catalog.rookie.binding
-    assert (first.epoch, first.generation) == (7, 1)
-    dispatch.reset(8)
-    with pytest.raises(RuntimeError, match="not published"):
-        dispatch.catalog.rookie.binding
+    assert dispatch.rookie_limit(epoch=7, generation=1).value == 4
     dispatch.publish()
-    assert dispatch.catalog.rookie.binding.apply(1, epoch=8, generation=2) == 4
+    for epoch, generation in ((7, 1), (8, 2)):
+        with pytest.raises(ValueError, match="Stale"):
+            dispatch.rookie_limit(epoch=epoch, generation=generation)
+    dispatch.reset(8)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        dispatch.rookie_limit(epoch=8, generation=2)
+    dispatch.publish()
+    assert dispatch.rookie_limit(epoch=8, generation=3).value == 4
 
 
-def test_late_host_commit_makes_even_a_literal_only_binding_unavailable(monkeypatch):
+def test_late_host_commit_makes_even_a_literal_only_value_unavailable(monkeypatch):
     dispatch = ValidationDispatch(definitions({"value": 4}), {}, epoch=7)
     clock = iter((0, 0, 2))
     monkeypatch.setattr(dispatch_module.time, "monotonic", lambda: next(clock))
@@ -141,7 +142,7 @@ def test_late_host_commit_makes_even_a_literal_only_binding_unavailable(monkeypa
         dispatch.publish()
     assert not dispatch.ready
     with pytest.raises(RuntimeError, match="unavailable"):
-        dispatch.catalog.rookie.binding
+        dispatch.rookie_limit(epoch=7, generation=1)
     monkeypatch.setattr(dispatch_module.time, "monotonic", lambda: 0)
     with pytest.raises(RuntimeError, match="unavailable"):
         dispatch.publish()
