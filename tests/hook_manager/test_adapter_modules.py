@@ -110,6 +110,7 @@ def install(installation):
 
 def test_installation_reports_components_without_claiming_full_scope(installation):
     modules, _, channel, _, hooks = installation
+    hooks[1].staffing = object()  # The signing factory also completed staffing hooks.
     with pytest.raises(HookError, match="native GameState"):
         modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
     assert not channel.closed and modules.channel is None
@@ -119,9 +120,9 @@ def test_installation_reports_components_without_claiming_full_scope(installatio
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": False, "academy_signing": False,
         "development_projects": True, "rookie_contract_length_check": "disabled",
-        "staff_prestige_check": "skipped", "staffing": False}
-    coverage["staffing"] = True
-    assert modules.status()["regulations"] == {"state": "installed", "components": dict(coverage, staffing=False)}
+        "staff_prestige_check": "skipped", "staffing": True}
+    coverage["staffing"] = False
+    assert modules.status()["regulations"] == {"state": "installed", "components": dict(coverage, staffing=True)}
     with pytest.raises(HookError, match="unused loaded"):
         install(installation)
     assert modules.stop_regulations()

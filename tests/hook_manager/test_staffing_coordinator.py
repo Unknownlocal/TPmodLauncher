@@ -12,6 +12,7 @@ import pytest
 from hook_manager.callables import CallBinding, CallableTarget, ResultContract
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
+from hook_manager.game_adapters.regulations import personnel_adapter as implementation
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
 from hook_manager.game_adapters.staff import staffing
 from hook_manager.game_adapters.staff.staffing import StaffingPlanner
@@ -19,7 +20,7 @@ from hook_manager.manager import HookError
 from tests.hook_manager.test_staffing_planner import owned
 
 
-def coordinator(monkeypatch, mode="allow"):
+def coordinator(monkeypatch, mode="allow", *, callers=False):
     state, manager, person = owned(monkeypatch)
     planner = StaffingPlanner(state)
 
@@ -54,17 +55,112 @@ def coordinator(monkeypatch, mode="allow"):
             self._personnel_operation = threading.Lock()
 
     channel = Channel()
-    guards = Guards(channel)
     module = ModuleType("owned_staffing_coordinator")
     module.StaffManager = type(manager)
     monkeypatch.setitem(sys.modules, module.__name__, module)
-    guards.approve(CallableTarget("staff.sign", module.__name__, ("StaffManager",), "sign_staff",
-                                  str(inspect.signature(planner.sign))))
+    signing = CallableTarget("staff.sign", module.__name__, ("StaffManager",), "sign_staff", str(inspect.signature(planner.sign)))
+    if callers:
+        targets = tuple(CallableTarget("staffing." + role, module.__name__, ("StaffManager",), method,
+                                      str(inspect.signature(getattr(type(manager), method))))
+                        for role, method in (("onboard", "onboard_joining_team_staff"), ("recover", "ensure_active_teams_have_staff")))
+        def unavailable(state):
+            raise HookError("Owned fixture has no driver manager")
+        monkeypatch.setattr(implementation, "DriverContractPlanner", unavailable)
+        monkeypatch.setattr(implementation, "StaffContractPlanner", lambda state: planner.contracts)
+        monkeypatch.setattr(implementation, "StaffingPlanner", lambda state: planner)
+        monkeypatch.setattr(implementation, "staff_target", lambda: signing)
+        monkeypatch.setattr(implementation, "staffing_targets", lambda: targets)
+        monkeypatch.setattr(implementation, "personnel_caller_targets", lambda kinds: ())
+        monkeypatch.setattr(implementation, "check_preparation", lambda *args: None)
+        reports = []
+        guards = PersonnelAdapter.create(state, channel, lambda *args: {"selected": "current"}, reports.append)
+        assert guards is not None and guards.staffing is not None
+        assert len(reports) == 1 and "no driver manager" in reports[0]
+        return state, manager, person, channel, guards, guards.staffing
+    guards = Guards(channel)
+    guards.approve(signing)
     codec = ResultContract({"shape": "bool", "denied": {"literal": False}})
     project = guards._projection
     for owner in channel._owners:
         guards.register(owner, [CallBinding("staff", "staff.sign", project, codec)])
     return state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
+
+
+def test_native_staffing_callers_preserve_returns_and_discard_refused_batch(monkeypatch):
+    state, manager, person, channel, guards, run = coordinator(monkeypatch, callers=True)
+    before = deepcopy((vars(person), manager.staff_season_history))
+    channel.after = lambda: setattr(channel, "mode", "deny")
+    try:
+        # A later refusal must discard the earlier private signing too. Native
+        # recovery returns None regardless; this is not permission to publish.
+        assert manager.ensure_active_teams_have_staff() is None
+        assert manager.staff == [person] and (vars(person), manager.staff_season_history) == before
+        assert guards.last_outcome.status == "deny" and guards.errors[-1] == "Owned policy refusal"
+        channel.mode, channel.after = "allow", lambda: None
+        assert manager.onboard_joining_team_staff("first", contract_years=2) == [person.name]
+        assert manager.ensure_active_teams_have_staff() is None and len(manager.staff) == 2
+        assert person.contract == {"team": "first"} and manager.staff[1].contract == {"team": "second"}
+        other = type(manager)()
+        other.state = SimpleNamespace()
+        # A cached wrapper for another manager keeps its original call path.
+        monkeypatch.setattr(other, "team_has_active_staff", lambda *a, **kw: True)
+        assert other.onboard_joining_team_staff("other") == []
+    finally:
+        guards.stop()
+    assert not hasattr(type(manager).onboard_joining_team_staff, "_tpm_hook_group")
+
+
+def test_pending_staffing_callers_do_not_prepare_or_fail_healthy_owners(monkeypatch):
+    _, manager, person, channel, guards, run = coordinator(monkeypatch, callers=True)
+    channel.validation_ready = False
+    monkeypatch.setattr(run.planner, "prepare_onboarding", lambda *a, **kw: pytest.fail("Pending staffing copied inputs"))
+    try:
+        assert manager.onboard_joining_team_staff("first") == [] and person.contract is None
+        assert not channel.actions and set(guards.owners.values()) == {"ready"}
+        channel.validation_ready = True
+        prepare = run.planner.prepare_recovery
+        def close_after_preparing(*args, **kwargs):
+            plan = prepare(*args, **kwargs)
+            channel.validation_ready = False
+            return plan
+        monkeypatch.setattr(run.planner, "prepare_recovery", close_after_preparing)
+        assert manager.ensure_active_teams_have_staff() is None
+        assert manager.staff == [person] and person.contract is None and not person.morale_effects
+        assert set(guards.owners.values()) == {"ready"}
+    finally:
+        guards.stop()
+
+
+@pytest.mark.parametrize("enrolled", [False, True])
+def test_native_staffing_worker_grant_lasts_only_for_the_call(monkeypatch, enrolled):
+    _, manager, person, channel, guards, run = coordinator(monkeypatch, callers=True)
+    entered, release = threading.Event(), threading.Event()
+    results, errors = [], []
+    def wait():
+        entered.set()
+        assert release.wait(2)
+    channel.after = wait
+    def worker():
+        try:
+            results.append(manager.ensure_active_teams_have_staff())
+            results.append((threading.current_thread() in guards._threads, guards._local.operation))
+        except BaseException as error:
+            errors.append(error)
+    thread = threading.Thread(target=worker)
+    if enrolled:
+        guards.enroll(thread)
+    try:
+        thread.start()
+        assert entered.wait(2)
+        assert not guards.try_stop() and thread in guards._threads
+        release.set()
+        thread.join(3)
+        assert not thread.is_alive() and not errors and results == [None, (enrolled, False)]
+        assert person.contract == {"team": "first"} and len(manager.staff) == 2 and guards._active == 0
+    finally:
+        release.set()
+        thread.join(3)
+        guards.stop()
 
 
 def test_complete_staffing_publishes_native_effects_and_preserves_canonical_owners(monkeypatch):

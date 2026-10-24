@@ -2,6 +2,7 @@
 """Guard Formula driver/staff signing with one shared negotiation owner."""
 
 from functools import update_wrapper
+import inspect
 import threading
 
 from ...callables import CallBinding, ResultContract
@@ -19,7 +20,9 @@ from ..personnel.preparation import publish_preparation
 from ..personnel.preparation_methods import check_preparation
 from ..drivers.targets import driver_target
 from ..staff.planner import StaffContractPlanner
-from ..staff.targets import staff_target
+from ..staff.staffing import StaffingPlanner
+from ..staff.targets import staff_target, staffing_targets
+from .staffing_coordinator import StaffingCoordinator
 
 
 class PersonnelAdapter(RegulationGuards):
@@ -54,12 +57,26 @@ class PersonnelAdapter(RegulationGuards):
                     planners[kind] = planner
                 except Exception as error:
                     failure(kind, error)
-            return cls(planners, channel, select, report=report) if planners else None
+            staffing = None
+            if "staff" in planners:
+                try:
+                    # Capture the native signer before installing its live guard.
+                    # Both common staffing entries must be compatible together.
+                    for target in staffing_targets():
+                        resolved = target.resolve({})
+                        if resolved is None or inspect.getattr_static(state.staff_manager, target.attribute) is not resolved[2]:
+                            # A subclass/instance override would evade a wrapper
+                            # on the mapped class, even with the same signature.
+                            raise HookError("Staffing integration needs the mapped native entry points")
+                    staffing = StaffingPlanner(state)
+                except Exception as error:
+                    failure("staffing", error)
+            return cls(planners, channel, select, report=report, staffing=staffing) if planners else None
         except Exception as error:
             failure("personnel", error)
             return None
 
-    def __init__(self, planners, channel, select, *, report=None):
+    def __init__(self, planners, channel, select, *, report=None, staffing=None):
         super().__init__(channel, select, "personnel.contract")
         self.planners = dict(planners)
         # One owned signing or complete staffing run may use career inputs at a
@@ -67,6 +84,7 @@ class PersonnelAdapter(RegulationGuards):
         # still be executing native writes after leaving that lock.
         self._personnel_operation = threading.Lock()
         self.feedback = None
+        self.staffing = StaffingCoordinator(self, staffing) if staffing is not None else None
         try:
             if not self.planners or self.planners.keys() - {"driver", "staff"}:
                 raise HookError("Personnel integration needs supported native planners")
@@ -77,19 +95,20 @@ class PersonnelAdapter(RegulationGuards):
             signing = [factory() for kind, factory in (("driver", driver_target), ("staff", staff_target))
                        if kind in self.planners]
             callers = self._caller_targets(state, self.planners)
+            staffing_callers = staffing_targets() if self.staffing is not None else ()
             # Recheck the complete set here: trusted callers may also construct
             # this adapter directly, without the factory's per-kind preflight.
-            # Readiness here is local to this signing component. The wider
-            # personnel scope stays closed until its transaction paths are mapped.
+            # This component covers signing and its optional staffing callers;
+            # complete personnel approval also requires the academy component.
             self._main()
-            if any(target.resolve(self.completed) is None for target in (*signing, *callers)):
+            if any(target.resolve(self.completed) is None for target in (*signing, *callers, *staffing_callers)):
                 raise HookError("Personnel integration requires its native caller modules to finish loading")
             check_preparation(state, self.planners)
-            for target in (*signing, *callers):
+            for target in (*signing, *callers, *staffing_callers):
                 self.approve(target)
             # Check every caller before the first wrapper. Parent journals restore
             # all assignments if installation fails partway through.
-            for target in callers:
+            for target in (*callers, *staffing_callers):
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             projection = self._projection
             codec = ResultContract({"shape": "bool", "denied": {"literal": False},
@@ -129,6 +148,11 @@ class PersonnelAdapter(RegulationGuards):
         return history["refusals"].check(self.channel, context, selections, calls, deadline, super()._refusal)
 
     def _wrapper(self, name, binding, target, original, signature):
+        if target.name.startswith("staffing."):
+            wrapped = self.staffing.wrap(target.name.rsplit(".", 1)[1], original, signature)
+            update_wrapper(wrapped, original)
+            wrapped._tpm_hook_group = name
+            return wrapped
         if target.name.startswith("personnel.caller."):
             wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
             update_wrapper(wrapped, original)

@@ -8,7 +8,8 @@ These are private launcher adapters, not a direct game-function API for mods.
 ## Main parts
 
 - [personnel_adapter.py](personnel_adapter.py): `PersonnelAdapter` connects driver
-  and staff signing to shared negotiation handling.
+  and staff signing to shared negotiation handling. It also installs the common
+  Formula staffing entries when their planner and signatures are compatible.
 - [academy_adapter.py](academy_adapter.py): `AcademyAdapter` connects academy
   signing, renewal and their player or AI callers.
 - [project_adapter.py](project_adapter.py): `ProjectAdapter` connects aero and
@@ -61,6 +62,11 @@ Staffing plans apply only when required roles are filled, their game inputs are
 unchanged and the same policy still applies. Coordinated staffing and ordinary
 signing share a reservation so they cannot change the career at the same time.
 The coordinator supports the main thread and explicitly authorised game workers.
+The mapped staffing wrappers grant a worker access only for that call and retain
+any grant it already had. They preserve the game's list/None returns. A refused
+batch discards all its private changes, including earlier allowed signings and
+generated people; an unfinished batch does not leak a partial success list.
+Loading saved agreements and activating accepted future deals stay native.
 
 Personnel checks cover new signings and renewals, including future-start
 contracts. Once accepted, agreements load and take effect through the game's
@@ -79,7 +85,10 @@ matches the number from the launcher's earlier status request before setup.
 It prepares `NativeRegulationPolicy` as the selector, so callers do not supply a
 selection function. The stored policy belongs to the installed adapters and is
 released with them. Setup reports which connections succeeded; this does not
-mean every staffing path is connected or that the mod checks are ready to run.
+mean the mod checks are ready to run. `staffing` coverage requires both the
+joining-team and missing-role wrappers; loading, season rollover and head-of-aero
+recovery reach these common methods. A changed entry or unsupported planner
+leaves staffing coverage unavailable, even if ordinary signing still installs.
 If validation is active, removal leaves the installation intact for a later
 retry. Once idle, it restores the game methods it changed and closes their
 connection before unloading the definitions.

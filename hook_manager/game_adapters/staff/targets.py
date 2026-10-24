@@ -15,3 +15,13 @@ def staff_target():
 def staff_prestige_target():
     return CallableTarget("staff.prestige-check", "managers.staff_manager", ("StaffManager",),
                           "required_prestige", "(self, staff: 'Staff') -> 'int'")
+
+
+def staffing_targets():
+    """Common Formula entry points used by loading, rollover and role recovery."""
+    return (
+        CallableTarget("staffing.onboard", "managers.staff_manager", ("StaffManager",),
+                       "onboard_joining_team_staff", "(self, team_name: 'str', *, contract_years: 'int' = 1) -> 'List[str]'"),
+        CallableTarget("staffing.recover", "managers.staff_manager", ("StaffManager",),
+                       "ensure_active_teams_have_staff", "(self, roles: 'Optional[List[str]]' = None) -> 'None'"),
+    )

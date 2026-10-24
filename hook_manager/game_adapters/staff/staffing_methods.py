@@ -6,14 +6,14 @@ import sys
 from ...callables import method_group
 from ...manager import HookError
 from .methods import _STAFF_GROUPS
+from .targets import staffing_targets
 
 
 # These methods run on a private manager. Ranking and name-pool helpers only read
 # borrowed data; generation and signing write newly created or selected people.
 # Compatibility checks call shapes, while native conformance checks these writes.
 _STAFFING_METHODS = {
-    'onboard_joining_team_staff': "(self, team_name: 'str', *, contract_years: 'int' = 1) -> 'List[str]'",
-    'ensure_active_teams_have_staff': "(self, roles: 'Optional[List[str]]' = None) -> 'None'",
+    **{target.attribute: target.signature for target in staffing_targets()},
     '_create_free_staff_for_role': "(self, role: 'str', rng: 'random.Random') -> 'Staff'",
     '_generate_skill_profile': "(self, role: 'str', rng: 'random.Random') -> 'Dict[str, int]'",
     '_generate_talent_profile': "(self, skills: 'Dict[str, int]', rng: 'random.Random') -> 'Dict[str, int]'",

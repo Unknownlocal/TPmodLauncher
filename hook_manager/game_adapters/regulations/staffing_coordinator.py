@@ -2,6 +2,7 @@
 """Validate a complete private staff operation before publishing its native writes."""
 
 import threading
+from contextlib import contextmanager
 
 from ...manager import HookError
 from ..personnel.cancellation import PersonnelCancellation
@@ -14,9 +15,9 @@ class StaffingCoordinator:
     """Validate native onboarding/recovery on the main thread or an admitted worker.
 
     The planner owns private native effects; this class owns regulation decisions
-    and the final permission to publish. Enclosing career/load/rollover changes
-    still need their own integration before using this coordinator. Workers need
-    an active staff signing guard so native signing shares the same reservation.
+    and the final permission to publish. Its fixed native entry wrappers cover
+    only newly proposed staffing contracts; loading and activation of accepted
+    contracts remain native. Workers share the active staff signing reservation.
     """
 
     def __init__(self, guards, planner):
@@ -27,6 +28,49 @@ class StaffingCoordinator:
                 or getattr(planner.sign, "_tpm_hook_group", None) is not None):
             raise HookError("Staffing coordinator needs matching pre-hook native staff planning")
         self.guards, self.planner = guards, planner
+
+    @contextmanager
+    def _caller_operation(self):
+        """Admit a native worker only for its fixed, owned staffing entry call."""
+        guards, current = self.guards, threading.current_thread()
+        if current is threading.main_thread() or getattr(guards._local, "operation", False):
+            yield
+            return
+        # These wrappers are trusted admission points, not mod-selected targets.
+        # Register the actual Thread object before operation() and revoke only
+        # our temporary grant. An earlier enrolment belongs to its existing owner.
+        with guards._lock:
+            already = current in guards._threads
+            guards._threads.add(current)
+        try:
+            with guards.operation():
+                yield
+        finally:
+            if not already:
+                with guards._lock:
+                    guards._threads.discard(current)
+
+    def wrap(self, role, original, signature):
+        """Keep native list/None returns while discarding an unapproved batch."""
+        def wrapped(*args, **kwargs):
+            guards = self.guards
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            if (guards.closed or bound.arguments["self"] is not self.planner.manager
+                    or not any(binding.target == "staff.sign" for binding in guards.entries.values())):
+                # Other careers, private manager copies and explicitly removed
+                # staff bindings use native code, including its usual arguments.
+                return original(*args, **kwargs)
+            with self._caller_operation():
+                result = (self.onboard(bound.arguments["team_name"], contract_years=bound.arguments["contract_years"])
+                          if role == "onboard" else self.recover(bound.arguments["roles"]))
+            if result.published:
+                return result.native_result
+            # Native recovery ignores sign_staff False and itself returns None.
+            # Never publish the successful prefix or leak its private name list.
+            guards._report(result.refusal.message if result.refusal else "Native staffing left required roles unfilled")
+            return [] if role == "onboard" else None
+        return wrapped
 
     def onboard(self, team_name, *, contract_years=1):
         """Validate and publish the native joining-team staff operation."""
@@ -41,7 +85,8 @@ class StaffingCoordinator:
         guards, channel = self.guards, self.guards.channel
         if not owners:
             return ()
-        if (channel.closed or owners & channel._unavailable or not owners <= channel._generations.keys()
+        if (channel.closed or not getattr(channel, "validation_ready", True)
+                or owners & channel._unavailable or not owners <= channel._generations.keys()
                 or any(guards.owners.get(owner) != "ready" for owner in owners)):
             return None
         return channel.epoch, tuple((owner, channel._generations[owner], channel._owners[owner]["revision"])

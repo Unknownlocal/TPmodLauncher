@@ -45,6 +45,11 @@ separate from the live roster until the result is applied.
 complete and the policy unchanged before applying it. It shares a reservation
 with ordinary signing to prevent overlapping career changes. Applying a plan
 uses its prepared result; it does not replay the signing calls.
+The personnel adapter captures the native staffing planner before installing the
+signing guard, then wraps the two common staffing entries listed in `targets.py`.
+Their signatures are shared with `staffing_methods.py` so both paths check the
+same arguments. Mod rules apply to new proposals; saved and already accepted
+contracts load and take effect through the game's existing code.
 
 Compatibility checks use game method names and the arguments they accept.
 Importing this package installs no hooks. Its planners and staffing records are
