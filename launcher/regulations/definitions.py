@@ -62,6 +62,11 @@ class RegulationDefinitions:
         return {owner: deepcopy(data.validators) for owner, data in self._owners.items()}
 
     @property
+    def native_rules(self):
+        """Copy the binding maps; their model values cannot be changed."""
+        return {owner: dict(data.native_rules) for owner, data in self._owners.items() if data.native_rules}
+
+    @property
     def revisions(self):
         # Digests are immutable strings, so only the owner-to-digest map is copied.
         return dict(self._revisions)

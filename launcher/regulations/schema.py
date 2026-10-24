@@ -90,14 +90,24 @@ def validator(value, owned_paths, accessible, scopes):
     """Check a semantic rule/context and an owned source reference, without binding."""
     fields(value, ("id", "rule", "scope", "handler"))
     name(value["id"])
-    if type(value["rule"]) is not str or value["rule"] not in accessible:
-        raise ValueError("Validator targets an unknown or foreign category")
+    rule(value["rule"], accessible)
     if type(value["scope"]) is not str or value["scope"] not in scopes:
         raise ValueError("Validator context has no trusted mapping")
-    handler = value["handler"]
-    if type(handler) is not str or not 3 <= len(handler) <= 256:
+    handler(value["handler"], owned_paths)
+
+
+def rule(value, accessible):
+    """Resolve an admitted category identity without granting cross-owner access."""
+    if type(value) is not str or value not in accessible:
+        raise ValueError("Reference targets an unknown or foreign category")
+    return value
+
+
+def handler(value, owned_paths):
+    """Check an owner-local source path without importing Python on the host."""
+    if type(value) is not str or not 3 <= len(value) <= 256:
         raise ValueError("Expected an owned Python handler reference")
-    parts = handler.split(".")
+    parts = value.split(".")
     if len(parts) < 2:
         raise ValueError("Handler needs a module and function")
     for part in parts:

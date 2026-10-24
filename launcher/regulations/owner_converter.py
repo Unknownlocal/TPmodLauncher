@@ -5,6 +5,7 @@ from collections import ChainMap
 
 from launcher.json_ingest import materialize
 from . import payload, schema
+from .bridge_converter import convert_bridges
 from .owner_definition import OwnerDefinition
 
 
@@ -56,12 +57,12 @@ def _scripts(owner, value, categories, index):
     return [schema.script(owner, row, known, position) for position, row in enumerate(rows)]
 
 
-def _payloads(categories, metadata, validators, accessible, index):
+def _payloads(model, accessible, index):
     # Native option parameters/envelopes are measured once per referenced category
     # for this attempt. Each owner must still account for its own option_data.
-    for key in categories.keys() | metadata.keys() | {row["rule"] for row in validators}:
+    for key in {row["key"] for row in model.categories} | model.rule_keys():
         for option, base in index.payloads(key, accessible[key]):
-            payload.check_metadata(base, metadata.get(key, {}).get(option, {}))
+            payload.check_metadata(base, model.option_data.get(key, {}).get(option, {}))
 
 
 def convert_owner(owner, section, source, base, scopes, index):
@@ -74,7 +75,7 @@ def convert_owner(owner, section, source, base, scopes, index):
         # Strict duplicate checks apply only to this selected enabled subtree.
         # Materialization also creates the containers this owner's model will own.
         data = materialize(section)
-        schema.fields(data, ("schema",), ("categories", "option_data", "scripted_changes", "validators"))
+        schema.fields(data, ("schema",), ("categories", "option_data", "scripted_changes", "validators", "native_rules"))
         if type(data["schema"]) is not int or data["schema"] != 1:
             raise ValueError("Unsupported enabled regulation schema")
         categories = _categories(owner, data.get("categories", []), base)
@@ -84,8 +85,10 @@ def convert_owner(owner, section, source, base, scopes, index):
         metadata = _metadata(data.get("option_data", {}), accessible, index)
         validators = _validators(data.get("validators", []), source, accessible, scopes, index)
         scripts = _scripts(owner, data.get("scripted_changes", []), categories, index)
-        _payloads(categories, metadata, validators, accessible, index)
-        return OwnerDefinition(list(categories.values()), metadata, validators, scripts)
+        bridges = convert_bridges(data.get("native_rules", {}), source, accessible, index)
+        model = OwnerDefinition(list(categories.values()), metadata, validators, scripts, bridges)
+        _payloads(model, accessible, index)
+        return model
     except (ValueError, TypeError, KeyError) as error:
         # Keep the owner identity on declaration failures; the document converter
         # adds the preparation-level error and discards the entire attempt.

@@ -36,6 +36,10 @@ class RegulationRuntime:
         self._attempted = True
         groups = {}
         try:
+            # Admission can describe bridges before their execution support is
+            # installed. Never treat them as harmless definition-only owners.
+            if self.definitions.native_rules:
+                raise ValueError("Native regulation rule bridges are not available for binding")
             for owner, validators in self.definitions.validators.items():
                 mod = self._mods[owner]
                 if (type(mod) is not SharedSourceMod or not mod._active

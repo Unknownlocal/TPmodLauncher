@@ -41,9 +41,9 @@ discarded on completion or failure.
 
 The optional root `mod_extensions` object is keyed by manifest ID. An enabled
 section requires integer `schema: 1` and permits `categories`, `option_data`,
-`validators` and `scripted_changes`. Disabled sections are left unread beyond
-JSON syntax and the whole-file size check. Duplicate consumed extension fields
-are rejected; native fields use the game's last-value-wins behaviour.
+`validators`, `scripted_changes` and `native_rules`. Disabled sections are left
+unread beyond JSON syntax and the whole-file size check. Duplicate fields in
+enabled sections are rejected; native fields use the last value, as in the game.
 
 - Categories require `key`, `label`, `default` and `options`, with optional
   `description` and `neighbours`. Keys start with the owner ID and `.` and cannot
@@ -61,6 +61,23 @@ are rejected; native fields use the game's last-value-wins behaviour.
   optional `id`. `new_regulation` contains the option's `key`. Scripts target
   owned categories. IDs are owner-qualified; omitted IDs use declaration order.
   Native scripts are preserved; duplicate IDs or category/season pairs fail.
+- `native_rules` accepts two named replacements. `rookie_contract_max_years`
+  accepts `{"value": 3}`, `{"value": null}`, or a reference containing `rule`
+  and `parameter`. A reference names one key in the adopted option's
+  `parameters`, or this owner's `option_data` when `source` is `"option_data"`.
+  An option may lack that key; a literal must be a positive integer or null.
+  A missing declaration leaves the native rule unchanged; `{"value": null}`
+  explicitly declares no rookie cap.
+- `staff_required_prestige`, also under `native_rules`, names an owned `handler`
+  and an optional `data` list of native or owned category keys. The list has at
+  most 32 distinct keys. Each named replacement can have only one enabled owner;
+  conflicts reject the whole preparation. These declarations have separate
+  models and cannot name arbitrary game functions.
+
+Bridge declarations are checked and included in rule revisions, but execution
+is not installed. `RegulationRuntime.bind()` rejects a candidate containing
+them before binding handlers or opening transport. It cannot report an
+unenforced replacement as ready.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.

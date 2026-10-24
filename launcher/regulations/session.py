@@ -15,10 +15,15 @@ class RegulationSession:
         self._reserved = set(native_keys)
         self._script_ids, self._script_targets = script_ids, script_targets
         self._categories = self._validators = 0
+        self._bridges = {}
 
     def add(self, owner, model):
         """Reserve one converted owner's declarations against all earlier rows."""
         try:
+            for name in model.native_rules:
+                if name in self._bridges:
+                    raise ValueError(f"Conflicting native rule {name}: already declared by {self._bridges[name]}")
+                self._bridges[name] = owner
             keys = {row["key"] for row in model.categories}
             if keys & self._reserved:
                 raise ValueError("Custom category collides with an existing definition")

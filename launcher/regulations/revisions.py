@@ -21,7 +21,7 @@ def finalize(owners, sources, native):
     uses = Counter(id(sources[owner].files) for owner in owners)
     for owner, model in owners.items():
         source = sources[owner]
-        keys = (model.option_data.keys() | {row["rule"] for row in model.validators}) & native.keys()
+        keys = model.rule_keys() & native.keys()
         digest = hashlib.sha256()
         digest.update(b"[" + _encode(owner) + b"," + _encode(model.declarations()) + b",{")
         for position, key in enumerate(sorted(keys)):
