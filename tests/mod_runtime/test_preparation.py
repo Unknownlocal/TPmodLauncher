@@ -2,6 +2,7 @@
 """Real runner compilation, controller adoption and deterministic cancellation races."""
 
 from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import ExitStack
 import shutil
 import threading
 
@@ -13,7 +14,8 @@ from launcher.source_mod import SourceMod
 from mod_runtime.bundle import BundleError, RunnerBundle
 from mod_runtime import preparation
 from mod_runtime.preparation import SourcePreparation
-from mod_runtime.source import SourceSnapshot
+from mod_runtime.shared_runtime import SharedPythonRunner
+from mod_runtime.source import SourceError, SourceManifest, SourceSnapshot
 
 
 CODE = '''import wit_world
@@ -37,6 +39,16 @@ capabilities = ["diagnostics"]
 ''', encoding="utf-8")
     (folder / "src/mod.py").write_text(CODE, encoding="utf-8")
     return folder
+
+
+@pytest.fixture
+def source_group(source_folder, tmp_path):
+    peer = tmp_path / "peer source"
+    shutil.copytree(source_folder, peer)
+    manifest = peer / "mod.toml"
+    manifest.write_text(manifest.read_text().replace("owned.prepared", "owned.peer"), encoding="utf-8")
+    return tuple((folder, SourceManifest.parse((folder / "mod.toml").read_bytes()))
+                 for folder in (source_folder, peer))
 
 
 def completed(job):
@@ -95,6 +107,83 @@ def test_real_preparation_runs_off_thread_then_adopts_on_controller(runner_bundl
         compiled_results[0].engine.ptr()
 
 
+def test_group_preparation_reads_runner_once_and_feeds_one_shared_store(runner_bundle, source_group, monkeypatch):
+    owner = threading.get_ident()
+    phases, reports = [], []
+    read, component, compile_request = SourceSnapshot.read, runner_bundle.component, preparation.CompiledMod.__init__
+    def snapshot(folder):
+        phases.append(("snapshot", threading.get_ident()))
+        return read(folder)
+    def runner_bytes():
+        phases.append(("runner", threading.get_ident()))
+        return component()
+    def request(instance, *args, **kwargs):
+        phases.append(("request", threading.get_ident()))
+        compile_request(instance, *args, **kwargs)
+    monkeypatch.setattr(SourceSnapshot, "read", snapshot)
+    monkeypatch.setattr(runner_bundle, "component", runner_bytes)
+    monkeypatch.setattr(preparation.CompiledMod, "__init__", request)
+    entry = source_group[0][0] / "src/mod.py"
+    entry.write_text("import wit_world\nPEER = wit_world.import_mod('owned.peer', 'mod')\n"
+                     "wit_world.report('source-import')\n" + CODE, encoding="utf-8")
+    with ThreadPoolExecutor(max_workers=1) as executor, ExitStack() as runtime:
+        with SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
+            with completed(job) as result:
+                assert [phase for phase, _ in phases] == ["snapshot", "snapshot", "runner", "request"]
+                assert all(thread != owner for _, thread in phases[:3]) and phases[-1][1] == owner
+                assert reports == [] and result.component is None
+                assert tuple(item.manifest for item in result.snapshots) == tuple(item[1] for item in source_group)
+                assert set(result.timings) == {"source_snapshot", "runner_read", "compile"}
+                job.close()  # Taking the result transfers ownership away from the job.
+                assert not result.compiled.closed
+                # Runner construction must use the checked copies, even if disk files change.
+                entry.write_text("raise AssertionError('changed on disk')", encoding="utf-8")
+                providers = {manifest.id: {"report": lambda text, mod=manifest.id: reports.append((mod, text))}
+                             for _, manifest in source_group}
+                group = runtime.enter_context(SharedPythonRunner(runner_bundle, result.snapshots, providers,
+                                                                  prepared=result.compiled))
+                assert group.sandbox._thread == owner and result.compiled.data is None
+        assert result.snapshots is None and result.compiled.closed
+        assert not group.closed  # The Store keeps the adopted code after input cleanup.
+        assert phases[-1] == ("runner", owner) and len(phases) == 5  # Fresh bundle verification only.
+        for member in group.members.values():
+            member.activate()
+            assert member.on_event("probe", '{"ok":true}') == '{"ok":true}'
+    assert group.closed
+    assert reports == [("owned.prepared", "source-import"), ("owned.prepared", "prepared source"),
+                       ("owned.peer", "prepared source")]
+
+
+@pytest.mark.parametrize("failure", ["changed-manifest", "bytes", "files"])
+def test_group_admission_failure_never_reads_or_compiles_runner(runner_bundle, source_group, monkeypatch, failure):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Incomplete or oversized groups must not request runner code")
+    monkeypatch.setattr(runner_bundle, "component", forbidden)
+    monkeypatch.setattr(preparation, "CompiledMod", forbidden)
+    if failure == "changed-manifest":
+        path = source_group[1][0] / "mod.toml"
+        path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "0.2.0"'), encoding="utf-8")
+        message = "manifest changed"
+    else:
+        limit = "MAX_GROUP_SOURCE_BYTES" if failure == "bytes" else "MAX_GROUP_SOURCE_FILES"
+        # One member fits; the second crosses the group ceiling.
+        first = SourceSnapshot.read(source_group[0][0])
+        monkeypatch.setattr(preparation, limit, first.total_bytes if failure == "bytes" else len(first.files))
+        message = "group exceeds its budget"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
+            with pytest.raises(SourceError, match=message):
+                completed(job)
+            with pytest.raises(RuntimeError, match="closed"):
+                job.take()
+
+
+def test_duplicate_group_members_are_rejected_before_submission(source_group):
+    # No executor is needed: ambiguous identities fail before any work is queued.
+    with pytest.raises(SourceError, match="Duplicate shared source owner"):
+        SourcePreparation.for_group(None, None, (source_group[0], source_group[0]))
+
+
 def test_queued_cancel_and_pending_take_never_read_compile_or_wait(source_folder, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     def occupy():
@@ -144,18 +233,18 @@ def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_fo
     assert future.exception() is None and results[0].closed
 
 
-def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, source_folder, monkeypatch):
+def test_cancel_after_last_checkpoint_disposes_entire_late_group(runner_bundle, source_group, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     results = []
-    original = preparation._prepare
+    original = preparation._prepare_group
     def blocked(*args):
         result = original(*args)
         results.append(result)
         entered.set()
         assert release.wait(10), "Test did not release prepared result"
         return result
-    monkeypatch.setattr(preparation, "_prepare", blocked)
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_folder) as job:
+    monkeypatch.setattr(preparation, "_prepare_group", blocked)
+    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation.for_group(executor, runner_bundle, source_group) as job:
         future = job._future
         try:
             assert entered.wait(30)
@@ -164,7 +253,7 @@ def test_cancel_after_last_checkpoint_disposes_late_success(runner_bundle, sourc
         finally:
             release.set()
     assert future.exception() is None
-    assert results[0].snapshot is None and results[0].component is None and results[0].compiled is None
+    assert results[0].snapshots is None and results[0].component is None and results[0].compiled is None
 
 
 @pytest.mark.parametrize("failure", ["compile", "interrupt"])

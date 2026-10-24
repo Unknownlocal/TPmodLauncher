@@ -211,6 +211,14 @@ snapshot and compilation request until the controller takes them once.
 Cancellation releases that request; another mod can keep the same compilation.
 Abandoned reads or running compilations finish before their results are disposed.
 
+`SourcePreparation.for_group()` prepares an ordered group against its already
+checked manifests. It reads every member without importing Python, checks the
+combined source limits, then reads the verified runner once. Any failed member
+rejects the group before compilation. `PreparedSources` owns those snapshots and
+one compiler request, which a `SharedPythonRunner` can adopt. Closing the result
+drops its source copies and releases its request; a running interpreter keeps
+its code. Both preparation forms use the same polling and cancellation code.
+
 `launcher/pack_mods.py` dispatches Python source mods and mods with prebuilt Wasm
 components after checking duplicate IDs. It owns preparation and executor lifetime
 with the game session, using the existing progress, readiness and cleanup rules.
