@@ -2,7 +2,7 @@
 """Claim one manual CI attempt per PR head commit and publish its result.
 
 Also publish a separate informational check linking to the manual entry point.
-Only trusted main-branch jobs execute this helper with a write token. Jobs
+The selected repository branch executes this helper with a write token. Jobs
 executing PR code receive read-only tokens and check out the resolved SHA.
 """
 
@@ -69,7 +69,7 @@ def instructions(api, number):
     summary = (
         f"[Open Test suite to run CI for PR #{number}]({url}).\n\n"
         "1. Click **Run workflow**.\n"
-        "2. Select **main** in the branch dropdown.\n"
+        "2. Select **main** or another repository branch in the branch dropdown.\n"
         f"3. Enter **{number}** as the PR number, then click **Run workflow**.\n\n"
         "Repository write access is required. Tests run only when requested. "
         "Each commit gets one attempt; a failed or cancelled attempt requires a new commit.\n\n"
@@ -89,8 +89,8 @@ def instructions(api, number):
 
 
 def require_first_attempt(ref, attempt):
-    if ref != "refs/heads/main":
-        raise ValueError("Run this workflow from main")
+    if not ref.startswith("refs/heads/"):
+        raise ValueError("Run this workflow from a repository branch")
     if str(attempt) != "1":
         raise ValueError("Re-runs are disabled: push a new commit before requesting CI again")
 
