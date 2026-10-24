@@ -138,13 +138,17 @@ class PackMods:
             self._progress("complete")
         return self.regulations
 
-    def confirm_regulations(self):
-        """Trusted mapping acknowledgement, inaccessible to source mod code."""
+    def confirm_regulations(self, components):
+        """Check trusted installation coverage before releasing the pack's UI."""
         if self._regulation_failed or self.regulations is None:
             raise RuntimeError("Regulations have not bound")
-        self.regulations.confirm_native()
-        self._publish_ui()
-        self._progress("complete")
+        try:
+            self.regulations.confirm_native(components)
+        finally:
+            # An incomplete replacement report revokes approval as well. Keep
+            # published UI and loading status in step with that change immediately.
+            self._publish_ui()
+            self._progress("complete")
 
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.

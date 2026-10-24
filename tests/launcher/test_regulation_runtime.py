@@ -25,6 +25,11 @@ from mod_runtime import source
 from regulation_support import context, make_mod, selection, validator
 
 
+# Transport-only tests supply an explicit stand-in for complete installation.
+# This is not evidence that production has installed the staffing callers.
+PERSONNEL_COMPONENTS = dict(driver_signing=True, staff_signing=True, academy_signing=True, staffing=True)
+
+
 def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract"):
     wake, progress, menus = threading.Event(), [], []
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [{"key": "native", "options": [{"key": "open"}]}],
@@ -50,6 +55,41 @@ def pump(scope, wake, future):
         wake.clear()
         scope.poll()
     return future.result(timeout=.1)
+
+
+def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod})
+    with closing(scope):
+        with pytest.raises(RuntimeError, match="Incomplete regulation binding"):
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+        with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+            with pytest.raises(ValueError, match="component report"):
+                scope.confirm_regulations(None)
+            # Signing support is insufficient; truthy integers also cannot
+            # substitute for a successful native component installation.
+            for staffing in (False, 1):
+                with pytest.raises(ValueError, match="coverage: staffing"):
+                    scope.confirm_regulations(dict(PERSONNEL_COMPONENTS, staffing=staffing))
+            assert not runtime.ready and not menus and progress[-1]["state"] == "loading"
+            assert not mod.sandbox.closed
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+            assert not runtime.ready  # Complete hooks still need committed rule data.
+            pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
+            with pytest.raises(ValueError, match="coverage: academy_signing"):
+                scope.confirm_regulations({"driver_signing": True, "staff_signing": True, "staffing": True})
+            assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
+
+
+def test_unmapped_native_scope_is_rejected_before_guest_binding(make_mod, tmp_path, monkeypatch):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    def unexpected(*args):
+        pytest.fail("Unmapped scope reached guest binding")
+    monkeypatch.setattr("launcher.regulations.runtime.SharedHandlerRunner.bind", unexpected)
+    with pytest.raises(ValueError, match="No complete native regulation mapping for scope: future.scope"):
+        prepare_scope(tmp_path, {mod.manifest.id: mod}, semantic_scope="future.scope")
+    assert mod.sandbox.closed
 
 
 def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod, tmp_path, monkeypatch):
@@ -88,7 +128,8 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
         try:
             for owner in mods:
                 engine.register(owner, [CallBinding("project", "project", project, codec)])
-            scope.confirm_regulations()
+            scope.confirm_regulations({"development_projects": engine.groups["project"]["state"] == "active",
+                                       "staffing": False})
             pump(scope, wake, worker.submit(policy.publish))
             thread = worker.submit(threading.current_thread).result(timeout=1)
             engine.enroll(thread)
@@ -152,7 +193,7 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
         assert runtime._handlers["b.rules"] is runtime._handlers["c.rules"]
         assert "d.data" not in runtime._handlers and mods["a.ui"].snapshot is None
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
-            scope.confirm_regulations()
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime.ready and progress[-1]["state"] == "complete" and len(publications) == 1
             assert runtime.status["owners"]["d.data"] == "bound"
@@ -204,7 +245,7 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         with pytest.raises(ValueError, match="Required regulation owner"):
             scope.bind_regulations(scopes={"personnel.contract"})
         with pytest.raises(RuntimeError):
-            scope.confirm_regulations()
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
         assert progress[-1]["state"] == "error" and not menus
 
 
@@ -216,7 +257,7 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, mods)
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         assert not runtime.ready  # A transport handshake is not native readiness.
-        scope.confirm_regulations()
+        scope.confirm_regulations(PERSONNEL_COMPONENTS)
         assert not runtime.ready
         # More than one socket frame of adopted replacements sharing a key.
         # Membership is input-derived; it is not limited to current/upcoming.
@@ -285,7 +326,7 @@ def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(ma
             process.stdin.write(json.dumps(runtime.endpoint) + "\n")
             process.stdin.flush()
             assert json.loads(reader.submit(process.stdout.readline).result(timeout=5)) == {"connected": True}
-            scope.confirm_regulations()
+            scope.confirm_regulations(PERSONNEL_COMPONENTS)
             contexts = [context() for _ in range(72)]
             for index, ctx in enumerate(contexts):
                 ctx["proposal"] = {"padding": "x" * 3450, "identity": index}

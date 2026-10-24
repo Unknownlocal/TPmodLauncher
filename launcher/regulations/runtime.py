@@ -11,6 +11,14 @@ from .server import RegulationServer
 from .validation.dispatch import ValidationDispatch
 
 
+# These are complete native scopes, not mod-selected function names. A new
+# adapter family needs an explicit mapping before its validators can bind.
+SCOPE_COMPONENTS = {
+    "personnel.contract": frozenset({"driver_signing", "staff_signing", "academy_signing", "staffing"}),
+    "development.project": frozenset({"development_projects"}),
+}
+
+
 class RegulationRuntime:
     def __init__(self, definitions, mods, wake=None):
         self.definitions, self._wake = definitions, wake
@@ -24,6 +32,7 @@ class RegulationRuntime:
         self._handlers, self._server, self._dispatch = {}, None, None
         self._publication, self._action = None, 0
         self._native = self.closed = self._attempted = self._bound = False
+        self._required_components = set()
 
     def _owning_thread(self):
         if threading.get_ident() != self._thread:
@@ -40,7 +49,14 @@ class RegulationRuntime:
             # installed. Never treat them as harmless definition-only owners.
             if self.definitions.native_rules:
                 raise ValueError("Native regulation rule bridges are not available for binding")
-            for owner, validators in self.definitions.validators.items():
+            validators_by_owner = self.definitions.validators
+            for validators in validators_by_owner.values():
+                for validator in validators:
+                    scope = validator["scope"]
+                    if scope not in SCOPE_COMPONENTS:
+                        raise ValueError("No complete native regulation mapping for scope: " + scope)
+                    self._required_components.update(SCOPE_COMPONENTS[scope])
+            for owner, validators in validators_by_owner.items():
                 mod = self._mods[owner]
                 if (type(mod) is not SharedSourceMod or not mod._active
                         or mod.sandbox.closed or mod.manifest.id != owner):
@@ -94,12 +110,25 @@ class RegulationRuntime:
     def status(self):
         return {"ready": self.ready, "owners": dict(self._states)}
 
-    def confirm_native(self):
-        """Trusted mapping acknowledgement; policy publication is a separate fence."""
+    def confirm_native(self, components):
+        """Accept installation coverage for every scope used by this pack.
+
+        Trusted setup supplies the AdapterModules installation report. Signing
+        alone cannot cover personnel staffing operations. Other components in
+        the report are irrelevant to this pack; policy publication still has
+        its own readiness check. Source mods cannot call this acknowledgement.
+        """
         self._owning_thread()
+        # A rejected replacement report must not retain a previous approval.
+        self._native = False
         if (self.closed or not self._bound or any(state == "unavailable" for state in self._states.values())
                 or (self._states and (not self._server.connected.is_set() or self._server.failed.is_set()))):
             raise RuntimeError("Incomplete regulation binding cannot become ready")
+        if type(components) is not dict:
+            raise ValueError("Native regulation acknowledgement needs a component report")
+        missing = sorted(key for key in self._required_components if components.get(key) is not True)
+        if missing:
+            raise ValueError("Incomplete native regulation coverage: " + ", ".join(missing))
         self._native = True
 
     def _unavailable(self, owners):

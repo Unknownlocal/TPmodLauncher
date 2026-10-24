@@ -1,8 +1,8 @@
-# Regulation admission and handlers
+# Regulation definitions and validation
 
-This private package reads enabled mods' regulation definitions and binds their
-Python handlers inside Wasm. The launcher owns pack lifetime, data publication
-and execution. Trusted game adapters supply the validation points. Mod code
+This private package reads enabled mods' regulation definitions and prepares their
+Python validation functions to run inside Wasm. The launcher manages loading,
+rule data and execution. Trusted game adapters supply the validation points. Mod code
 cannot select a native function or call the private callable engine.
 Public source admission accepts API 0.2.0/0.3.0; regulation permission remains
 private to the 0.4.0 interface.
@@ -13,9 +13,9 @@ private to the 0.4.0 interface.
 accepted source mods with the `regulations` permission. Prebuilt components and
 closed or failed source mods cannot add owners. Each eligible mod retains its
 checked source copy so preparation never reopens a changed `src/` tree.
-Without eligible owners, this path performs no file I/O.
+Without eligible owners, this path reads no files.
 
-`RegulationDefinitions.read()` pins the selected folder and reads its fixed
+`RegulationDefinitions.read()` checks the selected folder and reads its fixed
 `regulations.json`, up to 1 MiB. A missing or unreadable file rejects preparation.
 `from_bytes()` accepts bounded bytes and checked source copies. Trusted callers
 supply mapped context names and any native fallback categories.
@@ -26,12 +26,12 @@ checks each section and creates an `OwnerDefinition`. `RegulationSession` checks
 collisions and combined limits. `RegulationDefinitions` stores the finished view.
 Its outward `owners`, `native_document`, `document` and `revisions` properties
 return independent copies. `document` includes owned categories and scripts;
-`native_document` preserves native fields without the extension envelope.
+`native_document` preserves native fields without the mod sections.
 
-`PreparationIndex` reuses option lookups, source paths and payload measurements
+`PreparationIndex` reuses option lookups, source paths and data size checks
 within one preparation. Owner data refers to native definitions without copying
 the whole native catalogue. `payload.py` checks each owner's actual metadata
-against its invocation limits; a shared base measurement cannot approve another
+against its per-check limits; a shared base measurement cannot approve another
 owner's extra data. Revision calculation streams checked declarations, exact
 source text and referenced native data into SHA-256. Those digests identify rule
 revisions; they do not check game-method compatibility. Preparation caches are
@@ -55,8 +55,8 @@ enabled sections are rejected; native fields use the last value, as in the game.
   or owned option. It does not overwrite native fields or contain executable
   operators.
 - Validators have exactly `id`, `rule`, `scope` and `handler`. Rules are native
-  or owner-local; scopes need trusted mappings. Dotted handler modules must
-  exist in that owner's source. Function lookup happens inside Wasm.
+  or defined by the mod; scopes need trusted game adapters. Python modules named
+  by a handler must exist in that mod's source. Function lookup happens inside Wasm.
 - Scripts require `key`, `new_regulation` and positive `effective_season`, with
   optional `id`. `new_regulation` contains the option's `key`. Scripts target
   owned categories. IDs are owner-qualified; omitted IDs use declaration order.
@@ -100,7 +100,8 @@ validators stay required but need no guest handler table. A group with one sourc
 mod uses the same binding path.
 
 Handlers are synchronous two-argument functions from the accepted owner source.
-Owned re-exports are supported; Python is never imported into the launcher.
+Functions may be re-exported within the mod's checked source; mod Python is never
+imported into the launcher.
 Binding uses the source-import allowance: 256 million fuel units and five seconds
 per owner. Calls return `{"decision":"allow"}` or
 `{"decision":"deny","message":"Reason"}`. Refusals need 1-160 trimmed printable
@@ -123,7 +124,7 @@ events and expose no generic callable API.
 `RegulationServer` owns one authenticated loopback connection and a bounded queue.
 Its I/O thread receives requests and wakes the controller; only controller
 `poll()` enters Wasm. `RegulationChannel` uses protocol v2, session tokens,
-sequential request IDs, career epochs and acknowledged owner generations.
+request numbers, career numbers (`epoch`) and acknowledged rule-data versions.
 Socket data cannot supply Python code or native function targets.
 
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
@@ -145,8 +146,13 @@ every required owner unavailable. There is no reconnection or stale approval reu
 removes their live entries. Failure expands to every required owner sharing the
 Store, including definition-only owners. Wire failure replies name only the
 execution owners advertised to the native channel. A connection alone is not
-readiness: native interception needs trusted acknowledgement, and execution
-owners need committed policy.
+readiness: trusted setup must report every required part of the installed game
+hooks, and execution owners need committed policy. `personnel.contract` requires
+driver, staff and academy signing plus staffing operations;
+`development.project` requires development projects. A skipped or missing part
+keeps the pack unready. Extra parts do not block packs that do not use them.
+An unknown scope is rejected before handlers bind. The component report comes
+from trusted setup, never from mod declarations.
 
 `PackMods` reserves eligible rule owners before any source import or activation.
 Failure does not release those reservations. Desired UI stays staged while rules
