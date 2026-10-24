@@ -186,6 +186,47 @@ def owned(monkeypatch):
     return state, driver, negotiations, planner, Channel(), signing, callers
 
 
+def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing(monkeypatch):
+    state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
+    state.driver_manager.normalize_contract_status = None
+    observed, stores = [], []
+
+    def active(self, driver, week=None):
+        observed.append(driver)
+        return None
+
+    def read():
+        frame = adapter._local.personnel_caller
+        stores.append(frame["query_inputs"])
+        bound = inspect.signature(active).bind(state.driver_manager, driver, 10)
+        adapter.callers.queries.run("active", active, bound, frame)
+
+    def offer(self, row, candidate):
+        read()
+        return False  # Native eligibility can stop an offer before any mod check.
+
+    def decision(self, decision_id, accept):
+        read()
+        assert self._execute_offer(self.row, self.driver) is False
+        assert not stores[-1].drivers
+        read()
+        raise ValueError("Native confirmation failed")
+
+    monkeypatch.setattr(type(negotiations), "_execute_offer", offer)
+    monkeypatch.setattr(type(negotiations), "resolve_player_contract_decision", decision)
+    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    try:
+        with pytest.raises(ValueError, match="Native confirmation failed"):
+            negotiations.resolve_player_contract_decision("decision", True)
+        assert stores[0] is stores[1] is stores[2]
+        assert observed[0] is observed[1] and observed[1] is not observed[2]
+        assert not stores[0].drivers and not stores[0].managers
+        assert adapter._local.personnel_caller is None and not state.writes
+        assert "decision" in negotiations.pending and driver.contract is None
+    finally:
+        adapter.stop()
+
+
 def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_preparation(monkeypatch):
     state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
     state.email_manager = sys.modules["owned_personnel_adapter"].EmailManager(state)

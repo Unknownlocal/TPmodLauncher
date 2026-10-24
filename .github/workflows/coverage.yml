@@ -47,6 +47,7 @@ jobs:
                   ("hook_manager", "Hook manager"),
                   ("callables", "Private callable adapters"),
                   ("mod_runtime", "Mod runtime"),
+                  ("mod_runtime_loading", "Source loading"),
                   ("ci", "CI helpers"),
               )
               for platform, platform_label in (("windows", "Windows x64"), ("linux", "Linux x64"))

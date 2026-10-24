@@ -3,9 +3,9 @@
 
 import threading
 
-from launcher.source_mod import SourceMod
+from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime._regulations.values import integer
-from .handler_runner import HandlerRunner
+from .shared_handler_runner import SharedHandlerRunner
 from .publication import PolicyPublication
 from .server import RegulationServer
 from .validation.dispatch import ValidationDispatch
@@ -13,7 +13,10 @@ from .validation.dispatch import ValidationDispatch
 
 class RegulationRuntime:
     def __init__(self, definitions, mods, wake=None):
-        self.definitions, self._mods, self._wake = definitions, mods, wake
+        self.definitions, self._wake = definitions, wake
+        # Pack cleanup removes failed members from its live map. Retain required
+        # identities, including owners that declare data without a validator.
+        self._mods = {owner: mods.get(owner) for owner in definitions.owner_ids}
         self._thread = threading.get_ident()
         # Keep every admitted owner here even after failure: closing a Store
         # must make required validation unavailable, not silently disable a rule.
@@ -31,19 +34,27 @@ class RegulationRuntime:
         if self.closed or self._attempted:
             raise RuntimeError("Regulations must bind once in their pack session")
         self._attempted = True
-        for owner, validators in self.definitions.validators.items():
-            try:
+        groups = {}
+        try:
+            for owner, validators in self.definitions.validators.items():
                 mod = self._mods[owner]
-                if type(mod) is not SourceMod or not mod._active or mod.sandbox.closed or mod.manifest.id != owner:
+                if (type(mod) is not SharedSourceMod or not mod._active
+                        or mod.sandbox.closed or mod.manifest.id != owner):
                     raise ValueError("Regulation source owner is no longer active")
-                self._handlers[owner] = HandlerRunner.bind(mod.runner, validators)
-                self._states[owner] = "bound"
-            except Exception:
-                self._states[owner] = "unavailable"
-                raise
+                if validators:
+                    groups.setdefault(mod.runner, {})[owner] = validators
+            # Bind once per physical runner. Empty tables need no guest resident,
+            # but their owners still participate in readiness and group failure.
+            for runner, tables in groups.items():
+                handler = SharedHandlerRunner.bind(runner, tables)
+                self._handlers.update(dict.fromkeys(tables, handler))
+            self._states = dict.fromkeys(self._states, "bound")
+        except Exception:
+            self._unavailable(self._states)
+            raise
         # Definition-only owners remain required by the pack, but need no guest
         # execution view. The dispatcher claims only owners with bound validators.
-        self._dispatch = ValidationDispatch(self.definitions, {owner: handler for owner, handler in self._handlers.items() if handler.validators})
+        self._dispatch = ValidationDispatch(self.definitions, self._handlers)
         if self._states:
             catalog = self._dispatch.catalog
             # Preserve the catalog's ascending validator-ID order as wire slots.
@@ -72,7 +83,7 @@ class RegulationRuntime:
         # Neither native guard acknowledgement nor a socket handshake proves it.
         return (self._native and self._publication is None and self._dispatch.ready
                 and self._server.connected.is_set() and not self._server.failed.is_set()
-                and all(state in ("bound", "active") and not self._handlers[owner].runner.closed
+                and all(state in ("bound", "active") and not self._mods[owner].sandbox.closed
                         for owner, state in self._states.items()))
 
     @property
@@ -88,9 +99,20 @@ class RegulationRuntime:
         self._native = True
 
     def _unavailable(self, owners):
-        for owner in owners:
-            self._states[owner] = "unavailable"
-            self._handlers[owner].runner.close()
+        # A shared Store can fail through a non-regulation peer too. Expand any
+        # affected owner to every required owner of that same physical runner.
+        runners = {self._mods[owner].runner for owner in owners
+                   if type(self._mods[owner]) is SharedSourceMod}
+        for owner, mod in self._mods.items():
+            if type(mod) is not SharedSourceMod or mod.runner in runners:
+                self._states[owner] = "unavailable"
+        for runner in runners:
+            runner.close()
+
+    def _closed_owners(self):
+        for owner, mod in self._mods.items():
+            if self._server.failed.is_set() or mod is None or mod.sandbox.closed:
+                yield owner
 
     def handle(self, message):
         """Only poll() enters this on the Store-owning thread, never socket I/O."""
@@ -110,7 +132,7 @@ class RegulationRuntime:
                     raise ValueError("Regulation publication already pending")
                 candidate = PolicyPublication(self._dispatch, message)
                 affected = candidate.affected
-                if any(self._states[owner] == "unavailable" or self._handlers[owner].runner.closed for owner in affected):
+                if any(self._states[owner] == "unavailable" or self._mods[owner].sandbox.closed for owner in affected):
                     raise RuntimeError("Required regulation owner is unavailable")
                 self._publication = candidate
                 # Fence the old policy before receiving its replacement pages,
@@ -138,7 +160,7 @@ class RegulationRuntime:
             if operation == "reset":
                 # Reset retires the entire career, not just owners named by an
                 # action. Its generation map must describe all execution views.
-                affected = set(self._handlers)
+                affected = set(self._states)
                 expected = {owner: runner.generation for owner, runner in self._dispatch.runners.items()}
                 if message["generations"] != expected:
                     raise ValueError("Foreign career reset generations")
@@ -184,14 +206,14 @@ class RegulationRuntime:
         self._owning_thread()
         if self.closed or self._server is None:
             return
-        self._server.poll(self.handle, lambda: sorted(owner for owner, state in self._states.items() if state == "unavailable"))
+        self._unavailable(tuple(self._closed_owners()))
+        # The native channel knows execution owners only. Definition-only owners
+        # remain in pack status, but cannot appear as foreign binding identities.
+        self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.runners
+                                                      if self._states[owner] == "unavailable"))
         if self._server.failed.is_set():
             self._publication = None  # Release partially received policy on terminal I/O failure.
-        for owner, handler in self._handlers.items():
-            # A Store failure is local; a broken authenticated channel prevents
-            # checking any required owner and therefore invalidates all of them.
-            if self._server.failed.is_set() or handler.runner.closed:
-                self._unavailable((owner,))
+        self._unavailable(tuple(self._closed_owners()))
 
     def close(self):
         self._owning_thread()
@@ -201,5 +223,5 @@ class RegulationRuntime:
         self._publication = None
         if self._server is not None:
             self._server.close()
-        # SourceMods own Stores and close them in reverse pack activation order,
-        # after socket I/O has stopped; transport never races guest teardown.
+        # PackMods closes its shared/independent Stores after socket I/O stops;
+        # transport never races guest teardown.

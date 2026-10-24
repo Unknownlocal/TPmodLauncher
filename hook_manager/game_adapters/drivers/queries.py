@@ -5,12 +5,21 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from ..personnel.preparation import preparation_draft
+from .query_inputs import DriverQueryInputs
 
 
 class DriverQueries:
+    def active(self, original, manager, driver, week, frame):
+        """Run the busy active-contract path with ordinary method arguments."""
+        if "query_inputs" not in frame:
+            frame["query_inputs"] = DriverQueryInputs()
+        return frame["query_inputs"].active(original, manager, driver, week)
+
     def run(self, role, original, bound, frame):
         values = bound.arguments
         manager = values["self"]
+        if role == "active":
+            return self.active(original, manager, values["driver"], values.get("week"), frame)
         # These getters fill missing identity fields. Keep their answers
         # available to nested queries on the same private person data.
         if role in ("personalities", "career"):
@@ -30,9 +39,7 @@ class DriverQueries:
             active_contract=manager.active_contract, _contract_covers_week=manager._contract_covers_week,
         )
         values["self"] = private
-        if role == "active":
-            values["driver"] = SimpleNamespace(contract=deepcopy(values["driver"].contract))
-        elif role in ("entries", "next_entries"):
+        if role in ("entries", "next_entries"):
             originals = {}
             private.drivers = []
             for person in manager.drivers:

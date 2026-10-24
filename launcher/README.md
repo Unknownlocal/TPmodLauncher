@@ -37,9 +37,10 @@ bounds discovery, validates manifests and rejects every candidate sharing a
 duplicate ID before activating valid mods in ID order. Normal entry enables
 Python source mods and mods with prebuilt Wasm components.
 
-For Python mods, `mod_runtime.preparation` snapshots source and checks the admitted
-metadata and runner bytes on a worker. Prebuilt Wasm components also read on a
-worker during normal startup. The controller then requests compiled code through
+For Python mods, `SourcePreparation` copies every source member, checks its
+previously accepted manifest and limits the combined size before reading runner
+bytes once. Prebuilt Wasm components also read on a worker during normal startup.
+The controller then requests compiled code through
 `compiled_mod.py` and polls for completion without waiting on a compiler.
 
 `compilation_registry.py` keeps loaded code and pending compilations for each
@@ -56,32 +57,59 @@ back to uncached compilation. Every admission still verifies current bytes and
 creates fresh instance state. `load_timing.py` measures loading phases; the pack
 loader logs those timings and cache status.
 
+`pack_candidate.py` holds checked metadata. The controller creates one
+`SharedPythonRunner` for all source candidates. All sources transfer before
+entry imports, so a member can import a peer immediately. Imports happen together
+at the first source candidate; source and prebuilt activation stays in ID order.
+Source UI declarations stay staged until pack startup finishes. A failed source
+member rejects the whole fixed group; the loader does not retry with fewer mods.
+
 ## Mod execution and native readiness
 
 `mod_api.py` records public API versions, permissions and lifecycle signatures;
 `mod_contract.py` supplies prebuilt Wasm component admission, bounded JSON events and host-owned
-diagnostic and UI resource identity. `source_mod.py` applies that lifecycle and
-event contract to the Python runner. `runner_host.py` binds the complete typed interface
-to per-mod providers or permission-denial callbacks.
+diagnostic and UI resource identity. `shared_source_mod.py` applies that lifecycle
+and event contract to each shared entry. `runner_host.py` checks each owner's
+permissions and fixes its host callbacks before shared routing is created.
 
 `compiled_code.py` holds the shared Engine and compiled component after adoption.
-Each mod keeps its own Store, permissions, memory and limits. A whole execution
-phase belongs to one mod at a time, so its timeout cannot interrupt another mod
-using the shared Engine.
+`PackMods` uses one Store for the source group and separate Stores for prebuilt
+components. A whole execution phase belongs to one Store at a time, so its
+timeout cannot interrupt another Store using the shared Engine.
 
 `deadline_watchdog.py` reuses one waiting thread per shared Engine. It interrupts
 overdue guest execution and clears each finished call's deadline before another
 mod can run. The thread stops before that Engine is freed.
 
-`sandbox.py` owns each mod's linker, Store, reference to shared code and cleanup scope. It
+`sandbox.py` owns a runner's linker, Store, shared-code reference and cleanup. It
 validates imports and exports, serialises guest entry on the owning thread, and
-enforces memory, fuel, deadline and host-call limits. Source initialisation uses
-an aggregate loading phase; activation and events use ordinary call budgets.
-A failure closes the affected mod and revokes its owned registrations.
+enforces memory, fuel, deadline and host-call limits. Shared source loading gives
+each owner's transfer and entry import separate source allowances, plus one
+allowance for sealing the complete source table. Activation and events use
+ordinary call budgets.
+A failure closes the affected Store and runs its cleanup.
 
-The loader publishes progress and menu declarations to the native adapter after
-activation. Startup readiness waits for both preparation outcomes and native
-menu acknowledgement. Session closure releases active mods in reverse order;
+`shared_runner_host.py` supplies the host-call routing for
+`mod_runtime.shared_runtime.SharedPythonRunner`. One shared Store serves several
+logical source handles. Each source module imports a `wit_world` API bound to
+its admitted mod ID; the host selects that ID's provider table for diagnostics,
+menus, settings and themes. Other source IDs and ownerless calls are rejected.
+These tables retain ordinary permission checks, while mods sharing Python can
+borrow one another's API modules. They provide routing, not mutual isolation.
+Only the group owns closure and cleanup; a member handle cannot free memory
+that its peers still use. Closing a source entry closes the whole group,
+revokes every member's registrations before replacement UI is sent, and logs
+the affected IDs once. Unactivated peers are included in failure counts.
+
+Trusted calls may supply an absolute deadline to `Sandbox.phase`. It cannot
+extend the phase's normal allowance. Expired requests are rejected before guest
+entry; work that overruns after entry closes its Store. No background job or
+parallel source execution is involved.
+
+The loader publishes progress and staged UI declarations to the native adapter.
+Startup readiness waits for preparation outcomes, complete source activation and
+native acknowledgement. Immediate and deferred native rejection use the same
+cleanup. Session closure reports logical mods in reverse activation order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
 
 [`regulations/`](regulations/README.md) stages enabled-source regulation
@@ -89,6 +117,8 @@ definitions and binds Python handlers inside Wasm through a private preparation
 step that runs once per pack. A persistent authenticated channel queues calls for
 controller-thread execution under an absolute deadline. The private runtime waits
 for confirmation from the trusted game adapter before the rules become ready.
+Shared handlers bind once per runner. Required owner identities survive group
+cleanup, including owners that declare data without validators.
 Native fields are preserved and condition logic stays in mod source. This private
 loader entry point does not admit regulation permissions through the public mod API.
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Once-per-action contexts and checked owner-local selection/call references."""
+"""Encode proposals once and give each mod references to shared inputs."""
 
 from mod_runtime._regulations.policy import _integer, context_fields, encode, fields
 from mod_runtime._regulations.values import array_measure, bounded, integer, measure, object_measure, scalar
@@ -46,7 +46,8 @@ class PreparedAction:
         encoded = encode(wire)
         return encoded, measure(wire, encoded=encoded), object_measure(metrics), rule, season
 
-    def for_owner(self, view, calls, revision):
+    def for_owner(self, view, calls, revision, *, shared):
+        """Build one mod's call packet using context numbers from its shared runner."""
         if type(calls) is not list or not 1 <= len(calls) <= 32:
             raise ValueError("Invalid resident owner call count")
         contexts, selections, rows = {}, {}, []
@@ -64,14 +65,17 @@ class PreparedAction:
                 # each Store still receives its own fresh handler argument copies.
                 selections[selection] = len(selections), self._selection(view, self.selections[selection], revision)
             _, (_, _, rule_metric, rule, season) = selections[selection]
-            value, text, metric = self.contexts[context]
+            value, _, metric = self.contexts[context]
             if value["scope"] != declaration["scope"] or rule != declaration["rule"] or value["effective"]["season"] != season:
                 raise ValueError("Foreign resident invocation")
-            # Full referenced payload metrics count without visiting their values.
+            # Check the full argument size using cached counts, without walking
+            # the rule values again for every call.
             bounded(object_measure((("context", metric), ("regulation", rule_metric))))
             if context not in contexts:
-                # Keep the encoding made at aggregate entry. Owner filtering
-                # changes local indexes, without re-encoding the context itself.
+                # One group table owns the original encoded proposal. Owner
+                # envelopes carry only its number, with their own local slots.
+                index = shared.setdefault(context, len(shared))
+                text, metric = encode(index), scalar(index)
                 contexts[context] = len(contexts), text, metric
             rows.append([binding, contexts[context][0], selections[selection][0]])
             self.used_contexts.add(context)
@@ -89,6 +93,15 @@ class PreparedAction:
         metric = object_measure((key, metric) for key, _, metric in parts)
         if metric[0] > 384 * 1024:
             raise ValueError("Resident owner packet exceeds its bound")
+        return packet, metric, len(rows)
+
+    def for_group(self, references):
+        """Join cached context fragments once for one physical runner's action."""
+        rows = [self.contexts[index] for index in references]
+        packet = "[" + ",".join(text for _, text, _ in rows) + "]"
+        metric = array_measure(metric for _, _, metric in rows)
+        if not rows or metric[0] > 4 * 1024 * 1024:
+            raise ValueError("Shared regulation context table exceeds its bound")
         return packet, metric, len(rows)
 
     def seal(self):

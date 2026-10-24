@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Keep the installed rules for one mod inside its sandbox.
+"""Keep one mod's installed rules in the shared interpreter.
 
 Check incoming rule tables before they can be used. Unchanged records are reused
 across updates; new values use FrozenValue so later validation calls do not pay
@@ -14,7 +14,7 @@ from .values import bounded, integer, loads, measure, text
 
 
 class RegulationCatalog:
-    def __init__(self, packet, bindings, previous):
+    def __init__(self, packet, bindings, *, cache):
         fields(packet, ("owner", "revision", "bindings", "rules", "choices", "records", "totals"))
         self.identity = text(packet["owner"], 128), text(packet["revision"], 64)
         if len(self.identity[1]) != 64 or any(c not in "0123456789abcdef" for c in self.identity[1]):
@@ -38,6 +38,9 @@ class RegulationCatalog:
         if set(self.rules) != {rule for _, _, rule in bindings}:
             raise ValueError("Unreferenced resident rule")
         self.descriptors, self.records, self.by_id = [], {}, {}
+        # Borrow the group's records, including those staged by an earlier mod.
+        # Updates use this same cache, so unchanged IDs need no payload transfer.
+        self.cache = cache
         totals = [0, 0, 0]
         if type(packet["records"]) is not list:
             raise ValueError("Invalid resident record descriptors")
@@ -59,7 +62,7 @@ class RegulationCatalog:
                 raise ValueError("Invalid resident object measurements")
             self.descriptors.append((identity, descriptor["kind"], metric))
             totals = [integer(a + b, 63) for a, b in zip(totals, (metric[0], metric[1], metric[3]))]
-            old = previous.by_id.get(identity) if previous is not None else None
+            old = cache.get(identity)
             if old is not None:
                 # The trusted publisher owns immutable IDs. Reuse the old value;
                 # a changed kind or measurement under that ID is a protocol error.
@@ -114,6 +117,7 @@ class RegulationCatalog:
         # ordinary argument copies from it rather than passing cached data out.
         record = kind, metric, FrozenValue(value)
         self.records[slot] = self.by_id[identity] = record
+        self.cache[identity] = record
 
     def install_page(self, packet):
         rows = loads(packet)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from launcher.regulations.handler_runner import HandlerRunner
+from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.values import measure
 from launcher.regulations import RegulationDefinitions
@@ -21,7 +21,8 @@ def session(mod, rows=None):
     data = {"categories": [{"key": "native", "options": [{"key": "open"}]}],
             "mod_extensions": {mod.manifest.id: {"schema": 1, "validators": rows or [validator()]}}}
     model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), {mod.manifest.id: mod.snapshot}, scopes={"personnel.contract"})
-    dispatch = ValidationDispatch(model, {mod.manifest.id: HandlerRunner.bind(mod.runner, model.validators[mod.manifest.id])})
+    handler = SharedHandlerRunner.bind(mod.runner, model.validators)
+    dispatch = ValidationDispatch(model, {mod.manifest.id: handler})
     dispatch.publish(native={"native": [{"key": "open"}]})
     return dispatch
 
@@ -44,7 +45,7 @@ def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(m
     results = bound.evaluate([ctx], [selection()], {mod.manifest.id: [["a", 0, 0]] + [["b", 0, 0]] * 31})
     assert results[mod.manifest.id] == [{"decision": "allow"}] + [{"decision": "deny", "message": "\U0001f600" * 160}] * 31
     assert ctx == before and not mod.sandbox.closed
-    assert len(deadlines) == 1 and watchdog.token is None
+    assert len(deadlines) == 3 and len(set(deadlines)) == 1 and watchdog.token is None
 
 
 @pytest.mark.parametrize("fault", ["signature", "foreign_function", "import_budget"])
@@ -53,10 +54,10 @@ def test_binding_failure_closes_the_owner_without_publishing_partial_handlers(ma
             "foreign_function": "from json import loads as validate\n",
             "import_budget": "while True: pass\n"}[fault]
     if fault == "import_budget":
-        monkeypatch.setattr("launcher.regulations.handler_runner.SOURCE_FUEL", 1_000_000)
+        monkeypatch.setattr("launcher.regulations.shared_handler_runner.SOURCE_FUEL", 1_000_000)
     mod = make_mod(code)
     with pytest.raises(SandboxError, match="synchronous|fuel"):
-        HandlerRunner.bind(mod.runner, [validator()])
+        SharedHandlerRunner.bind(mod.runner, {mod.manifest.id: [validator()]})
     assert mod.sandbox.closed
 
 
@@ -84,7 +85,7 @@ def test_watchdog_teardown_cannot_return_a_late_approval(monkeypatch):
                 else '{"action":1,"prepared":1}')
 
     runner = SimpleNamespace(sandbox=SimpleNamespace(phase=phase, call=export), close=lambda: closed.append(True))
-    bound = ValidationRunner(SimpleNamespace(runner=runner))
+    bound = ValidationRunner(SimpleNamespace(runner=runner), owner="owned.rules")
     bound.active, bound.epoch, bound.generation, bound.required = True, 1, 1, 1
     monkeypatch.setattr("launcher.regulations.validation.runner.time.monotonic", lambda: clock[0])
     with pytest.raises(SandboxError, match="Late"):

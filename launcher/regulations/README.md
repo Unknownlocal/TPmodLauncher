@@ -1,191 +1,134 @@
-# Regulation admission and sandbox handlers
+# Regulation admission and handlers
 
-The [validation package](validation/README.md) owns the combined host catalog and
-reference-based dispatch. The private v2 socket protocol publishes adopted policy
-and dispatches compact action references through that same retained catalog.
+This private package reads enabled mods' regulation definitions and binds their
+Python handlers inside Wasm. The launcher owns pack lifetime, data publication
+and execution. Trusted game adapters supply the validation points. Mod code
+cannot select a native function or call the private callable engine.
+Public source admission accepts API 0.2.0/0.3.0; regulation permission remains
+private to the 0.4.0 interface.
 
-This private package admits regulation definitions and binds owned Python
-handlers inside Wasm. Pack/session lifetime is launcher-owned; actual game
-validation mappings remain separate integration work. Public API 0.4.0 stays unavailable; existing
-public API versions remain unchanged.
+## Definition preparation
 
-`PackMods.prepare_regulations()` is a trusted, one-shot preparation seam after
-pack activation. Enabled owners come from its retained, active Python source
-instances requesting `regulations`; closed, failed and prebuilt-component mods
-cannot supply owners. Source snapshots are retained after admission rather than
-reopening `src/`. Current manifest versions cannot request this capability, so
-ordinary sessions neither read the extension file here nor gain new resources.
-`PackMods.bind_regulations()` binds retained owners and starts their private
-transport. Trusted native acknowledgement through `confirm_regulations()` is
-required before staged UI and completion can publish; actual game mappings
-and rule publication remain later integration steps.
+`PackMods.prepare_regulations()` runs once after activation. Its owners are live,
+accepted source mods with the `regulations` permission. Prebuilt components and
+closed or failed source mods cannot add owners. Each eligible mod retains its
+checked source copy so preparation never reopens a changed `src/` tree.
+Without eligible owners, this path performs no file I/O.
 
-`RegulationDefinitions.read()` pins the selected folder and reads at most 1 MiB
-from its fixed `regulations.json`. Empty ownership performs no filesystem I/O.
-When an eligible owner exists, a missing/unreadable file rejects preparation;
-fallback metadata does not supply missing extension declarations.
-`RegulationDefinitions.from_bytes()` accepts bounded bytes and admitted source
-snapshots for internal conformance checks. Context names and additional native fallback categories are
-provided by trusted mappings; the loader does not advertise contexts itself.
+`RegulationDefinitions.read()` pins the selected folder and reads its fixed
+`regulations.json`, up to 1 MiB. A missing or unreadable file rejects preparation.
+`from_bytes()` accepts bounded bytes and checked source copies. Trusted callers
+supply mapped context names and any native fallback categories.
 
-Decoding and selected-subtree materialization use the shared
-[`json_ingest`](../json_ingest/README.md) primitives. Owner selection and all
-regulation-specific declaration checks remain here. `converter.py` selects the
-native document and enabled sections; `owner_converter.py` converts each consumed
-section into an `OwnerDefinition`. The `RegulationDefinitions` constructor only
-stores prepared native/owner/revision state; byte ingestion uses `from_bytes()`.
-Each class has its own module. Native and opaque option/parameter data retain
-their dictionary shape rather than being normalized into fixed-field models.
-The owner model holds categories, option data, validators and scripts; outward
-views remain independent dictionaries for later binding/publication.
+[`json_ingest`](../json_ingest/README.md) decodes UTF-8 and selects fields.
+`converter.py` selects native data and enabled mod sections; `owner_converter.py`
+checks each section and creates an `OwnerDefinition`. `RegulationSession` checks
+collisions and combined limits. `RegulationDefinitions` stores the finished view.
+Its outward `owners`, `native_document`, `document` and `revisions` properties
+return independent copies. `document` includes owned categories and scripts;
+`native_document` preserves native fields without the extension envelope.
 
-Conversion is explicit launcher code. JSON cannot choose a model, import a host
-class or call the private callable engine.
+`PreparationIndex` reuses option lookups, source paths and payload measurements
+within one preparation. Owner data refers to native definitions without copying
+the whole native catalogue. `payload.py` checks each owner's actual metadata
+against its invocation limits; a shared base measurement cannot approve another
+owner's extra data. Revision calculation streams checked declarations, exact
+source text and referenced native data into SHA-256. Those digests identify rule
+revisions; they do not check game-method compatibility. Preparation caches are
+discarded on completion or failure.
 
-Preparation has three stages: convert owner declarations, admit them through
-`RegulationSession` for shared collision/quota checks, then finalize revisions.
-`PreparationIndex` lazily reuses option-key sets, owned source paths and minimum
-option-envelope measurements within that attempt. Owner references use a layered
-lookup of native and owned categories rather than copying the native catalogue.
-Unreferenced native definitions remain outside extension-specific validation.
+## Selected JSON structure
 
-Minimum envelopes include empty owner metadata. `payload.py` checks each owner's
-actual metadata by replacing that placeholder with its measured node count,
-container depth and UTF-8 length. A shared native measurement never implies that
-another owner's metadata fits. Full invocation bounds and common context fields are checked by dispatch;
-scope normalization and adopted upcoming-policy selection remain later work.
-
-Revision finalization streams the existing canonical JSON representation into
-SHA-256. It reuses encoded native categories and any shared immutable source-file
-tuples, retaining identical digest values. Substituting component digests would
-change that representation; this refactor retains the existing format. Unique
-source buffers are not cached, and shared buffers are released after their last
-owner. All preparation caches are local and discarded on completion or failure.
-
-The optional root `mod_extensions` object is keyed by manifest ID. Each enabled
+The optional root `mod_extensions` object is keyed by manifest ID. An enabled
 section requires integer `schema: 1` and permits `categories`, `option_data`,
-`validators` and `scripted_changes`. Disabled sections are not materialized or
-semantically validated, including duplicate fields inside them. Syntax and the
-whole-file byte limit still apply. Duplicate consumed extension fields are
-rejected; native fields retain the game's last-value-wins behavior.
+`validators` and `scripted_changes`. Disabled sections are left unread beyond
+JSON syntax and the whole-file size check. Duplicate consumed extension fields
+are rejected; native fields use the game's last-value-wins behaviour.
 
-- Custom categories require `key`, `label`, `default`, `options`, with optional
-  `description` and `neighbours`. Keys start with the owner ID followed by `.`.
-  They cannot collide with native, fallback or another owner's definitions.
-- Options require consecutive positive integer `id`, unique `key`, and printable `name`;
-  optional fields are `summary`, `description` and object `parameters`.
-  Neighbours reference distinct other options within the same category.
-- `option_data[category][option]` holds an opaque object for a native or owned
-  option. It does not overwrite native fields. Neither metadata object has
-  operators or executable binding meanings.
-- Validators have exactly `id`, `rule`, `scope`, `handler`. Rule references stay
-  native or owner-local, scopes must have a trusted mapping, and dotted handler
-  modules must exist in that owner's snapshot. Function resolution/signatures
-  and execution are resolved inside the sandbox, never through host imports.
-- Scripts require `key`, `new_regulation`, positive `effective_season`, and
-  optionally a named `id`. `new_regulation` has exactly the option's `key`, using
-  the native object format. They target owned custom categories only. IDs are
-  owner-qualified; omitted IDs use the declaration index. Existing native scripts
-  are preserved; duplicate IDs and category/season targets are rejected.
+- Categories require `key`, `label`, `default` and `options`, with optional
+  `description` and `neighbours`. Keys start with the owner ID and `.` and cannot
+  collide with existing categories.
+- Options require consecutive positive integer `id`, unique `key` and printable
+  `name`. Optional fields are `summary`, `description` and object `parameters`.
+  Neighbours name distinct other options in the same category.
+- `option_data[category][option]` holds the mod's extra JSON object for a native
+  or owned option. It does not overwrite native fields or contain executable
+  operators.
+- Validators have exactly `id`, `rule`, `scope` and `handler`. Rules are native
+  or owner-local; scopes need trusted mappings. Dotted handler modules must
+  exist in that owner's source. Function lookup happens inside Wasm.
+- Scripts require `key`, `new_regulation` and positive `effective_season`, with
+  optional `id`. `new_regulation` contains the option's `key`. Scripts target
+  owned categories. IDs are owner-qualified; omitted IDs use declaration order.
+  Native scripts are preserved; duplicate IDs or category/season pairs fail.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
-category, 128 categories/256 validators per session, and 128 scripts per owner.
-Known policy data is checked against a minimum invocation envelope for the
-4,096-byte/1,024-node/eight-container-level limits. These apply to each validator
-invocation payload; the complete `regulations.json` file has the separate 1 MiB
-limit described above (tentative).
+category, 128 categories/256 validators per session and 128 scripts per owner.
+Each validator's complete context and rule together must fit 4,096 UTF-8 bytes,
+1,024 nodes and eight container levels. These are invocation limits, separate
+from the 1 MiB file limit. Failed preparation returns no partial owner set.
 
-Preparation is atomic. `owners`, `native_document`, `document` and `revisions`
-return independent data. `document` is a candidate merged view for future binding
-and publication; `native_document` preserves native fields with the extension
-envelope removed. Revisions include the selected declarations, author version
-and exact admitted source text, plus referenced native/fallback definitions.
-Save-state compatibility, disable/re-enable
-transitions, effective dates and native governance remain later work.
+## Binding and retained validation
 
-## Private sandbox handler dispatch
+`PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
+tables once per shared source runner through `SharedHandlerRunner`. Each owner
+keeps its own IDs, declarations and generations. Owners declaring data without
+validators stay required but need no guest handler table. A group with one source
+mod uses the same binding path.
 
-`HandlerRunner` binds ordinary synchronous two-argument functions from each
-owner's admitted source snapshot through dedicated private runner exports. Owned
-re-exports are supported; author Python is never imported into the launcher.
-Binding shares the source-import allowance (256M fuel/five seconds per owner).
+Handlers are synchronous two-argument functions from the accepted owner source.
+Owned re-exports are supported; Python is never imported into the launcher.
+Binding uses the source-import allowance: 256 million fuel units and five seconds
+per owner. Calls return `{"decision":"allow"}` or
+`{"decision":"deny","message":"Reason"}`. Refusals need 1-160 trimmed printable
+characters. Conditions stay in mod code.
 
-Every invocation receives independent plain JSON copies of context and rule,
-limited together to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels.
-Common envelope fields are checked on both sides. Handlers return exactly allow
-or deny with 1 to 160 trimmed printable message characters. Conditions stay mod code.
+The [validation package](validation/README.md) owns the combined catalogue,
+updates and reference-based dispatch. Rule data stays in memory between actions.
+Shared owners reuse native records, and each proposal table transfers once per
+runner. Every handler still receives fresh ordinary JSON arguments.
 
-Policy data is retained in each subscribed Store. Actions carry shared context
-and selection tables, with references to that installed data. Up to four
-invocations share bounded preparation (64M fuel) for checking and copying; this
-routine invokes no validators. Each prepared slot is
-consumed once with its own ordinary 5M fuel and 64 host-call allowance. Preparation
-cannot spend a handler's allowance, and siblings cannot spend one another's.
-One watchdog covers the original absolute 100 ms action deadline across every
-preparation/execution call; selecting a fresh fuel allowance cannot restart it.
-Full invocation limits are composed from cached record metrics and dynamic
-contexts. There is no full-rule preparation fallback, truncation or retry.
-Failure closes the owned runner. See [validation](validation/README.md) for the
-combined catalog, installation budgets and guest ownership.
+Up to four invocations share a preparation allowance of 64 million fuel units.
+Each handler has its own five-million fuel and 64 host-call allowance. The whole
+action shares its original absolute 100 ms deadline, including transfer and
+cleanup. No new phase restarts that deadline. Failure closes the affected Store;
+all source peers in it become unavailable. The private exports use no lifecycle
+events and expose no generic callable API.
 
-This requires a matching private ABI 0.4.0 runner bundle. The author facade and
-host imports are unchanged; dispatch uses no lifecycle events and exposes no
-generic callable or native target access. Native integration remains separate.
+## Transport and readiness
 
-## Private persistent transport
+`RegulationServer` owns one authenticated loopback connection and a bounded queue.
+Its I/O thread receives requests and wakes the controller; only controller
+`poll()` enters Wasm. `RegulationChannel` uses protocol v2, session tokens,
+sequential request IDs, career epochs and acknowledged owner generations.
+Socket data cannot supply Python code or native function targets.
 
-`RegulationServer` owns one authenticated loopback connection, a bounded pending
-request queue and an I/O thread. The thread only receives/queues/wakes; `poll()`
-invokes a trusted evaluator on the creating controller thread. The runtime owns
-this server and supplies its endpoint only to trusted native integration.
+`publish(native=..., custom=...)` streams changed rules through `policy-begin`,
+ordered `policy-page` rows and `policy-seal`. Native publications supply complete
+adopted options; custom publications contain admitted option keys. `None` keeps
+installed options while advancing their generation. Private overlays stay in the
+launcher. One control deadline covers all pages and commits. Readiness stays
+blocked until commit acknowledgement. `reset(epoch)` clears policy while keeping
+bindings; a new publication is required and a failed Store cannot be revived.
 
-The native `RegulationChannel` uses protocol v2, session tokens, sequential request
-IDs, career epochs and acknowledged owner generations. `publish(native=..., custom=...)`
-streams complete adopted memberships for changed rules; `None` retains an already
-installed membership while advancing its generation. Custom memberships contain
-only keys resolved against admitted definitions. Native publications carry
-normalized operational parameters; private overlays never cross this socket.
-Socket data cannot supply executable code or select a native function.
+Actions carry shared contexts/selections and owner binding-slot references.
+Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up to
+8,912,896 decoded bytes/46 parts, assembled before parsing. Large refusal results
+also use bounded fragments. All fragments share the original action deadline.
+An identified group failure can keep the connection open; broken transport makes
+every required owner unavailable. There is no reconnection or stale approval reuse.
 
-Publication uses `policy-begin` (closed count/byte/node plan), bounded ordered
-`policy-page` rows and `policy-seal`. One original control deadline covers all
-pages and guest commits, with one queued page providing backpressure. Readiness
-is fenced from begin until commit acknowledgement. `reset(epoch)` clears installed
-policy without changing bindings or reviving a failed owner; new publication is
-required before actions resume.
+`RegulationRuntime` retains required owner identities even after pack cleanup
+removes their live entries. Failure expands to every required owner sharing the
+Store, including definition-only owners. Wire failure replies name only the
+execution owners advertised to the native channel. A connection alone is not
+readiness: native interception needs trusted acknowledgement, and execution
+owners need committed policy.
 
-Actions contain shared contexts/selections and owner binding-slot calls. Frames
-remain bounded to 256 KiB. Larger logical actions use ordered base64 fragments,
-up to 8,912,896 decoded bytes/46 parts, parsed once after complete assembly.
-The original absolute 100 ms deadline includes every fragment and participating
-Store. Neither framing nor retained data increases per-invocation limits.
-Legal multi-owner refusal results may also exceed a frame. They use bounded
-`action-result-part` fragments under that same deadline, with a separate limit
-derived from 1,024 maximum-length Unicode refusals and owner/header overhead.
-An identified owner failure remains unavailable without dropping other owners'
-connection. Protocol, disconnect or timeout failure closes the session with no
-retry/reconnect or stale approval reuse. Shutdown stops owned I/O.
-
-Fixed client/framing sources are included in the native bridge bootstrap. Its
-private wake callback queues controller work without native RPC or guest entry.
-Actual game validation mappings remain a separate integration. No author method
-or native authority is exposed by this transport.
-
-## Pack lifetime and readiness
-
-`RegulationRuntime` binds required owners once and dispatches queued calls on the
-Store's creating controller thread. A connection alone cannot establish readiness:
-trusted acknowledgement of complete native interception and committed policy
-are both required. A mapping acknowledgement alone leaves execution owners pending.
-Identified handler failure latches its owner unavailable while other owners can
-still be checked; transport failure makes all required owners unavailable.
-Cleanup does not disable or remove a required declaration.
-
-`PackMods` reserves eligible owners before any activation can publish UI. Failed
-activation releases that reservation; successful activation keeps the owner
-required until session closure. While unready, desired declarations stay staged
-and any published menu/settings/themes are cleared. Loading cannot report complete
-until all required owners are ready. Failure cleanup removes local declarations
-immediately but defers native UI updates until the validation reply is released,
-so UI acknowledgement cannot block that reply. Shutdown stops transport before closing
-source Stores in reverse activation order. Public API 0.4.0 remains withheld.
+`PackMods` reserves eligible rule owners before any source import or activation.
+Failure does not release those reservations. Desired UI stays staged while rules
+are unready; published UI is cleared on failure, and loading cannot report ready.
+Cleanup removes all failed peers' declarations before publishing replacements.
+During validation it defers native UI updates until the reply has been released,
+so UI acknowledgement cannot block that reply. Shutdown stops transport before
+closing the pack's runtimes.

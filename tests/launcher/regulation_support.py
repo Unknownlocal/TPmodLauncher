@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Shared data and real source-runner fixture for regulation adapter checks."""
 
-from contextlib import ExitStack, closing
-
 import pytest
 
-from launcher.source_mod import SourceMod
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 
@@ -25,17 +22,16 @@ def validator(identity="check", handler="rules.validate"):
 
 
 @pytest.fixture
-def make_mod(runner_bundle):
-    with ExitStack() as stack:
-        def create(rules, *, owner="owned.rules", extra=(), report=None):
-            # API 0.4.0 remains unparseable by public admission. Trusted snapshots
-            # exercise its private seam without publishing a capability.
-            caps = {"regulations"} | ({"diagnostics"} if report else set())
-            manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
-            files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
-                     ("rules.py", rules), *extra)
-            snapshot = SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files))
-            mod = stack.enter_context(closing(SourceMod(runner_bundle, snapshot, report=report)))
-            mod.activate()
-            return mod
-        yield create
+def make_mod(make_source_group):
+    def create(rules, *, owner="owned.rules", extra=(), report=None):
+        # API 0.4.0 remains unparseable by public admission. Trusted snapshots
+        # exercise its private seam without publishing a capability.
+        caps = {"regulations"} | ({"diagnostics"} if report else set())
+        manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
+        files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
+                 ("rules.py", rules), *extra)
+        snapshot = SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files))
+        mod = make_source_group((snapshot,), report=report)[owner]
+        mod.activate()
+        return mod
+    return create

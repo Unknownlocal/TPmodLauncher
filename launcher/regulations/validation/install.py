@@ -2,11 +2,11 @@
 """Finite owner installation plan assembled from cached JSON record fragments."""
 
 from mod_runtime._regulations.values import install_fuel
-from mod_runtime.runtime import _chunks
+from mod_runtime.source_transfer import _chunks
 
 
 class PolicyInstall:
-    def __init__(self, view, previous, epoch, generation):
+    def __init__(self, view, previous, epoch, generation, *, known=None):
         self.operations = []
         if view is previous:
             self.operations = [("begin-regulation-policy", (epoch, generation, 0), "manifest"),
@@ -15,7 +15,10 @@ class PolicyInstall:
             self.commit_fuel = 1_250_000
             return
         text, metric = view.manifest()
-        known = {record.identity for record in previous.records} if previous is not None else set()
+        if known is None:
+            known = {record.identity for record in previous.records} if previous is not None else set()
+        # A shared publisher carries the union of installed/staged record IDs.
+        # Another owner then borrows the native record instead of sending it again.
         incoming = [(slot, record) for slot, record in enumerate(view.records) if record.identity not in known]
         self.operations.append(("begin-regulation-policy", (epoch, generation, metric[0]), "receiving"))
         self.operations.extend(("put-regulation-policy", (chunk,), None) for chunk in _chunks(text.encode("utf-8")))

@@ -3,17 +3,32 @@
 package modlauncher:python-runner@0.4.0;
 
 world code-runner {
-    import report: func(message: string);
-    import add-menu-button: func(id: string, label: string, message: string);
-    import register-settings: func(definition: string) -> string;
-    import save-settings: func(values: string) -> string;
-    import register-theme: func(definition: string);
+    // The trusted guest supplies each source module's admitted identity.
+    // These remain the same five approved operations, with no arbitrary calls.
+    import source-report: func(owner: string, message: string);
+    import source-add-menu-button: func(owner: string, id: string, label: string, message: string);
+    import source-register-settings: func(owner: string, definition: string) -> string;
+    import source-save-settings: func(owner: string, values: string) -> string;
+    import source-register-theme: func(owner: string, definition: string);
 
-    export put-source: func(path: string, chunk: string);
-    export load-source: func(entry: string) -> string;
-    export activate: func();
-    export on-event: func(name: string, payload: string) -> string;
-    export bind-regulation: func(index: u32, declaration: string) -> string;
+    // Shared source loading uses stable mod IDs, not one synthetic pack owner.
+    // Transfer every snapshot before seal; loading never activates an entry.
+    export declare-source: func(owner: string, entry: string);
+    export put-owner-source: func(owner: string, path: string, chunk: string);
+    export seal-sources: func();
+    export load-owner-source: func(owner: string) -> string;
+    export activate-source: func(owner: string);
+    export on-source-event: func(owner: string, name: string, payload: string) -> string;
+    // Shared residents retain original owner tables. Selection only addresses
+    // serial private operations; author host-call identity stays source-bound.
+    export bind-source-regulation: func(index: u32, declaration: string) -> string;
+    export select-regulation-owner: func(owner: string);
+    export begin-regulation-contexts: func(action: u64, bytes: u32, first: string) -> string;
+    export put-regulation-contexts: func(chunk: string);
+    export seal-regulation-contexts: func() -> string;
+    export finish-regulation-action: func(action: u64);
+    export finish-regulation-publication: func();
+    export reset-regulation-group: func(epoch: u64) -> string;
 
     // Resident policy/action operations are private, not author capabilities.
     export begin-regulation-policy: func(epoch: u64, generation: u64, manifest-bytes: u32) -> string;
@@ -25,11 +40,9 @@ world code-runner {
     export seal-regulation-record: func() -> string;
     export seal-regulation-policy: func() -> string;
     export commit-regulation-policy: func(epoch: u64, generation: u64) -> string;
-    export reset-regulation-career: func(epoch: u64) -> string;
     export begin-regulation-action: func(action: u64, epoch: u64, generation: u64, bytes: u32, first: string) -> string;
     export put-regulation-action: func(chunk: string);
     export seal-regulation-action: func() -> string;
     export prepare-regulation-slots: func(action: u64) -> string;
     export validate-resident-regulation: func(action: u64, slot: u32) -> string;
-    export discard-regulation-action: func(action: u64);
 }

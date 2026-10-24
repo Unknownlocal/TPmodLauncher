@@ -8,28 +8,47 @@ import threading
 from launcher.compiled_mod import CompiledMod
 from launcher.load_timing import measure
 from .bundle import RunnerBundle
-from .prepared_source import PreparedSource
-from .source import SourceError, SourceSnapshot
+from .prepared_sources import PreparedSources
+from .source import SourceError, SourceManifest, SourceSnapshot
+from ._source_policy import MAX_GROUP_SOURCE_BYTES, MAX_GROUP_SOURCE_FILES, MAX_SOURCE_OWNERS
 
 
-def _prepare(bundle, folder, cancelled, expected_manifest=None):
-    def checkpoint():
-        if cancelled.is_set():
-            raise CancelledError()
+def _checkpoint(cancelled):
+    if cancelled.is_set():
+        raise CancelledError()
 
-    timings = {}
-    checkpoint()
+
+def _snapshot(folder, expected_manifest, cancelled):
+    """Keep the manifest that was checked before loading, including its permissions."""
+    _checkpoint(cancelled)
+    snapshot = SourceSnapshot.read(folder)
+    _checkpoint(cancelled)
+    if snapshot.manifest != expected_manifest:
+        raise SourceError("Source manifest changed after admission")
+    return snapshot
+
+
+def _prepare_group(cancelled, bundle, sources):
+    """Copy every member before requesting code; peer imports need the full group."""
+    _checkpoint(cancelled)
     if type(bundle) is not RunnerBundle:
         raise ValueError("Expected a verified runner bundle")
+    snapshots, timings = [], {}
+    size = files = 0
     with measure(timings, "source_snapshot"):
-        snapshot = SourceSnapshot.read(folder)
-    checkpoint()
-    if expected_manifest is not None and snapshot.manifest != expected_manifest:
-        raise SourceError("Source manifest changed after admission")
+        for folder, manifest in sources:
+            snapshot = _snapshot(folder, manifest, cancelled)
+            # These counts come from the checked disk reader. Stop retaining
+            # members as soon as the group is too large, before requesting code.
+            size += snapshot.total_bytes
+            files += len(snapshot.files)
+            if size > MAX_GROUP_SOURCE_BYTES or files > MAX_GROUP_SOURCE_FILES:
+                raise SourceError("Shared source group exceeds its budget")
+            snapshots.append(snapshot)
     with measure(timings, "runner_read"):
         data = bundle.component()
-    checkpoint()
-    return PreparedSource(snapshot, data, timings)
+    _checkpoint(cancelled)
+    return PreparedSources(tuple(snapshots), data, timings)
 
 
 def _discard(future):
@@ -39,7 +58,7 @@ def _discard(future):
 
 
 class SourcePreparation:
-    """Read on a worker, then request shared code from the execution thread.
+    """Read a fixed source group, then request code on the execution thread.
 
     The session owns the executor and bounds outstanding work. Workers create no
     Store and execute no mod code. Cancellation is checked between bounded read
@@ -49,15 +68,31 @@ class SourcePreparation:
     work may still be serving another loading scope and must be allowed to drain.
     """
 
-    def __init__(self, executor, bundle, folder, *, cache=None, expected_manifest=None):
+    def __init__(self, executor, bundle, sources, *, cache=None):
+        """Prepare an ordered tuple of (folder, previously checked SourceManifest) pairs.
+
+        Every member must pass: returning a smaller group could break imports or
+        silently omit required rules. No source executes here. The returned job
+        can be polled with take() or abandoned with close() without waiting.
+        """
+        if type(sources) is not tuple or not 0 < len(sources) <= MAX_SOURCE_OWNERS:
+            raise SourceError("Expected a bounded tuple of source group members")
+        members, owners = [], set()
+        for folder, manifest in sources:
+            if type(manifest) is not SourceManifest:
+                raise SourceError("Expected an admitted source manifest")
+            if manifest.id in owners:
+                raise SourceError("Duplicate shared source owner")
+            owners.add(manifest.id)
+            members.append((Path(folder).absolute(), manifest))
+        # Bind relative paths before submission, retaining links for the reader's
+        # checks. Workers return text/bytes; take() requests code on the Store thread.
         self._thread = threading.get_ident()
         self._cancelled = threading.Event()
         self._closed = False
         self._result = None
         self._executor, self._cache = executor, cache
-        # Bind relative paths now without resolving away links checked by the reader.
-        folder = Path(folder).absolute()
-        self._future = executor.submit(_prepare, bundle, folder, self._cancelled, expected_manifest)
+        self._future = executor.submit(_prepare_group, self._cancelled, bundle, tuple(members))
 
     def _check_thread(self):
         if threading.get_ident() != self._thread:

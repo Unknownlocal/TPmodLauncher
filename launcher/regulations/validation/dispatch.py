@@ -6,7 +6,7 @@ import threading
 import time
 
 from mod_runtime._regulations.values import integer
-from ..handler_runner import HandlerRunner
+from ..shared_handler_runner import SharedHandlerRunner
 from .action import PreparedAction
 from .catalog import CombinedCatalog
 
@@ -17,14 +17,21 @@ class ValidationDispatch:
         self.catalog = CombinedCatalog(definitions)
         if type(handlers) is not dict or handlers.keys() != self.catalog.owners.keys():
             raise ValueError("Every required resident owner needs its admitted handler")
-        self.runners = {}
+        self.runners, self.groups = {}, {}
         for owner in self.catalog.owners:
             handler = handlers[owner]
-            if type(handler) is not HandlerRunner or handler.runner.manifest.id != owner:
-                raise ValueError("Foreign resident handler owner")
-            self.runners[owner] = handler.validation()
+            if (type(handler) is not SharedHandlerRunner
+                    or getattr(handler.runner, "_regulation_handlers", None) is not handler
+                    or owner not in handler.validators
+                    or any(handlers.get(member) is not handler for member in handler.validators)):
+                raise ValueError("Every shared handler owner must belong to this dispatcher")
+            group = handler.validation()
+            self.groups[owner] = group
+            self.runners[owner] = group.runners[owner]
         # Record/action IDs belong to one controller lifetime. Two dispatchers
         # must never attach independent catalogs to the same resident Store.
+        # Complete group admission makes its cached member claims cover the
+        # physical shared Store as well as each owner's logical view.
         if any(runner._claimed for runner in self.runners.values()):
             raise ValueError("Resident handler already belongs to a dispatcher")
         for runner in self.runners.values():
@@ -39,9 +46,17 @@ class ValidationDispatch:
         self._busy = True
 
     def _fail(self, owners):
-        for owner in owners:
+        # A shared Store cannot retain one healthy member after another fails.
+        # Keep the original IDs in status, and close each physical runner once.
+        affected = set(owners)
+        for owner in tuple(affected):
+            affected.update(self.groups[owner].runners)
+        runners = set()
+        for owner in affected:
             self.states[owner] = "unavailable"
-            self.runners[owner].handler.runner.close()
+            runners.add(self.runners[owner].handler.runner)
+        for runner in runners:
+            runner.close()
 
     @property
     def ready(self):
@@ -68,12 +83,17 @@ class ValidationDispatch:
                 self.states[owner] = "dirty"
                 self.runners[owner].required = self.generation
             views = self.catalog.stage(native, custom)
+            groups = dict.fromkeys(self.groups[owner] for owner in views)
+            for group in groups:
+                group.begin_publication(tuple(owner for owner in views if self.groups[owner] is group))
             # Every affected Store is sealed before any is committed. Partial
             # commit failure closes all affected owners; no old view authorizes it.
             for owner, view in views.items():
-                self.runners[owner].stage(view, self.epoch, self.generation, deadline)
+                self.groups[owner].stage(owner, view, self.epoch, self.generation, deadline)
             for owner in views:
                 self.runners[owner].commit(self.epoch, self.generation, deadline)
+            for group in groups:
+                group.finish_publication(deadline)
             if time.monotonic() >= deadline:
                 raise RuntimeError("Late resident publication")
             self.catalog.commit()
@@ -93,7 +113,7 @@ class ValidationDispatch:
 
     def evaluate(self, contexts, selections, calls, *, deadline=None):
         self._enter()
-        owners = set()
+        owners, pending = set(), set()
         try:
             started = time.monotonic()
             if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
@@ -105,24 +125,45 @@ class ValidationDispatch:
             if any(self.states[owner] != "active" or self.runners[owner].handler.runner.closed for owner in owners):
                 raise RuntimeError("A required resident owner is unavailable")
             frame = PreparedAction(contexts, selections)
+            references = {self.groups[owner]: {} for owner in calls}
             packets = {owner: frame.for_owner(self.catalog.views[owner], calls[owner],
-                                             f"{self.catalog.views[owner].revision}:{self.epoch}:{self.runners[owner].generation}")
+                                             f"{self.catalog.views[owner].revision}:{self.epoch}:{self.runners[owner].generation}",
+                                             shared=references[self.groups[owner]])
                        for owner in self.runners if owner in calls}
+            shared = {group: frame.for_group(rows) for group, rows in references.items()}
+            remaining = {group: sum(self.groups[owner] is group for owner in packets) for group in shared}
             frame.seal()
             self.action = integer(self.action + 1, 64, positive=True)
             # Prepare every owner's envelope before any author function runs.
             # One original deadline covers preparation and every participating Store.
-            # Clear the outer failure cohort after preflight. Execution below
-            # closes its particular failed owner instead of every requested one.
+            # Clear the outer failure cohort after preflight. During execution,
+            # only the failed Store and any still-open shared actions must close.
             owners, results = set(), {}
+            # A group's members can straddle another group's owners in ID order.
+            # Keep its table open from the first to the last requested member.
             for owner, packet in packets.items():
+                group = self.groups[owner]
                 try:
+                    if group not in pending:
+                        pending.add(group)
+                        group.begin_action(shared[group], self.action, deadline)
                     results[owner] = self.runners[owner].evaluate(packet, self.action, deadline)
+                    remaining[group] -= 1
+                    if remaining[group] == 0:
+                        group.finish_action(self.action, deadline)
+                        pending.remove(group)
                 except BaseException:
-                    self._fail((owner,))
+                    owners.add(owner)
                     raise
+            if time.monotonic() >= deadline:
+                owners.update(packets)
+                raise RuntimeError("Late resident regulation action")
             return results
         except BaseException:
+            # Global owner order can interleave several physical Stores. A group
+            # left with shared inputs cannot be reused after an interrupted batch.
+            for group in pending:
+                owners.update(group.runners)
             self._fail(owners)
             raise
         finally:
@@ -140,7 +181,8 @@ class ValidationDispatch:
                 if self.states[owner] == "unavailable" or runner.handler.runner.closed:
                     raise RuntimeError("Reset cannot revive a failed resident owner")
                 self.states[owner] = "dirty"
-                runner.reset(epoch, deadline)
+            for group in dict.fromkeys(self.groups.values()):
+                group.reset(epoch, deadline)
             self.catalog.reset()
             # Releasing the combined host graph also consumes the reset deadline,
             # even though every guest has already cleared its own view.

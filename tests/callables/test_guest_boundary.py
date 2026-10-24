@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Real sandbox isolation for the private callable package and native host."""
 
-from mod_runtime.runtime import PythonRunner
+from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 MANIFEST = SourceManifest.parse(b'''schema = 2
@@ -32,6 +32,6 @@ class WitWorld(wit_world.WitWorld):
         wit_world.report("Private native hooks absent")
 '''
     messages = []
-    with PythonRunner(runner_bundle, snapshot(code), {"report": messages.append}) as runner:
-        runner.activate()
+    with SharedPythonRunner(runner_bundle, (snapshot(code),), {MANIFEST.id: {"report": messages.append}}) as runner:
+        runner.members[MANIFEST.id].activate()
     assert messages == ["Private native hooks absent"]

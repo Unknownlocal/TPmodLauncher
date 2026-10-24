@@ -14,6 +14,7 @@ from ..personnel.caller_targets import personnel_caller_targets, personnel_mail_
 from ..personnel.callers import PersonnelCallers
 from ..personnel.feedback import PersonnelFeedback
 from ..drivers.planner import DriverContractPlanner
+from ..drivers.query_inputs import discard_query_inputs
 from ..personnel.preparation import publish_preparation
 from ..personnel.preparation_methods import check_preparation
 from ..drivers.targets import driver_target
@@ -164,6 +165,7 @@ class PersonnelAdapter(RegulationGuards):
             # return values and feedback should extract the display message.
             caller["refusal"] = outcome
             caller["normalizations"].clear()
+            discard_query_inputs(caller)
         screen = getattr(self._local, "personnel_screen", None)
         # The optional UI owner records the reason; policy decisions and native
         # return values remain the responsibility of this shared signing guard.
@@ -190,6 +192,7 @@ class PersonnelAdapter(RegulationGuards):
             # Signing can change career data beyond the proposal, even if it
             # ultimately returns False or raises. Earlier refusals must expire.
             caller["validation"].clear()
+            discard_query_inputs(caller)
             # Publish native getter initialization at the same admission boundary
             # as signing; denial discards it and native failure still retains it.
             publish_preparation(caller)
@@ -203,3 +206,4 @@ class PersonnelAdapter(RegulationGuards):
                 # Nested native calls may have added refusals during execution.
                 # Discard them after the signer's last possible state changes.
                 caller["validation"].clear()
+                discard_query_inputs(caller)

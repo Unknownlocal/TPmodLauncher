@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.handler_runner import HandlerRunner
+from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.regulations.publication import PolicyPublication
 from hook_manager.game_adapters.regulations.protocol import regulation_policy_value
 from launcher.regulations.validation import catalog as catalog_module
@@ -32,7 +32,7 @@ def definitions(sources, *, sections=None, fallback=()):
 
 def dispatch(mods):
     model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
-    handlers = {owner: HandlerRunner.bind(mods[owner].runner, rows) for owner, rows in model.validators.items()}
+    handlers = {owner: SharedHandlerRunner.bind(mods[owner].runner, {owner: rows}) for owner, rows in model.validators.items()}
     return ValidationDispatch(model, handlers)
 
 
@@ -151,7 +151,8 @@ def validate(c,r):
     monkeypatch.setattr(action_module, "encode", no_payload_encode)
     traffic.clear()
     session.publish(native={"native": None})
-    assert len(traffic) == 6 and sum(name == "begin-regulation-policy" for _, name in traffic) == 2
+    assert sum(name == "begin-regulation-policy" for _, name in traffic) == 2
+    assert not any("record" in name for _, name in traffic)
     traffic.clear()
     ctx = context()
     ctx["proposal"] = {"expect": 35, "empty": []}
@@ -210,7 +211,7 @@ def test_control_replacement_counts_retirement_and_reset_preserves_bindings(make
 def test_partial_multi_owner_commit_cannot_publish_or_revive_old_policy(make_mod, monkeypatch):
     mods = {owner: make_mod("def validate(c,r): return {'decision':'allow'}\n", owner=owner) for owner in ("a.rules", "b.rules")}
     model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
-    handlers = {owner: HandlerRunner.bind(mods[owner].runner, rows) for owner, rows in model.validators.items()}
+    handlers = {owner: SharedHandlerRunner.bind(mods[owner].runner, {owner: rows}) for owner, rows in model.validators.items()}
     with pytest.raises(ValueError, match="integer"):
         ValidationDispatch(model, handlers, epoch=0)
     session = ValidationDispatch(model, dict(reversed(list(handlers.items()))))

@@ -7,25 +7,28 @@ memory. Copying happens outside each handler's allowance; mods can keep or chang
 their arguments without affecting later calls or cached rules.
 """
 
-from .policy import _integer, context_fields, fields
-from .values import bounded, clone, integer, measure, object_measure, scalar
+from .policy import _integer, fields
+from .values import bounded, clone, integer, object_measure, scalar
 
 
 class RegulationAction:
-    def __init__(self, packet, catalog, revision):
+    def __init__(self, packet, catalog, revision, *, contexts):
         fields(packet, ("owner", "revision", "contexts", "selections", "calls"))
         if (packet["owner"], packet["revision"]) != catalog.identity:
             raise ValueError("Foreign resident action owner/revision")
         for key in ("contexts", "selections", "calls"):
             if type(packet[key]) is not list or not 1 <= len(packet[key]) <= 32:
                 raise ValueError("Invalid resident action dimensions")
-        self.contexts = packet["contexts"]
-        context_metrics = []
-        # Measure each supplied context once, even when several calls reuse it.
-        # The expanded context-plus-rule bound is checked below after resolution.
-        for context in self.contexts:
-            context_fields(context)
-            context_metrics.append(bounded(measure(context)))
+        self.contexts, context_metrics, metadata = [], [], []
+        # The group has already checked and measured the proposals. Resolve each
+        # index here, then check the full context-plus-rule size below.
+        for context in packet["contexts"]:
+            value, metric, scope, season = contexts.get(context)
+            self.contexts.append(value)
+            context_metrics.append(metric)
+            metadata.append((scope, season))
+        if len(set(packet["contexts"])) != len(self.contexts):
+            raise ValueError("Repeated shared regulation context reference")
         self.rules, rule_metrics = [], []
         for selection in packet["selections"]:
             fields(selection, ("rule", "evaluation_season", "selected", "current", "upcoming"))
@@ -79,8 +82,8 @@ class RegulationAction:
                     or context >= len(self.contexts) or selection >= len(self.rules)):
                 raise ValueError("Unknown or out-of-order resident call")
             function, scope, rule = catalog.bindings[binding]
-            if (self.contexts[context]["scope"] != scope or self.rules[selection]["key"] != rule
-                    or self.contexts[context]["effective"]["season"] != self.rules[selection]["evaluation_season"]):
+            if (metadata[context][0] != scope or self.rules[selection]["key"] != rule
+                    or metadata[context][1] != self.rules[selection]["evaluation_season"]):
                 raise ValueError("Foreign resident invocation")
             # References save wire work, but all referenced payloads still count
             # toward the ordinary logical invocation limit.

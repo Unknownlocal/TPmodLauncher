@@ -10,7 +10,7 @@ import pytest
 
 from launcher.pack_mods import PackMods
 from launcher.regulations import RegulationDefinitions
-from launcher.source_mod import SourceMod
+from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 SCOPES = {"personnel.contract"}
@@ -260,10 +260,10 @@ def test_pack_preparation_uses_only_live_admitted_source_owners_once(tmp_path):
     (tmp_path / "regulations.json").write_bytes(json.dumps(data).encode())
     scope = PackMods(tmp_path, lambda _: None)
     scope.finished, scope._pack_root = True, tmp_path
-    active = SourceMod.__new__(SourceMod)
+    active = SharedSourceMod.__new__(SharedSourceMod)
     active.snapshot, active.manifest = source(), source().manifest
     active._active, active.sandbox = True, SimpleNamespace(closed=False)
-    closed = SourceMod.__new__(SourceMod)
+    closed = SharedSourceMod.__new__(SharedSourceMod)
     closed.snapshot, closed.manifest = source("closed.mod"), source("closed.mod").manifest
     closed._active, closed.sandbox = True, SimpleNamespace(closed=True)
     scope.mods = {"example.rules": active, "closed.mod": closed,

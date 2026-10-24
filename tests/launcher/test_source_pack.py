@@ -23,7 +23,7 @@ from mod_runtime import preparation
 from mod_runtime.source import SourceSnapshot
 
 
-# Cold compilation and loading several private interpreters need headroom on
+# Cold compilation and source loading need headroom on
 # shared CI hosts; these behaviour checks are not a startup benchmark.
 SOURCE_PACK_LOAD_TIMEOUT = 120
 
@@ -56,25 +56,45 @@ def records(messages, event):
 
 def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source_mod, code_mod, runner_bundle):
     game, folder, record = pack
-    source_mod(folder, "z-folder", mod_id="owned.a")
+    code = '''import json
+import wit_world
+DATA = wit_world.import_mod('owned.c', 'shared')
+class WitWorld:
+ def activate(self):
+  DATA.values.append(OWNER)
+  wit_world.report('source ready')
+ def on_event(self, name, payload):
+  return json.dumps(DATA.values) if name == 'peer' else payload
+'''
+    source_mod(folder, "z-folder", mod_id="owned.a", code="OWNER='owned.a'\n" + code)
     code_mod(folder, "a-folder", mod_id="owned.b")
+    peer = source_mod(folder, "peer-folder", mod_id="owned.c", code="OWNER='owned.c'\n" + code.replace(
+        "DATA = wit_world.import_mod('owned.c', 'shared')", "import shared as DATA"))
+    (peer / "src/shared.py").write_text("values = []\n")
     messages, progress = [], []
     with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
                           background=True, set_loading=progress.append)) as scope:
         scope.load(record)
         finish(scope)
-        assert list(scope.mods) == ["owned.a", "owned.b"]
+        assert list(scope.mods) == ["owned.a", "owned.b", "owned.c"]
+        assert scope.mods["owned.a"].sandbox is scope.mods["owned.c"].sandbox
+        assert scope.mods["owned.a"].sandbox is not scope.mods["owned.b"].sandbox
+        assert scope.mods["owned.a"].snapshot is scope.mods["owned.c"].snapshot is None
+        assert scope.mods["owned.a"].event("peer", None) == ["owned.a", "owned.c"]
+        assert scope.mods["owned.c"].event("peer", None) == ["owned.a", "owned.c"]
         # Existing API mods cannot claim regulation ownership; even a missing
         # regulations.json stays untouched when no eligible owner is enabled.
         assert scope.prepare_regulations(scopes=set()) is None
         assert scope.mods["owned.a"].event("owned.event", {"ok": True}) == {"ok": True}
         assert scope.mods["owned.a"].sandbox._thread == threading.get_ident()
         assert scope.mods["owned.b"].event("owned.event", None) == {}
-        assert progress[-1] == dict(state="complete", loaded=2, failed=0, total=2)
-        assert records(messages, "REPORT") == [dict(id="owned.a", message="source ready")]
+        assert progress[-1] == dict(state="complete", loaded=3, failed=0, total=3)
+        assert [row["id"] for row in records(messages, "ACTIVE")] == ["owned.a", "owned.b", "owned.c"]
+        assert records(messages, "REPORT") == [dict(id=owner, message="source ready") for owner in ("owned.a", "owned.c")]
+        assert len(records(messages, "SOURCE GROUP TIMING")) == 1
         instances = list(scope.mods.values())
     assert all(mod.sandbox.closed for mod in instances)
-    assert [item["id"] for item in records(messages, "CLOSED")] == ["owned.b", "owned.a"]
+    assert [item["id"] for item in records(messages, "CLOSED")] == ["owned.c", "owned.b", "owned.a"]
 
 
 def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod, code_mod, runner_bundle, monkeypatch):
@@ -140,7 +160,7 @@ def test_closing_session_keeps_a_queued_compilation_needed_by_another_session(pa
 
 
 @pytest.mark.parametrize("failure", ["syntax", "missing"])
-def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source_mod, runner_bundle, failure):
+def test_bad_source_rejects_fixed_group_and_preserves_prebuilt_neighbor(pack, source_mod, code_mod, runner_bundle, failure):
     game, folder, record = pack
     bad = source_mod(folder, "a-bad", mod_id="owned.bad")
     if failure == "syntax":
@@ -148,14 +168,17 @@ def test_bad_sources_fail_individually_without_author_wasm_fallback(pack, source
     else:
         (bad / "src/mod.py").unlink()
     source_mod(folder, "b-good", mod_id="owned.good")
+    code_mod(folder, "c-wasm", mod_id="owned.wasm")
     messages, progress = [], []
     with closing(PackMods(game, messages.append, runner_bundle=runner_bundle, set_loading=progress.append)) as scope:
         scope.load(record)
         finish(scope)
-        assert list(scope.mods) == ["owned.good"]
-        assert progress[-1] == dict(state="complete", loaded=1, failed=1, total=2)
-        assert len(records(messages, "REJECTED")) == 1
-        assert records(messages, "REPORT") == [dict(id="owned.good", message="source ready")]
+        assert list(scope.mods) == ["owned.wasm"]
+        assert progress[-1] == dict(state="complete", loaded=1, failed=2, total=3)
+        assert len(records(messages, "REJECTED")) == 2
+        assert records(messages, "SOURCE GROUP FAILED")[0]["owners"] == ["owned.bad", "owned.good"]
+        assert not records(messages, "REPORT")
+        assert scope.mods["owned.wasm"].event("probe", None) == {}
 
 
 def test_manifest_changes_after_admission_are_rejected_before_compile(pack, source_mod, runner_bundle, monkeypatch):
@@ -180,7 +203,7 @@ def test_manifest_changes_after_admission_are_rejected_before_compile(pack, sour
         rejected = records(messages, "REJECTED")[0]
         assert rejected["id"] == "owned.source" and rejected["folder"] == mod.name
         assert "changed after admission" in rejected["detail"]
-        assert records(messages, "TIMING")[0]["phase_seconds"]["source_prepare"] >= 0
+        assert records(messages, "SOURCE GROUP TIMING")[0]["phase_seconds"]["source_prepare"] >= 0
 
 
 @pytest.mark.parametrize("activation_failure", [False, True])
@@ -208,7 +231,7 @@ class WitWorld(wit_world.WitWorld):
         scope.load(record)
         finish(scope)
         if activation_failure:
-            assert list(scope.mods) == ["owned.other"]
+            assert not scope.mods and scope.failed == 2
             assert scope.settings.records == []
             assert not (root / "settings.json").exists()
             return
@@ -221,10 +244,10 @@ class WitWorld(wit_world.WitWorld):
         assert mod.event("save", value) == value
         assert json.loads((root / "settings.json").read_text()) == value
         assert not (folder / "owned.other/settings.json").exists()
-        # A malformed event fails the owning sandbox, releases its rows, and preserves its last save.
+        # A malformed event closes all source peers, releases rows and keeps the last save.
         with pytest.raises(SandboxError, match="registered field IDs"):
             mod.event("save", {"schema": 1, "values": {"colour_11": "#FFFFFF"}})
-        assert list(scope.mods) == ["owned.other"]
+        assert not scope.mods and scope.failed == 2
         assert scope.settings.records == []
         assert json.loads((root / "settings.json").read_text()) == value
     assert scope.settings.records == []
@@ -306,7 +329,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         assert len(notifications) == 2
         with pytest.raises(SandboxError):
             scope.mods["example.theme"].event("invalid/event", None)
-        assert list(scope.mods) == ["owned.other"]
+        assert not scope.mods
         assert adapter.records == []
         assert scope.themes.records == palettes[-1] == []
     assert native_settings.OptionsScreen.draw is native_originals["draw"]
@@ -320,7 +343,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
 
 
 @pytest.mark.parametrize("failure", ["themes", "settings"])
-def test_deferred_ui_failure_preserves_other_operation_owners(pack, source_mod, runner_bundle, failure):
+def test_deferred_ui_failure_revokes_all_shared_operation_owners(pack, source_mod, runner_bundle, failure):
     game, folder, startup = pack
     palette = {"label": "Palette Only", "colours": {
         role: "#00000080" if role == "OVERLAY" else "#112233" for role in sorted(THEME_ROLES)
@@ -361,12 +384,9 @@ class WitWorld(wit_world.WitWorld):
         handler({"state": "failed", "generation": generation - 1})
         assert len(scope.mods) == 2
         handler({"state": "failed", "generation": generation})
-        survivor = "owned.settings" if failure == "themes" else "owned.palette"
-        assert list(scope.mods) == [survivor]
-        surviving_area = "settings" if failure == "themes" else "themes"
-        assert [row["owner"] for row in getattr(scope, surviving_area).records] == [survivor]
-        assert scope.mods[survivor].event("probe", {"ok": True}) == {"ok": True}
-        assert getattr(scope, failure).records == registries[failure][-1] == []
+        assert not scope.mods and scope.failed == 2
+        assert scope.settings.records == scope.themes.records == []
+        assert registries["settings"][-1] == registries["themes"][-1] == []
 
 
 def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):
@@ -388,9 +408,33 @@ def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bun
         menu_mod = scope.mods["owned.menu"]
         with pytest.raises(SandboxError):
             menu_mod.event("bad/event", None)
-        assert "Mod Launcher" not in hub.MENU_ITEMS and list(scope.mods) == ["owned.diagnostics"]
-        assert scope.mods["owned.diagnostics"].event("owned.event", None) is None
+        assert "Mod Launcher" not in hub.MENU_ITEMS and not scope.mods
     assert hub.MENU_ITEMS == ["Career", "Load", "Exit"]
+
+
+def test_import_time_ui_publishes_all_members_once_and_rolls_back_rejected_group(pack, source_mod, code_mod, runner_bundle):
+    game, folder, record = pack
+    for owner in ("owned.a", "owned.c"):
+        source_mod(folder, owner, capabilities=("main-menu",), code=f'''import wit_world
+wit_world.add_menu_button('open', '{owner}', 'Message')
+class WitWorld:
+ def activate(self): pass
+ def on_event(self,n,p): return p
+''')
+    code_mod(folder, "owned.b")
+    publications, progress = [], []
+    def publish(rows):
+        publications.append(rows)
+        return {"menu": {"generation": len(publications), "state": "failed" if rows else "idle",
+                         "detail": "Owned native rejection"}}
+    with closing(PackMods(game, lambda _: None, runner_bundle=runner_bundle,
+                          set_menu=publish, set_loading=progress.append)) as scope:
+        scope.load(record)
+        finish(scope)
+        assert [[row["owner"] for row in rows] for rows in publications] == [["owned.a", "owned.c"], []]
+        assert list(scope.mods) == ["owned.b"] and scope.failed == 2
+        assert scope._source_runner.closed and scope.menu.buttons == []
+        assert progress[-1] == dict(state="complete", loaded=1, failed=2, total=3)
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -415,5 +459,6 @@ def test_deferred_native_menu_keeps_readiness_blocked_until_result(pack, source_
         monkeypatch.setitem(sys.modules, hub.__name__, hub)
         scope.menu_status(adapter.poll())
         assert not adapter.status()["loading"]["blocked"]
-        assert list(scope.mods) == (["owned.diagnostics"] if fail else ["owned.diagnostics", "owned.menu"])
-        assert scope.mods["owned.diagnostics"].event("owned.event", {"ok": True}) == {"ok": True}
+        assert list(scope.mods) == ([] if fail else ["owned.diagnostics", "owned.menu"])
+        if not fail:
+            assert scope.mods["owned.diagnostics"].event("owned.event", {"ok": True}) == {"ok": True}

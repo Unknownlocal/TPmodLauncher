@@ -20,7 +20,7 @@ from .bundle import (
     ABI_VERSION, COMPONENTIZE_VERSION, EXPORTS, FILES, MANIFEST, NOTICE_FILES, SOURCES,
     RunnerBundle, BundleError, _checked, _read, MAX_COMPONENT_BYTES,
 )
-from .contract import HOST_OPERATIONS
+from .contract import RUNNER_HOST_OPERATIONS
 
 
 def check_interface(data):
@@ -40,7 +40,7 @@ def check_interface(data):
         config.wasm_component_model = True
         config.cranelift_opt_level = "none"
         with Engine(config) as engine, Component(engine, data) as component, component.type as interface:
-            expected = {name: (spec.parameters, spec.result) for name, spec in HOST_OPERATIONS.items()}
+            expected = {name: (spec.parameters, spec.result) for name, spec in RUNNER_HOST_OPERATIONS.items()}
             imports = {name: signature(item.ty) for name, item in interface.imports(engine).items()}
             public = interface.exports(engine)
             # The pinned toolchain adds one private binding-metadata instance.
