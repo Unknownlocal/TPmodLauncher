@@ -7,10 +7,12 @@ from .cancellation import PersonnelCancellation
 from .market_preparation import MarketPreparation
 from .preparation import PRESTIGE_FIELDS, preparation_draft, publish_preparation
 from ..drivers.queries import DriverQueries
+from ..drivers.query_inputs import DriverQueryInputs, discard_query_inputs
 
 
 # These native entry points return None, including when their work is stopped.
 _MARKET_CALLERS = {"due", "ai_staff", "ai_drivers"}
+_GETTERS = {"active", "count", "status", "entries", "next_entries", "personalities", "career", "prestige"}
 
 
 class PersonnelCallers:
@@ -23,10 +25,15 @@ class PersonnelCallers:
             guards = self.guards
             if guards.closed or not guards.owners:
                 return original(*args, **kwargs)
+            previous = getattr(guards._local, "personnel_caller", None)
+            # These reads need no argument rewriting outside preparation or once
+            # signing is admitted. Let native code also report argument errors;
+            # thousands of nested getters need not bind the same arguments twice.
+            if role in _GETTERS and (previous is None or getattr(guards._local, "committing_personnel", False)):
+                return original(*args, **kwargs)
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
             values = bound.arguments
-            previous = getattr(guards._local, "personnel_caller", None)
             market = previous["market"] if previous else None
             if role == "mail":
                 # Signing uses live managers and can send through their real
@@ -62,9 +69,7 @@ class PersonnelCallers:
                 if role in ("finish", "stage"):
                     market.checkpoint(row, candidate_scope=True)
                 return result
-            if role in ("active", "count", "status", "entries", "next_entries", "personalities", "career", "prestige"):
-                if previous is None or getattr(guards._local, "committing_personnel", False):
-                    return original(*args, **kwargs)
+            if role in _GETTERS:
                 if role == "prestige":
                     # Staff and driver prechecks use this getter. Its lazy team
                     # initialization must stay private until either signing allows.
@@ -85,6 +90,9 @@ class PersonnelCallers:
                      # Consumer-owned validation bookkeeping. Nested offers share
                      # it, and removing the outer frame prevents later reuse.
                      "validation": previous["validation"] if previous else {},
+                     # Nested confirmation/offer checks reuse private query
+                     # inputs, never an allowance or a week-dependent answer.
+                     "query_inputs": previous["query_inputs"] if previous else DriverQueryInputs(),
                      # Driver failure handling consumes this single attempt;
                      # it is not a cache of decisions or a retry-suppression map.
                      "offer_attempt": None,
@@ -129,6 +137,9 @@ class PersonnelCallers:
                         # market; nested offer return is not market completion.
                         frame["market"].finish(frame)
                 finally:
+                    # A nested offer can fail without entering signing. Forget
+                    # its inputs before an outer caller tries another candidate.
+                    discard_query_inputs(frame)
                     if previous is not None:
                         # The outer AI must associate failure with the offer that
                         # just returned, including a native precheck/no refusal.
