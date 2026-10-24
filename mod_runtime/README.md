@@ -25,6 +25,8 @@ mod authors supply their Python source and manifest.
 permissions. `launcher/runner_host.py` supplies a separate operation table for
 each mod. Ungranted operations reject calls before a provider runs. The sandbox
 checks signatures and enforces memory, execution and host-call limits.
+Shared runners use `launcher/shared_runner_host.py` to select an admitted mod's
+table by ID; the private source calls add that ID to the same five operations.
 
 ## Source admission
 
@@ -97,10 +99,42 @@ source at 8 MiB, 4096 files and 128 owners. Transfer chunks remain at most 4096
 bytes; this is not a file-size limit. The Store's memory and execution limits
 still apply after admission.
 
+## Shared runtime ownership and host calls
+
+`shared_runtime.py` owns one `SharedPythonRunner`, including its Store, source
+loading and group cleanup. `source_handle.py` supplies a `SourceHandle` for each
+member, carrying its manifest and access to activation and string events. A
+handle cannot close the interpreter independently. Closing the group, or a guest
+failure, makes every member unavailable and runs the caller's group cleanup once.
+Creation, calls and closure stay on the Store's creating thread.
+
+Each member imports a `wit_world` module whose host methods are bound to its ID.
+`author_world.py` builds those modules and `source_imports.py` returns the right
+one for ordinary `import wit_world` and `from wit_world import ...` statements.
+A peer's imported function keeps its original module's host identity, including
+when another entry calls it later. No mutable global current-mod value is needed.
+Fetching the global module directly through `sys.modules` or
+`importlib.import_module("wit_world")` bypasses this selection and cannot make
+ownerless host calls in a shared runner.
+
+`launcher/shared_runner_host.py` checks that every call names an admitted group
+member and selects that member's fixed provider table. Diagnostics, menus,
+settings and themes retain their existing author arguments; their private Wasm
+imports carry the ID. Ordinary permission checks still apply to that table.
+Mods share Python objects and can borrow one another's API modules, so these
+tables organise routing rather than isolate mods from their peers. Calls cannot
+select providers outside the admitted group or arbitrary launcher functions.
+
+Optional absolute request deadlines bound the existing execution allowance.
+Requests already expired before entry leave the group usable. A guest or host
+operation that exceeds its allowance closes the group; a late host return cannot
+be accepted as success. The Store's existing fuel, memory and host-call limits
+remain in force.
+
 The current `PackMods` path continues to use individual `PythonRunner` instances.
-The shared loading adapter is separate from routing host calls to the correct
-mod and from resident regulation dispatch. Public source admission still accepts
-API 0.2.0/0.3.0; the extended runner interface remains private.
+Shared runtime ownership and source loading are independent of resident
+regulation dispatch. Public source admission still accepts API 0.2.0/0.3.0;
+the extended runner interface remains private.
 
 ## Resident regulation validation
 

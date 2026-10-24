@@ -2,6 +2,7 @@
 """Install the small wit_world API used by Python source mods."""
 
 import sys
+from functools import partial
 from types import ModuleType
 
 import runner_bindings as _bindings
@@ -15,6 +16,16 @@ class AuthorWorld:
 
     def on_event(self, name, payload):
         raise NotImplementedError
+
+
+def source_author_api(owner, import_mod):
+    """Bind host calls to the module's mod, including when peers call its functions."""
+    api = ModuleType("wit_world")
+    api.WitWorld = AuthorWorld
+    api.import_mod = import_mod
+    for name in ("report", "add_menu_button", "register_settings", "save_settings", "register_theme"):
+        setattr(api, name, partial(getattr(_bindings, "source_" + name), owner))
+    return api
 
 
 def install_author_api():

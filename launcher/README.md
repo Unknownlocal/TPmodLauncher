@@ -65,19 +65,34 @@ event contract to the Python runner. `runner_host.py` binds the complete typed i
 to per-mod providers or permission-denial callbacks.
 
 `compiled_code.py` holds the shared Engine and compiled component after adoption.
-Each mod keeps its own Store, permissions, memory and limits. A whole execution
-phase belongs to one mod at a time, so its timeout cannot interrupt another mod
-using the shared Engine.
+The current `PackMods` path gives each mod its own Store, permissions, memory and
+limits. A whole execution phase belongs to one Store at a time, so its timeout
+cannot interrupt another mod using the shared Engine.
 
 `deadline_watchdog.py` reuses one waiting thread per shared Engine. It interrupts
 overdue guest execution and clears each finished call's deadline before another
 mod can run. The thread stops before that Engine is freed.
 
-`sandbox.py` owns each mod's linker, Store, reference to shared code and cleanup scope. It
+`sandbox.py` owns a runner's linker, Store, shared-code reference and cleanup. It
 validates imports and exports, serialises guest entry on the owning thread, and
 enforces memory, fuel, deadline and host-call limits. Source initialisation uses
 an aggregate loading phase; activation and events use ordinary call budgets.
-A failure closes the affected mod and revokes its owned registrations.
+A failure closes the affected Store and runs its cleanup.
+
+`shared_runner_host.py` also supplies the host-call routing for
+`mod_runtime.shared_runtime.SharedPythonRunner`. One shared Store serves several
+logical source handles. Each source module imports a `wit_world` API bound to
+its admitted mod ID; the host selects that ID's provider table for diagnostics,
+menus, settings and themes. Other source IDs and ownerless calls are rejected.
+These tables retain ordinary permission checks, while mods sharing Python can
+borrow one another's API modules. They provide routing, not mutual isolation.
+Only the group owns closure and cleanup; a member handle cannot free memory
+that its peers still use. The current pack path does not construct this group.
+
+Trusted calls may supply an absolute deadline to `Sandbox.phase`. It cannot
+extend the phase's normal allowance. Expired requests are rejected before guest
+entry; work that overruns after entry closes its Store. No background job or
+parallel source execution is involved.
 
 The loader publishes progress and menu declarations to the native adapter after
 activation. Startup readiness waits for both preparation outcomes and native

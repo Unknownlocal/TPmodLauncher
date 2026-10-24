@@ -293,7 +293,7 @@ class Sandbox:
         return self._closed
 
     @contextmanager
-    def phase(self, *, fuel, seconds):
+    def phase(self, *, fuel, seconds, deadline=None):
         """Share one trusted fuel/deadline/host-call allowance across several calls.
 
         Host work between calls counts against the same deadline. Normal calls
@@ -301,13 +301,24 @@ class Sandbox:
         One watchdog covers the entire phase, including host work between calls.
         Trusted calls may refresh fuel/host-call budgets without moving this
         deadline. Guest input cannot select allowances or enter this context.
+        An optional absolute deadline can only shorten the phase. Work already
+        expired before entry is rejected without claiming or closing the Store.
         """
         Limits(fuel=fuel, seconds=seconds)  # Reuse the trusted-budget validation.
         self._check_entry()
         if self._phase_deadline is not None:
             raise SandboxError("Nested sandbox phases are unsupported")
+        started = time.monotonic()
+        if deadline is not None:
+            if type(deadline) not in (int, float) or not math.isfinite(deadline):
+                raise ValueError("Expected a finite absolute sandbox deadline")
+            if deadline <= started:
+                # A job which expires before entry has not damaged the runner.
+                raise SandboxError("Sandbox request deadline expired before entry")
         self._claim_code()
-        self._phase_deadline = time.monotonic() + seconds
+        # Bound the existing request; computing another relative allowance must
+        # not move its original deadline later during host-side preparation.
+        self._phase_deadline = min(started + seconds, deadline) if deadline is not None else started + seconds
         self._calls = 0
         try:
             self._store.set_fuel(fuel)

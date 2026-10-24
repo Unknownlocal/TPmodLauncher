@@ -13,6 +13,7 @@ from _source_policy import (
 from .source_imports import SourceImports
 from .source_loader import SourceLoader
 from .memory_importer import MemoryImporter
+from .author_world import source_author_api
 
 
 class SourceGroup:
@@ -76,7 +77,8 @@ class SourceGroup:
             namespace = source_owner(owner)
             self._package(namespace)
             loader.seal(namespace)
-            groups[namespace] = (loader.sources, SourceImports(namespace, loader.sources))
+            api = source_author_api(owner, self.import_module)
+            groups[namespace] = (loader.sources, SourceImports(namespace, loader.sources, api))
         # One finder selects a member by its qualified prefix in a dictionary.
         # Importing a module must not scan every other mod's source finder.
         sys.meta_path.insert(0, MemoryImporter({}, groups))

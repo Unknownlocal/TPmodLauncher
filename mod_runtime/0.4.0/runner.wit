@@ -9,6 +9,14 @@ world code-runner {
     import save-settings: func(values: string) -> string;
     import register-theme: func(definition: string);
 
+    // The trusted guest supplies each source module's admitted identity.
+    // These remain the same five approved operations, with no arbitrary calls.
+    import source-report: func(owner: string, message: string);
+    import source-add-menu-button: func(owner: string, id: string, label: string, message: string);
+    import source-register-settings: func(owner: string, definition: string) -> string;
+    import source-save-settings: func(owner: string, values: string) -> string;
+    import source-register-theme: func(owner: string, definition: string);
+
     export put-source: func(path: string, chunk: string);
     export load-source: func(entry: string) -> string;
     export activate: func();

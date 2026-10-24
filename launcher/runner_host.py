@@ -3,12 +3,16 @@
 
 from functools import partial
 
-from mod_runtime.contract import HOST_OPERATIONS
+from mod_runtime.contract import HOST_OPERATIONS, SOURCE_HOST_OPERATIONS
 from launcher.sandbox import Operation, SandboxError
 
 
 def _deny(name, capability, *arguments):
     raise SandboxError(f"Capability {capability!r} is required for {name!r}")
+
+
+def _unowned(name, *arguments):
+    raise SandboxError(f"An admitted source owner is required for {name!r}")
 
 
 def bind_operations(capabilities, providers):
@@ -37,4 +41,8 @@ def bind_operations(capabilities, providers):
         else:
             callback = partial(_deny, name, spec.capability)
         operations[name] = Operation(spec.parameters, spec.result, callback)
+    # An individual runner has no shared owner table. Never interpret a caller-
+    # supplied ID as authority to reach another mod's providers through this path.
+    for name, spec in SOURCE_HOST_OPERATIONS.items():
+        operations[name] = Operation(spec.parameters, spec.result, partial(_unowned, name))
     return operations
