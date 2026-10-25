@@ -8,6 +8,7 @@ import threading
 
 from ...callables import CallableTarget
 from ...manager import HookError, Manager
+from .native_scripts import NativeScripts
 
 
 class NativeCategories(Manager):
@@ -23,9 +24,12 @@ class NativeCategories(Manager):
         # Bundle cleanup takes this lock and waits for active loads. The native
         # loader itself runs outside the lock, so workers can do normal file I/O.
         self._lock, self._active = threading.RLock(), 0
-        if (type(request) is not dict or set(request) != {"pack", "categories"}
+        self.scripts = None
+        if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes"}
+                or not {"pack", "categories"} <= request.keys()
                 or type(request["pack"]) is not str or not Path(request["pack"]).is_absolute()
-                or type(request["categories"]) is not list or not 1 <= len(request["categories"]) <= 128):
+                or type(request["categories"]) is not list or not 1 <= len(request["categories"]) <= 128
+                or type(request.get("scripted_changes", [])) is not list):
             raise HookError("Expected prepared categories and their absolute pack folder")
         self.pack = Path(request["pack"]).resolve(strict=True)
         self.categories = {row["key"]: deepcopy(row) for row in request["categories"]}
@@ -40,6 +44,10 @@ class NativeCategories(Manager):
                 raise HookError("Category loading needs the loaded native regulation manager")
             self.approve(target)
             self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "after"}])
+            if request.get("scripted_changes"):
+                # Scripts can target only owned categories, so their loading
+                # helper shares this pack's lifetime and cleanup reservation.
+                self.scripts = NativeScripts(self, request["scripted_changes"])
         except BaseException:
             self.stop()
             raise
@@ -54,6 +62,14 @@ class NativeCategories(Manager):
                 or any(state.regulation_manager.regulation_defs.get(key) != value
                        for key, value in self.categories.items())):
             raise HookError("The career did not load the prepared mod regulation categories")
+        if self.scripts is not None:
+            self.scripts.check(state)
+
+    def stop(self):
+        """Restore script hooks with their category loader after owned loads finish."""
+        if self.scripts is not None:
+            self.scripts.stop()
+        return super().stop()
 
     def _wrapper(self, name, binding, target, original, signature):
         """Keep native loading first, then add this pack's checked category copies."""

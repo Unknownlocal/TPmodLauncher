@@ -71,6 +71,10 @@ def test_owned_view_preserves_native_data_and_isolates_copies_and_revisions():
     assert categories == [data["mod_extensions"]["example.rules"]["categories"][0]]
     categories.clear()
     assert result.custom_categories
+    scripts = result.custom_scripts
+    assert scripts == result.document["change_control"]["scripted_changes"]
+    scripts.clear()
+    assert result.custom_scripts
     assert result.revisions == prepare(data).revisions
     assert result.revisions != prepare(data, {"example.rules": source(text="# changed code")}).revisions
     data["categories"][0]["options"][0]["parameters"] = {"limit": 2}

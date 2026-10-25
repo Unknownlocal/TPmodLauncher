@@ -35,6 +35,17 @@ native code initialises defaults or restores saved selections. It checks the
 loaded categories again before policy publication. No file is rewritten, and
 there is no category-loading hook when no enabled owner adds categories.
 
+`custom_scripts` copies enabled mods' scheduled rule choices into the same loading
+request. These are JSON declarations, separate from Python validation functions.
+The game adapter adds them after governance construction and saved-policy
+restoration, before career setup can activate mod checks. The game validates the
+combined policy and retains its saved script progress. Existing matching scripts
+are reused; conflicting saved definitions prevent activation. Script execution
+follows the loaded `change_control.mode`: adding scripts keeps that mode intact.
+The prepared loading request allows up to 128 categories and 4,096 script rows
+within 2 MiB, including the IDs prefixed with their mod names during preparation.
+The original `regulations.json` file limit remains 1 MiB.
+
 `PreparationIndex` reuses option lookups, source paths and data size checks
 within one preparation. Owner data refers to native definitions without copying
 the whole native catalogue. `payload.py` checks each owner's actual metadata

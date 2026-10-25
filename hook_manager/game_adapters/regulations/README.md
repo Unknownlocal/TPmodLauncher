@@ -32,6 +32,9 @@ These are private launcher adapters, not a direct game-function API for mods.
   mods' prepared categories when the game loads definitions for the selected
   Formula pack. The game loads its own category definitions first, then uses the
   combined definitions to initialise rule choices.
+- [native_scripts.py](native_scripts.py): `NativeScripts` keeps enabled mods'
+  scheduled rule choices when governance is constructed and saved policy is
+  restored. These are JSON declarations; the game schedules and applies them.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -78,8 +81,8 @@ normal code without a second mod approval.
 
 Adapters check game method names and accepted arguments before installation.
 Incompatibility is reported in command-line output and logs, and the affected
-integration is skipped. Failed installation restores changes already made. Importing these
-modules installs nothing; installation and removal belong to trusted launcher
+integration is skipped. Failed installation restores changes already made.
+Importing these modules installs nothing; installation and removal belong to trusted launcher
 code. Mods cannot choose native targets or call the private callable adapter.
 
 The private `AdapterModules.install_regulations` method owns the signing and
@@ -93,6 +96,13 @@ Each native load receives independent custom category data. Setup checks that
 the career received it and the loader is still owned before publishing policy.
 The loader stays with the pack between careers; full cleanup waits for an active
 load before restoring it. Other packs and Oval careers keep native definitions.
+
+When custom scripts are present, the category loader also owns their two loading
+hooks. They add missing scripts to the loaded policy, using the game's own policy
+validation. A matching saved script is kept once; a changed script or category
+reports incompatibility and prevents mod activation. Saved progress remains
+native, including completed and suppressed script IDs. The loaded voting or
+scripted mode is preserved. Category-only mods install no script hooks.
 
 Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
 keep the prepared option data until removal. Setup reports which connections

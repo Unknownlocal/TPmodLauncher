@@ -35,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot planner caller_targets callers",
-    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories",
+    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories native_scripts",
 }
 
 
@@ -122,11 +122,16 @@ class Bridge:
             raise BridgeError("This operation accepts no theme declarations")
         if operation == "await-regulations":
             if (regulations is not None and (type(regulations) is not dict
-                    or set(regulations) != {"pack", "categories"}
+                    or set(regulations) - {"pack", "categories", "scripted_changes"}
+                    or not {"pack", "categories"} <= regulations.keys()
                     or type(regulations["pack"]) is not str or not Path(regulations["pack"]).is_absolute()
                     or type(regulations["categories"]) is not list
                     or not 1 <= len(regulations["categories"]) <= 128
-                    or len(json.dumps(regulations, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 1024 * 1024)) or _service is not None:
+                    or type(regulations.get("scripted_changes", [])) is not list
+                    or len(regulations.get("scripted_changes", [])) > 4096
+                    # Owner-qualified script IDs can grow the admitted 1 MiB
+                    # file data; this bound includes that preparation overhead.
+                    or len(json.dumps(regulations, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 2 * 1024 * 1024)) or _service is not None:
                 raise BridgeError("Expected bounded prepared regulation categories")
         elif operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             fields = {"generation", "endpoint"}

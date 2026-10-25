@@ -116,8 +116,11 @@ class PackMods:
         if self._regulation_owners:
             categories = self.regulations.definitions.custom_categories
             # Only enabled, bound owners reach this fixed data-only operation.
-            # Native categories and scripts continue through their own loaders.
+            # Native policy and progress continue through their own loaders.
             data = {"regulations": {"pack": str(self._pack_root), "categories": categories}} if categories else {}
+            scripts = self.regulations.definitions.custom_scripts
+            if scripts:
+                data["regulations"]["scripted_changes"] = scripts
             status = self._bridge.request("await-regulations", **data)
             if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
                 raise RuntimeError("Native regulation loading protection was not confirmed")

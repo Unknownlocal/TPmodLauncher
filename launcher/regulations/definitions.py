@@ -88,6 +88,11 @@ class RegulationDefinitions:
         return deepcopy([category for owner in self._owners.values() for category in owner.categories])
 
     @property
+    def custom_scripts(self):
+        """Copy only enabled owners' scripts; native policy remains game-owned."""
+        return deepcopy([row for owner in self._owners.values() for row in owner.scripted_changes])
+
+    @property
     def document(self):
         """Copy the combined game document; callers must bind before using it."""
         result = self.native_document
@@ -96,7 +101,7 @@ class RegulationDefinitions:
         categories = self.custom_categories
         if categories:
             result.setdefault("categories", []).extend(categories)
-        for data in self._owners.values():
-            if data.scripted_changes:
-                result.setdefault("change_control", {}).setdefault("scripted_changes", []).extend(deepcopy(data.scripted_changes))
+        scripts = self.custom_scripts
+        if scripts:
+            result.setdefault("change_control", {}).setdefault("scripted_changes", []).extend(scripts)
         return result
