@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableTarget, ResultContract
+from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.manager import HookError
 from hook_manager.game_adapters.projects import technical_profile as module
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
@@ -109,7 +109,7 @@ def test_project_guard_keeps_foreign_calls_native_and_rejects_changed_owned_inpu
     native_module.start = start
     engine.approve(CallableTarget("start", native_module.__name__, (), "start", str(inspect.signature(start))))
     engine.register(owner, [CallBinding("project", "start", project,
-        ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}}))])
+        refuse_boolean)])
     engine.poll()
     try:
         # The class hook also sees other careers. Their calls stay native even

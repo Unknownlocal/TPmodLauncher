@@ -2,11 +2,12 @@
 """Own synthetic modules and guard engines for private callable checks."""
 
 import sys
+from collections import defaultdict
 from types import ModuleType
 
 import pytest
 
-from hook_manager.callables import CallableAdapters
+from hook_manager.game_adapters.regulations.guards import RegulationGuards
 
 
 @pytest.fixture
@@ -15,9 +16,17 @@ def host(monkeypatch):
     monkeypatch.setitem(sys.modules, module.__name__, module)
     engines = []
 
-    def create(dispatch=None, **kwargs):
-        engine = CallableAdapters(dispatch or (
-            lambda owner, calls, deadline: [{"decision": "allow"} for call in calls]), **kwargs)
+    def create(dispatch=None):
+        # Exercise the production shared guard. Only the external channel is a
+        # stand-in; these tests own native wrapper lifecycle and worker access.
+        def channel(contexts, selections, calls, deadline):
+            return channel.dispatch(contexts, selections, calls, deadline)
+        channel.dispatch = dispatch or (lambda contexts, selections, calls, deadline:
+            {owner: [{"decision": "allow"} for _ in rows] for owner, rows in calls.items()})
+        channel.bindings = lambda scope: defaultdict(lambda: [(0, "native")])
+        channel._unavailable = set()
+        engine = RegulationGuards(channel, lambda rule, season: {
+            "selected": "current", "current": [0, season], "upcoming": None}, "personnel.contract")
         engines.append(engine)
         return module, engine
 

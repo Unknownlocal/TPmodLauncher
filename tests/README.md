@@ -10,7 +10,7 @@ real Wasm execution, owned native helper processes and relocated player bundles.
 | --- | --- |
 | `launcher/` | Dependency verification, component admission, compilation cache, sandbox limits, pack loading, regulation definition admission, settings persistence and process/session lifetime; optional build and release validation. |
 | `hook_manager/` | Deferred hooks, ownership/restoration, pack discovery, native menu/settings/theme adapters and the bridge. |
-| `callables/` | Private callable targets, return contracts, owner isolation, validation, worker/shutdown coordination, sandbox isolation and dedicated native bridge acceptance. |
+| `callables/` | Private callable targets, native refusal formats, shared wrapper ownership, validation, worker/shutdown coordination, guest access restrictions and dedicated native bridge acceptance. |
 | `mod_runtime/` | Runner integrity and ABI, source snapshots, host-operation permissions, loading/callback budgets, cancellation, controller adoption and source-mod lifecycle. |
 | `ci/` | Portable suite ownership, manual CI claims/statuses, completion gates and coverage combination/reporting. |
 

@@ -9,7 +9,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableTarget, ResultContract
+from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
 from hook_manager.game_adapters.regulations import personnel_adapter as implementation
@@ -79,10 +79,9 @@ def coordinator(monkeypatch, mode="allow", *, callers=False):
         return state, manager, person, channel, guards, guards.staffing
     guards = Guards(channel)
     guards.approve(signing)
-    codec = ResultContract({"shape": "bool", "denied": {"literal": False}})
     project = guards._projection
     for owner in channel._owners:
-        guards.register(owner, [CallBinding("staff", "staff.sign", project, codec)])
+        guards.register(owner, [CallBinding("staff", "staff.sign", project, refuse_boolean)])
     return state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
 
 

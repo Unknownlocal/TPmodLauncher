@@ -4,27 +4,22 @@
 # Normal host imports use the package; flat game bootstrap supplies dependencies.
 if __package__:
     from ..manager import HookError, identifier
-    from .result_contract import ResultContract
 
 
 class CallBinding:
-    """Trusted integration: target ID, adapter projection and native denial contract.
+    """Trusted integration: target ID, read-only projection and native refusal function.
 
     project(bound_arguments, native_result) runs only trusted launcher code and
-    must be read-only. It may normalize arbitrary native areas; it is never mod
+    must be read-only. It may normalise arbitrary native areas; it is never mod
     source. Scope-specific adapters later construct the public context/rule data.
-    Arguments may include self/cls; the engine copies only the projection result
-    for dispatch. native_result is None for a guard, or the query's actual result.
+    Arguments may include self/cls; the adapter copies only the projection result
+    for dispatch. The second argument is None because checks precede native code.
     """
 
-    def __init__(self, id, target, project, result, *, phase="guard"):
-        # IDs select approved host integrations; project is a trusted callable,
-        # never a handler imported from a mod's source files into the game.
+    def __init__(self, id, target, project, refuse):
+        # Only launcher code supplies these functions. Mod declarations cannot
+        # select native targets, run projections or choose a success-like refusal.
         self.id, self.target = identifier(id), identifier(target)
-        if not callable(project) or not isinstance(result, ResultContract):
-            raise HookError("Expected a trusted projection and return contract")
-        # Guards evaluate before native execution. Query mappings must identify
-        # read-only native queries and supply a selector preserving native refusals.
-        if phase not in ("guard", "query") or phase == "query" and result.accepted is None:
-            raise HookError("Queries require a native success selector")
-        self.project, self.result, self.phase = project, result, phase
+        if not callable(project) or not callable(refuse):
+            raise HookError("Expected trusted projection and refusal functions")
+        self.project, self.refuse = project, refuse

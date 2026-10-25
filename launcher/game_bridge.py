@@ -16,7 +16,7 @@ import uuid
 # serves normal host imports and is deliberately absent from this execution list.
 PYTHON_SOURCES = (
     "manager", "callables/signatures", "callables/target",
-    "callables/result_contract", "callables/binding", "callables/adapters",
+    "callables/refusals", "callables/binding", "callables/adapters",
     # Transport stays in the flat core. Complete adapters load separately into
     # their own module namespaces through the trusted adapters operation.
     "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",

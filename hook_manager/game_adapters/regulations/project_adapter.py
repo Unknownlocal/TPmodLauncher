@@ -8,7 +8,7 @@ Other scopes and public capability admission retain their separate release gates
 
 from functools import update_wrapper
 
-from ...callables import CallBinding, ResultContract
+from ...callables import CallBinding, refuse_boolean
 from ...manager import HookError, Manager
 from .guards import RegulationGuards
 from .contexts import regulation_context
@@ -52,10 +52,8 @@ class ProjectAdapter(RegulationGuards):
             for target in callers:
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             projections = {target.name: self._projection(target.name) for target in starts}
-            codec = ResultContract({"shape": "bool", "denied": {"literal": False},
-                                    "accepted": {"path": [], "one_of": [True]}})
             for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], codec) for target in starts])
+                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], refuse_boolean) for target in starts])
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
                 raise HookError("Project integration did not install completely")

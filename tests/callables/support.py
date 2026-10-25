@@ -1,27 +1,13 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Shared native fixtures and trusted contract builders for callable tests."""
+"""Shared native fixtures and trusted projections for callable tests."""
 
 import inspect
 
-from hook_manager.callables import CallableTarget, ResultContract
-
-
-def boolean():
-    return ResultContract({"shape": "bool", "denied": {"literal": False},
-                           "accepted": {"path": [], "one_of": [True]}})
-
-
-
-def pair():
-    return ResultContract({"shape": {"tuple": ["bool", "string"]},
-                           "denied": {"tuple": [{"literal": False}, {"message": True}]},
-                           "accepted": {"path": [0], "one_of": [True]}})
-
+from hook_manager.callables import CallableTarget
 
 
 def project(arguments, result):
-    return {"value": arguments["value"]}
-
+    return {"effective": {"season": 1}, "proposal": {"value": arguments["value"]}}
 
 
 def approve(engine, module, attribute="method", owners=(), name=None):

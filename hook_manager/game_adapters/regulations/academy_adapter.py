@@ -3,7 +3,7 @@
 
 from functools import update_wrapper
 
-from ...callables import CallBinding, ResultContract
+from ...callables import CallBinding, refuse_with_reason
 from ...manager import HookError, Manager
 from ..academy.caller_targets import academy_caller_targets
 from ..academy.callers import AcademyCallers
@@ -48,11 +48,8 @@ class AcademyAdapter(RegulationGuards):
             for target in callers:
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             projections = {target.name: self._projection(target.name) for target in targets}
-            codec = ResultContract({"shape": {"tuple": ["bool", "string"]},
-                                    "denied": {"tuple": [{"literal": False}, {"message": True}]},
-                                    "accepted": {"path": [0], "one_of": [True]}})
             for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], codec)
+                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], refuse_with_reason)
                                       for target in targets])
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
@@ -85,7 +82,7 @@ class AcademyAdapter(RegulationGuards):
             caller["attempted"], caller["team_name"] = True, bound.arguments["team_name"]
         return super()._validate(original, signature, entries, args, kwargs)
 
-    def _deny(self, codec, outcome):
+    def _deny(self, refuse, outcome):
         caller = getattr(self._local, "academy_caller", None)
         if caller:
             # Retain the refusal's status even if later AI attempts replace the
@@ -93,7 +90,7 @@ class AcademyAdapter(RegulationGuards):
             caller["refusal"] = outcome
             if caller["preparation"] is not None:
                 caller["preparation"].refused = True
-        return super()._deny(codec, outcome)
+        return super()._deny(refuse, outcome)
 
     def _execute(self, original, args, kwargs):
         caller = getattr(self._local, "academy_caller", None)

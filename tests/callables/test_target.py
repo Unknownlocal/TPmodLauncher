@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableAdapters, CallableTarget, method_group
+from hook_manager.callables import CallBinding, CallableTarget, method_group, refuse_boolean
 from hook_manager.manager import HookError
 
-from .support import approve, boolean, project
+from .support import approve, project
 
 
 def test_inherited_decorated_target_preserves_native_execution(host):
@@ -42,26 +42,28 @@ def test_inherited_decorated_target_preserves_native_execution(host):
     module.Child = Child
     original = inspect.getattr_static(Child, "method")
     approve(engine, module, "method", ("Child",))
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     assert Child().method()
     assert events == ["enter", 1, "exit"]
     engine.remove_owner("owner")
     assert "method" not in vars(Child)
     assert inspect.getattr_static(Child, "method") is original
-    engine.evaluate = lambda *args: [{"decision": "deny", "message": "No"}]
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.channel.dispatch = lambda contexts, selections, calls, deadline: {
+        owner: [{"decision": "deny", "message": "No"}] for owner in calls}
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     assert Child().method() is False and events == ["enter", 1, "exit"]
 
 
-def test_worker_import_defers_readiness_until_main_thread_poll(tmp_path, monkeypatch):
+def test_worker_import_defers_readiness_until_main_thread_poll(host, tmp_path, monkeypatch):
     name = "owned_deferred_private"
     source = "def method(value):\n    return True\n"
     (tmp_path / (name + ".py")).write_text(source)
     monkeypatch.syspath_prepend(str(tmp_path))
-    engine = CallableAdapters(lambda *args: [{"decision": "deny", "message": "No"}])
+    _, engine = host(lambda contexts, selections, calls, deadline: {
+        owner: [{"decision": "deny", "message": "No"}] for owner in calls})
     engine.approve(CallableTarget("method", name, (), "method", "(value)"))
     try:
-        engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+        engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
         assert name not in sys.modules and engine.owners == {"owner": "pending"}
         thread = threading.Thread(target=lambda: importlib.import_module(name))
         thread.start()
@@ -92,14 +94,14 @@ def test_signature_targets_accept_body_changes_and_reject_signature_changes(host
         return current(*args, **kwargs)
 
     module.method = decorated
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     assert module.method(1) is False and events == ["native decorator"]
     assert engine.owners == {"owner": "ready"}
     engine.remove_owner("owner")
     assert module.method is decorated
     module.method = lambda value, added: True
     with pytest.raises(HookError, match="signature changed"):
-        engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+        engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     assert not engine.entries
 
 

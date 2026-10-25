@@ -15,7 +15,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.manager import HookError
-from hook_manager.callables import CallBinding, CallableTarget, ResultContract
+from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
@@ -398,10 +398,9 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods
         assert not runtime.ready and module.start is native
         engine = RegulationGuards(channel, policy.select, "development.project")
         engine.approve(CallableTarget("project", module.__name__, (), "start", str(inspect.signature(native))))
-        codec = ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}})
         try:
             for owner in mods:
-                engine.register(owner, [CallBinding("project", "project", project, codec)])
+                engine.register(owner, [CallBinding("project", "project", project, refuse_boolean)])
             def control(operation):
                 assert not runtime.ready and scope._regulation_dispatching
                 assert module.start(2) is False and not projections and not writes

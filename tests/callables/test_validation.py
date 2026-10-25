@@ -4,53 +4,28 @@
 
 import pytest
 
-from hook_manager.callables import CallBinding
+from hook_manager.callables import CallBinding, refuse_boolean
 from hook_manager.manager import HookError
 
-from .support import approve, boolean, pair, project
+from .support import approve, project
 
 
-def test_projection_is_bounded_copied_and_cannot_leak_native_objects(host):
-    native = {"value": [1]}
+def test_projection_is_copied_and_cannot_leak_native_objects(host):
+    native = {"effective": {"season": 1}, "proposal": {"value": [1]}}
     mutations = []
 
-    def dispatch(owner, calls, deadline):
-        calls[0]["snapshot"]["value"].append(2)
-        return [{"decision": "allow"}]
+    def dispatch(contexts, selections, calls, deadline):
+        contexts[0]["proposal"]["value"].append(2)
+        return {owner: [{"decision": "allow"}] for owner in calls}
 
     module, engine = host(dispatch)
     module.method = lambda value: mutations.append(value) or True
     approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", lambda args, result: native, boolean())])
-    assert module.method(4) and native == {"value": [1]}
+    engine.register("owner", [CallBinding("rule", "method", lambda args, result: native, refuse_boolean)])
+    assert module.method(4) and native["proposal"] == {"value": [1]}
     engine.remove_owner("owner")
-    engine.register("bad", [CallBinding("rule", "method", lambda args, result: {"native": object()}, boolean())])
+    engine.register("bad", [CallBinding("rule", "method", lambda args, result: {"effective": {"season": 1}, "proposal": {"value": [object()]}}, refuse_boolean)])
     assert module.method(5) is False and mutations == [4]
-    engine.remove_owner("bad")
-    engine.register("large", [CallBinding("rule", "method", lambda args, result: {"text": "é" * 2048}, boolean())])
-    assert module.method(6) is False and mutations == [4]
-
-
-def test_query_preserves_native_refusal_and_original_exceptions(host):
-    dispatched, original_calls = [], []
-    failure = ValueError("native exception")
-
-    def method(value):
-        original_calls.append(value)
-        if value == 3:
-            raise failure
-        return (False, "Native refusal") if value == 1 else (True, "Native allowed")
-
-    module, engine = host(lambda *args: dispatched.append(args) or [{"decision": "deny", "message": "Rule refusal"}])
-    module.method = method
-    approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", project, pair(), phase="query")])
-    assert module.method(1) == (False, "Native refusal") and not dispatched
-    assert module.method(2) == (False, "Rule refusal") and len(dispatched) == 1
-    with pytest.raises(ValueError) as caught:
-        module.method(3)
-    assert caught.value is failure and original_calls == [1, 2, 3]
-    assert engine.owners == {"owner": "ready"}
 
 
 def test_guard_calls_original_at_most_once_on_native_error(host):
@@ -63,37 +38,10 @@ def test_guard_calls_original_at_most_once_on_native_error(host):
 
     module.method = method
     approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     with pytest.raises(ValueError) as caught:
         module.method(1)
     assert caught.value is error and calls == [1] and engine.owners == {"owner": "ready"}
-
-
-def test_native_result_drift_blocks_and_latches(host):
-    module, engine = host()
-    module.method = lambda value: {"unexpected": True}
-    approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", project, boolean(), phase="query")])
-    assert module.method(1) is False and engine.owners == {"owner": "unavailable"}
-
-
-def test_deadline_includes_projection_dispatch_and_all_owners(host, monkeypatch):
-    now, received, mutations = [0.0], [], []
-    monkeypatch.setattr("hook_manager.callables.adapters.time.monotonic", lambda: now[0])
-
-    def dispatch(owner, calls, deadline):
-        received.append((owner, deadline))
-        now[0] += .06
-        return [{"decision": "allow"}]
-
-    module, engine = host(dispatch)
-    module.method = lambda value: mutations.append(value) or True
-    approve(engine, module)
-    for owner in ("a", "b"):
-        engine.register(owner, [CallBinding("rule", "method", project, boolean())])
-    assert module.method(1) is False and mutations == []
-    assert received == [("a", .1), ("b", .1)]
-    assert engine.owners == {"a": "ready", "b": "unavailable"}
 
 
 def test_reentrant_dispatch_and_reconfiguration_cannot_authorize_mutation(host):
@@ -102,12 +50,12 @@ def test_reentrant_dispatch_and_reconfiguration_cannot_authorize_mutation(host):
     module.method = lambda value: mutations.append(value) or True
     approve(engine, module)
 
-    def dispatch(owner, calls, deadline):
+    def dispatch(contexts, selections, calls, deadline):
         with pytest.raises(HookError, match="during an operation"):
-            engine.remove_owner(owner)
+            engine.remove_owner("owner")
         assert module.method(2) is False
-        return [{"decision": "allow"}]
+        return {owner: [{"decision": "allow"}] for owner in calls}
 
-    engine.evaluate = dispatch
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.channel.dispatch = dispatch
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     assert module.method(1) is False and mutations == []

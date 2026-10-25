@@ -22,18 +22,31 @@ def guarded(value):
 
 original = guarded
 # The real adapter owner restores guard registries and defers busy shutdown.
-guards = host.CallableAdapters()
+host.adapters.load()
+
+
+def channel(contexts, selections, calls, deadline):
+    return {owner: [{"decision": "allow"} if channel.allowed else
+                    {"decision": "deny", "message": "Owned guard"} for _ in rows]
+            for owner, rows in calls.items()}
+
+
+channel.allowed = False
+channel.bindings = lambda scope: {"owned.guard": [(0, "native")]}
+channel._unavailable = set()
+guards = host.adapter_code.game_adapters.regulations.guards.RegulationGuards(
+    channel, lambda rule, season: {"selected": "current", "current": [0, season], "upcoming": None},
+    "personnel.contract")
 host.adapters.regulations.append(guards)
-guards.evaluate = lambda owner, batch, deadline: [{"decision": "deny", "message": "Owned guard"}]
 guards.approve(host.CallableTarget(
     "owned.guard", "__main__", (), "guarded", "(value)",
 ))
 guards.register("owned.guard", [host.CallBinding(
-    "rule", "owned.guard", lambda arguments, result: {"value": arguments["value"]},
-    host.ResultContract({"shape": "bool", "denied": {"literal": False}}),
+    "rule", "owned.guard", lambda arguments, result: {"effective": {"season": 1}, "proposal": {"value": arguments["value"]}},
+    host.refuse_boolean,
 )])
 assert guarded(1) is False and calls == []
-guards.evaluate = lambda owner, batch, deadline: [{"decision": "allow"}]
+channel.allowed = True
 
 
 def worker():

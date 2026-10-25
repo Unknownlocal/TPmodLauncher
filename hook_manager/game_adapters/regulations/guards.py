@@ -2,7 +2,7 @@
 """Run all subscribing mods against one proposal before calling native code.
 
 The callable manager still owns wrappers, worker admission and restoration. This
-path replaces its per-owner projections with one context and one channel action.
+adapter supplies one context and one channel action shared by all participants.
 Neither the projections nor the rule-selection callback come from mod code.
 """
 
@@ -17,7 +17,7 @@ from .outcome import ValidationOutcome
 
 class RegulationGuards(CallableAdapters):
     def __init__(self, channel, select, scope):
-        super().__init__(channel)
+        super().__init__()
         self.channel, self.select = channel, select
         # Native policy supplies a cheap freshness check. Fixed trusted selectors
         # used without a live policy have no changing selection inputs.
@@ -28,7 +28,7 @@ class RegulationGuards(CallableAdapters):
         # All owners must agree on the proposal. Otherwise the first binding's
         # projection would silently determine which terms its peers validate.
         for binding in bindings:
-            if binding.phase != "guard" or any(
+            if any(
                     item.target == binding.target and item.project is not binding.project
                     for item in self.entries.values()):
                 raise HookError("Shared regulation guards require one projection per target")
@@ -45,22 +45,22 @@ class RegulationGuards(CallableAdapters):
         outcome = self.last_outcome
         return outcome.message if outcome else None
 
-    def _deny(self, codec, outcome):
+    def _deny(self, refuse, outcome):
         self._local.outcome = outcome
-        return codec.denied(outcome.message)
+        return refuse(outcome.message)
 
     def _validate(self, original, signature, entries, args, kwargs):
         # Direct native calls do not always have a caller frame to clear this.
         self._local.outcome = None
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
-        codec, projection = entries[0][1].result, entries[0][1].project
+        refuse, projection = entries[0][1].refuse, entries[0][1].project
         participants = {key[0] for key, _ in entries}
         outcome = self._decision(lambda: projection(dict(bound.arguments), None), participants,
                                  identity=lambda: self._proposal_identity(bound.arguments))
         self._local.outcome = outcome
         if outcome.status != "allow":
-            return self._deny(codec, outcome)
+            return self._deny(refuse, outcome)
         return self._execute(original, args, kwargs)
 
     def _proposal_identity(self, arguments):

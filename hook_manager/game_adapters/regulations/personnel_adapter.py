@@ -5,7 +5,7 @@ from functools import update_wrapper
 import inspect
 import threading
 
-from ...callables import CallBinding, ResultContract
+from ...callables import CallBinding, refuse_boolean
 from ...manager import HookError, Manager
 from .guards import RegulationGuards
 from .contexts import regulation_context
@@ -111,10 +111,8 @@ class PersonnelAdapter(RegulationGuards):
             for target in (*callers, *staffing_callers):
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             projection = self._projection
-            codec = ResultContract({"shape": "bool", "denied": {"literal": False},
-                                    "accepted": {"path": [], "one_of": [True]}})
             for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projection, codec) for target in signing])
+                self.register(owner, [CallBinding(target.name, target.name, projection, refuse_boolean) for target in signing])
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
                 raise HookError("Personnel integration did not install completely")
@@ -176,7 +174,7 @@ class PersonnelAdapter(RegulationGuards):
         # execution. A staffing publication must not invalidate allowed terms.
         # Busy is host unavailability, so no healthy validator is latched failed.
         if not self._personnel_operation.acquire(blocking=False):
-            return self._deny(entries[0][1].result, ValidationOutcome("unavailable", "Personnel operation is busy"))
+            return self._deny(entries[0][1].refuse, ValidationOutcome("unavailable", "Personnel operation is busy"))
         try:
             return super()._validate(original, signature, entries, bound.args, bound.kwargs)
         finally:

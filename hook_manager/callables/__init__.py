@@ -9,7 +9,7 @@ Neither path supplies modules or registration operations to sandboxed mods.
 from .adapters import CallableAdapters
 from .binding import CallBinding
 from .signatures import method_group
-from .result_contract import ResultContract
+from .refusals import refuse_boolean, refuse_with_reason
 from .target import CallableTarget
 
-__all__ = ["CallBinding", "CallableAdapters", "CallableTarget", "ResultContract", "method_group"]
+__all__ = ["CallBinding", "CallableAdapters", "CallableTarget", "refuse_boolean", "refuse_with_reason", "method_group"]

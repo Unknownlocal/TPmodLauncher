@@ -5,10 +5,10 @@ import threading
 
 import pytest
 
-from hook_manager.callables import CallBinding
+from hook_manager.callables import CallBinding, refuse_boolean
 from hook_manager.manager import HookError
 
-from .support import approve, boolean, project
+from .support import approve, project
 
 
 def test_worker_enrollment_poll_and_mutation_exclusion(host):
@@ -17,7 +17,7 @@ def test_worker_enrollment_poll_and_mutation_exclusion(host):
     module, engine = host()
     module.method = lambda value: mutations.append(value) or True
     approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
 
     def worker():
         with engine.operation():
@@ -68,7 +68,7 @@ def test_registration_excludes_worker_admission_until_publication(host, monkeypa
 
     monkeypatch.setattr(engine, "_install_ready", install)
     try:
-        engine.register("owner", [CallBinding("rule", "method", project, boolean())])
+        engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
     finally:
         thread.join(3)
     assert not thread.is_alive() and results == [True] and engine.owners == {"owner": "ready"}
@@ -119,8 +119,8 @@ def test_escaped_removed_wrapper_does_not_hold_lock_while_native_joins_worker(ho
     module.method = method
     approve(engine, module)
     approve(engine, module, "second")
-    engine.register("first", [CallBinding("rule", "method", project, boolean())])
-    engine.register("second", [CallBinding("rule", "second", project, boolean())])
+    engine.register("first", [CallBinding("rule", "method", project, refuse_boolean)])
+    engine.register("second", [CallBinding("rule", "second", project, refuse_boolean)])
     escaped = module.method
     engine.remove_owner("first")
     try:
