@@ -81,6 +81,8 @@ def main(argv=None):
                   "career_preload": "hook_manager.career_preload",
                   "native_regulation_policy": "hook_manager.game_adapters.regulations.native_policy"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
+        if options.suite == "native_regulation_policy":
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_categories")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
             # assigning the private subpackage to its separate coverage report.

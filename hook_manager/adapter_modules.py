@@ -37,6 +37,7 @@ class AdapterModules:
         self.policy = None
         self.regulation_generation = None
         self.preload = None
+        self.categories = None
 
     def status(self):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
@@ -49,6 +50,8 @@ class AdapterModules:
             result["detail"] = self.error
         if self.preload is not None:
             result["career_preload"] = self.preload.loading_status()
+            if self.categories is not None and self.categories.errors:
+                result["career_preload"] = {"state": "unavailable", "detail": self.categories.errors[-1]}
         if self.channel is not None or self.regulation_error:
             # Installation coverage is not policy readiness. In particular,
             # signing adapters do not install whole-team staffing callers.
@@ -64,16 +67,27 @@ class AdapterModules:
                 result["regulations"]["detail"] = self.regulation_error
         return result
 
-    def await_regulations(self):
+    def await_regulations(self, definitions=None):
         """Extend native preload completion before trusted setup releases Load Game.
 
-        No pack or mod can select these wrappers. This private operation grants
-        neither regulation readiness nor menu permission by itself.
+        Optional category data comes from enabled, bound owners. The fixed
+        loader runs before native defaults and saved selections are restored.
+        Mods cannot select either wrapper; arming alone does not approve checks.
         """
         self.host.manager._main()
-        if self.state == "closed" or self.channel is not None or self.preload is not None:
+        if self.state == "closed" or self.channel is not None or self.preload is not None or self.categories is not None:
             raise HookError("Career preloading needs an unused adapter installation")
-        self.preload = CareerPreload(self._career_left)
+        try:
+            if definitions is not None:
+                self.load()
+                if self.state != "loaded":
+                    raise HookError(self.error or "Adapter modules are not loaded")
+                loader = self.host.adapter_code.game_adapters.regulations.native_categories
+                self.categories = loader.NativeCategories(definitions)
+            self.preload = CareerPreload(self._career_left)
+        except BaseException:
+            self.stop_regulations()
+            raise
         return self.status()
 
     def _career_left(self):
@@ -116,6 +130,8 @@ class AdapterModules:
                 raise HookError("Regulation preparation needs a captured native loading attempt")
             generation = request["generation"]
             state = self.preload.current(generation)
+            if self.categories is not None:
+                self.categories.check(state)
             channel = self.channel
             if channel is None:
                 channel = self.host.RegulationChannel(request["endpoint"])
@@ -300,7 +316,10 @@ class AdapterModules:
         """
         self.host.manager._main()
         with ExitStack() as locks:
-            for hook in self.regulations:
+            # Category loading belongs to the pack, so career retirement keeps
+            # it installed. Full cleanup must also wait for its loading workers.
+            hooks = [*self.regulations, *([self.categories] if self.categories is not None and not retain else [])]
+            for hook in hooks:
                 lock = getattr(hook, "_lock", None)
                 if lock is not None:
                     if not lock.acquire(blocking=False):
@@ -308,8 +327,10 @@ class AdapterModules:
                     locks.callback(lock.release)
                     if hook._active:
                         return False
-            for hook in reversed(self.regulations):
+            for hook in reversed(hooks):
                 hook.stop()
+            if not retain:
+                self.categories = None
             if self.channel is not None and not retain:
                 self.channel.close()
             self.regulations.clear()

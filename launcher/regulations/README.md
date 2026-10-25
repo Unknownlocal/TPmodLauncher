@@ -2,8 +2,8 @@
 
 This private package reads enabled mods' regulation definitions and prepares their
 Python validation functions to run inside Wasm. The launcher manages loading,
-rule data and execution. Trusted game adapters supply the validation points. Mod code
-cannot select a native function or call the private callable engine.
+rule data and execution. Trusted game adapters supply the places where checks
+run. Mod code cannot select a game function or call the private callable engine.
 Public source admission accepts API 0.2.0/0.3.0; regulation permission remains
 private to the 0.4.0 interface.
 
@@ -27,6 +27,13 @@ collisions and combined limits. `RegulationDefinitions` stores the finished view
 Its outward `owners`, `native_document`, `document` and `revisions` properties
 return independent copies. `document` includes owned categories and scripts;
 `native_document` preserves native fields without the mod sections.
+
+`custom_categories` supplies a separate copy of enabled mods' categories.
+After handlers bind, normal startup sends those categories and the selected pack
+folder through the fixed loading request. The game adapter adds them before
+native code initialises defaults or restores saved selections. It checks the
+loaded categories again before policy publication. No file is rewritten, and
+there is no category-loading hook when no enabled owner adds categories.
 
 `PreparationIndex` reuses option lookups, source paths and data size checks
 within one preparation. Owner data refers to native definitions without copying
@@ -97,7 +104,7 @@ Each validator's complete context and rule together must fit 4,096 UTF-8 bytes,
 1,024 nodes and eight container levels. These are invocation limits, separate
 from the 1 MiB file limit. Failed preparation returns no partial owner set.
 
-## Binding and retained validation
+## Loading checks and keeping rule data in memory
 
 `PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
 tables once per shared source runner through `SharedHandlerRunner`. Each owner

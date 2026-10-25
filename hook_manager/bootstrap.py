@@ -89,9 +89,9 @@ def pulse(sources, digest, instance, game_root, request_json):
         elif type(request) is dict and request.get("operation") == "await-regulations":
             notices = []
             try:
-                if set(request) != {"operation"}:
-                    raise ValueError("Career preloading accepts no payload")
-                module.adapters.await_regulations()
+                if set(request) not in ({"operation"}, {"operation", "regulations"}):
+                    raise ValueError("Invalid regulation loading fields")
+                module.adapters.await_regulations(request.get("regulations"))
             except Exception as error:
                 notices.append("REGULATIONS COMPATIBILITY FAILED career.preload: "
                                + " ".join(str(error).split())[:512]

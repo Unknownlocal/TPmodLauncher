@@ -83,14 +83,20 @@ class RegulationDefinitions:
         return deepcopy(self._native)
 
     @property
+    def custom_categories(self):
+        """Copy enabled owners' categories for the fixed native loading adapter."""
+        return deepcopy([category for owner in self._owners.values() for category in owner.categories])
+
+    @property
     def document(self):
-        """Return a candidate native view; callers must bind before publishing it."""
+        """Copy the combined game document; callers must bind before using it."""
         result = self.native_document
         # Extend only the copied native view. Owner-only metadata and handler
         # references stay in owners; they are not native game declaration fields.
+        categories = self.custom_categories
+        if categories:
+            result.setdefault("categories", []).extend(categories)
         for data in self._owners.values():
-            if data.categories:
-                result.setdefault("categories", []).extend(deepcopy(data.categories))
             if data.scripted_changes:
                 result.setdefault("change_control", {}).setdefault("scripted_changes", []).extend(deepcopy(data.scripted_changes))
         return result

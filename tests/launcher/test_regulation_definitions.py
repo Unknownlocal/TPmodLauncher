@@ -67,6 +67,10 @@ def test_owned_view_preserves_native_data_and_isolates_copies_and_revisions():
     owned.clear()
     assert result.owners["example.rules"]["option_data"]["native"]["open"]["anything"] == [1, "x"]
     assert result.document["categories"][1]["options"] and result.owners
+    categories = result.custom_categories
+    assert categories == [data["mod_extensions"]["example.rules"]["categories"][0]]
+    categories.clear()
+    assert result.custom_categories
     assert result.revisions == prepare(data).revisions
     assert result.revisions != prepare(data, {"example.rules": source(text="# changed code")}).revisions
     data["categories"][0]["options"][0]["parameters"] = {"limit": 2}

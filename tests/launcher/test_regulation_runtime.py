@@ -76,7 +76,8 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
     owner = mod.manifest.id
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
-            owner: {"schema": 1, "validators": [validator()], "native_rules": {
+            owner: {"schema": 1, "categories": [{"key": owner + ".policy", "label": "Policy", "default": "open",
+                "options": [{"id": 1, "key": "open", "name": "Open"}]}], "validators": [validator()], "native_rules": {
                 "rookie_contract_length_check": False, "staff_prestige_check": True}}}}), encoding="utf-8")
     progress, menus, operations, channels = [], [], [], []
     client = control_bridge(monkeypatch, lambda operation: {})
@@ -97,6 +98,8 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
             if operation == "await-regulations":
                 # Career selection must still be blocked while protection arms.
                 assert progress[-1]["state"] == "loading" and not menus
+                assert record["regulations"] == {"pack": str(tmp_path),
+                    "categories": scope.regulations.definitions.custom_categories}
                 reply({"adapters": {"career_preload": {"state": "armed"}}})
             elif operation in ("prepare-regulations", "retire-regulations"):
                 def publish():

@@ -96,7 +96,8 @@ def test_callable_coverage_is_separate_from_parent_hook_manager(monkeypatch):
     config = Coverage(config_file=config_file)
     assert config.get_option("run:omit") == ["*/hook_manager/callables/*",
                                             "*/hook_manager/career_preload.py",
-                                            "*/hook_manager/game_adapters/regulations/native_policy.py"]
+                                            "*/hook_manager/game_adapters/regulations/native_policy.py",
+                                            "*/hook_manager/game_adapters/regulations/native_categories.py"]
     assert config.get_option("run:branch") and config.get_option("run:relative_files")
 
 

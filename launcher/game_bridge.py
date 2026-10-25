@@ -35,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot planner caller_targets callers",
-    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy",
+    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories",
 }
 
 
@@ -120,7 +120,15 @@ class Bridge:
                 raise BridgeError("Expected bounded theme declarations")
         elif themes is not None:
             raise BridgeError("This operation accepts no theme declarations")
-        if operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
+        if operation == "await-regulations":
+            if (regulations is not None and (type(regulations) is not dict
+                    or set(regulations) != {"pack", "categories"}
+                    or type(regulations["pack"]) is not str or not Path(regulations["pack"]).is_absolute()
+                    or type(regulations["categories"]) is not list
+                    or not 1 <= len(regulations["categories"]) <= 128
+                    or len(json.dumps(regulations, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")) > 1024 * 1024)) or _service is not None:
+                raise BridgeError("Expected bounded prepared regulation categories")
+        elif operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             fields = {"generation", "endpoint"}
             if operation == "install-regulations" and type(regulations) is dict and "native_rules" in regulations:
                 fields.add("native_rules")

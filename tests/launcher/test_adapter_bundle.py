@@ -21,7 +21,7 @@ def bridge():
     return factory(ROOT, None)(session, 0, lambda *args: None)
 
 
-def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch):
+def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path):
     client = bridge()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]
     # Only emulate bootstrap's supported-version check on the portable host.
@@ -72,6 +72,10 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))
         career = game.GameState()
+        career.data_dir = tmp_path
+        native = ModuleType("managers.regulation_manager")
+        native.RegulationManager = type("RegulationManager", (), {"_load_regulation_defs": lambda self: {"native": {}}})
+        monkeypatch.setitem(sys.modules, native.__name__, native)
         ui = ModuleType("ui.screen_manager")
         ui.ScreenManager = type("ScreenManager", (), {
             "handle_event": lambda self, event: "native event", "update": lambda self: "native update",
@@ -92,7 +96,13 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         screen_manager.current = screen
         rejected = pulse("await-regulations", target="author-selected")
         assert rejected["regulation_notices"] and host.adapters.preload is None
-        assert pulse("await-regulations")["adapters"]["career_preload"] == {"state": "armed"}
+        categories = [{"key": "owned.rule", "default": "open", "options": [{"key": "open"}]}]
+        assert pulse("await-regulations", regulations={"pack": str(tmp_path), "categories": categories})["adapters"]["career_preload"] == {"state": "armed"}
+        loader = host.adapters.categories
+        career.regulation_manager = native.RegulationManager()
+        career.regulation_manager.state = career
+        career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
+        assert career.regulation_manager.regulation_defs["owned.rule"] == categories[0]
         cached_preload = sys.modules["ui.screens.hub_screen"].advance_session_preload
         assert cached_preload(screen, career) is False
         generation = host.adapters.preload.generation
@@ -164,6 +174,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
+        assert loader.closed and host.adapters.categories is None
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:
@@ -183,6 +194,10 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
     assert sent[0]["operation"] == "adapters"
     client.request("await-regulations")
     assert sent[-1].keys() == {"type", "id", "operation"} and sent[-1]["operation"] == "await-regulations"
+    client.request("await-regulations", regulations={"pack": str(ROOT), "categories": [{"key": "owned.rule"}]})
+    assert sent[-1]["regulations"]["categories"] == [{"key": "owned.rule"}]
+    with pytest.raises(BridgeError, match="bounded prepared"):
+        client.request("await-regulations", regulations={"pack": str(ROOT), "categories": [], "target": "author-selected"})
     control = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
     client.request("install-regulations", regulations=dict(control, native_rules={"staff_prestige_check": False}))
     assert sent[-1]["regulations"]["native_rules"] == {"staff_prestige_check": False}

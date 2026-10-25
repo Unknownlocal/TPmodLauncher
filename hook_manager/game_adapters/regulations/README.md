@@ -28,6 +28,10 @@ These are private launcher adapters, not a direct game-function API for mods.
   reachable options for subscribed rules from the career's loaded regulations.
   It sends this data once, then uses the game's own method to choose an option
   for each proposal's season. Later checks send small references to that data.
+- [native_categories.py](native_categories.py): `NativeCategories` adds enabled
+  mods' prepared categories when the game loads definitions for the selected
+  Formula pack. The game loads its own category definitions first, then uses the
+  combined definitions to initialise rule choices.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -73,8 +77,8 @@ contracts. Once accepted, agreements load and take effect through the game's
 normal code without a second mod approval.
 
 Adapters check game method names and accepted arguments before installation.
-Incompatibility is reported in command-line output and logs, and the affected integration
-is skipped. Failed installation restores changes already made. Importing these
+Incompatibility is reported in command-line output and logs, and the affected
+integration is skipped. Failed installation restores changes already made. Importing these
 modules installs nothing; installation and removal belong to trusted launcher
 code. Mods cannot choose native targets or call the private callable adapter.
 
@@ -84,6 +88,12 @@ Private preparation takes its career from the game's loading attempt captured
 by `CareerPreload`. It checks the attempt number, screen and loading job before
 and after publishing data. Installation and activation check that same owner;
 there is no separate current-career discovery or direct-install fallback.
+Before career selection opens, trusted setup can install the category loader.
+Each native load receives independent custom category data. Setup checks that
+the career received it and the loader is still owned before publishing policy.
+The loader stays with the pack between careers; full cleanup waits for an active
+load before restoring it. Other packs and Oval careers keep native definitions.
+
 Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
 keep the prepared option data until removal. Setup reports which connections
 succeeded; the mod checks still need activation. `staffing` coverage requires both
