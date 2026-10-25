@@ -3,6 +3,7 @@
 
 import json
 from pathlib import Path
+import runpy
 import textwrap
 
 import pytest
@@ -22,9 +23,10 @@ def run_workflow_script(filename):
 
 @pytest.fixture
 def reports(tmp_path, monkeypatch):
+    suites = runpy.run_path(str(WORKFLOWS.parent / "ci_tests.py"))["SUITES"]
     names = [
         f"python-coverage-{suite}-{platform}"
-        for suite in ("launcher", "hook_manager", "callables", "mod_runtime", "mod_runtime_loading", "ci")
+        for suite in suites
         for platform in ("windows", "linux")
     ] + ["python-coverage-acceptance-windows"]
     for covered, name in enumerate(names, start=1):
@@ -51,13 +53,13 @@ def test_reports_every_suite_and_platform_separately(reports):
     run_workflow_script("coverage.yml")
     summary = (directory / "summary.md").read_text(encoding="utf-8")
     rows = [line for line in summary.splitlines() if "x64 |" in line]
-    assert len(rows) == len(names) == 13
+    assert len(rows) == len(names)
     for covered, row in enumerate(rows, start=1):
         assert f"{covered / 20:.2%} ({covered}/20)" in row
         assert "50.00% (1/2)" in row
     assert "| Launcher | Windows x64 |" in rows[0]
     assert "| Launcher | Linux x64 |" in rows[1]
-    assert "| Private callable adapters | Windows x64 |" in rows[4]
+    assert "| Private callable adapters | Windows x64 |" in summary
     assert "| Runtime acceptance | Windows x64 |" in rows[-1]
     assert "abc123" in summary
     assert "/actions/runs/123" in summary
@@ -65,11 +67,11 @@ def test_reports_every_suite_and_platform_separately(reports):
 
 def test_missing_suite_report_fails_instead_of_publishing_partial_success(reports):
     directory, _ = reports
-    (directory / "python-coverage-hook_manager-linux/coverage.xml").unlink()
-    with pytest.raises(SystemExit, match="Missing coverage report for Hook manager / Linux x64"):
+    (directory / "python-coverage-native_regulation_policy-linux/coverage.xml").unlink()
+    with pytest.raises(SystemExit, match="Missing coverage report for Native regulation policy / Linux x64"):
         run_workflow_script("coverage.yml")
     summary = (directory / "summary.md").read_text(encoding="utf-8")
-    assert "| Hook manager | Linux x64 | Report unavailable |" in summary
+    assert "| Native regulation policy | Linux x64 | Report unavailable |" in summary
 
 
 @pytest.mark.parametrize("xml", [
