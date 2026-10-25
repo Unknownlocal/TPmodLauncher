@@ -112,26 +112,19 @@ native acknowledgement. Immediate and deferred native rejection use the same
 cleanup. Session closure reports logical mods in reverse activation order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
 
-[`regulations/`](regulations/README.md) stages enabled-source regulation
-definitions and binds Python handlers inside Wasm through a private preparation
-step that runs once per pack. A persistent authenticated channel queues calls for
-controller-thread execution under an absolute deadline. The private runtime waits
-for confirmation from the trusted game adapter before the rules become ready.
-Shared handlers bind once per runner. Required owner identities survive group
-cleanup, including owners that declare data without validators.
-After pack loading, `PackMods` binds admitted handlers and confirms that the
-native loading adapter is armed before enabling career selection. Mod UI stays
-withheld until the selected career's rules are prepared and its hooks activated.
-`RegulationRuntime` owns those steps and the captured career number; the bridge
-sends fixed requests and `PackMods` derives UI holds from runtime status. Setup
-errors use normal controller cleanup; unconfirmed hooks cannot leave the pack
-marked ready. Returning to the menu or
-replacing a loading attempt retires its hooks and clears career rule data. The
-next career reuses the pack's interpreter, validators and connection, with fresh
-data and coverage approval. Cancellation between setup replies follows this
-same retirement path rather than closing healthy mods.
-Native fields are preserved and condition logic stays in mod source. This private
-loader entry point does not admit regulation permissions through the public mod API.
+[`regulations/`](regulations/README.md) reads enabled source mods' definitions and
+binds their Python validators once in the pack's shared Wasm runner. Native fields
+are preserved; conditions stay in mod code. An authenticated connection carries
+checks to the controller thread under one absolute deadline.
+
+`RegulationRuntime` owns career preparation, installation, activation and
+retirement. The bridge sends fixed requests; `PackMods` derives readiness and UI
+holds from runtime status. Loading protection must be armed before career
+selection opens, and activation acknowledged before mod UI appears. Returning to
+the menu or cancelling a load retires career hooks and data while retaining the
+pack's interpreter, handlers and connection. The next career needs fresh data and
+hook approval. The child package documents failure handling and required owners;
+regulation permission remains outside the public mod API.
 
 [`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
 field selection and explicit duplicate policies. Document-specific adapters own

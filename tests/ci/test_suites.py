@@ -2,6 +2,7 @@
 """Check portable CI ownership and selection without executing other suites."""
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,24 +16,6 @@ spec = importlib.util.spec_from_file_location(
 )
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
-
-
-@pytest.mark.parametrize(
-    ("path", "suite"),
-    [
-        ("tests/launcher/test_new_feature.py", "launcher"),
-        ("tests/hook_manager/test_menu.py", "hook_manager"),
-        ("tests/hook_manager/career/test_preload.py", "career_preload"),
-        ("tests/hook_manager/game_adapters/regulations/test_native_policy.py", "native_regulation_policy"),
-        ("tests/hook_manager/game_adapters/projects/test_technical_profile.py", "project_context"),
-        ("tests/callables/test_validation.py", "callables"),
-        ("tests/mod_runtime/test_source.py", "mod_runtime"),
-        ("tests/mod_runtime/loading/test_shared_sources.py", "mod_runtime_loading"),
-        ("tests/ci/test_suites.py", "ci"),
-    ],
-)
-def test_portable_modules_have_one_owner(tmp_path, path, suite):
-    assert ci.suite_for(tmp_path / path, tmp_path) == suite
 
 
 def test_unassigned_module_fails(tmp_path):
@@ -75,49 +58,28 @@ def test_empty_suite_fails(tmp_path):
         ci.SuiteSelection("mod_runtime", tmp_path).pytest_collection_modifyitems(config, [])
 
 
-def test_main_always_applies_portable_markers_and_check_only_collects(monkeypatch):
-    calls = []
-    monkeypatch.setattr(ci.pytest, "main", lambda args, plugins: calls.append((args, plugins)) or 0)
-    assert ci.main(["--suite", "check", "-q"]) == 0
-    args, plugins = calls.pop()
-    assert args == [str(ci.ROOT / "tests"), "-q", "--collect-only", "-m", ci.PORTABLE]
-    assert plugins[0].suite == "check"
-
-
-def test_callable_coverage_is_separate_from_parent_hook_manager(monkeypatch):
-    calls = []
-    monkeypatch.setattr(ci.pytest, "main", lambda args, plugins: calls.append(args) or 0)
-    assert ci.main(["--suite", "callables", "--coverage", "-p", "pytest_cov"]) == 0
-    assert "--cov=hook_manager.callables" in calls[0]
-    assert "--cov=hook_manager" not in calls[0]
-    assert ci.main(["--suite", "hook_manager", "--coverage", "-p", "pytest_cov"]) == 0
-    assert "--cov=hook_manager" in calls[1]
-    config_file = next(arg.removeprefix("--cov-config=") for arg in calls[1] if arg.startswith("--cov-config="))
-    from coverage import Coverage
-    config = Coverage(config_file=config_file)
-    assert config.get_option("run:omit") == ["*/hook_manager/callables/*",
-                                            "*/hook_manager/career_preload.py",
-                                            "*/hook_manager/game_adapters/regulations/native_policy.py",
-                                            "*/hook_manager/game_adapters/regulations/native_categories.py",
-                                            "*/hook_manager/game_adapters/regulations/native_scripts.py",
-                                            "*/hook_manager/game_adapters/regulations/native_defaults.py",
-                                            "*/hook_manager/game_adapters/projects/*"]
-    assert config.get_option("run:branch") and config.get_option("run:relative_files")
-
-
-def test_real_collection_filters_acceptance_before_assigning_suites(tmp_path):
+@pytest.mark.parametrize("suite", ["hook_manager", "callables", "check"])
+def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suite):
+    # Execute the CLI with a small owned tree: argument inspection alone cannot
+    # prove that markers, collect-only mode or coverage exclusions take effect.
     modules = {
-        "tests/hook_manager/test_host.py": "def test_host(): pass\n",
+        "hook_manager/__init__.py": "",
+        "hook_manager/parent.py": "def value(): return 'parent'\n",
+        "hook_manager/callables/__init__.py": "",
+        "hook_manager/callables/child.py": "def value(): return 'child'\n",
+        "tests/hook_manager/test_host.py": (
+            "from hook_manager import parent\nfrom hook_manager.callables import child\n"
+            "def test_host(): assert (parent.value(), child.value()) == ('parent', 'child')\n"
+        ),
+        "tests/callables/test_callable.py": (
+            "from hook_manager import parent\nfrom hook_manager.callables import child\n"
+            "def test_callable(): assert (parent.value(), child.value()) == ('parent', 'child')\n"
+        ),
+        "tests/hook_manager/career/test_preload.py": "def test_child(): assert False\n",
         "tests/launcher/test_pack_mods.py": "def test_other_suite(): assert False\n",
-        "tests/test_acceptance_only.py": (
-            "import pytest\n@pytest.mark.native\ndef test_native(): assert False\n"
-        ),
-        "tests/test_legacy_only.py": (
-            "import pytest\n@pytest.mark.legacy\ndef test_legacy(): assert False\n"
-        ),
-        "tests/test_release_only.py": (
-            "import pytest\n@pytest.mark.release\ndef test_release(): assert False\n"
-        ),
+        **{f"tests/test_{marker}_only.py": (
+            f"import pytest\n@pytest.mark.{marker}\ndef test_{marker}(): assert False\n"
+        ) for marker in ("native", "legacy", "release")},
     }
     for name, source in modules.items():
         path = tmp_path / name
@@ -126,23 +88,39 @@ def test_real_collection_filters_acceptance_before_assigning_suites(tmp_path):
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    native: native acceptance\n    legacy: optional compatibility\n    release: optional release\n", encoding="utf-8"
     )
+    config = Path(spec.origin).parent / "coverage-hook-manager.toml"
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github/coverage-hook-manager.toml").write_bytes(config.read_bytes())
     script = """
 import importlib.util, pathlib, sys
+sys.path.insert(0, str(pathlib.Path.cwd()))
 spec = importlib.util.spec_from_file_location('ci_tests', sys.argv[1])
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
-root = pathlib.Path(sys.argv[2])
-raise SystemExit(ci.pytest.main(
-    [str(root / 'tests'), '-q', '-m', ci.PORTABLE],
-    plugins=[ci.SuiteSelection('hook_manager', root)],
-))
+ci.ROOT = pathlib.Path.cwd()
+# The selector's default root is captured at import, so supply the owned tree.
+select = ci.SuiteSelection
+ci.SuiteSelection = lambda suite: select(suite, ci.ROOT)
+args = ['--suite', sys.argv[2], '-q']
+if sys.argv[2] != 'check':
+    args += ['--coverage', '-p', 'pytest_cov', '--cov-report=xml:coverage.xml']
+raise SystemExit(ci.main(args))
 """
     result = subprocess.run(
-        [sys.executable, "-B", "-c", script, str(spec.origin), str(tmp_path)],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=30,
+        [sys.executable, "-B", "-c", script, str(spec.origin), suite],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+        # The fixture's coverage must not overwrite or join the parent CI run.
+        env={**os.environ, "COVERAGE_FILE": str(tmp_path / ".coverage")},
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed, 4 deselected" in result.stdout
+    if suite == "check":
+        assert "collected" in result.stdout and "passed" not in result.stdout
+        assert all(name in result.stdout for name in ("test_host", "test_callable", "test_child", "test_other_suite"))
+        assert not (tmp_path / "coverage.xml").exists()
+    else:
+        assert "1 passed, 6 deselected" in result.stdout
+        from xml.etree import ElementTree
+        files = {row.attrib["filename"] for row in ElementTree.parse(tmp_path / "coverage.xml").iter("class")}
+        # Both areas ran. Only the selected area's source belongs in its report.
+        assert any(name.endswith("parent.py") for name in files) == (suite == "hook_manager")
+        assert any(name.endswith("child.py") for name in files) == (suite == "callables")

@@ -40,23 +40,13 @@ It copies only the declarations needed for binding and native loading. Revision
 IDs are returned in a separate copied map. The game reads its own native document;
 the launcher retains only the category references needed by mod rules.
 
-`custom_categories` supplies a separate copy of enabled mods' categories.
-After handlers bind, normal startup sends those categories and the selected pack
-folder through the fixed loading request. The game adapter adds them before
-native code initialises defaults or restores saved selections. It checks the
-loaded categories again before policy publication. No file is rewritten, and
-there is no category-loading hook when no enabled owner adds categories.
-
-`custom_scripts` copies enabled mods' scheduled rule choices into the same loading
-request. These are JSON declarations, separate from Python validation functions.
-The game adapter adds them after governance construction and saved-policy
-restoration, before career setup can activate mod checks. The game validates the
-combined policy and retains its saved script progress. Existing matching scripts
-are reused; conflicting saved definitions prevent activation. Script execution
-follows the loaded `change_control.mode`: adding scripts keeps that mode intact.
-The prepared loading request allows up to 128 categories and 4,096 script rows
-within 2 MiB, including the IDs prefixed with their mod names during preparation.
-The original `regulations.json` file limit remains 1 MiB.
+`custom_categories` and `custom_scripts` copy enabled mods' declarations into the
+fixed loading request after handlers bind. No file is rewritten. The
+[native integration](../../hook_manager/game_adapters/regulations/README.md) owns
+loading hooks, checks definitions before publication and preserves the loaded
+policy mode and saved script progress. Matching scripts are reused; conflicts
+prevent activation. The request permits 128 categories and 4,096 script rows
+within 2 MiB, including owner-prefixed IDs. The file limit remains 1 MiB.
 
 `PreparationIndex` reuses option lookups, source paths and data size checks
 within one preparation. Owner data refers to native definitions without copying
@@ -98,28 +88,19 @@ enabled sections are rejected; native fields use the last value, as in the game.
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
 
-Native switches are checked and included in rule revisions. After career data
-is acknowledged, `RegulationRuntime.native_rules()` supplies their values to
-the fixed installation request. Activation requires each declared switch to
-report `native` for true or `disabled` for false. A skipped incompatible switch
-cannot become ready; failed activation restores the installed hooks.
-Switch-only mods use an empty data publication and need no validation handlers.
-If a required owner fails after setup, the controller closes transport and uses
-the fixed `restore-native-rules` request to remove the bypasses. Ordinary action
-guards stay installed and refuse unchecked actions; failure cannot remove a
-custom restriction by reverting the whole installation to native behaviour.
-
-`ValidationDispatch.native_rules()` copies the fixed booleans for private game
-setup after checking the current career, publication and readiness. Publication
-failure makes them unavailable; career reset cannot revive a failed policy.
-The game keeps these values between lookups.
+Checked native switches form part of rule revisions. After career publication,
+the runtime supplies checked booleans to the fixed installation request. Each switch must
+report `native` for true or `disabled` for false before activation; incompatible
+switches prevent readiness. Failed setup restores installed hooks. Switch-only
+mods publish empty rule data and need no handlers. Required-owner failure closes
+transport and restores bypassed native checks while ordinary action guards
+continue refusing unchecked actions. The native integration owns these hooks.
 
 Driver contexts include `proposal.native_checks.rookie_contract_length_applies`.
-The original game helper determines that boolean for the proposed person, role
-and employer, even when the native length check is disabled. A mod validator can
-use it with a maximum in its adopted rule data, without copying the game's
-definition of a rookie. The [driver adapter](../../hook_manager/game_adapters/drivers/README.md)
-skips the unrelated cap-ranking calculation so it cannot initialise live engines.
+The original game helper calculates it for the proposed person, role and employer
+even when the native cap is disabled. Validators can combine it with adopted rule
+data. The [driver adapter](../../hook_manager/game_adapters/drivers/README.md)
+explains how preparation avoids changing live game data.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.
@@ -131,10 +112,10 @@ from the 1 MiB file limit. Failed preparation returns no partial owner set.
 
 `PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
 tables once in the pack's shared source runner through `SharedHandlerRunner`.
-It rejects owners using separate runners. Each mod keeps its own IDs and declarations;
-one career generation covers their installed views. Owners declaring data without validators stay required but need
-no guest handler table. A group with one source
-mod uses the same binding path.
+It rejects owners using separate runners. Mods keep their own IDs and declarations,
+with one career number shared by all installed data. Owners declaring data without
+validators stay required but need no handler table. A single source mod uses the
+same binding path.
 
 Handlers are synchronous two-argument functions from the accepted owner source.
 Functions may be re-exported within the mod's checked source; mod Python is never
@@ -191,17 +172,11 @@ the game process. No enabled declarations means no native loading hooks.
 Setup failures are reported through command-line output and the log. A failed
 validator's native bypasses are restored while its action guards stay unavailable.
 
-`publish(native=..., custom=...)` installs every subscribed rule through
-`policy-begin`, ordered `policy-page` rows and `policy-seal`. Native records contain
-all reachable choices; custom records name admitted option keys. Partial updates,
-unchanged-membership markers and a second install in the same career are rejected.
-Private option data stays in the launcher. One deadline covers all pages and
-guest commits; readiness waits for the complete acknowledgement.
-
-`reset(epoch)` clears career data while retaining bindings. The next career needs
-a complete install and fresh native coverage approval. Reset cannot revive a failed
-runner. It may also retire data when loading is cancelled before activation;
-actions still require approved hooks.
+The [validation package](validation/README.md) owns complete career publication
+and reset. Private option data stays in the launcher; native choices arrive in
+bounded pages under one deadline, with complete acknowledgement before use.
+Partial updates and repeat installation are rejected. Reset retains bindings but
+requires fresh data and hook approval; it cannot revive a failed runner.
 
 Each action carries one shared proposal, rule selections and owner binding-slot
 references. Each declared validator runs once, up to 256 per action. Requests and
@@ -213,23 +188,15 @@ every required owner unavailable. There is no reconnection or stale approval reu
 The server has a private wakeup connection so shutdown can interrupt an idle read
 even while the native client remains connected; it needs no idle polling loop.
 
-`RegulationRuntime` retains required owner identities even after pack cleanup
-removes their live entries. Failure expands to every required owner sharing the
-Store, including definition-only owners. Wire failure replies name only the
-execution owners advertised to the native channel. A connection alone is not
-readiness: trusted setup must report every required part of the installed game
-hooks, and execution owners need committed policy. `personnel.contract` requires
-driver, staff and academy signing plus staffing operations;
-`development.project` requires development projects. A skipped or missing part
-keeps the pack unready. Extra parts do not block packs that do not use them.
-An unknown scope is rejected before handlers bind. The component report comes
-from trusted setup, never from mod declarations.
+`PackMods` reserves required owners before imports or activation; cleanup and
+failure never remove that requirement. Store failure includes definition-only
+owners, while wire failure replies name only advertised execution owners.
+Readiness requires committed policy and trusted coverage of each required scope:
+driver, staff, academy and staffing for `personnel.contract`, or projects for
+`development.project`. Missing coverage blocks readiness; unrelated coverage does
+not. Unknown scopes are rejected before binding. Mods cannot approve coverage.
 
-`PackMods` reserves eligible rule owners before any source import or activation.
-Failure does not release those reservations. Desired UI stays staged while rules
-are unready; published UI is cleared on failure. The menu may open once native
-loading protection is armed, while regulation readiness still waits for the career.
-Cleanup removes all failed peers' declarations before publishing replacements.
-During validation it defers native UI updates until the reply has been released,
-so UI acknowledgement cannot block that reply. Shutdown stops transport before
-closing the pack's runtimes.
+UI stays staged while rules are unready and is cleared on failure. Cleanup removes
+all failed peers' declarations before publishing replacements. Native UI updates
+wait until validation replies have been released, so UI acknowledgement cannot
+block a decision. Shutdown stops transport before closing runtimes.

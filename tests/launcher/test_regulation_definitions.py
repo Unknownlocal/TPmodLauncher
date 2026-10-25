@@ -18,8 +18,7 @@ SCOPES = {"personnel.contract"}
 
 
 def source(owner="example.rules", text="raise AssertionError('host imported author code')"):
-    # A private conformance fixture for the planned contract. Manifest parsing
-    # still rejects public API 0.4.0; no capability is published by this step.
+    # Inert source proves definition admission never imports mod Python.
     manifest = SourceManifest(owner, "1.0.0", "0.4.0", "rules", frozenset({"regulations"}))
     return SourceSnapshot(manifest, (("rules.py", text),), len(text.encode()))
 
