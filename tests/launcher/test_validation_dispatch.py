@@ -80,7 +80,6 @@ def test_catalog_borrows_admission_and_projects_shared_effective_native_data_onc
     sections[owners[0]]["validators"].append({**validator("private"), "rule": "a.rules.private"})
     model = definitions(sources, sections=sections, fallback=[{"key": "fallback", "options": [{"key": "open"}]}])
     catalog = CombinedCatalog(model)
-    assert "fallback" not in {row["key"] for row in model.native_document["categories"]}
     encoded = []
     original = catalog_module.encode
     monkeypatch.setattr(catalog_module, "encode", lambda value: (encoded.append(value), original(value))[1])
@@ -90,13 +89,13 @@ def test_catalog_borrows_admission_and_projects_shared_effective_native_data_onc
     first = [row for row in views[owners[0]].choices if row[0] == "native"]
     second = [row for row in views[owners[1]].choices if row[0] == "native"]
     assert len(first) == 3 and all(a[2] is b[2] for a, b in zip(first, second))
-    assert first[0][2].value == {"points": [25], "opaque": {"x": True}}
+    assert json.loads(first[0][2].text) == {"points": [25], "opaque": {"x": True}}
     assert first[0][3] is first[1][3] and first[0][3] is not second[0][3]
     assert sum("points" in value for value in encoded) == 3
     private = next(row[2] for row in views[owners[0]].choices if row[0] == "a.rules.private")
-    assert private.value is model._owners[owners[0]].categories[0]["options"][0]["parameters"]
+    assert json.loads(private.text) == {"custom": [1]}
     native[0]["points"].append(999)
-    assert first[0][2].value["points"] == [25]
+    assert json.loads(first[0][2].text)["points"] == [25]
     catalog.commit()
     with pytest.raises(ValueError, match="collide"):
         catalog.stage({"native": [{"key": "open", "points": 1, "parameters": {"points": 1}}]}, {})

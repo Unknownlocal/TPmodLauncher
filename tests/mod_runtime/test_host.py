@@ -38,8 +38,8 @@ class WitWorld:
         with SharedPythonRunner(runner_bundle, (snapshot,), {OWNER: {operation: lambda *args: calls.append(args)}},
                                 cleanup=lambda: cleaned.append(True)) as group:
             member = group.members[OWNER]
-            member.activate()
-            member.on_event("probe", "{}")
+            group.activate(member.manifest.id)
+            group.on_event(member.manifest.id, "probe", "{}")
     assert calls == [] and cleaned == [True]
 
 

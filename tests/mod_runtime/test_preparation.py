@@ -99,8 +99,8 @@ def test_group_preparation_reads_runner_once_and_feeds_one_shared_store(runner_b
         assert not group.closed  # The Store keeps the adopted code after input cleanup.
         assert phases[-1] == ("runner", owner) and len(phases) == 5  # Fresh bundle verification only.
         for member in group.members.values():
-            member.activate()
-            assert member.on_event("probe", '{"ok":true}') == '{"ok":true}'
+            group.activate(member.manifest.id)
+            assert group.on_event(member.manifest.id, "probe", '{"ok":true}') == '{"ok":true}'
     assert group.closed
     assert reports == [("owned.prepared", "source-import"), ("owned.prepared", "prepared source"),
                        ("owned.peer", "prepared source")]

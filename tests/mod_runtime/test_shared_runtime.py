@@ -64,12 +64,12 @@ class WitWorld:
                              ("owned.beta", "report", "helper-import"),
                              ("owned.alpha", "report", "entry-import")]
         for member in (first, second):
-            member.activate()
+            group.activate(member.manifest.id)
             assert (member.manifest.id, "report", "constructor") in calls
             assert (member.manifest.id, "menu", "item", "Item", "item") in calls
             assert (member.manifest.id, "register-settings", "{}") in calls
             assert (member.manifest.id, "theme", "{}") in calls
-        assert json.loads(first.on_event("peer", "{}")) == {"owner": "owned.alpha"}
+        assert json.loads(group.on_event(first.manifest.id, "peer", "{}")) == {"owner": "owned.alpha"}
         assert calls[-2:] == [("owned.beta", "report", "peer-call"),
                               ("owned.alpha", "save-settings", "{}")]
         assert not first.closed and not second.closed
@@ -86,9 +86,9 @@ def test_shared_provider_routing_rejects_unadmitted_calls(runner_bundle, rejecte
     calls, cleaned = [], []
     with SharedPythonRunner(runner_bundle, sources, providers(sources, calls),
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): member.activate()
+        for member in group.members.values(): group.activate(member.manifest.id)
         with pytest.raises(SandboxError, match="outside this runtime group|Capability.*required"):
-            group.members["owned.beta"].on_event("probe", "{}")
+            group.on_event("owned.beta", "probe", "{}")
         assert all(member.closed for member in group.members.values())
     assert calls == [] and cleaned == [True]
 
@@ -102,9 +102,9 @@ def test_guest_resource_failure_disables_every_member_and_cleans_once(runner_bun
     cleaned = []
     with SharedPythonRunner(runner_bundle, sources, providers(sources, []),
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): member.activate()
+        for member in group.members.values(): group.activate(member.manifest.id)
         with pytest.raises(SandboxError) as failure:
-            group.members["owned.alpha"].on_event("probe", "{}")
+            group.on_event("owned.alpha", "probe", "{}")
         if fault == "fuel": assert "fuel" in str(failure.value)
         assert all(member.closed for member in group.members.values())
     assert cleaned == [True]
@@ -121,14 +121,14 @@ def test_original_deadline_skips_expired_work_and_rejects_late_host_return(runne
     operations["owned.alpha"]["report"] = slow
     with SharedPythonRunner(runner_bundle, sources, operations,
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): member.activate()
+        for member in group.members.values(): group.activate(member.manifest.id)
         first, second = group.members.values()
         with pytest.raises(SandboxError, match="expired before entry"):
-            first.on_event("probe", "{}", deadline=time.monotonic() - 1)
+            group.on_event(first.manifest.id, "probe", "{}", deadline=time.monotonic() - 1)
         assert calls == [] and not first.closed
-        assert second.on_event("probe", "{}") == "{}"
+        assert group.on_event(second.manifest.id, "probe", "{}") == "{}"
         with pytest.raises(SandboxError, match="deadline"):
-            first.on_event("probe", "{}", deadline=time.monotonic() + .04)
+            group.on_event(first.manifest.id, "probe", "{}", deadline=time.monotonic() + .04)
         assert first.closed and second.closed
     assert calls == ["slow"] and cleaned == [True]
 
@@ -140,9 +140,9 @@ def test_foreign_thread_cannot_call_or_dispose_the_group(runner_bundle):
     with SharedPythonRunner(runner_bundle, sources, providers(sources, []),
                             cleanup=lambda: cleaned.append(threading.get_ident())) as group:
         member = group.members["owned.alpha"]
-        member.activate()
+        group.activate(member.manifest.id)
         def foreign():
-            for operation in (lambda: member.on_event("probe", "{}"), group.close):
+            for operation in (lambda: group.on_event(member.manifest.id, "probe", "{}"), group.close):
                 try: operation()
                 except SandboxError as error: errors.append(str(error))
         thread = threading.Thread(target=foreign)
@@ -150,7 +150,7 @@ def test_foreign_thread_cannot_call_or_dispose_the_group(runner_bundle):
         thread.join(2)
         assert not thread.is_alive() and len(errors) == 2
         assert all("creating thread" in error for error in errors)
-        assert not group.closed and member.on_event("probe", "{}") == "{}"
+        assert not group.closed and group.on_event(member.manifest.id, "probe", "{}") == "{}"
     assert cleaned == [creator]
 
 

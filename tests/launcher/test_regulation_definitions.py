@@ -5,6 +5,7 @@ from copy import deepcopy
 import hashlib
 import json
 from types import SimpleNamespace
+from weakref import ref
 
 import pytest
 
@@ -54,25 +55,13 @@ def test_owned_view_preserves_native_data_and_isolates_copies_and_revisions():
     before = deepcopy(data)
     result = prepare(data)
     assert data == before
-    assert result.native_document == {key: value for key, value in data.items() if key != "mod_extensions"}
-    merged = result.document
-    assert merged["categories"][0] == data["categories"][0]
-    assert merged["change_control"]["mode"] == "voting"
-    assert merged["change_control"]["scripted_changes"][0]["id"] == "example.rules:0"
-    assert merged["change_control"]["scripted_changes"][0]["new_regulation"] == {"key": "restricted"}
-    assert result.owners["example.rules"]["categories"][0]["options"][0]["parameters"] == {"target": "data.only"}
-    merged["categories"][1]["options"].clear()
-    owned = result.owners
-    owned["example.rules"]["option_data"]["native"]["open"]["anything"].clear()
-    owned.clear()
-    assert result.owners["example.rules"]["option_data"]["native"]["open"]["anything"] == [1, "x"]
-    assert result.document["categories"][1]["options"] and result.owners
     categories = result.custom_categories
     assert categories == [data["mod_extensions"]["example.rules"]["categories"][0]]
     categories.clear()
     assert result.custom_categories
     scripts = result.custom_scripts
-    assert scripts == result.document["change_control"]["scripted_changes"]
+    assert scripts[0]["id"] == "example.rules:0"
+    assert scripts[0]["new_regulation"] == {"key": "restricted"}
     scripts.clear()
     assert result.custom_scripts
     assert result.revisions == prepare(data).revisions
@@ -84,10 +73,10 @@ def test_owned_view_preserves_native_data_and_isolates_copies_and_revisions():
 def test_native_and_disabled_sections_keep_existing_json_semantics(tmp_path):
     content = b'{"categories":[],"native_extra":{"x":1,"x":2},"mod_extensions":{"off":{"schema":false,"schema":[],"nested":{"x":1,"x":2}}}}'
     result = RegulationDefinitions.from_bytes(content, {"example.rules": source()}, scopes=SCOPES)
-    assert result.document == {"categories": [], "native_extra": {"x": 2}} and result.owners == {}
+    assert result.owner_ids == () and result.custom_categories == result.custom_scripts == []
     RegulationDefinitions.from_bytes(content, {"example.rules": source()}, scopes=SCOPES,
         native_categories=lambda: pytest.fail("Omitted owners must not inspect native defaults"))
-    assert RegulationDefinitions.from_bytes(b'{"mod_extensions":null}', {}, scopes=set()).document == {}
+    assert RegulationDefinitions.from_bytes(b'{"mod_extensions":null}', {}, scopes=set()).owner_ids == ()
     assert RegulationDefinitions.read(tmp_path / "absent", {}, scopes=set()) is None
     with pytest.raises(ValueError, match="declaration fields"):
         RegulationDefinitions.from_bytes(b'{"mod_extensions":{"example.rules":null}}', {"example.rules": source()}, scopes=SCOPES)
@@ -157,8 +146,8 @@ def test_native_option_data_uses_trusted_defaults_without_rewriting_native_field
     section["validators"][0]["rule"] = "fallback"
     fallback = {"key": "fallback", "options": [{"key": "open"}]}
     result = prepare(data, native_categories=[fallback])
-    assert result.owners["example.rules"]["option_data"]["fallback"]["open"] == {"custom": 9}
-    assert result.native_document["categories"] == data["categories"]
+    assert result.validators["example.rules"][0]["rule"] == "fallback"
+    assert data["categories"][-1]["opaque"] == {"no_options": True}
     section["option_data"] = {"foreign.policy": {"open": {}}}
     with pytest.raises(ValueError, match="unknown or foreign"):
         prepare(data, native_categories=[fallback])
@@ -205,7 +194,7 @@ def test_owner_metadata_is_budgeted_with_the_cached_minimum_envelope(limit):
         excess = {"a": {"b": {"c": {"d": {"e": {}}}}}}
     section = data["mod_extensions"]["example.rules"]
     section["option_data"]["native"]["open"] = allowed
-    assert prepare(data).owners
+    assert prepare(data).owner_ids
     section["option_data"]["native"]["open"] = excess
     with pytest.raises(ValueError, match="bytes|node limit|container depth"):
         prepare(data)
@@ -223,7 +212,12 @@ def test_shared_native_and_source_inputs_keep_owner_data_and_revision_bytes_inde
     result = prepare(data, sources)
     # Independently encode the original complete revision format. Shared cached
     # pieces must produce exactly these bytes, including owner-local metadata.
-    for owner, declarations in result.owners.items():
+    for owner in result.owner_ids:
+        declarations = {"schema": 1, "categories": [], "option_data": {},
+                        "validators": [], "scripted_changes": [],
+                        **deepcopy(data["mod_extensions"][owner])}
+        for index, script in enumerate(declarations["scripted_changes"]):
+            script.setdefault("id", f"{owner}:{index}")
         revision = [owner, declarations, {"native": data["categories"][0]},
                     sources[owner].manifest.version, sources[owner].files]
         expected = hashlib.sha256(json.dumps(revision, sort_keys=True, ensure_ascii=True,
@@ -255,7 +249,7 @@ def test_session_quotas_cannot_be_split_across_owners(resource):
 def test_file_admission_is_bounded_and_requires_matching_source_identity(tmp_path):
     path = tmp_path / "regulations.json"
     path.write_bytes(json.dumps(document()).encode())
-    assert RegulationDefinitions.read(tmp_path, {"example.rules": source()}, scopes=SCOPES).owners
+    assert RegulationDefinitions.read(tmp_path, {"example.rules": source()}, scopes=SCOPES).owner_ids
     path.write_bytes(b" " * (1024 * 1024 + 1))
     with pytest.raises(ValueError, match="byte limit"):
         RegulationDefinitions.read(tmp_path, {"example.rules": source()}, scopes=SCOPES)
@@ -276,8 +270,10 @@ def test_pack_preparation_uses_only_live_admitted_source_owners_once(tmp_path):
     closed = SharedSourceMod.__new__(SharedSourceMod)
     closed.snapshot, closed.manifest = source("closed.mod"), source("closed.mod").manifest
     closed._active, closed.sandbox = True, SimpleNamespace(closed=True)
+    snapshot = ref(active.snapshot)
     scope.mods = {"example.rules": active, "closed.mod": closed,
                   "component.mod": SimpleNamespace(manifest=source("component.mod").manifest)}
-    assert set(scope.prepare_regulations(scopes=SCOPES).owners) == {"example.rules"}
+    assert scope.prepare_regulations(scopes=SCOPES).owner_ids == ("example.rules",)
+    assert active.snapshot is closed.snapshot is None and snapshot() is None
     with pytest.raises(ValueError, match="one preparation"):
         scope.prepare_regulations(scopes=SCOPES)

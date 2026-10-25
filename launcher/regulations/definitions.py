@@ -18,22 +18,22 @@ class RegulationDefinitions:
     Public outward views are independent copies of the retained declarations.
     """
 
-    def __init__(self, native, owners, revisions, references):
+    def __init__(self, owners, revisions, references):
         # Ownership transfers here after conversion has finished. Revalidating or
         # copying in the model would repeat the converter's work; use read() or
         # from_bytes() when starting with untrusted file content.
-        self._native, self._owners, self._revisions = native, owners, revisions
-        # Retain the admitted file/fallback index separately from the file view.
-        # Trusted catalog preparation borrows it without re-reading or cloning it.
+        self._owners, self._revisions = owners, revisions
+        # Keep category references, not the full native document.
+        # Trusted catalog preparation borrows them without re-reading or cloning.
         self._references = references
 
     @classmethod
     def from_bytes(cls, content, enabled_sources, *, scopes, native_categories=()):
         """Convert bounded bytes using trusted admission/mapping inputs."""
-        native, owners, revisions, references = convert(content, enabled_sources, scopes=scopes,
-                                                        native_categories=native_categories)
+        owners, revisions, references = convert(content, enabled_sources, scopes=scopes,
+                                               native_categories=native_categories)
         # Do not construct a candidate with only the owners that happened to pass.
-        return cls(native, owners, revisions, references)
+        return cls(owners, revisions, references)
 
     def _catalog_inputs(self):
         """Borrow retained inputs for trusted read-only catalog preparation only."""
@@ -72,17 +72,6 @@ class RegulationDefinitions:
         return dict(self._revisions)
 
     @property
-    def owners(self):
-        """Return isolated declarations for binding; this is not readiness."""
-        # OwnerDefinition.declarations() borrows internal lists/dicts. Copy at
-        # this boundary so consumers cannot mutate retained models or revisions.
-        return deepcopy({owner: data.declarations() for owner, data in self._owners.items()})
-
-    @property
-    def native_document(self):
-        return deepcopy(self._native)
-
-    @property
     def custom_categories(self):
         """Copy enabled owners' categories for the fixed native loading adapter."""
         return deepcopy([category for owner in self._owners.values() for category in owner.categories])
@@ -91,17 +80,3 @@ class RegulationDefinitions:
     def custom_scripts(self):
         """Copy only enabled owners' scripts; native policy remains game-owned."""
         return deepcopy([row for owner in self._owners.values() for row in owner.scripted_changes])
-
-    @property
-    def document(self):
-        """Copy the combined game document; callers must bind before using it."""
-        result = self.native_document
-        # Extend only the copied native view. Owner-only metadata and handler
-        # references stay in owners; they are not native game declaration fields.
-        categories = self.custom_categories
-        if categories:
-            result.setdefault("categories", []).extend(categories)
-        scripts = self.custom_scripts
-        if scripts:
-            result.setdefault("change_control", {}).setdefault("scripted_changes", []).extend(scripts)
-        return result

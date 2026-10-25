@@ -105,9 +105,9 @@ still apply after admission.
 
 `shared_runtime.py` owns one `SharedPythonRunner`, including its Store, source
 loading and group cleanup. `source_handle.py` supplies a `SourceHandle` for each
-member, carrying its manifest and access to activation and string events. A
-handle cannot close the interpreter independently. Closing the group, or a guest
-failure, makes every member unavailable and runs the caller's group cleanup once.
+member, carrying its manifest and availability. Activation and string events
+call the shared runner directly with that member's ID. Closing the group, or a
+guest failure, makes every member unavailable and runs group cleanup once.
 Creation, calls and closure stay on the Store's creating thread.
 
 Each member imports a `wit_world` module whose host methods are bound to its ID.

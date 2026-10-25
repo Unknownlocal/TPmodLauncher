@@ -57,7 +57,7 @@ def shared(runner_bundle, *, count=1, peer_handler=False):
     with SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
                             cleanup=lambda: cleaned.append(True)) as group:
         for member in group.members.values():
-            member.activate()
+            group.activate(member.manifest.id)
         binding = SharedHandlerRunner.bind(group, definitions.validators)
         yield group, binding, CombinedCatalog(definitions), calls, cleaned
     assert cleaned == [True]

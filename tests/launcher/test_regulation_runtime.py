@@ -273,23 +273,25 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod})
     with closing(scope):
         with pytest.raises(RuntimeError, match="Incomplete regulation binding"):
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
             with pytest.raises(ValueError, match="component report"):
-                scope.confirm_regulations(None)
+                runtime.confirm_native(None)
             # Signing support is insufficient; truthy integers also cannot
             # substitute for a successful native component installation.
             for staffing in (False, 1):
                 with pytest.raises(ValueError, match="coverage: staffing"):
-                    scope.confirm_regulations(dict(PERSONNEL_COMPONENTS, staffing=staffing))
+                    runtime.confirm_native(dict(PERSONNEL_COMPONENTS, staffing=staffing))
             assert not runtime.ready and not menus and progress[-1]["state"] == "loading"
             assert not mod.sandbox.closed
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime._dispatch.ready and not runtime.ready and not menus
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
+            scope.poll()
             assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
             with pytest.raises(ValueError, match="coverage: academy_signing"):
-                scope.confirm_regulations({"driver_signing": True, "staff_signing": True, "staffing": True})
+                runtime.confirm_native({"driver_signing": True, "staff_signing": True, "staffing": True})
+            scope.poll()
             assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
 
 
@@ -482,9 +484,10 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
         assert len({id(mod.sandbox) for mod in mods.values()}) == 1
         runtime = scope.bind_regulations(scopes={"personnel.contract"})
         assert runtime._handlers["b.rules"] is runtime._handlers["c.rules"]
-        assert "d.data" not in runtime._handlers and mods["a.ui"].snapshot is None
+        assert "d.data" not in runtime._handlers
+        assert all(mod.snapshot is None for mod in mods.values())
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime.ready and progress[-1]["state"] == "complete" and len(publications) == 1
             assert runtime.status["owners"]["d.data"] == "bound"
@@ -532,11 +535,9 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         assert progress[-1]["state"] == "error" and not menus
         # Repairing a live file cannot restart admission or publish staged UI.
         path.write_text(json.dumps(data), encoding="utf-8")
-        assert mod.sandbox.closed
+        assert mod.sandbox.closed and mod.snapshot is None
         with pytest.raises(ValueError, match="Required regulation owner"):
             scope.bind_regulations(scopes={"personnel.contract"})
-        with pytest.raises(RuntimeError):
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
         assert progress[-1]["state"] == "error" and not menus
 
 
@@ -548,7 +549,7 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, mods)
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         assert not runtime.ready  # A transport handshake is not native readiness.
-        scope.confirm_regulations(PERSONNEL_COMPONENTS)
+        runtime.confirm_native(PERSONNEL_COMPONENTS)
         assert not runtime.ready
         # More than one socket frame of adopted replacements sharing a key.
         # Membership is input-derived; it is not limited to current/upcoming.
@@ -563,7 +564,7 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
         assert not runtime.ready and not catalog.views
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
         assert not runtime.ready  # A new career cannot inherit native coverage approval.
-        scope.confirm_regulations(PERSONNEL_COMPONENTS)
+        runtime.confirm_native(PERSONNEL_COMPONENTS)
         assert runtime.ready and channel.epoch == 2
         reply_sent = threading.Event()
         from launcher.regulations import server as transport
@@ -619,7 +620,7 @@ def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(ma
             process.stdin.write(json.dumps(runtime.endpoint) + "\n")
             process.stdin.flush()
             assert json.loads(reader.submit(process.stdout.readline).result(timeout=5)) == {"connected": True}
-            scope.confirm_regulations(PERSONNEL_COMPONENTS)
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
             contexts = [context() for _ in range(72)]
             for index, ctx in enumerate(contexts):
                 ctx["proposal"] = {"padding": "x" * 3450, "identity": index}

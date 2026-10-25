@@ -98,8 +98,8 @@ class WitWorld(wit_world.WitWorld):
     messages = []
     with SharedPythonRunner(runner_bundle, (snapshot,), {snapshot.manifest.id: {"report": messages.append}}) as group:
         member = group.members[snapshot.manifest.id]
-        member.activate()
-        assert member.on_event("probe", "{}") == "{}"
+        group.activate(member.manifest.id)
+        assert group.on_event(member.manifest.id, "probe", "{}") == "{}"
     assert messages == ["original snapshot"]
 
 

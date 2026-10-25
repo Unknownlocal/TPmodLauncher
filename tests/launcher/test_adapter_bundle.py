@@ -58,7 +58,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert snapshot._contract.__globals__ is vars(snapshot)
         assert issubclass(personnel.PersonnelAdapter, host.CallableAdapters)
         assert channel.HookError is host.HookError
-        assert host.manager.groups == {} and host.callables.owners == {}
+        assert host.manager.groups == {}
         assert tuple(sys.meta_path) == finders and tuple(sys.path) == paths
         assert not {key for key in set(sys.modules) - before
                     if key == "game_state" or key.startswith(("managers.", "ui."))}

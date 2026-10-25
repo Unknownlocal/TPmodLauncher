@@ -12,8 +12,9 @@ private to the 0.4.0 interface.
 `PackMods.prepare_regulations()` runs once after activation. Its owners are live,
 accepted source mods with the `regulations` permission. Prebuilt components and
 closed or failed source mods cannot add owners. Each eligible mod retains its
-checked source copy so preparation never reopens a changed `src/` tree.
-Without eligible owners, this path reads no files.
+checked source copy until preparation finishes or fails, then releases it. The
+guest retains its source for later imports. Preparation never reopens a changed
+`src/` tree. Without eligible owners, this path reads no files.
 
 `RegulationDefinitions.read()` checks the selected folder and reads its fixed
 `regulations.json`, up to 1 MiB. A missing or unreadable file rejects preparation.
@@ -35,9 +36,9 @@ are reported through command-line output and logs, leaving native play available
 `converter.py` selects native data and enabled mod sections; `owner_converter.py`
 checks each section and creates an `OwnerDefinition`. `RegulationSession` checks
 collisions and combined limits. `RegulationDefinitions` stores the finished view.
-Its outward `owners`, `native_document`, `document` and `revisions` properties
-return independent copies. `document` includes owned categories and scripts;
-`native_document` preserves native fields without the mod sections.
+It copies only the declarations needed for binding and native loading. Revision
+IDs are returned in a separate copied map. The game reads its own native document;
+the launcher retains only the category references needed by mod rules.
 
 `custom_categories` supplies a separate copy of enabled mods' categories.
 After handlers bind, normal startup sends those categories and the selected pack

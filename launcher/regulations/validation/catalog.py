@@ -9,7 +9,7 @@ only need to visit affected mods. Sandboxes retain their own copies.
 from collections import ChainMap
 
 from mod_runtime._regulations.policy import encode
-from mod_runtime._regulations.values import bounded, clone, integer, measure, text
+from mod_runtime._regulations.values import bounded, integer, measure, text
 from ..definitions import RegulationDefinitions
 from .record import CatalogRecord
 from .view import OwnerView
@@ -82,7 +82,7 @@ class CombinedCatalog:
         if identity not in cache:
             metric = bounded(measure(value, encoded=encoded))
             self._next = integer(self._next + 1, 64, positive=True)
-            cache[identity] = CatalogRecord(self._next, kind, value if borrow else clone(value), encoded, metric)
+            cache[identity] = CatalogRecord(self._next, kind, encoded, metric)
         return cache[identity]
 
     def _native_choices(self, rule, options, cache):

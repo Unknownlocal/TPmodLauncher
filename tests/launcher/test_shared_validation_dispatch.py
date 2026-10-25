@@ -48,7 +48,7 @@ def make_shared_dispatch(runner_bundle, make_mod):
             group = stack.enter_context(SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
                                                            cleanup=lambda: cleaned.append(True)))
             for member in group.members.values():
-                member.activate()
+                group.activate(member.manifest.id)
             peer = make_mod(CODE.format(owner="b.rules"), owner="b.rules", report=lambda owner, text: calls.append((owner, text)))
             sources["b.rules"] = peer.snapshot
             sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],

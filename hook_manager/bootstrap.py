@@ -43,9 +43,6 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
-            # Keep the required-validation lifecycle separate from legacy hooks;
-            # no dispatcher or registrations are admitted by bootstrap itself.
-            module.callables = module.CallableAdapters()
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
             module.menu = module.MenuAdapter()
@@ -138,14 +135,9 @@ def pulse(sources, digest, instance, game_root, request_json):
             response["regulation_notices"] = notices
         else:
             if request == {"operation": "shutdown"}:
-                if not module.callables.try_stop():
-                    # Preserve the queued bridge request for a bounded retry.
-                    # Waiting here would pin the main thread needed by the game;
-                    # raising would abandon restoration through the fatal path.
-                    return "WAIT: native callable operation is active"
                 if not module.adapters.close():
-                    # Regulation guards own separate registries. Retain their
-                    # modules/channel until every admitted operation finishes.
+                    # Keep guard modules and their channel until every
+                    # admitted operation finishes; retry without blocking here.
                     return "WAIT: native regulation operation is active"
                 module.menu.close()
                 module.themes.close()
@@ -153,8 +145,6 @@ def pulse(sources, digest, instance, game_root, request_json):
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
-        response["callables"] = (module.callables.status() if module.callables.closed
-                                 else module.callables.poll())
         if module.adapters.preload is not None:
             module.adapters.preload.poll()
         response["adapters"] = module.adapters.status()

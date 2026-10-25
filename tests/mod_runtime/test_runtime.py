@@ -37,7 +37,7 @@ def test_multibyte_source_crosses_chunk_boundaries_and_dotted_entry_loads(runner
     data = replace(data, manifest=replace(MANIFEST, entry="pkg.entry"))
     messages = []
     with SharedPythonRunner(runner_bundle, (data,), {MANIFEST.id: {"report": messages.append}}) as runner:
-        runner.members[MANIFEST.id].activate()
+        runner.activate(MANIFEST.id)
     assert messages == ["ready"]
 
 

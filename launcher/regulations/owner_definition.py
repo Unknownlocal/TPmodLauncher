@@ -10,7 +10,7 @@ class OwnerDefinition:
 
     The converter transfers private containers to this model after validation.
     Frozen fields prevent reassignment, not nested mutation; retained containers
-    stay internal. The aggregate copies declarations before exposing outward views.
+    stay internal. The aggregate copies only the fields needed by native loading and binding.
     Native/category option fields remain dictionaries to preserve their format.
     """
 
@@ -25,10 +25,9 @@ class OwnerDefinition:
         return self.option_data.keys() | {row["rule"] for row in self.validators}
 
     def declarations(self):
-        """Build a borrowed schema-1 view for internal copying/serialization.
+        """Build a borrowed declaration view for revision hashing.
 
-        Declaration containers are borrowed. The aggregate copies this view
-        before returning it, avoiding a deep copy of rule data just for hashing.
+        Revision encoding reads these private containers without copying them.
         """
         result = {"schema": 1, "categories": self.categories,
                   "option_data": self.option_data, "validators": self.validators,

@@ -63,15 +63,15 @@ def test_shared_imports_preserve_owner_state_and_allow_cross_mod_objects(runner_
     second = snapshot("owned.beta", "beta", entry="entry.main")
     cleaned = []
     with sandbox(runner_bundle, cleaned) as guest:
-        sources = SharedSources(guest, (first, second))
+        SharedSources(guest, (first, second))
         for owner in ("owned.alpha", "owned.beta"):
-            sources.activate(owner)
+            guest.call("activate-source", owner)
         # Identical local import names resolve within the requesting mod. The
         # first entry also imported beta before beta's entry object was loaded.
-        assert json.loads(sources.on_event("owned.alpha", "touch", "{}")) == ["alpha"] * 5 + [2, []]
-        assert json.loads(sources.on_event("owned.beta", "read", "{}")) == ["beta"] * 5 + [1, []]
-        sources.on_event("owned.alpha", "peer", '"owned.beta"')
-        assert json.loads(sources.on_event("owned.beta", "read", "{}"))[-1] == ["alpha"]
+        assert json.loads(guest.call("on-source-event", "owned.alpha", "touch", "{}")) == ["alpha"] * 5 + [2, []]
+        assert json.loads(guest.call("on-source-event", "owned.beta", "read", "{}")) == ["beta"] * 5 + [1, []]
+        guest.call("on-source-event", "owned.alpha", "peer", '"owned.beta"')
+        assert json.loads(guest.call("on-source-event", "owned.beta", "read", "{}"))[-1] == ["alpha"]
         assert not guest.closed
     assert cleaned == [True]
 

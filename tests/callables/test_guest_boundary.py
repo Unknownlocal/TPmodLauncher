@@ -33,5 +33,5 @@ class WitWorld(wit_world.WitWorld):
 '''
     messages = []
     with SharedPythonRunner(runner_bundle, (snapshot(code),), {MANIFEST.id: {"report": messages.append}}) as runner:
-        runner.members[MANIFEST.id].activate()
+        runner.activate(MANIFEST.id)
     assert messages == ["Private native hooks absent"]

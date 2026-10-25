@@ -17,10 +17,9 @@ from .source import SourceSnapshot
 
 
 class SharedSources:
-    """Load separate entry objects and address them through original mod IDs."""
+    """Transfer and import checked sources into the caller-owned runner."""
 
     def __init__(self, sandbox, snapshots):
-        self.sandbox = sandbox
         try:
             if type(snapshots) is not tuple or not 0 < len(snapshots) <= MAX_SOURCE_OWNERS:
                 raise SandboxError("Expected a bounded tuple of source snapshots")
@@ -70,11 +69,3 @@ class SharedSources:
         except BaseException:
             sandbox.close()
             raise
-
-    def activate(self, owner):
-        """Activate the selected loaded entry; the Store remains caller-owned."""
-        self.sandbox.call("activate-source", owner)
-
-    def on_event(self, owner, name, payload):
-        """Exchange strings with one activated entry, without changing mod IDs."""
-        return self.sandbox.call("on-source-event", owner, name, payload)

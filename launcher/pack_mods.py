@@ -259,18 +259,6 @@ class PackMods:
         self.poll()
         return status
 
-    def confirm_regulations(self, components):
-        """Check trusted installation coverage before releasing the pack's UI."""
-        if self._regulation_failed or self.regulations is None:
-            raise RuntimeError("Regulations have not bound")
-        try:
-            self.regulations.confirm_native(components)
-        finally:
-            # An incomplete replacement report revokes approval as well. Keep
-            # published UI and loading status in step with that change immediately.
-            self._publish_ui()
-            self._progress("complete")
-
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.
 
@@ -287,8 +275,15 @@ class PackMods:
         # Freeze preparation even on failure: editing a live pack cannot silently
         # repair/redefine an enabled rule; recovery needs a fresh admission.
         self._regulations_prepared = True
-        return RegulationDefinitions.read(self._pack_root, sources, scopes=scopes,
-                                          native_categories=native_categories)
+        try:
+            return RegulationDefinitions.read(self._pack_root, sources, scopes=scopes,
+                                              native_categories=native_categories)
+        finally:
+            # Admission is one-shot even on failure. The guest keeps its source
+            # for lazy imports; these host copies have no further consumer.
+            for mod in self.mods.values():
+                if type(mod) is SharedSourceMod:
+                    mod.snapshot = None
 
     def _flush_menu(self):
         """Send staged declarations outside guest execution, without per-frame callbacks."""

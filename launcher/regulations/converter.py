@@ -62,7 +62,7 @@ def _script_reservations(native):
 
 
 def convert(content, enabled_sources, *, scopes, native_categories=()):
-    """Return prepared native/owner/revision state, or discard all of it.
+    """Return prepared owner/revision/reference state, or discard all of it.
 
     The caller explicitly selects this regulation converter. Neither document
     values nor author code can choose a host model, import or native target.
@@ -103,6 +103,6 @@ def convert(content, enabled_sources, *, scopes, native_categories=()):
         # Only accepted owners reach revision finalization. All hashes are ready
         # before the aggregate model can take ownership of prepared state.
         revisions = finalize(owners, sources, base)
-        return native, owners, revisions, base
+        return owners, revisions, base
     except (ValueError, TypeError, KeyError, RecursionError) as error:
         raise ValueError(f"Cannot prepare regulation definitions: {error}") from error

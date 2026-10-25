@@ -35,13 +35,11 @@ def prepare(data, sources=None):
 @pytest.mark.parametrize("name", [ROOKIE, PRESTIGE])
 def test_switches_keep_false_and_change_revisions_without_rule_dependencies(name):
     absent = prepare(document({}))
-    assert absent.native_rules == {} and "native_rules" not in absent.owners[OWNER]
+    assert absent.native_rules == {}
     revisions = []
     for enabled in (True, False):
         result = prepare(document({name: enabled}))
         assert result.native_rules == {OWNER: {name: enabled}}
-        assert result.owners[OWNER]["native_rules"] == {name: enabled}
-        assert result.document == absent.document
         assert result._catalog_inputs()[1][OWNER].rule_keys() == set()
         outward = result.native_rules
         outward[OWNER].clear()
