@@ -200,7 +200,8 @@ def test_switch_only_policy_requires_complete_installation_and_fresh_career_publ
                 restored.append(operation)
                 return {"regulation_control": True}
             scope._bridge = control_bridge(monkeypatch, restore)
-            scope._regulation_generation = 2
+            runtime.generation = 2
+            runtime._bridge = scope._bridge
             mod.close()
             with pytest.raises(RuntimeError, match="unavailable"):
                 runtime.native_rules()
@@ -227,8 +228,8 @@ def test_cancel_between_native_setup_replies_retires_only_career(make_mod, tmp_p
                 "state": "installed", "career_generation": 1, "components": PERSONNEL_COMPONENTS}}}
         client = control_bridge(monkeypatch, control)
         # Reset acknowledgement must be serviced on the owning thread, as in
-        # Bridge.retire_regulations; this test's immediate reply only queues it.
-        scope.activate_native_regulations(client, 1)
+        # Runtime retirement; this test's immediate reply only queues it.
+        runtime._activate(client, 1)
         pump(scope, wake, resets[0])
         assert operations[-1] == "retire-regulations" and not runtime.ready
         assert not runtime.closed and not mod.runner.closed and not scope._regulation_failed
@@ -286,7 +287,13 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
             assert not mod.sandbox.closed
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime._dispatch.ready and not runtime.ready and not menus
-            runtime.confirm_native(PERSONNEL_COMPONENTS)
+            runtime.confirm_native(PERSONNEL_COMPONENTS, pending=True)
+            # Native guards can become enabled just before their activation reply
+            # arrives. Coverage already permits checks; UI must still stay held.
+            action = worker.submit(channel, [context()], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
+            assert pump(scope, wake, action) == {mod.manifest.id: [{"decision": "allow"}]}
+            assert not runtime.ready and not menus
+            runtime.finish_native_activation()
             scope.poll()
             assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
             with pytest.raises(ValueError, match="coverage: academy_signing"):
@@ -316,24 +323,28 @@ def test_published_data_rejects_unacknowledged_or_stale_actions_before_author_co
         assert not executed and mod.sandbox.closed and not runtime.ready
 
 
-def test_native_preparation_defers_cleanup_ui_until_bridge_reply(make_mod, tmp_path):
+def test_native_preparation_defers_cleanup_ui_until_bridge_reply(make_mod, tmp_path, monkeypatch):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     owner = mod.manifest.id
     scope, runtime, _, progress, menus = prepare_scope(tmp_path, {owner: mod})
-    # Model the pack's physical runner ownership, including group cleanup.
     scope._sources = {owner: SimpleNamespace(root=tmp_path)}
     scope._source_runner = mod.runner
     mod.sandbox._resources.callback(scope._remove_sources)
     scope.applied_menu = [{"owner": owner}]
     count = len(progress)
-    def prepare(received, generation):
-        assert received is runtime and generation == 1 and scope._regulation_dispatching
-        mod.close()
-        assert not menus and len(progress) == count
-        return {"adapters": {"regulations": {"state": "unavailable"}}}
+    def control(operation):
+        assert runtime.busy
+        if operation == "prepare-regulations":
+            mod.close()
+            assert not menus and len(progress) == count
+            return {"adapters": {"regulations": {"state": "unavailable"}}}
+        assert operation == "stop-regulations" and runtime.closed
+        return {"regulation_control": True}
     with closing(scope):
-        scope.prepare_native_regulations(SimpleNamespace(prepare_regulations=prepare), 1)
-        assert not scope._regulation_dispatching and scope._regulation_failed and runtime.closed
+        with pytest.raises(RuntimeError, match="preparation was not confirmed"):
+            runtime._prepare(control_bridge(monkeypatch, control), 1)
+        assert not runtime.busy and scope._regulation_failed and runtime.closed
+        scope.poll()
         assert menus[-1] == [] and progress[-1]["state"] == "error"
 
 
@@ -410,7 +421,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods
                 return {"regulation_control": True, "adapters": {"regulations": {
                     "state": "active" if channel.validation_ready else "installed", "career_generation": 1,
                     "components": {"development_projects": engine.groups["project"]["state"] == "active", "staffing": False}}}}
-            scope.activate_native_regulations(control_bridge(monkeypatch, control), 1)
+            runtime._activate(control_bridge(monkeypatch, control), 1)
 
             def start(budget):
                 with engine.operation():
@@ -451,7 +462,7 @@ def test_failed_native_activation_closes_transport_and_requests_cleanup(make_mod
                 "state": "installed" if operation == "install-regulations" else "unavailable", "career_generation": 1,
                 "components": dict(PERSONNEL_COMPONENTS, staffing=failure != "coverage")}}}
         with pytest.raises((ValueError, RuntimeError), match="coverage: staffing|activation was not confirmed"):
-            scope.activate_native_regulations(control_bridge(monkeypatch, control), 1)
+            runtime._activate(control_bridge(monkeypatch, control), 1)
         assert operations == (["install-regulations"] + (["activate-regulations"] if failure == "enable" else [])
                               + ["stop-regulations"])
         assert not runtime.ready and not menus and not scope._regulation_dispatching

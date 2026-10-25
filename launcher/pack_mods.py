@@ -92,14 +92,23 @@ class PackMods:
         self._source_starting = self._source_unavailable = self._source_reported = False
         self._pack_root = None
         self._regulations_prepared = False
-        self._regulation_failed = False
-        self._regulation_dispatching = False
+        self._regulation_error = False
         self.regulations, self._regulation_status = None, None
         self._regulation_owners, self._regulation_wake = set(), wake
         self._bridge = bridge
-        self._regulation_armed = False
-        self._regulation_generation = None
-        self._regulation_retired = True
+
+    @property
+    def _regulation_failed(self):
+        return (self._regulation_error or bool(self._regulation_owners and self._source_unavailable)
+                or self.regulations is not None and self.regulations.failed)
+
+    @property
+    def _regulation_dispatching(self):
+        return self.regulations is not None and self.regulations.busy
+
+    @property
+    def _regulation_armed(self):
+        return self.regulations is not None and self.regulations.armed
 
     def _start_regulations(self):
         """Bind once, then protect native loading before enabling career selection.
@@ -115,59 +124,13 @@ class PackMods:
         self.bind_regulations(scopes=set(SCOPE_COMPONENTS),
                               native_categories=lambda: self._bridge.regulation_defaults(self._pack_root))
         if self._regulation_owners:
-            categories = self.regulations.definitions.custom_categories
-            # Only enabled, bound owners reach this fixed data-only operation.
-            # Native policy and progress continue through their own loaders.
-            data = {"regulations": {"pack": str(self._pack_root), "categories": categories}} if categories else {}
-            scripts = self.regulations.definitions.custom_scripts
-            if scripts:
-                data["regulations"]["scripted_changes"] = scripts
-            status = self._bridge.request("await-regulations", **data)
-            if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
-                raise RuntimeError("Native regulation loading protection was not confirmed")
-            self._regulation_armed = True
+            self.regulations.arm(self._bridge, self._pack_root)
         self._progress("complete")
 
     def career_preload(self, status):
-        """Retire departed careers and prepare the next native-captured attempt.
-
-        The controller delivers changes on its Store-owning thread. A repeated
-        waiting notice must not publish again or install a second set of hooks.
-        """
-        if self.closed or not self._regulation_armed or self._regulation_failed:
-            return
-        if status.get("state") == "unavailable":
-            raise RuntimeError("Native regulation loading protection became unavailable")
-        if status.get("state") not in ("waiting", "left"):
-            return
-        generation = status.get("generation")
-        if type(generation) is not int or generation < 1:
-            raise ValueError("Invalid native regulation loading attempt")
-        if self._regulation_generation is not None:
-            if generation < self._regulation_generation or generation == self._regulation_generation and status["state"] != "left":
-                return
-            if not self._regulation_retired:
-                self._regulation_dispatching = True
-                try:
-                    self._bridge.retire_regulations(self.regulations, self._regulation_generation)
-                    self._regulation_retired = True
-                    self._regulation_status = None  # The next career must republish its held UI.
-                finally:
-                    self._regulation_dispatching = False
-        if status["state"] == "left":
-            # Keep the number after departure so a delayed waiting notice
-            # cannot restart a cancelled attempt. A retry gets a new number.
-            self._regulation_generation = generation
-            self._publish_ui()
-            return
-        self._regulation_generation = generation
-        self._regulation_retired = False
-        prepared = self.prepare_native_regulations(self._bridge, generation)
-        if self._regulation_failed:
-            raise RuntimeError("Native regulation preparation was not confirmed")
-        if prepared.get("adapters", {}).get("regulations", {}).get("state") != "prepared":
-            return  # A cancelled/replaced loading job did not acquire a policy.
-        self.activate_native_regulations(self._bridge, generation)
+        """Refresh held UI between the runtime's completed native setup requests."""
+        if not self.closed and self.regulations is not None:
+            self.regulations.career_preload(status, self.poll)
 
     def _regulation_waiting(self):
         return (not self.closed and (self._regulation_failed or (bool(self._regulation_owners)
@@ -201,7 +164,7 @@ class PackMods:
         except Exception as error:
             # Preparation can fail before there is a runtime, and listener startup
             # can fail after handlers bind. Neither can revert to loading/ready.
-            self._regulation_failed = True
+            self._regulation_error = True
             self._log("REGULATIONS FAILED", owners=sorted(self._regulation_owners), detail=str(error)[:512])
             try:
                 self._reject_mods(self._regulation_owners, str(error)[:512])
@@ -213,51 +176,6 @@ class PackMods:
             self._publish_ui()
             self._progress("complete")
         return self.regulations
-
-    def prepare_native_regulations(self, bridge, generation):
-        """Send the loaded career's rule data before installing its game hooks.
-
-        Store cleanup can remove mod UI even when only transport is polled.
-        Defer those updates while the game is waiting on this bridge request;
-        they may use the bridge again only after its reply has arrived.
-        """
-        if (self.closed or self._regulation_failed or self.regulations is None
-                or self._regulation_dispatching):
-            raise RuntimeError("Regulations are not available for native preparation")
-        self._regulation_dispatching = True
-        try:
-            status = bridge.prepare_regulations(self.regulations, generation)
-        except BaseException:
-            self._regulation_failed = True
-            self._regulation_status = None  # Refresh deferred UI on the next safe poll.
-            raise
-        finally:
-            self._regulation_dispatching = False
-        if status.get("adapters", {}).get("regulations", {}).get("state") != "prepared":
-            preload = status.get("adapters", {}).get("career_preload", {})
-            if preload.get("state") not in ("left", "waiting") or preload.get("generation") == generation and preload.get("state") != "left":
-                self._regulation_failed = True
-                self.regulations.close()
-        self._publish_ui()
-        self._progress("complete")
-        return status
-
-    def activate_native_regulations(self, bridge, generation):
-        """Keep UI held until prepared hooks are installed, checked and enabled."""
-        if (self.closed or self._regulation_failed or self.regulations is None
-                or self._regulation_dispatching):
-            raise RuntimeError("Regulations are not available for native activation")
-        self._regulation_dispatching = True
-        try:
-            status = bridge.activate_regulations(self.regulations, generation)
-        except BaseException:
-            self._regulation_failed = True
-            self._regulation_status = None
-            raise
-        finally:
-            self._regulation_dispatching = False
-        self.poll()
-        return status
 
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.
@@ -331,8 +249,6 @@ class PackMods:
         """Count and identify the entire failed group once, including unactivated peers."""
         self._source_unavailable = True
         self._source_starting = False
-        if self._regulation_owners:
-            self._regulation_failed = True
         if self.closed or self._source_reported:
             return
         self._source_reported = True
@@ -348,8 +264,6 @@ class PackMods:
         self._source_starting = False
         self._source_entries.clear()
         if not self.closed:
-            if self._regulation_owners:
-                self._regulation_failed = True
             # Constructor cleanup can run before assignment. In that case the
             # loading branch logs the original error once construction unwinds.
             if self._source_runner is not None:
@@ -514,8 +428,7 @@ class PackMods:
     def _progress(self, state="loading"):
         """Publish host-owned counts; native readiness still waits for registry installation."""
         if state in ("loading", "complete") and self._regulation_waiting():
-            failed = self._regulation_failed or (self.regulations is not None
-                     and "unavailable" in self.regulations.status["owners"].values())
+            failed = self._regulation_failed
             # The native preload adapter protects the selected career after
             # the menu opens. Required mod UI remains held by _ui_waiting().
             state = "error" if failed else "complete" if self.finished and self._regulation_armed else "loading"
@@ -566,25 +479,8 @@ class PackMods:
         if self.regulations is not None:
             # This runs on the controller/Store owner before any synchronous UI
             # bridge request. The I/O thread only wakes this loop and queues data.
-            self._regulation_dispatching = True
-            try:
-                self.regulations.poll()
-            finally:
-                self._regulation_dispatching = False
+            self.regulations.poll()
             status = self.regulations.status
-            if (self._bridge is not None and self._regulation_generation is not None
-                    and not self.regulations.closed and "unavailable" in status["owners"].values()
-                    and any(not enabled for values in self.regulations.definitions.native_rules.values()
-                            for enabled in values.values())):
-                # Close transport before bridge work to release waiting guards.
-                # Keep those guards installed: failed custom rules cannot become
-                # permission to sign. Only native bypass helpers are restored.
-                self._regulation_failed = self._regulation_dispatching = True
-                try:
-                    self._bridge.restore_native_rules(self.regulations, self._regulation_generation)
-                finally:
-                    self._regulation_dispatching = False
-                status = self.regulations.status
             if status != self._regulation_status:
                 self._regulation_status = status
                 self._publish_ui()

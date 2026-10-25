@@ -168,31 +168,28 @@ Its I/O thread receives requests and wakes the controller; only controller
 request numbers, career numbers (`epoch`) and acknowledged rule-data versions.
 Socket data cannot supply Python code or native function targets.
 
-`PackMods.prepare_native_regulations()` uses the bridge's fixed preparation
-request to publish the loaded career's rule data before any game hooks install.
-While waiting for the game's reply, the bridge services regulation requests on
-the controller thread. Mod cleanup defers UI updates until that reply arrives,
-so it cannot start a second bridge request during preparation. Publication alone
-does not approve hook coverage.
+`RegulationRuntime` owns the captured career number and its preparation,
+installation, activation and retirement. The bridge sends fixed requests and
+services regulation transport while awaiting a reply. `PackMods` derives its UI
+holds and failure display from runtime status, refreshing between completed
+requests so cleanup cannot start another request through a busy bridge.
 
-`PackMods.activate_native_regulations()` installs hooks with validation held off,
-checks the installation report, then asks the game to enable them. Readiness and
-mod UI remain held until that final reply. Failure closes transport and requests
-native cleanup. Healthy validators are not permanently disabled by a temporary
-refusal during installation. These fixed controls cannot name arbitrary methods.
+Normal startup binds admitted handlers once and confirms that `CareerPreload`
+protects career selection. Each captured attempt publishes its rule data before
+hooks install. Coverage is checked with validation held off; readiness and mod
+UI are released only after the game confirms activation. Confirmed coverage
+already permits validation if native guards enable just before that reply; the
+game controls when guarded actions begin. A failed setup closes transport
+before requesting native restoration. An invalid acknowledgement cannot
+leave an earlier approval active.
 
-Normal startup binds admitted handlers once and arms `CareerPreload` before
-enabling career selection. Mod UI still waits for regulation readiness.
-The bridge reports changes to the captured loading attempt; `PackMods` prepares
-and activates it on the controller thread. Repeated or older waiting notices do
-not repeat setup. No enabled declarations means no native loading hooks.
-Setup failures use the controller's normal cleanup, restoring native hooks and
-reporting the failure in command-line output and the log. Native departure
-notices retire career hooks after admitted work finishes. The connection and
-handler tables stay loaded; the next career must publish fresh data and confirm
-coverage again. A cancelled attempt can retire data published before activation,
-without closing the pack's interpreter or validators. Stale notices cannot retire
-a later prepared career.
+Repeated or older waiting notices do not repeat setup. Departure numbers remain
+recorded so a cancelled attempt cannot restart from a delayed notice. Retirement
+keeps the connection and handlers, but the next career must publish fresh data
+and confirm coverage again. Native captured-job and ownership checks remain in
+the game process. No enabled declarations means no native loading hooks.
+Setup failures are reported through command-line output and the log. A failed
+validator's native bypasses are restored while its action guards stay unavailable.
 
 `publish(native=..., custom=...)` installs every subscribed rule through
 `policy-begin`, ordered `policy-page` rows and `policy-seal`. Native records contain

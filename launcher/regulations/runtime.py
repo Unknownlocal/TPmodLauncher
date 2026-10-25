@@ -2,6 +2,7 @@
 """Controller-owned binding, policy publication and pack readiness."""
 
 import threading
+from contextlib import contextmanager
 
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime._regulations.values import integer
@@ -31,9 +32,130 @@ class RegulationRuntime:
         self._states = dict.fromkeys(definitions.owner_ids, "pending")
         self._handler, self._runner, self._server, self._dispatch = None, None, None, None
         self._publication, self._action = None, 0
-        self._native = self.closed = self._attempted = self._bound = False
-        self._activation_pending = False
+        self.closed = self._attempted = self._bound = self.busy = False
+        self._native = None  # None -> installed coverage -> confirmed activation.
+        self._bridge, self.generation, self._retired = None, None, True
         self._required_components = set()
+
+    @property
+    def armed(self):
+        return self._bridge is not None
+
+    @property
+    def failed(self):
+        return (self.closed or "unavailable" in self._states.values()
+                or self._runner is not None and self._runner.closed
+                or self._server is not None and self._server.failed.is_set())
+
+    def arm(self, bridge, pack):
+        """Protect career selection after binding, without selecting a save."""
+        self._owning_thread()
+        categories = self.definitions.custom_categories
+        data = {"regulations": {"pack": str(pack), "categories": categories}} if categories else {}
+        scripts = self.definitions.custom_scripts
+        if scripts:
+            data["regulations"]["scripted_changes"] = scripts
+        status = bridge.request("await-regulations", **data)
+        if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
+            raise RuntimeError("Native regulation loading protection was not confirmed")
+        self._bridge = bridge
+
+    @contextmanager
+    def _control(self, bridge, generation):
+        """Keep UI requests out of native setup and centralise terminal rollback."""
+        self._owning_thread()
+        if self.failed or self.busy:
+            raise RuntimeError("Regulations are not available for native setup")
+        control = {"generation": generation, "endpoint": self.endpoint}
+        self.busy = True
+        try:
+            yield control
+        except BaseException:
+            self._restore(bridge, control)
+            raise
+        finally:
+            self.busy = False
+
+    def _restore(self, bridge, control, *, rules_only=False):
+        # Release native socket waits first. Busy native operations still use
+        # the bridge's bounded WAIT/retry path before restoring owned wrappers.
+        try:
+            self.close()
+        finally:
+            status = bridge.request("restore-native-rules" if rules_only else "stop-regulations", regulations=control)
+        if status.get("regulation_control") is not True:
+            raise RuntimeError("Native regulation cleanup was not confirmed")
+
+    def _retire(self, bridge, control):
+        status = bridge.request("retire-regulations", timeout=3 + 5 * len(self.definitions.owner_ids),
+                                regulations=control, _service=self.poll)
+        if status.get("regulation_control") is not True:
+            raise RuntimeError("Native regulation retirement was not confirmed")
+        self._retired = True
+
+    def _prepare(self, bridge, generation):
+        with self._control(bridge, generation) as control:
+            status = bridge.request("prepare-regulations", timeout=3 + 5 * len(self.definitions.owner_ids),
+                                    regulations=control, _service=self.poll)
+            if status.get("adapters", {}).get("regulations", {}).get("state") == "prepared":
+                return True
+            preload = status.get("adapters", {}).get("career_preload", {})
+            if preload.get("state") == "left" or preload.get("state") == "waiting" and preload.get("generation") != generation:
+                return False  # A healthy cancelled/replaced native job is not a failed pack.
+            raise RuntimeError("Native regulation preparation was not confirmed")
+
+    def _activate(self, bridge, generation):
+        with self._control(bridge, generation) as control:
+            for operation, expected, phase in (("install-regulations", "installed", "installation"),
+                                               ("activate-regulations", "active", "activation")):
+                data = dict(control, native_rules=self.native_rules()) if expected == "installed" else control
+                status = bridge.request(operation, regulations=data)
+                if status.get("regulation_control") == "stale":
+                    self._retire(bridge, control)
+                    return
+                native = status.get("adapters", {}).get("regulations", {})
+                if (status.get("regulation_control") is not True or native.get("state") != expected
+                        or native.get("career_generation") != generation):
+                    raise RuntimeError("Native regulation " + phase + " was not confirmed")
+                if expected == "installed":
+                    self.confirm_native(native.get("components"), pending=True)
+                else:
+                    self.finish_native_activation()
+
+    def career_preload(self, status, refresh):
+        """Own native attempt ordering, retirement and prepare/install/activate."""
+        self._owning_thread()
+        if not self.armed or self.failed:
+            return
+        if self.busy:
+            raise RuntimeError("Native regulation setup is already in progress")
+        if status.get("state") == "unavailable":
+            raise RuntimeError("Native regulation loading protection became unavailable")
+        if status.get("state") not in ("waiting", "left"):
+            return
+        generation = status.get("generation")
+        if type(generation) is not int or generation < 1:
+            raise ValueError("Invalid native regulation loading attempt")
+        if self.generation is not None:
+            if generation < self.generation or generation == self.generation and status["state"] != "left":
+                return
+            if not self._retired:
+                with self._control(self._bridge, self.generation) as control:
+                    self._retire(self._bridge, control)
+        # Retain departure IDs too: a delayed waiting notice must not resurrect
+        # a cancelled job. A fresh retry has its own strictly newer native ID.
+        self.generation = generation
+        if status["state"] == "left":
+            refresh()
+            return
+        self._retired = False
+        prepared = self._prepare(self._bridge, generation)
+        # Publish revoked UI only between replies, never while the same bridge
+        # is servicing native setup. The pack derives holds from runtime.ready.
+        refresh()
+        if prepared:
+            self._activate(self._bridge, generation)
+            refresh()
 
     def _owning_thread(self):
         if threading.get_ident() != self._thread:
@@ -94,21 +216,20 @@ class RegulationRuntime:
 
     @property
     def ready(self):
-        if not self._bound or self.closed:
+        if not self._bound or self.failed:
             return False
         if not self._states:
             return True
         # Bound definition-only owners need no execution policy. For validator
         # owners, dispatch.ready separately requires an active committed view.
         # Neither native guard acknowledgement nor a socket handshake proves it.
-        return (self._native and not self._activation_pending and self._publication is None and self._dispatch.ready
-                and self._server.connected.is_set() and not self._server.failed.is_set()
-                and not self._runner.closed
+        return (self._native == "active" and self._publication is None and self._dispatch.ready
+                and self._server.connected.is_set()
                 and all(state in ("bound", "active") for state in self._states.values()))
 
     @property
     def status(self):
-        return {"ready": self.ready, "owners": dict(self._states)}
+        return {"ready": self.ready, "failed": self.failed, "owners": dict(self._states), "career_generation": self.generation}
 
     def native_rules(self):
         """Copy admitted switches for installation after career data is acknowledged."""
@@ -131,7 +252,7 @@ class RegulationRuntime:
         """
         self._owning_thread()
         # A rejected replacement report must not retain a previous approval.
-        self._native = False
+        self._native = None
         if (self.closed or not self._bound or any(state == "unavailable" for state in self._states.values())
                 or (self._states and (not self._server.connected.is_set() or self._server.failed.is_set()))):
             raise RuntimeError("Incomplete regulation binding cannot become ready")
@@ -148,17 +269,16 @@ class RegulationRuntime:
                     raise ValueError("Incomplete native regulation switch coverage: " + name)
         if pending and not self._dispatch.ready:
             raise RuntimeError("Native activation needs committed regulation data")
-        self._activation_pending = pending
-        self._native = True
+        self._native = "installed" if pending else "active"
 
     def finish_native_activation(self):
         """Release pack readiness only after the game confirms its hooks enabled."""
         self._owning_thread()
-        if not self._native or not self._activation_pending:
+        if self._native != "installed":
             raise RuntimeError("No native regulation activation is pending")
-        self._activation_pending = False
+        self._native = "active"
         if not self.ready:
-            self._native = False
+            self._native = None
             raise RuntimeError("Native regulation activation became unavailable")
 
     def _unavailable(self):
@@ -179,7 +299,9 @@ class RegulationRuntime:
             # Data publication precedes coverage acknowledgement. A committed
             # publication may also be retired if loading is cancelled before
             # activation; actions still require acknowledged native ownership.
-            if (not self._native and operation not in ("policy-begin", "policy-page", "policy-seal")
+            # Coverage permits validation as soon as native guards enable it.
+            # Waiting for their activation reply holds UI, not these checks.
+            if (self._native is None and operation not in ("policy-begin", "policy-page", "policy-seal")
                     and not (operation == "reset" and self._publication is None and self._dispatch.ready)):
                 raise RuntimeError("Native regulation guards are not acknowledged")
             if operation != "reset" and message["epoch"] != self._dispatch.epoch:
@@ -226,7 +348,7 @@ class RegulationRuntime:
                 self._dispatch.reset(message["epoch"], deadline=message["deadline"])
                 for owner in self._dispatch.states:
                     self._states[owner] = "bound"
-                self._native = self._activation_pending = False
+                self._native = None
                 return "reset"
             if operation != "action":
                 raise ValueError("Unknown regulation operation")
@@ -261,22 +383,32 @@ class RegulationRuntime:
         self._owning_thread()
         if self.closed or self._server is None:
             return
-        if self._server.failed.is_set() or self._runner.closed:
-            self._unavailable()
-        # The native channel knows execution owners only. Definition-only owners
-        # remain in pack status, but cannot appear as foreign binding identities.
-        self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.states
-                                                      if self._states[owner] == "unavailable"))
-        if self._server.failed.is_set():
-            self._publication = None  # Release partially received policy on terminal I/O failure.
-        if self._server.failed.is_set() or self._runner.closed:
-            self._unavailable()
+        previous, self.busy = self.busy, True
+        try:
+            if self._server.failed.is_set() or self._runner.closed:
+                self._unavailable()
+            # The native channel knows execution owners only. Definition-only owners
+            # remain in pack status, but cannot appear as foreign binding identities.
+            self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.states
+                                                          if self._states[owner] == "unavailable"))
+            if self._server.failed.is_set():
+                self._publication = None  # Release partially received policy on terminal I/O failure.
+            if self._server.failed.is_set() or self._runner.closed:
+                self._unavailable()
+
+            # A setup request services this poll too. Restore native helpers only
+            # after that outer request replies, avoiding a second busy bridge call.
+            if (not previous and self._bridge is not None and self.generation is not None and self.failed
+                    and any(not enabled for values in self.definitions.native_rules.values() for enabled in values.values())):
+                self._restore(self._bridge, {"generation": self.generation, "endpoint": self.endpoint}, rules_only=True)
+        finally:
+            self.busy = previous
 
     def close(self):
         self._owning_thread()
         if self.closed:
             return
-        self.closed, self._native = True, False
+        self.closed, self._native = True, None
         self._publication = None
         if self._server is not None:
             self._server.close()

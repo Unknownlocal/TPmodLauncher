@@ -122,9 +122,10 @@ cleanup, including owners that declare data without validators.
 After pack loading, `PackMods` binds admitted handlers and confirms that the
 native loading adapter is armed before enabling career selection. Mod UI stays
 withheld until the selected career's rules are prepared and its hooks activated.
-The bridge sends loading-status changes to the controller, which runs those
-steps once for the captured attempt. Setup errors use normal controller cleanup;
-unconfirmed hooks cannot leave the pack marked ready. Returning to the menu or
+`RegulationRuntime` owns those steps and the captured career number; the bridge
+sends fixed requests and `PackMods` derives UI holds from runtime status. Setup
+errors use normal controller cleanup; unconfirmed hooks cannot leave the pack
+marked ready. Returning to the menu or
 replacing a loading attempt retires its hooks and clears career rule data. The
 next career reuses the pack's interpreter, validators and connection, with fresh
 data and coverage approval. Cancellation between setup replies follows this

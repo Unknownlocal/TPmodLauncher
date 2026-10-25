@@ -257,31 +257,22 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
 
 
 def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch):
-    client, sent, threads, closed = bridge(), [], [], []
+    client, sent, threads = bridge(), [], []
     def post(record, timeout):
         sent.append(record)
-        if record.get("operation") == "stop-regulations":
-            assert closed == [True]
-            client._message({"type": "send", "payload": {
-                "event": "reply", "id": record["id"], "status": {"regulation_control": True}}}, lambda *args: None)
     monkeypatch.setattr(client, "_post", post)
     def service():
         threads.append(threading.get_ident())
         client._message({"type": "send", "payload": {
             "event": "reply", "id": sent[-1]["id"], "status": {"prepared": True}}}, lambda *args: None)
-    runtime = SimpleNamespace(definitions=SimpleNamespace(owner_ids=("owned",)),
-        endpoint={"port": 1, "token": "0" * 64}, poll=service, close=lambda: closed.append(True))
-    assert client.prepare_regulations(runtime, 1) == {"prepared": True}
-    assert threads == [threading.get_ident()] and closed == []
-    assert set(sent[0]) == {"type", "id", "operation", "regulations"}
-    assert sent[0]["regulations"] == {"generation": 1, "endpoint": runtime.endpoint}
+    control = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
+    assert client.request("prepare-regulations", regulations=control, _service=service) == {"prepared": True}
+    assert threads == [threading.get_ident()]
+    assert set(sent[0]) == {"type", "id", "operation", "regulations"} and sent[0]["regulations"] == control
     with pytest.raises(BridgeError, match="bounded regulation setup"):
         client.request("prepare-regulations", regulations={"generation": 1, "endpoint": {}, "target": "arbitrary"}, _service=service)
     def fail():
         raise RuntimeError("Controller service failed")
-    runtime.poll = fail
     with pytest.raises(RuntimeError, match="Controller service failed"):
-        client.prepare_regulations(runtime, 1)
-    assert closed == [True] and client.waiters == {}
-    assert sent[-2] == {"type": "manager-cancel", "id": sent[-3]["id"]}
-    assert sent[-1]["operation"] == "stop-regulations" and sent[-1]["regulations"] == sent[-3]["regulations"]
+        client.request("prepare-regulations", regulations=control, _service=fail)
+    assert client.waiters == {} and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
