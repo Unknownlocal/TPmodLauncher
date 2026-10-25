@@ -22,7 +22,7 @@ def session(mod, rows=None):
             "mod_extensions": {mod.manifest.id: {"schema": 1, "validators": rows or [validator()]}}}
     model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), {mod.manifest.id: mod.snapshot}, scopes={"personnel.contract"})
     handler = SharedHandlerRunner.bind(mod.runner, model.validators)
-    dispatch = ValidationDispatch(model, {mod.manifest.id: handler})
+    dispatch = ValidationDispatch(model, handler)
     dispatch.publish(native={"native": [{"key": "open"}]})
     return dispatch
 

@@ -26,7 +26,7 @@ the callable native probe owns flat bootstrap and busy-shutdown restoration.
 The real guest check owns private-module and endpoint absence; runtime tests own
 generic source-load failure cleanup.
 
-Preparation tests use synchronized worker gates to exercise queued/running
+Preparation tests use synchronised worker gates to exercise queued/running
 cancellation and abandoned results. Disposable compiler results isolate ownership
 races when no guest is admitted; real compilation and controller-thread adoption
 retain an integration check. Pack/session tests combine controlled process and
@@ -42,8 +42,8 @@ independent author-built Python component fixtures. Test fixtures own their
 files and helper processes rather than using game data or live game injection.
 
 Python integration fixtures share a session-local Wasmtime compilation cache.
-Each instance still receives a fresh Engine, Component, Store, guest state and
-grants; tests passing an explicit cache retain that setup. Pytest cases execute
+Compiled Engine and Component code is reused; each runner receives a fresh Store,
+guest state and grants. Tests passing an explicit cache retain that setup. Pytest cases execute
 serially within each job, while separate CI jobs run independently. Background
 preparation and Wasmtime's own compilation workers remain part of the tested
 execution model.
@@ -107,7 +107,7 @@ and dependency inputs, with matching earlier caches available for restoration.
 
 `runner-bundle.yml` builds and verifies one portable Python runner from the tested
 commit. Launcher/runtime/callable jobs on both platforms and Windows bundle preparation
-consume that artifact. The runner fixture verifies its receipt and compares the
+consume that artefact. The runner fixture verifies its receipt and compares the
 guest, frozen policy/handler helpers and WIT bytes against the checkout. With
 `TPM_TEST_RUNNER_BUNDLE` and `TPM_REQUIRE_SHARED_RUNNER=1`, missing or mismatched
 inputs fail instead of triggering a rebuild. Local tests build once on demand
@@ -115,17 +115,17 @@ per pytest session when no shared bundle is supplied.
 
 Regulation dispatch checks stay in the existing launcher and hook-manager suites.
 They cover real Wasm binding, copied/bounded resident arguments, staged policy
-publication, career reset and owner failure isolation, plus authenticated framing
+publication, career reset and shared-runner failure, plus authenticated framing
 and shutdown. One native check sends a fragmented shared action from the owned
-CPython client to three Wasm Stores under the same absolute deadline. Logical
-maximum framing capacity has a separate clock-controlled transport check; it
+CPython client to three mod owners in one shared Wasm Store under the same
+deadline. Logical maximum framing capacity has a separate clock-controlled transport check; it
 does not assert that arbitrary maximum-size actions complete within 100 ms.
 It joins the existing native acceptance selection; no additional CI job or
-per-test runner build is needed. Native game mappings remain a later step.
+per-test runner build is needed.
 
 Windows acceptance prepares one verified player bundle for its independent
 embedded and native jobs. The native job runs `tests/callables/` in a separate
-named step with its own JUnit and coverage artifact, sharing interpreter and
+named step with its own JUnit and coverage artefact, sharing interpreter and
 bundle setup. Its general acceptance step excludes that directory. The manual reduced-Frida workflow reuses the runner
 build workflow and keeps native builds, matching source exports and transport
 acceptance together; release validation also checks the Windows candidate.
@@ -147,14 +147,14 @@ line and branch measurement.
 
 After a successful Test suite run, the reporting workflow downloads only that
 run's XML and parses it without checking out or executing tested code. It expects
-five portable areas on both platforms plus Windows acceptance. Suite/platform
+every declared portable suite on both platforms plus Windows acceptance. Suite/platform
 percentages remain separate, and reports are never combined across runs or
 commits. The summary distinguishes the workflow-definition commit from the
 tested PR head recorded by the claim/status jobs.
 
 Developer performance comparisons live in
 [`benchmarks/regulations`](../benchmarks/regulations/README.md), outside CI.
-They reuse one matching artifact per frozen source set and separate diagnostic
-counts/memory from clean timings. CI retains semantic isolation, exact accounting,
+They reuse one matching artefact per frozen source set and separate diagnostic
+counts/memory from clean timings. CI retains independent handler arguments, exact accounting,
 publication/reset and dense-catalog GC checks in the existing test cases; it does
 not add a noisy benchmark matrix or per-scenario component builds.

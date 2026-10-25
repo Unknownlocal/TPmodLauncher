@@ -204,8 +204,8 @@ mod ID.
 `launcher/regulations/validation/group.py`. It installs each group's common records
 once, sends a shared proposal table and checks completion under the original
 deadline. Generations and status remain per owner, while failure and reset follow
-the physical Store. Pack/session binding groups handlers by their physical
-runner and keeps definition-only owners required without creating empty tables.
+the shared Store. Pack binding uses one handler for all validator owners and
+keeps definition-only owners required without creating empty tables.
 
 ## Preparation and session ownership
 

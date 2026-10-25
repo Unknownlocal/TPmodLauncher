@@ -22,16 +22,26 @@ def validator(identity="check", handler="rules.validate"):
 
 
 @pytest.fixture
-def make_mod(make_source_group):
-    def create(rules, *, owner="owned.rules", extra=(), report=None):
-        # API 0.4.0 remains unparseable by public admission. Trusted snapshots
-        # exercise its private seam without publishing a capability.
+def make_mods(make_source_group):
+    def create(rules, *, extra=(), report=None):
+        # Public admission still rejects API 0.4.0; checked snapshots exercise
+        # the private contract in the same shared runner used by production.
         caps = {"regulations"} | ({"diagnostics"} if report else set())
-        manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
-        files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
-                 ("rules.py", rules), *extra)
-        snapshot = SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files))
-        mod = make_source_group((snapshot,), report=report)[owner]
-        mod.activate()
-        return mod
+        snapshots = []
+        for owner, code in rules.items():
+            manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
+            files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
+                     ("rules.py", code), *extra)
+            snapshots.append(SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files)))
+        mods = make_source_group(tuple(snapshots), report=report)
+        for mod in mods.values():
+            mod.activate()
+        return mods
+    return create
+
+
+@pytest.fixture
+def make_mod(make_mods):
+    def create(rules, *, owner="owned.rules", **kwargs):
+        return make_mods({owner: rules}, **kwargs)[owner]
     return create

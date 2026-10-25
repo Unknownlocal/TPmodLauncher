@@ -25,14 +25,7 @@ class SharedHandlerRunner:
 
     def __init__(self, runner, validators):
         self.runner, self.validators = runner, validators
-        self._validation = None
-
-    def validation(self):
-        """Return the one trusted coordinator for this physical resident group."""
-        if self._validation is None:
-            from .validation.group import ValidationGroup
-            self._validation = ValidationGroup(self)
-        return self._validation
+        self._claimed = False
 
     @classmethod
     def bind(cls, runner, validators):

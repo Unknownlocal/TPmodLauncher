@@ -7,6 +7,8 @@ import shutil
 
 import pytest
 
+from regulation_support import make_mods
+
 from launcher import build_frida as build
 from launcher import build_mod
 from wasmtime import wat2wasm

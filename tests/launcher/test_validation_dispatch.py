@@ -32,8 +32,8 @@ def definitions(sources, *, sections=None, fallback=()):
 
 def dispatch(mods):
     model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
-    handlers = {owner: SharedHandlerRunner.bind(mods[owner].runner, {owner: rows}) for owner, rows in model.validators.items()}
-    return ValidationDispatch(model, handlers)
+    handler = SharedHandlerRunner.bind(next(iter(mods.values())).runner, model.validators)
+    return ValidationDispatch(model, handler)
 
 
 def selection(index=0):
@@ -103,10 +103,8 @@ def test_catalog_borrows_admission_and_projects_shared_effective_native_data_onc
         catalog.stage({"a.rules.private": [{"key": "open", "parameters": {"custom": "replacement"}}]}, {})
 
 
-def test_validation_dispatch_warm_actions_use_references_and_independent_arguments(make_mod, monkeypatch):
-    mods = {}
-    for owner in ("a.rules", "b.rules"):
-        mods[owner] = make_mod(f"""retained=None
+def test_validation_dispatch_warm_actions_use_references_and_independent_arguments(make_mods, monkeypatch):
+    mods = make_mods({owner: f"""retained=None
 def validate(c,r):
  global retained
  assert r['current']['parameters']['points']==[c['proposal']['expect']]
@@ -119,20 +117,20 @@ def validate(c,r):
  assert c['proposal']['empty']==[]
  retained=(c,r)
  return {{'decision':'allow'}}
-""", owner=owner)
+""" for owner in ("a.rules", "b.rules")})
     session = dispatch(mods)
     traffic = []
-    for owner, mod in mods.items():
-        original = mod.sandbox.call
-        def call(name, *args, _owner=owner, _original=original, **kwargs):
-            traffic.append((_owner, name))
-            return _original(name, *args, **kwargs)
-        monkeypatch.setattr(mod.sandbox, "call", call)
+    sandbox = next(iter(mods.values())).sandbox
+    original = sandbox.call
+    def call(name, *args, **kwargs):
+        traffic.append(name)
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(sandbox, "call", call)
     native = [{"key": "open", "points": [value]} for value in (25, 30, 35)]
     session.publish(native={"native": native})
     assert session.ready
-    assert max(i for i, (_, name) in enumerate(traffic) if name == "seal-regulation-policy") < min(
-        i for i, (_, name) in enumerate(traffic) if name == "commit-regulation-policy")
+    assert max(i for i, name in enumerate(traffic) if name == "seal-regulation-policy") < min(
+        i for i, name in enumerate(traffic) if name == "commit-regulation-policy")
     encode = values.encode
     def no_payload_encode(value):
         def check(item):
@@ -150,8 +148,8 @@ def validate(c,r):
     monkeypatch.setattr(action_module, "encode", no_payload_encode)
     traffic.clear()
     session.publish(native={"native": None})
-    assert sum(name == "begin-regulation-policy" for _, name in traffic) == 2
-    assert not any("record" in name for _, name in traffic)
+    assert sum(name == "begin-regulation-policy" for name in traffic) == 2
+    assert not any("record" in name for name in traffic)
     traffic.clear()
     ctx = context()
     ctx["proposal"] = {"expect": 35, "empty": []}
@@ -160,7 +158,7 @@ def validate(c,r):
     ctx["proposal"]["expect"] = 25
     assert session.evaluate([ctx], [selection()], {owner: [["check", 0, 0]] for owner in mods}) == {
         owner: [{"decision": "allow"}] for owner in mods}
-    assert not any("policy" in name or "record" in name for _, name in traffic)
+    assert not any("policy" in name or "record" in name for name in traffic)
 
 
 def test_host_composed_limits_cover_chunked_actions_before_author_execution(make_mod):
@@ -207,13 +205,13 @@ def test_control_replacement_counts_retirement_and_reset_preserves_bindings(make
     assert session.action > action and not previous_ids & {record.identity for record in session.catalog.views[mod.manifest.id].records}
 
 
-def test_partial_multi_owner_commit_cannot_publish_or_revive_old_policy(make_mod, monkeypatch):
-    mods = {owner: make_mod("def validate(c,r): return {'decision':'allow'}\n", owner=owner) for owner in ("a.rules", "b.rules")}
+def test_partial_multi_owner_commit_cannot_publish_or_revive_old_policy(make_mods, monkeypatch):
+    mods = make_mods(dict.fromkeys(("a.rules", "b.rules"), "def validate(c,r): return {'decision':'allow'}\n"))
     model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
-    handlers = {owner: SharedHandlerRunner.bind(mods[owner].runner, {owner: rows}) for owner, rows in model.validators.items()}
+    handler = SharedHandlerRunner.bind(mods["a.rules"].runner, model.validators)
     with pytest.raises(ValueError, match="integer"):
-        ValidationDispatch(model, handlers, epoch=0)
-    session = ValidationDispatch(model, dict(reversed(list(handlers.items()))))
+        ValidationDispatch(model, handler, epoch=0)
+    session = ValidationDispatch(model, handler)
     assert list(session.runners) == list(model.owner_ids)
     session.publish(native={"native": [{"key": "open"}]})
     before = session.catalog.views
@@ -250,26 +248,3 @@ def test_late_host_cleanup_cannot_acknowledge_control_operation(make_mod, monkey
             session.reset(2)
     assert not session.ready and mod.sandbox.closed
     assert session.states[mod.manifest.id] == "unavailable"
-
-
-def test_execution_failure_keeps_other_owners_available_and_replies_are_correlated(make_mod, monkeypatch):
-    mods = {"a.rules": make_mod("def validate(c,r):\n while True: pass\n", owner="a.rules"),
-            "b.rules": make_mod("def validate(c,r): return {'decision':'allow'}\n", owner="b.rules")}
-    session = dispatch(mods)
-    session.publish(native={"native": [{"key": "open"}]})
-    with pytest.raises(Exception, match="fuel"):
-        session.evaluate([context()], [selection()], {owner: [["check", 0, 0]] for owner in mods})
-    assert session.states == {"a.rules": "unavailable", "b.rules": "active"}
-    assert session.evaluate([context()], [selection()], {"b.rules": [["check", 0, 0]]})["b.rules"] == [{"decision": "allow"}]
-    original = mods["b.rules"].sandbox.call
-    def foreign(name, *args, **kwargs):
-        raw = original(name, *args, **kwargs)
-        if name == "validate-resident-regulation":
-            value = json.loads(raw)
-            value["action"] += 1
-            return json.dumps(value)
-        return raw
-    monkeypatch.setattr(mods["b.rules"].sandbox, "call", foreign)
-    with pytest.raises(Exception, match="Foreign"):
-        session.evaluate([context()], [selection()], {"b.rules": [["check", 0, 0]]})
-    assert session.states["b.rules"] == "unavailable" and mods["b.rules"].sandbox.closed

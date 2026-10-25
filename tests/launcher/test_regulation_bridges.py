@@ -75,7 +75,7 @@ def test_conflicts_are_per_switch_and_disabled_owners_do_not_reserve_it(name):
 
 def test_switch_preparation_uses_existing_policy_identity_and_requires_republication():
     expected = {ROOKIE: False, PRESTIGE: False}
-    dispatch = ValidationDispatch(prepare(document(expected)), {}, epoch=7)
+    dispatch = ValidationDispatch(prepare(document(expected)), epoch=7)
     assert not dispatch.ready
     dispatch.publish()
     values = dispatch.native_rules(epoch=7, generation=1)
@@ -94,7 +94,7 @@ def test_switch_preparation_uses_existing_policy_identity_and_requires_republica
 
 
 def test_late_publication_fences_switch_only_owners_without_guest_handlers(monkeypatch):
-    dispatch = ValidationDispatch(prepare(document({ROOKIE: False})), {}, epoch=7)
+    dispatch = ValidationDispatch(prepare(document({ROOKIE: False})), epoch=7)
     clock = iter((0, 0, 2))
     monkeypatch.setattr(dispatch_module.time, "monotonic", lambda: next(clock))
     with pytest.raises(RuntimeError, match="Late resident publication"):

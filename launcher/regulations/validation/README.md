@@ -8,7 +8,7 @@ adding mod-facing methods or imports.
 | File | Owns |
 | --- | --- |
 | `catalog.py` | Shared native rule values, per-mod data and the mods using each rule |
-| `record.py` | One rule value, its JSON text and measured size |
+| `record.py` | One rule's JSON text and measured size |
 | `view.py` | One mod's record, option and binding lookup tables |
 | `install.py` | Bounded transfers and the setup/commit budgets |
 | `action.py` | Encode proposals once and check per-mod call packets |
@@ -16,18 +16,12 @@ adding mod-facing methods or imports.
 | `group.py` | Shared record reuse, one proposal table, group completion and reset |
 | `dispatch.py` | Publish updates and run checks in order on the controller thread |
 
-Construct `ValidationDispatch(admitted_definitions, bound_handlers)`. The handler map
-contains every owner with at least one validator; keys and binding declarations
-must match admission. Mods defining rules without validators need no execution
-helper. The dispatcher uses already checked definitions and fallback rules;
-public readers still receive independent copies. No author Python is loaded in
-the host.
-
-Every owner in a source group maps to the same `SharedHandlerRunner`. Its complete
-binding table must be present. A physical runner binds once and can belong to
-only one dispatcher. `ValidationRunner` retains each owner's generation and
-view; `ValidationGroup` coordinates the
-shared Store without combining the original owner IDs.
+`ValidationDispatch(admitted_definitions, bound_handler)` uses the pack's one
+shared `SharedHandlerRunner`. Its binding table must contain exactly the owners
+with validators. Definition-only packs pass no handler. The runner binds once
+and belongs to one dispatcher, preventing competing record caches or action IDs.
+`ValidationRunner` retains each mod's generation and view; `ValidationGroup`
+manages their shared records, proposals and reset. Author code stays inside Wasm.
 
 `publish(native={rule: [effective_option, ...]}, custom={rule: [option_key, ...]})`
 supplies all distinct option values that any supported season can select for each
@@ -42,18 +36,18 @@ options. Their flat operational fields and explicit parameters form the base;
 identity/presentation fields are excluded and flat/nested collisions fail. Custom
 keys resolve only to the owner's admitted parameters. Overlays always come from
 the admitted owner; an unknown synthesised native key gets an empty overlay.
-Native values are copied once; already checked private data is borrowed without
+Native values are encoded once; already checked private data is borrowed without
 modification. Equal native JSON records can reuse active IDs. New record
 IDs never repeat, including after reset or an aborted publication. Unreachable
 dynamic records retire after commit.
 
 Every affected owner stages and seals before any commits. A partial commit failure
-leaves the affected Stores unavailable; no old-generation fallback exists. The
+makes the shared runner unavailable; no old-generation fallback exists. The
 eight-million-base installation formula is split between staging and commit,
 reserving the work of releasing replaced data for commit. Stage and commit share
-five seconds of per-owner processing time; waiting for other Stores consumes the original
-transaction deadline of `1 + 5 * affected_owners` seconds. No phase restarts either
-allowance. This is a watchdog ceiling, not a latency target.
+five seconds of per-owner processing time. Work for other owners still consumes
+the original transaction deadline of `1 + 5 * affected_owners` seconds. No phase
+restarts either allowance. This is a watchdog ceiling, not a latency target.
 
 A shared group supplies the union of installed and newly staged record IDs to
 installation planning. Another owner can borrow a common native record without
@@ -69,22 +63,19 @@ selection_index]` rows. Indexes refer to the distinct membership order published
 above. The caller owns native season/selection semantics; this layer checks
 authority, order, freshness and full logical limits. Every owner packet is
 prepared before author execution, with no stable payload encoding or traversal.
-Contexts are encoded/measured once globally. Each shared Store receives one table
-of the contexts it uses; owner packets carry numbered references. Full limits are
-checked before replacing contexts with references. Guest arguments remain
-independent ordinary copies. Owner execution order is preserved when several shared groups are
-interleaved. A group opens its table at its first requested owner and checks
-completion after its last, before any results can leave the dispatcher.
+Contexts are encoded and measured once, then sent as one shared table. Each mod's
+packet refers to numbered entries. Full limits are checked before replacing
+contexts with references. Handlers receive independent argument copies and run
+in owner-ID order. The shared action must finish before any results are returned.
 
-Entry has counted framework fuel; later four-slot copying retains 64M, handlers
-retain 5M/64 host calls, and all owners share the original 100 ms action deadline.
-Failure makes every owner in the failed physical Store unavailable, including
-peers not named in that action or update. Other groups with unfinished action
-state also close; earlier approvals cannot become a partial success. Other
-Stores that remain usable retain their status. Required owners stay in the model.
-`reset(new_epoch)` clears policy views while preserving bindings and monotonically
-increasing action/record identities. Reset runs once per physical group, requires
-new publication before use, and cannot revive a failed Store.
+Preparing up to four calls has a 64-million fuel allowance. Each handler keeps
+its five-million fuel and 64 host-call limits. All owners share the original
+100 ms action deadline, including argument preparation and cleanup.
+Failure makes the whole source group unavailable, including peers omitted from
+the action or update. Earlier approvals cannot become a partial success.
+`reset(new_epoch)` clears career data while retaining bindings and increasing
+action/record IDs. It runs once for the shared runner, requires fresh publication
+before use, and cannot revive a failed runner.
 
 Native transport and pack readiness use this package through the runtime.
 `PackMods` supplies its shared source group through `RegulationRuntime`.

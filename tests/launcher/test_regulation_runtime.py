@@ -142,7 +142,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         for generation in (7, 6):
             scope.career_preload({"state": "waiting", "generation": generation})
         assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
-        handlers = dict(scope.regulations._handlers)
+        handler = scope.regulations._handler
         runner = mod.runner
         scope.career_preload({"state": "left", "generation": 7})
         assert not scope.regulations.ready and menus[-1] == [] and not runner.closed
@@ -151,7 +151,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         # A quick replacement may overtake the intermediate menu notice.
         scope.career_preload({"state": "waiting", "generation": 9})
         assert scope.regulations.ready and channels[0].epoch == 3
-        assert mod.runner is runner and scope.regulations._handlers == handlers
+        assert mod.runner is runner and scope.regulations._handler is handler
         mod.close()
         scope.poll()
         scope.poll()
@@ -170,7 +170,7 @@ def test_switch_only_policy_requires_complete_installation_and_fresh_career_publ
     with closing(PackMods(tmp_path, lambda _: None, wake=wake.set)) as scope:
         scope.mods, scope.finished, scope._pack_root = {mod.manifest.id: mod}, True, tmp_path
         runtime = scope.bind_regulations(scopes=set())
-        assert runtime._handlers == {} and not runtime.ready
+        assert runtime._handler is None and not runtime.ready
         with pytest.raises(RuntimeError, match="unavailable"):
             runtime.native_rules()
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
@@ -295,7 +295,8 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
             assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
 
 
-def test_published_data_cannot_run_a_validator_before_native_acknowledgement(make_mod, tmp_path):
+@pytest.mark.parametrize("rejected", ["unacknowledged", "stale-generation"])
+def test_published_data_rejects_unacknowledged_or_stale_actions_before_author_code(make_mod, tmp_path, rejected):
     executed = []
     mod = make_mod("import wit_world\ndef validate(c,r):\n wit_world.report('unexpected')\n return {'decision':'allow'}\n",
                    report=lambda *args: executed.append(args))
@@ -303,6 +304,10 @@ def test_published_data_cannot_run_a_validator_before_native_acknowledgement(mak
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
         assert runtime._dispatch.ready and not runtime.ready
+        if rejected == "stale-generation":
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
+            pump(scope, wake, worker.submit(channel.publish, native={"native": None}))
+            channel._generations[mod.manifest.id] -= 1
         action = worker.submit(channel, [context()], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
             pump(scope, wake, action)
@@ -340,10 +345,24 @@ def test_unmapped_native_scope_is_rejected_before_guest_binding(make_mod, tmp_pa
     assert mod.sandbox.closed
 
 
-def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod, tmp_path, monkeypatch):
-    mods = {
-        "a.rules": make_mod("def validate(c,r):\n c['proposal']['budget']=0\n return {'decision':'allow'}\n", owner="a.rules"),
-        "b.rules": make_mod("def validate(c,r):\n if r['upcoming'] is not None: assert r['upcoming']['parameters']['limit']==99\n if r['current']['key']=='closed': return {'decision':'deny','message':'Rule changed'}\n if c['proposal']['budget']>5: return {'decision':'deny','message':'Budget refused'}\n return {'decision':'allow'}\n", owner="b.rules")}
+def test_binding_rejects_separate_runners_including_definition_only_owners(make_mod, tmp_path):
+    mods = {owner: make_mod("def validate(c,r): return {'decision':'allow'}\n", owner=owner)
+            for owner in ("a.rules", "b.data")}
+    (tmp_path / "regulations.json").write_text(json.dumps({
+        "categories": [{"key": "native", "options": [{"key": "open"}]}],
+        "mod_extensions": {"a.rules": {"schema": 1, "validators": [validator()]}, "b.data": {"schema": 1}}}), encoding="utf-8")
+    with closing(PackMods(tmp_path, lambda _: None)) as scope:
+        scope.mods, scope.finished, scope._pack_root = dict(mods), True, tmp_path
+        with pytest.raises(ValueError, match="share one Python runner"):
+            scope.bind_regulations(scopes={"personnel.contract"})
+        assert all(mod.sandbox.closed for mod in mods.values())
+        assert scope._regulation_failed
+
+
+def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods, tmp_path, monkeypatch):
+    mods = make_mods({
+        "a.rules": "def validate(c,r):\n c['proposal']['budget']=0\n return {'decision':'allow'}\n",
+        "b.rules": "def validate(c,r):\n if r['upcoming'] is not None: assert r['upcoming']['parameters']['limit']==99\n if r['current']['key']=='closed': return {'decision':'deny','message':'Rule changed'}\n if c['proposal']['budget']>5: return {'decision':'deny','message':'Budget refused'}\n return {'decision':'allow'}\n"})
     scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods, semantic_scope="development.project")
     module = ModuleType("owned_project_native_entry")
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -403,7 +422,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
             assert not writes and projections == [12]
             assert pump(scope, wake, worker.submit(start, 4)) == (True, None)
             assert writes == [4] and projections == [12, 4] and runtime.ready
-            generation, handlers = runtime._dispatch.generation, dict(runtime._handlers)
+            generation, handlers = runtime._dispatch.generation, runtime._handler
             state.regulation_manager.regulations["native"].pop("upcoming_option")
             state.regulation_manager.regulations["native"].update(current="closed", upcoming=None)
             state.season_no += 1
@@ -411,7 +430,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
             assert writes == [4] and set(engine.owners.values()) == {"ready"}
             state.regulation_manager.regulations["native"]["current"] = "open"
             assert pump(scope, wake, worker.submit(start, 4)) == (True, None)
-            assert writes == [4, 4] and runtime._dispatch.generation == generation and runtime._handlers == handlers
+            assert writes == [4, 4] and runtime._dispatch.generation == generation and runtime._handler is handlers
         finally:
             engine.stop()
         assert module.start is native
@@ -483,8 +502,7 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
         mods = dict(scope.mods)
         assert len({id(mod.sandbox) for mod in mods.values()}) == 1
         runtime = scope.bind_regulations(scopes={"personnel.contract"})
-        assert runtime._handlers["b.rules"] is runtime._handlers["c.rules"]
-        assert "d.data" not in runtime._handlers
+        assert set(runtime._handler.validators) == {"b.rules", "c.rules"}
         assert all(mod.snapshot is None for mod in mods.values())
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
             runtime.confirm_native(PERSONNEL_COMPONENTS)
@@ -541,11 +559,11 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         assert progress[-1]["state"] == "error" and not menus
 
 
-def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_the_controller(make_mod, tmp_path, monkeypatch):
+def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_controller(make_mods, tmp_path, monkeypatch):
     threads = []
-    mods = {"a.rules": make_mod("def validate(c,r): return {'decision':'allow','replacement':1}\n", owner="a.rules"),
-            "b.rules": make_mod("import wit_world\ndef validate(c,r):\n wit_world.report('checked')\n return {'decision':'allow'}\n",
-                                owner="b.rules", report=lambda *_: threads.append(threading.get_ident()))}
+    mods = make_mods({"a.rules": "def validate(c,r): return {'decision':'allow','replacement':1}\n",
+                      "b.rules": "import wit_world\ndef validate(c,r):\n wit_world.report('checked')\n return {'decision':'allow'}\n"},
+                     report=lambda *_: threads.append(threading.get_ident()))
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, mods)
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         assert not runtime.ready  # A transport handshake is not native readiness.
@@ -566,6 +584,9 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
         assert not runtime.ready  # A new career cannot inherit native coverage approval.
         runtime.confirm_native(PERSONNEL_COMPONENTS)
         assert runtime.ready and channel.epoch == 2
+        future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
+        assert pump(scope, wake, future) == {"b.rules": [{"decision": "allow"}]}
+        assert threads == [threading.get_ident()]
         reply_sent = threading.Event()
         from launcher.regulations import server as transport
         write = transport.regulation_send_action
@@ -587,23 +608,17 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
             pump(scope, wake, future)
         assert not channel.closed and not runtime.ready and mods["a.rules"].sandbox.closed
         assert menus[-1] == [] and scope.applied_menu == []
-        assert scope.menu.buttons == [] and "a.rules" not in scope.mods
-        future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
-        assert pump(scope, wake, future) == {"b.rules": [{"decision": "allow"}]}
-        assert threads == [threading.get_ident()] and runtime.status["owners"] == {"a.rules": "unavailable", "b.rules": "active"}
-        with pytest.raises(HookError, match="unavailable"):
-            channel([context()], [selection()], {"a.rules": [[0, 0, 0]]}, time.monotonic() + .1)
-        channel._generations["b.rules"] -= 1
+        assert scope.menu.buttons == [] and not scope.mods
+        assert runtime.status["owners"] == dict.fromkeys(mods, "unavailable")
         future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
             pump(scope, wake, future)
-        assert threads == [threading.get_ident()]  # Stale generation never enters author code.
+        assert threads == [threading.get_ident()]  # A peer cannot re-enter the failed interpreter.
 
 
 @pytest.mark.native
-def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(make_mod, tmp_path, native_project):
-    mods = {owner: make_mod("def validate(c,r): return {'decision':'allow'}\n", owner=owner)
-            for owner in ("a.rules", "b.rules", "c.rules")}
+def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(make_mods, tmp_path, native_project):
+    mods = make_mods(dict.fromkeys(("a.rules", "b.rules", "c.rules"), "def validate(c,r): return {'decision':'allow'}\n"))
     scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods)
     helper = Path(__file__).with_name("fixtures") / "regulation_client_probe.py"
     process = subprocess.Popen([str(native_project.client), "-I", "-S", "-B", str(helper), str(Path(__file__).resolve().parents[2])],

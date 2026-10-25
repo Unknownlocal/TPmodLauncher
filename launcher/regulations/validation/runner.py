@@ -15,7 +15,6 @@ class ValidationRunner:
         self.handler, self.active, self.staged = handler, None, None
         self.owner = owner
         self.epoch, self.generation, self.required = 0, 0, 0
-        self._claimed = False
 
     def _phase(self, fuel, seconds, deadline):
         remaining = min(seconds, deadline - time.monotonic())
