@@ -175,9 +175,11 @@ class RegulationRuntime:
             if self.closed:
                 raise RuntimeError("Regulation runtime is closed")
             # Setup publishes rule data before installing any live game hooks.
-            # Only data publication can precede coverage acknowledgement; an
-            # action or career reset still needs acknowledged native ownership.
-            if not self._native and operation not in ("policy-begin", "policy-page", "policy-seal"):
+            # Data publication precedes coverage acknowledgement. A committed
+            # publication may also be retired if loading is cancelled before
+            # activation; actions still require acknowledged native ownership.
+            if (not self._native and operation not in ("policy-begin", "policy-page", "policy-seal")
+                    and not (operation == "reset" and self._publication is None and self._dispatch.ready)):
                 raise RuntimeError("Native regulation guards are not acknowledged")
             if operation != "reset" and message["epoch"] != self._dispatch.epoch:
                 raise ValueError("Foreign regulation career epoch")
@@ -221,6 +223,7 @@ class RegulationRuntime:
                 self._dispatch.reset(message["epoch"], deadline=message["deadline"])
                 for owner in self._dispatch.runners:
                     self._states[owner] = "bound"
+                self._native = self._activation_pending = False
                 return "reset"
             if operation != "action":
                 raise ValueError("Unknown regulation operation")

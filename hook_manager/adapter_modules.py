@@ -50,7 +50,7 @@ class AdapterModules:
             # Installation coverage is not policy readiness. In particular,
             # signing adapters do not install whole-team staffing callers.
             state = ("cleanup_pending" if self.channel is not None else "unavailable") if self.regulation_error else (
-                "installed" if self.coverage else "prepared")
+                "installed" if self.coverage else "prepared" if self.policy is not None else "bound")
             result["regulations"] = {"state": state,
                                      "components": dict(self.coverage)}
             if self.regulation_generation is not None and self.coverage and not self.regulation_error:
@@ -70,8 +70,13 @@ class AdapterModules:
         self.host.manager._main()
         if self.state == "closed" or self.channel is not None or self.preload is not None:
             raise HookError("Career preloading needs an unused adapter installation")
-        self.preload = CareerPreload()
+        self.preload = CareerPreload(self._career_left)
         return self.status()
+
+    def _career_left(self):
+        """Stop new mod-checked actions; retirement waits for admitted work."""
+        if self.channel is not None:
+            self.channel.validation_ready = False
 
     def prepare_regulations(self, request, *, report):
         """Publish a career snapshot through a fixed endpoint, without game hooks.
@@ -89,8 +94,15 @@ class AdapterModules:
             # must not dismantle the newly captured loading attempt.
             report("REGULATIONS COMPATIBILITY FAILED preparation: stale loading attempt; request skipped")
             return self.status()
-        if self.channel is not None:
+        if self.channel is not None and self.policy is not None:
             raise HookError("Regulation preparation already owns a channel")
+        # Cancellation or a newer queued attempt is normal, not a broken mod.
+        # Check before acquiring resources or invoking failure cleanup.
+        if self.preload is not None:
+            try:
+                self.preload.current(request["generation"])
+            except HookError:
+                return self.status()
         self.regulation_error = None
         channel = None
         try:
@@ -101,7 +113,11 @@ class AdapterModules:
                 raise HookError("Regulation preparation needs a captured native loading attempt")
             generation = request["generation"]
             state = self.preload.current(generation)
-            channel = self.host.RegulationChannel(request["endpoint"])
+            channel = self.channel
+            if channel is None:
+                channel = self.host.RegulationChannel(request["endpoint"])
+            elif request["endpoint"].get("token") != channel._token:
+                raise HookError("Regulation preparation does not own this connection")
             channel.validation_ready = False
             native = self.host.adapter_code.game_adapters.regulations.native_policy
             policy = native.NativeRegulationPolicy(state, channel)
@@ -130,13 +146,21 @@ class AdapterModules:
         The endpoint token ties delayed control requests to their own connection.
         Coverage approval happens in the launcher between installation and enable.
         Stopping returns False while an admitted operation still needs its hooks.
+        A stale loading attempt returns "stale" so setup retires only its career.
         """
         self.host.manager._main()
-        if (operation not in ("install-regulations", "activate-regulations", "stop-regulations")
+        if (operation not in ("install-regulations", "activate-regulations", "stop-regulations", "retire-regulations")
                 or type(request) is not dict or set(request) != {"generation", "endpoint"}
                 or type(request["generation"]) is not int or request["generation"] < 1
                 or type(request["endpoint"]) is not dict or set(request["endpoint"]) != {"port", "token"}):
             raise HookError("Invalid regulation control fields")
+        if operation == "retire-regulations":
+            if self.channel is None:
+                return True  # Cancellation before publication owns no career data.
+            if request["endpoint"]["token"] != self.channel._token:
+                raise HookError("Regulation retirement does not own this connection")
+            if self.policy is None:
+                return True  # The same retirement was already acknowledged.
         if operation == "stop-regulations" and self.channel is None:
             if self.preload is not None and request["generation"] != self.preload.generation:
                 # An old cleanup reply must not release a rearmed loading job.
@@ -149,9 +173,23 @@ class AdapterModules:
         if operation == "stop-regulations":
             self.channel.validation_ready = False
             return self.stop_regulations()
+        if operation == "retire-regulations":
+            channel = self.channel
+            channel.validation_ready = False
+            if not self.stop_regulations(retain=True):
+                return False
+            channel.reset(channel.epoch + 1)
+            return True
+        # Native input can cancel between the separate preparation/installation
+        # replies. Preserve the connection so the host can retire this policy.
+        try:
+            state = self.preload.current(self.regulation_generation)
+        except HookError:
+            self.channel.validation_ready = False
+            return "stale"
         try:
             policy, channel = self.policy, self.channel
-            if self.preload.current(self.regulation_generation) is not policy.state:
+            if state is not policy.state:
                 raise HookError("The prepared regulation career is no longer current")
             policy._current()
             if not policy._published or any(policy._adoption(rule) != row for rule, row in policy._adopted.items()):
@@ -234,12 +272,14 @@ class AdapterModules:
             self.stop_regulations()
             raise
 
-    def stop_regulations(self):
-        """Restore the whole installation, or return False without changing it.
+    def stop_regulations(self, *, retain=False):
+        """Restore owned hooks only when no admitted operation still needs them.
 
         Acquire the guard registries together before checking their active
         operations. Otherwise a worker could enter an earlier guard while a
         later one is being stopped, leaving a half-removed installation.
+        Retirement retains the connection and loading observer: the next career
+        reuses admitted handlers, but must publish data and approve coverage anew.
         """
         self.host.manager._main()
         with ExitStack() as locks:
@@ -253,15 +293,16 @@ class AdapterModules:
                         return False
             for hook in reversed(self.regulations):
                 hook.stop()
-            if self.channel is not None:
+            if self.channel is not None and not retain:
                 self.channel.close()
             self.regulations.clear()
-            self.channel = None
+            if not retain:
+                self.channel = None
             self.coverage.clear()
             self.regulation_error = None
             self.policy = None
             self.regulation_generation = None
-            if self.preload is not None:
+            if self.preload is not None and not retain:
                 self.preload.stop()
                 self.preload = None
         return True

@@ -218,6 +218,25 @@ def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation,
         assert owner.method is foreign
 
 
+def test_cancelled_prepared_career_can_retire_without_closing_pack_connection(installation):
+    modules, _, channel, _, _ = installation
+    channel._rules, channel._custom, channel._token, channel.epoch = set(), set(), "0" * 64, 1
+    channel.publish = lambda **data: None
+    resets = []
+    channel.reset = resets.append
+    modules.host.RegulationChannel = lambda endpoint: channel
+    request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
+    preload = capture(installation)
+    modules.prepare_regulations(request, report=pytest.fail)
+    def cancelled(generation):
+        raise HookError("cancelled loading attempt")
+    preload.current = cancelled
+    assert modules.control_regulations("install-regulations", request, report=pytest.fail) == "stale"
+    assert modules.channel is channel and not channel.closed
+    assert modules.control_regulations("retire-regulations", request, report=pytest.fail)
+    assert modules.preload is preload and modules.policy is None and resets == [2]
+
+
 @pytest.mark.parametrize("failure", ["publication", "career_change"])
 def test_preparation_failure_closes_candidate_and_reports_native_fallback(installation, failure):
     modules, _, channel, _, hooks = installation

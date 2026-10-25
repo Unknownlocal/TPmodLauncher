@@ -98,7 +98,7 @@ class Bridge:
                 regulations=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
         if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters",
-                             "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations"):
+                             "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -120,12 +120,12 @@ class Bridge:
                 raise BridgeError("Expected bounded theme declarations")
         elif themes is not None:
             raise BridgeError("This operation accepts no theme declarations")
-        if operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations"):
+        if operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations"):
             if (type(regulations) is not dict or set(regulations) != {"generation", "endpoint"}
                     or type(regulations["generation"]) is not int or regulations["generation"] < 1
                     or type(regulations["endpoint"]) is not dict or set(regulations["endpoint"]) != {"port", "token"}
                     or len(json.dumps(regulations).encode("utf-8")) > 512
-                    or (not callable(_service) if operation == "prepare-regulations" else _service is not None)):
+                    or (not callable(_service) if operation in ("prepare-regulations", "retire-regulations") else _service is not None)):
                 raise BridgeError("Expected bounded regulation setup and controller service")
         elif regulations is not None or _service is not None:
             raise BridgeError("This operation accepts no regulation setup or service")
@@ -212,17 +212,31 @@ class Bridge:
         if cleanup.get("regulation_control") is not True:
             raise BridgeError("Native regulation cleanup was not confirmed")
 
+    def retire_regulations(self, runtime, generation):
+        """Clear one career while retaining its authenticated transport and handlers."""
+        result = self.request("retire-regulations", timeout=3 + 5 * len(runtime.definitions.owner_ids),
+                              regulations={"generation": generation, "endpoint": runtime.endpoint}, _service=runtime.poll)
+        if result.get("regulation_control") is not True:
+            raise BridgeError("Native regulation retirement was not confirmed")
+        return result
+
     def activate_regulations(self, runtime, generation):
         """Install closed guards, approve real coverage, then enable them together."""
         control = {"generation": generation, "endpoint": runtime.endpoint}
         try:
             status = self.request("install-regulations", regulations=control)
+            if status.get("regulation_control") == "stale":
+                self.retire_regulations(runtime, generation)
+                return status
             installed = status.get("adapters", {}).get("regulations", {})
             if (status.get("regulation_control") is not True or installed.get("state") != "installed"
                     or installed.get("career_generation") != generation):
                 raise BridgeError("Native regulation installation was not confirmed")
             runtime.confirm_native(installed.get("components"), pending=True)
             status = self.request("activate-regulations", regulations=control)
+            if status.get("regulation_control") == "stale":
+                self.retire_regulations(runtime, generation)
+                return status
             active = status.get("adapters", {}).get("regulations", {})
             if (status.get("regulation_control") is not True or active.get("state") != "active"
                     or active.get("career_generation") != generation):

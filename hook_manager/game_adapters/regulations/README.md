@@ -95,6 +95,11 @@ retry. Once idle, it restores the game methods it changed and closes their
 connection before unloading the definitions.
 Failed setup uses the same cleanup path; status reports `cleanup_pending` while
 that cleanup is deferred.
+Career retirement uses the same idle check to remove its hooks and policy while
+retaining the loading observer and connection. It clears stored career data
+through the existing reset operation. The next career must publish its data and
+confirm hook coverage before activation; a cancelled setup cannot pass approval
+to another save.
 
 Rule choices must be prepared again if the adopted choices, career season,
 native manager or rule definitions are replaced.

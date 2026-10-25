@@ -85,6 +85,11 @@ Cleanup restores owned helper copies. For a pack with admitted regulation
 declarations, the launcher arms this adapter before enabling career selection.
 Changes in loading status reach the controller once; it prepares and activates
 the captured attempt before the game completes loading.
+The same adapter observes `ScreenManager.switch_to` for return to the hub or a
+different career. It revokes approval locally and reports departure; cancelled
+jobs also lose approval. The controller retires the old hooks once admitted work
+finishes, clears career rule data and prepares the next captured attempt. Mod
+instances, bound validators and their connection stay loaded between careers.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence

@@ -20,6 +20,8 @@ def native(monkeypatch):
         ready = False
         calls = 0
     class Screen:
+        def switch_to(self, screen):
+            self.current = screen
         def __init__(self):
             self.manager = self
             self.current = self
@@ -35,6 +37,10 @@ def native(monkeypatch):
         return screen._preload_job.ready
     helper.advance_session_preload = hub.advance_session_preload = advance_session_preload
     game.GameState = State
+    navigation = ModuleType("ui.screen_manager")
+    navigation.ScreenManager = Screen
+    hub.HubScreen = type("HubScreen", (), {})
+    monkeypatch.setitem(sys.modules, navigation.__name__, navigation)
     for module in (helper, hub, game):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     screen = Screen()
@@ -134,5 +140,33 @@ def test_missing_native_job_restores_completion_instead_of_raising_into_loader(n
         assert hub.advance_session_preload(screen, screen.state) is True
         assert preload.closed and preload.loading_status()["state"] == "unavailable"
         assert hub.advance_session_preload is helper.advance_session_preload
+    finally:
+        preload.stop()
+
+
+def test_native_transitions_and_cancellation_retire_only_the_owned_career(native):
+    _, hub, game, screen, Screen, Job = native
+    departed = []
+    preload = CareerPreload(lambda: departed.append(preload.generation))
+    try:
+        screen._preload_job.ready = True
+        assert not hub.advance_session_preload(screen, screen.state)
+        generation = preload.generation
+        preload.allow(screen.state)
+        dashboard = Screen()
+        dashboard.state = screen.state
+        screen.switch_to(dashboard)
+        assert not departed  # Ordinary navigation within this career remains native.
+        screen.switch_to(hub.HubScreen())
+        assert departed == [generation] and preload.loading_status()["state"] == "left"
+        with pytest.raises(HookError):
+            preload.current(generation)
+        # Reloading the same state/job is still a fresh attempt after returning.
+        screen.switch_to(screen)
+        assert not hub.advance_session_preload(screen, screen.state)
+        assert preload.generation > generation
+        screen._preload_job.cancelled = True
+        preload.poll()
+        assert len(departed) == 2 and preload.loading_status()["state"] == "left"
     finally:
         preload.stop()

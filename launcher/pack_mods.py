@@ -99,6 +99,7 @@ class PackMods:
         self._bridge = bridge
         self._regulation_armed = False
         self._regulation_generation = None
+        self._regulation_retired = True
 
     def _start_regulations(self):
         """Bind once, then protect native loading before enabling career selection.
@@ -120,7 +121,7 @@ class PackMods:
         self._progress("complete")
 
     def career_preload(self, status):
-        """Prepare only the attempt captured by the game's loading adapter.
+        """Retire departed careers and prepare the next native-captured attempt.
 
         The controller delivers changes on its Store-owning thread. A repeated
         waiting notice must not publish again or install a second set of hooks.
@@ -129,21 +130,35 @@ class PackMods:
             return
         if status.get("state") == "unavailable":
             raise RuntimeError("Native regulation loading protection became unavailable")
-        if status.get("state") != "waiting":
+        if status.get("state") not in ("waiting", "left"):
             return
         generation = status.get("generation")
         if type(generation) is not int or generation < 1:
             raise ValueError("Invalid native regulation loading attempt")
         if self._regulation_generation is not None:
-            if generation <= self._regulation_generation:
+            if generation < self._regulation_generation or generation == self._regulation_generation and status["state"] != "left":
                 return
-            # This pack session owns one native career. A later attempt cannot
-            # reuse its approval; controller cleanup restores native behaviour.
-            raise RuntimeError("A new career needs a fresh regulation session")
+            if not self._regulation_retired:
+                self._regulation_dispatching = True
+                try:
+                    self._bridge.retire_regulations(self.regulations, self._regulation_generation)
+                    self._regulation_retired = True
+                    self._regulation_status = None  # The next career must republish its held UI.
+                finally:
+                    self._regulation_dispatching = False
+        if status["state"] == "left":
+            # Keep the number after departure so a delayed waiting notice
+            # cannot restart a cancelled attempt. A retry gets a new number.
+            self._regulation_generation = generation
+            self._publish_ui()
+            return
         self._regulation_generation = generation
-        self.prepare_native_regulations(self._bridge, generation)
+        self._regulation_retired = False
+        prepared = self.prepare_native_regulations(self._bridge, generation)
         if self._regulation_failed:
             raise RuntimeError("Native regulation preparation was not confirmed")
+        if prepared.get("adapters", {}).get("regulations", {}).get("state") != "prepared":
+            return  # A cancelled/replaced loading job did not acquire a policy.
         self.activate_native_regulations(self._bridge, generation)
 
     def _regulation_waiting(self):
@@ -211,8 +226,10 @@ class PackMods:
         finally:
             self._regulation_dispatching = False
         if status.get("adapters", {}).get("regulations", {}).get("state") != "prepared":
-            self._regulation_failed = True
-            self.regulations.close()
+            preload = status.get("adapters", {}).get("career_preload", {})
+            if preload.get("state") not in ("left", "waiting") or preload.get("generation") == generation and preload.get("state") != "left":
+                self._regulation_failed = True
+                self.regulations.close()
         self._publish_ui()
         self._progress("complete")
         return status

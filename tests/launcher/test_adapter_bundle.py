@@ -74,7 +74,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         career = game.GameState()
         ui = ModuleType("ui.screen_manager")
         ui.ScreenManager = type("ScreenManager", (), {
-            "handle_event": lambda self, event: "native event", "update": lambda self: "native update"})
+            "handle_event": lambda self, event: "native event", "update": lambda self: "native update",
+            "switch_to": lambda self, screen: setattr(self, "current", screen)})
         monkeypatch.setitem(sys.modules, ui.__name__, ui)
         screen_manager = ui.ScreenManager()
         screen_manager.current = SimpleNamespace(state=career)
@@ -123,6 +124,29 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
+        # Retirement uses the same WAIT/idle boundary but retains the loading
+        # owner and authenticated connection for another career.
+        resets = []
+        channel.epoch = 1
+        channel.reset = resets.append
+        guard._active = 1
+        request = json.dumps(json.dumps({"operation": "retire-regulations", "regulations": control}))
+        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert not channel.validation_ready and not guard.closed and not resets
+        guard._active = 0
+        owner = host.adapters.preload
+        assert pulse("retire-regulations", regulations=control)["regulation_control"] is True
+        assert host.adapters.preload is owner and not owner.closed and host.adapters.channel is channel
+        assert guard.closed and resets == [2] and host.adapters.policy is None
+        assert pulse("retire-regulations", regulations=control)["regulation_control"] is True and resets == [2]
+        # The retained connection publishes again without another channel or
+        # preloader construction. A delayed stop cannot remove a newer policy.
+        screen._preload_job = type("OwnedPreloadJob", (), {})()
+        assert cached_preload(screen, career) is False
+        next_control = dict(control, generation=owner.generation)
+        assert pulse("prepare-regulations", regulations=next_control)["adapters"]["regulations"]["state"] == "prepared"
+        assert pulse("retire-regulations", regulations=control)["regulation_control"] is False
+        control = next_control
         assert pulse("stop-regulations", regulations=control)["regulation_control"] is True
         assert host.adapters.preload is None and cached_preload(screen, career) is True
         pulse("await-regulations")

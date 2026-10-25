@@ -51,7 +51,10 @@ game = ModuleType("game_state")
 game.GameState = type("GameState", (), {})
 sys.modules[game.__name__] = game
 loading_screen = HubScreen()
-loading_screen.manager = type("OwnedManager", (), {})()
+navigation = ModuleType("ui.screen_manager")
+navigation.ScreenManager = type("OwnedManager", (), {"switch_to": lambda self, screen: setattr(self, "current", screen)})
+sys.modules[navigation.__name__] = navigation
+loading_screen.manager = navigation.ScreenManager()
 loading_screen.manager.current = loading_screen
 loading_screen.state = game.GameState()
 loading_screen._preload_job = type("OwnedJob", (), {})()
@@ -105,9 +108,11 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
-    if host.adapters.preload is not None:
+    if (output / "leave-request").exists() and loading_screen.manager.current is loading_screen:
+        loading_screen.manager.switch_to(HubScreen())
+    if host.adapters.preload is not None and loading_screen.manager.current is loading_screen:
         assert hub.advance_session_preload(loading_screen, loading_screen.state) is False
-    if host.menu.loading["state"] == "error" and host.themes.placeholder is None:
+    if (host.menu.loading or {}).get("state") == "error" and host.themes.placeholder is None:
         assert "code-mod:owned.theme" not in packs.COLOR_PACK_LABELS
         (output / "themes-error-cleaned").touch()
     if host.themes.applied == "owned.theme" and not (output / "themes-applied.json").exists():
@@ -130,7 +135,7 @@ while not manager.closed and time.monotonic() < deadline:
         (output / "settings-again-acknowledged").touch()
     if (
         "Owned UI" in hub.MENU_ITEMS
-        and host.menu.loading["state"] == "complete"
+        and (host.menu.loading or {}).get("state") == "complete"
         and not (output / "menu.json").exists()
     ):
         screen = HubScreen()

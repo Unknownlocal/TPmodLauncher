@@ -106,7 +106,7 @@ def pulse(sources, digest, instance, game_root, request_json):
             response = module.manager.request({"operation": "status"})
             response["regulation_notices"] = notices
         elif type(request) is dict and request.get("operation") in (
-                "install-regulations", "activate-regulations", "stop-regulations"):
+                "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations"):
             notices = []
             try:
                 if set(request) != {"operation", "regulations"}:

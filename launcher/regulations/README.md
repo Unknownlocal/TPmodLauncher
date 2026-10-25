@@ -146,8 +146,12 @@ The bridge reports changes to the captured loading attempt; `PackMods` prepares
 and activates it on the controller thread. Repeated or older waiting notices do
 not repeat setup. No enabled declarations means no native loading hooks.
 Setup failures use the controller's normal cleanup, restoring native hooks and
-reporting the failure in command-line output and the log. Loading another career in the same
-process requires a fresh session; it cannot inherit the first approval.
+reporting the failure in command-line output and the log. Native departure
+notices retire career hooks after admitted work finishes. The connection and
+handler tables stay loaded; the next career must publish fresh data and confirm
+coverage again. A cancelled attempt can retire data published before activation,
+without closing the pack's interpreter or validators. Stale notices cannot retire
+a later prepared career.
 
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
 ordered `policy-page` rows and `policy-seal`. Native publications supply complete
@@ -155,8 +159,10 @@ adopted options; custom publications contain admitted option keys. `None` keeps
 installed options while advancing their generation. Private overlays stay in the
 launcher. One control deadline covers all pages and commits. Readiness stays
 blocked until commit acknowledgement. `reset(epoch)` clears policy while keeping
-bindings; a new publication is required and a failed Store cannot be revived.
-Data publication can precede hook approval; actions and career resets cannot.
+bindings; a new publication and native coverage approval are required and a
+failed Store cannot be revived. Data publication can precede hook approval.
+Reset may retire a complete publication before activation when loading is
+cancelled; actions still require approved hooks.
 
 Actions carry shared contexts/selections and owner binding-slot references.
 Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up to

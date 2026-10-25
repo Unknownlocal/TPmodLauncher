@@ -120,6 +120,13 @@ try:
         current.request("status")
         controller.poll()
     assert sum(row["state"] == "waiting" for row in attempts) == 1, attempts
+    (output / "leave-request").touch()
+    deadline = time.monotonic() + 3
+    while not any(row["state"] == "left" for row in attempts) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    assert any(row["state"] == "left" and row["generation"] == waiting[0]["generation"] for row in attempts), attempts
+    assert current.request("retire-regulations", regulations={"generation": waiting[0]["generation"],
+        "endpoint": {"port": 1, "token": "0" * 64}}, _service=lambda: None)["regulation_control"] is True
     assert current.request("stop-regulations", regulations={"generation": waiting[0]["generation"],
         "endpoint": {"port": 1, "token": "0" * 64}})["regulation_control"] is True
     (output / "pause-request").touch()

@@ -77,7 +77,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
             owner: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
-    progress, menus, operations = [], [], []
+    progress, menus, operations, channels = [], [], [], []
     client = control_bridge(monkeypatch, lambda operation: {})
     with ExitStack() as resources:
         worker = resources.enter_context(ThreadPoolExecutor(max_workers=1))
@@ -97,17 +97,23 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                 # Career selection must still be blocked while protection arms.
                 assert progress[-1]["state"] == "loading" and not menus
                 reply({"adapters": {"career_preload": {"state": "armed"}}})
-            elif operation == "prepare-regulations":
+            elif operation in ("prepare-regulations", "retire-regulations"):
                 def publish():
-                    channel = resources.enter_context(closing(RegulationChannel(scope.regulations.endpoint)))
-                    channel.publish(native={"native": [{"key": "open"}]})
-                    reply({"adapters": {"regulations": {"state": "prepared"}}})
+                    if not channels:
+                        channels.append(resources.enter_context(closing(RegulationChannel(scope.regulations.endpoint))))
+                    channel = channels[0]
+                    if operation == "retire-regulations":
+                        channel.reset(channel.epoch + 1)
+                        reply({"regulation_control": True})
+                    else:
+                        channel.publish(native={"native": [{"key": "open"}]})
+                        reply({"adapters": {"regulations": {"state": "prepared"}}})
                 worker.submit(publish)
             else:
                 assert not scope.regulations.ready
                 reply({"regulation_control": True, "adapters": {"regulations": {
                     "state": "installed" if operation == "install-regulations" else "active",
-                    "career_generation": 7, "components": PERSONNEL_COMPONENTS}}})
+                    "career_generation": record["regulations"]["generation"], "components": PERSONNEL_COMPONENTS}}})
         monkeypatch.setattr(client, "_post", post)
         scope.poll()
         assert scope._regulation_armed and not scope.regulations.ready and not menus
@@ -118,8 +124,41 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         for generation in (7, 6):
             scope.career_preload({"state": "waiting", "generation": generation})
         assert operations == ["await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
-        with pytest.raises(RuntimeError, match="fresh regulation session"):
-            scope.career_preload({"state": "waiting", "generation": 8})
+        handlers = dict(scope.regulations._handlers)
+        runner = mod.runner
+        scope.career_preload({"state": "left", "generation": 7})
+        assert not scope.regulations.ready and menus[-1] == [] and not runner.closed
+        scope.career_preload({"state": "waiting", "generation": 8})
+        assert scope.regulations.ready and menus[-1] and channels[0].epoch == 2
+        # A quick replacement may overtake the intermediate menu notice.
+        scope.career_preload({"state": "waiting", "generation": 9})
+        assert scope.regulations.ready and channels[0].epoch == 3
+        assert mod.runner is runner and scope.regulations._handlers == handlers
+
+
+@pytest.mark.parametrize("cancel_at", ["install-regulations", "activate-regulations"])
+def test_cancel_between_native_setup_replies_retires_only_career(make_mod, tmp_path, monkeypatch, cancel_at):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    scope, runtime, wake, _, _ = prepare_scope(tmp_path, {mod.manifest.id: mod})
+    with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+        pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        operations, resets = [], []
+        def control(operation):
+            operations.append(operation)
+            if operation == "retire-regulations":
+                resets.append(worker.submit(channel.reset, 2))
+                return {"regulation_control": True}
+            if operation == cancel_at:
+                return {"regulation_control": "stale"}
+            return {"regulation_control": True, "adapters": {"regulations": {
+                "state": "installed", "career_generation": 1, "components": PERSONNEL_COMPONENTS}}}
+        client = control_bridge(monkeypatch, control)
+        # Reset acknowledgement must be serviced on the owning thread, as in
+        # Bridge.retire_regulations; this test's immediate reply only queues it.
+        scope.activate_native_regulations(client, 1)
+        pump(scope, wake, resets[0])
+        assert operations[-1] == "retire-regulations" and not runtime.ready
+        assert not runtime.closed and not mod.runner.closed and not scope._regulation_failed
 
 
 def test_startup_needs_no_native_hooks_for_omitted_regulation_sections(make_mod, tmp_path):
@@ -438,6 +477,8 @@ def test_persistent_dispatch_latches_only_the_failed_owner_and_keeps_guests_on_t
         pump(scope, wake, worker.submit(channel.reset, 2))
         assert not runtime.ready and not catalog.views
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        assert not runtime.ready  # A new career cannot inherit native coverage approval.
+        scope.confirm_regulations(PERSONNEL_COMPONENTS)
         assert runtime.ready and channel.epoch == 2
         reply_sent = threading.Event()
         from launcher.regulations import server as transport
