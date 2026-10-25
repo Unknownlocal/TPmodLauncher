@@ -8,6 +8,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.callables import CallableTarget
+from hook_manager.manager import HookError
 from hook_manager.game_adapters.regulations import personnel_adapter as implementation
 from hook_manager.game_adapters.personnel.market_preparation import MarketPreparation
 
@@ -46,6 +47,12 @@ def owned(monkeypatch):
             return 50
 
     class StaffManager:
+        def onboard_joining_team_staff(self, team_name):
+            return []
+
+        def ensure_active_teams_have_staff(self):
+            return None
+
         def sign_staff(self, staff, salary=2):
             self.state.prestige_manager.displayed_prestige(self.state.teams["target"])
             self.state.writes.append("staff")
@@ -157,9 +164,9 @@ def owned(monkeypatch):
                target("personnel.caller.prestige", PrestigeManager, "displayed_prestige"))
     monkeypatch.setattr(implementation, "driver_target", lambda: signing)
     monkeypatch.setattr(implementation, "staff_target", lambda: target("staff.sign", StaffManager, "sign_staff"))
-    monkeypatch.setattr(implementation, "personnel_caller_targets", lambda kinds: callers)
+    monkeypatch.setattr(implementation, "personnel_caller_targets", lambda: callers)
     monkeypatch.setattr(implementation, "personnel_mail_target", lambda: target("personnel.caller.mail", EmailManager, "send_email"))
-    monkeypatch.setattr(implementation, "check_preparation", lambda state, kinds: None)
+    monkeypatch.setattr(implementation, "check_preparation", lambda state: None)
 
     class Channel:
         mode = "deny"
@@ -183,6 +190,14 @@ def owned(monkeypatch):
     planner = SimpleNamespace(state=state, manager=manager,
                               prepare=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
                                                          "effective": {"season": 3}, "proposal": {}})
+    staff_planner = SimpleNamespace(state=state, manager=state.staff_manager, prepare=planner.prepare)
+    staffing = SimpleNamespace(state=state, manager=state.staff_manager, contracts=staff_planner,
+                               sign=StaffManager.sign_staff)
+    monkeypatch.setattr(implementation, "DriverContractPlanner", lambda state: planner)
+    monkeypatch.setattr(implementation, "StaffingPlanner", lambda state: staffing)
+    monkeypatch.setattr(implementation, "staffing_targets", lambda: (
+        target("staffing.onboard", StaffManager, "onboard_joining_team_staff"),
+        target("staffing.recover", StaffManager, "ensure_active_teams_have_staff")))
     return state, driver, negotiations, planner, Channel(), signing, callers
 
 
@@ -214,7 +229,7 @@ def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing
 
     monkeypatch.setattr(type(negotiations), "_execute_offer", offer)
     monkeypatch.setattr(type(negotiations), "resolve_player_contract_decision", decision)
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         with pytest.raises(ValueError, match="Native confirmation failed"):
             negotiations.resolve_player_contract_decision("decision", True)
@@ -246,7 +261,7 @@ def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_prepar
         return original(*args)
 
     monkeypatch.setattr(type(channel), "__call__", dispatch)
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         negotiations.resolve_due_decisions()
         assert first["status"] == "completed" and driver.contract == {"salary": 2} and other.contract is None
@@ -335,7 +350,7 @@ def test_market_keeps_native_fallback_and_stops_unavailable_after_prior_completi
         return original_dispatch(*args)
 
     monkeypatch.setattr(type(channel), "__call__", dispatch)
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         assert negotiations.resolve_due_decisions() is None
         assert attempts == ["deny", "allow", "failed"]
@@ -350,7 +365,7 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
         state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
         channel.mode, state.native_refuse = mode, True
         channel.message = "Rule says driver will not renew this reserve role contract"
-        adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+        adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
         try:
             assert negotiations.ai_manage_drivers("reserve") is None
             assert state.writes == ({"deny": ["cooldown"], "allow": [2, "cooldown"], "failed": []}[mode])
@@ -367,7 +382,7 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
 def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(monkeypatch):
     state, driver, negotiations, planner, channel, signing, _ = owned(monkeypatch)
     original = type(state.driver_manager).sign_driver
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         # Each refused confirmation must remain pending; a native False would
         # otherwise try a backup and close it. Offer preparation must not stick.
@@ -391,7 +406,7 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert state.writes == [2] and negotiations.row["offer"]["years"] == 1
@@ -413,39 +428,26 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
     assert type(state.driver_manager).sign_driver is original
 
 
-def test_driver_creation_skips_unsubscribed_or_incompatible_callers_atomically(monkeypatch):
+def test_personnel_preflight_rejects_changed_callers_before_assignment(monkeypatch):
     state, driver, negotiations, planner, channel, signing, callers = owned(monkeypatch)
-    reports = []
-    monkeypatch.setattr(channel, "bindings", lambda scope: {})
-    monkeypatch.setattr(implementation, "DriverContractPlanner", lambda *a: pytest.fail("No subscriptions must skip inspection"))
-    assert implementation.PersonnelAdapter.create(state, channel, None, reports.append) is None and not reports
-    monkeypatch.setattr(channel, "bindings", lambda scope: {"owned.rules": ((0, "rule"),)})
-    monkeypatch.setattr(implementation, "DriverContractPlanner", lambda *a: planner)
-    monkeypatch.setattr(implementation, "StaffContractPlanner", lambda *a: planner)
-    monkeypatch.setattr(implementation, "staff_target", lambda: signing)
     originals = type(state.driver_manager).sign_driver, type(negotiations)._execute_offer
-    broken = callers[-1]
-    broken.signature = "(changed)"
-    assert implementation.PersonnelAdapter.create(state, channel, None, reports.append) is None
-    assert len(reports) == 2 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
+    callers[-1].signature = "(changed)"
+    with pytest.raises(HookError, match="signature changed"):
+        implementation.PersonnelAdapter(state, channel, None)
     assert (type(state.driver_manager).sign_driver, type(negotiations)._execute_offer) == originals
 
 
 def test_staff_and_driver_share_callers_without_publishing_refused_staff_preparation(monkeypatch):
-    # Reuse the driver lifecycle fixture; only the second signing target and
-    # staff-specific pre-sign field write introduce new integration behavior.
-    state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
+    # Exercise staff-specific temporary fields through the shared negotiation path.
+    state, driver, negotiations, _, channel, _, _ = owned(monkeypatch)
     staff = SimpleNamespace(contract=None)
-    staff_planner = SimpleNamespace(state=state, manager=state.staff_manager,
-                                   prepare=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
-                                                              "effective": {"season": 3}, "proposal": {"kind": "staff"}})
     negotiations.driver = staff
     negotiations.row = {"candidate_type": "staff", "initiated_by": "player", "offer": {"years": 3},
                         "context": {"entry_id": "native-hint"}}
     original_offer = type(negotiations)._execute_offer
     original_staff = type(state.staff_manager).sign_staff
-    adapter = implementation.PersonnelAdapter({"driver": planner, "staff": staff_planner}, channel,
-                                              lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel,
+                                              lambda *a: {"selected": "current"}).install_prepared()
     try:
         assert len([name for name in adapter.groups if name.endswith("caller.offer")]) == 1
         for mode, reason in (("deny", "Owned refusal"), ("failed", "Validation unavailable")):
@@ -459,8 +461,8 @@ def test_staff_and_driver_share_callers_without_publishing_refused_staff_prepara
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.PersonnelAdapter({"driver": planner, "staff": staff_planner}, channel,
-                                              lambda *a: {"selected": "current"})
+    adapter = implementation.PersonnelAdapter(state, channel,
+                                              lambda *a: {"selected": "current"}).install_prepared()
     try:
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert staff.contract == {"salary": 2} and staff._oval_target_entry_id == "native-hint"

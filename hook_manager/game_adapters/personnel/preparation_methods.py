@@ -5,9 +5,8 @@ from ...callables import method_group
 from .market_preparation import MarketPreparation
 
 
-# Check the signatures used by preparation, with driver/staff-only dependencies
-# kept separate. Body behavior is inspected/tested in developer conformance work;
-# it is deliberately not a runtime compatibility gate.
+# Check both driver and staff preparation. Runtime compatibility uses signatures;
+# native behaviour is checked separately in developer conformance work.
 _PREPARATION_GROUPS = {
     'personnel_negotiation_manager': {
         '_normalize_ai_rookie_offer_duration': "(self, row: 'Dict[str, Any]', driver: 'Any' = None) -> 'None'",
@@ -46,10 +45,7 @@ _PREPARATION_GROUPS = {
 }
 
 
-def check_preparation(state, kinds):
+def check_preparation(state):
     MarketPreparation.check(state)
     for role, signatures in _PREPARATION_GROUPS.items():
-        if (role in ("driver_manager", "driver_negotiation") and "driver" not in kinds
-                or role == "staff_manager" and "staff" not in kinds):
-            continue
         method_group(getattr(state, "personnel_negotiation_manager" if role == "driver_negotiation" else role), signatures)

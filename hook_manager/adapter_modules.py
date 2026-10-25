@@ -272,8 +272,8 @@ class AdapterModules:
 
         This Python-only method is absent from the bridge request API. The
         caller supplies the identified career, authenticated channel and native
-        rule selector; no mod paths or author Python enter this loader. Channel
-        ownership transfers after preflight, including cleanup on failed setup.
+        rule selector; no mod paths or author Python enter this loader. Once the
+        initial career/channel checks pass, this owner also cleans up failed setup.
         Preparation and control check the captured loading attempt; this method
         only constructs its hooks from those already prepared inputs.
         """
@@ -290,21 +290,35 @@ class AdapterModules:
         adapters = self.host.adapter_code.game_adapters.regulations
         self.channel = channel
         try:
-            # Switches validate their entire boolean record first. Planners can
-            # still retain the original rookie helper after its switch installs.
+            personnel = []
+            # Unsubscribed packs do not trigger personnel inspection or hooks.
+            if channel.bindings("personnel.contract"):
+                try:
+                    # Constructors only prepare support. A late academy failure
+                    # must not leave earlier driver/staff/staffing wrappers behind.
+                    personnel.append(adapters.personnel_adapter.PersonnelAdapter(state, channel, select, report=report))
+                    personnel.append(adapters.academy_adapter.AcademyAdapter(state, channel, select))
+                except Exception as error:
+                    for hook in reversed(personnel):
+                        hook.stop()
+                    personnel.clear()
+                    # This scope requires all four components; partial coverage
+                    # cannot activate a pack, so skip the group together.
+                    report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract: "
+                           + " ".join(str(error).split())[:512]
+                           + "; personnel integration skipped; continuing native game")
+            # All required personnel support is checked before the first native
+            # assignment, including these independently requested rule switches.
+            self.regulations.extend(personnel)
             self.regulations.extend(adapters.native_rules.install_native_rules(state, native_rules, report=report))
-            for module, name in (("personnel_adapter", "PersonnelAdapter"),
-                                 ("academy_adapter", "AcademyAdapter"),
-                                 ("project_adapter", "ProjectAdapter")):
-                installed = getattr(getattr(adapters, module), name).create(state, channel, select, report)
-                if installed is not None:
-                    self.regulations.append(installed)
-                if name == "PersonnelAdapter":
-                    self.coverage["staffing"] = installed is not None and getattr(installed, "staffing", None) is not None
-                    for kind in ("driver", "staff"):
-                        self.coverage[kind + "_signing"] = installed is not None and kind in installed.planners
-                else:
-                    self.coverage["academy_signing" if name == "AcademyAdapter" else "development_projects"] = installed is not None
+            for hook in personnel:
+                hook.install_prepared()
+            for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"):
+                self.coverage[key] = bool(personnel)
+            project = adapters.project_adapter.ProjectAdapter.create(state, channel, select, report)
+            if project is not None:
+                self.regulations.append(project)
+            self.coverage["development_projects"] = project is not None
             groups = {name for hook in self.regulations for name, row in hook.groups.items() if row["state"] == "active"}
             # A requested bypass is "disabled" only if its wrapper installed.
             # "skipped" means compatibility checks left that native rule intact.

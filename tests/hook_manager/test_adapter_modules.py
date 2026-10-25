@@ -74,7 +74,7 @@ def installation(host, monkeypatch):
     game.GameState = type("GameState", (), {})
     monkeypatch.setitem(sys.modules, "game_state", game)
     career = game.GameState()
-    channel = SimpleNamespace(closed=False)
+    channel = SimpleNamespace(closed=False, bindings=lambda scope: {"owned.rules": ((0, "rule"),)})
     def close():
         # Connections and installed objects must stop before definitions vanish.
         assert modules.prefix in sys.modules
@@ -82,18 +82,19 @@ def installation(host, monkeypatch):
     channel.close = close
     native = Manager()
     native.groups["drivers.rookie-check"] = {"state": "active", "bindings": [], "changes": []}
-    personnel, projects = CallableAdapters(), CallableAdapters()
-    personnel.planners = {"driver": object()}
+    personnel, academy, projects = CallableAdapters(), CallableAdapters(), CallableAdapters()
+    personnel.install_prepared = lambda: personnel
+    academy.install_prepared = lambda: academy
     adapters = host.adapter_code.game_adapters.regulations
     adapters.native_policy = SimpleNamespace(NativeRegulationPolicy=NativeRegulationPolicy)
     adapters.native_rules = SimpleNamespace(install_native_rules=lambda *a, **kw: (native,))
-    adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=SimpleNamespace(create=lambda *a: personnel))
-    adapters.academy_adapter = SimpleNamespace(AcademyAdapter=SimpleNamespace(create=lambda *a: None))
+    adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=lambda *a, **kw: personnel)
+    adapters.academy_adapter = SimpleNamespace(AcademyAdapter=lambda *a: academy)
     adapters.project_adapter = SimpleNamespace(ProjectAdapter=SimpleNamespace(create=lambda *a: projects))
-    yield modules, career, channel, adapters, (native, personnel, projects)
+    yield modules, career, channel, adapters, (native, personnel, academy, projects)
     assert modules.close()
     # A factory skipped by a test still owns its unreturned stand-in.
-    for hook in (native, personnel, projects):
+    for hook in (native, personnel, academy, projects):
         hook.stop()
 
 
@@ -115,15 +116,13 @@ def capture(installation):
     return modules.preload
 
 
-def test_installation_reports_components_without_claiming_full_scope(installation):
+def test_installation_reports_complete_personnel_coverage(installation):
     modules, _, channel, _, hooks = installation
-    hooks[1].staffing = object()  # The signing factory also completed staffing hooks.
     with pytest.raises(HookError, match="native GameState"):
         modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
-    assert not channel.closed and modules.channel is None
-    assert not channel.closed and all(not hook.closed for hook in hooks)
+    assert modules.channel is None and not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
-    assert coverage == {"driver_signing": True, "staff_signing": False, "academy_signing": False,
+    assert coverage == {"driver_signing": True, "staff_signing": True, "academy_signing": True,
         "development_projects": True, "rookie_contract_length_check": "disabled",
         "staff_prestige_check": "skipped", "staffing": True}
     coverage["staffing"] = False
@@ -135,6 +134,33 @@ def test_installation_reports_components_without_claiming_full_scope(installatio
     assert modules.state == "loaded"  # Policy/career removal can keep definitions.
 
 
+def test_late_academy_preflight_failure_leaves_all_personnel_methods_native(installation, monkeypatch):
+    from hook_manager.game_adapters.regulations import personnel_adapter, academy_adapter
+    from tests.hook_manager.test_personnel_adapter import owned
+
+    modules, _, channel, adapters, hooks = installation
+    state, _, negotiations, _, _, signing, callers = owned(monkeypatch)
+    monkeypatch.setattr(sys.modules["game_state"], "GameState", type(state))
+    adapters.personnel_adapter, adapters.academy_adapter = personnel_adapter, academy_adapter
+    targets = (signing, personnel_adapter.staff_target(), *callers, *personnel_adapter.staffing_targets())
+    originals = [target.resolve({})[2] for target in targets]
+    observed = []
+
+    def incompatible(career):
+        observed.extend(target.resolve({})[2] for target in targets)
+        raise HookError("Owned academy helper changed")
+
+    monkeypatch.setattr(academy_adapter, "AcademyContractPlanner", incompatible)
+    reports = []
+    coverage = modules.install_regulations(state, channel, lambda *args: None,
+                                          native_rules={}, report=reports.append)
+    assert observed == originals == [target.resolve({})[2] for target in targets]
+    assert len(reports) == 1 and "Owned academy helper changed" in reports[0]
+    assert "continuing native game" in reports[0]
+    assert not any(coverage[key] for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"))
+    assert coverage["development_projects"]  # Its independent scope remains usable.
+
+
 def test_setup_exception_restores_prior_components_and_closes_channel(installation):
     modules, _, channel, adapters, hooks = installation
     def fail(*args):
@@ -142,7 +168,7 @@ def test_setup_exception_restores_prior_components_and_closes_channel(installati
     adapters.project_adapter.ProjectAdapter.create = fail
     with pytest.raises(RuntimeError, match="Interrupted setup"):
         install(installation)
-    assert hooks[0].closed and hooks[1].closed and not hooks[2].closed
+    assert all(hook.closed for hook in hooks[:-1]) and not hooks[-1].closed
     assert channel.closed and modules.channel is None and modules.coverage == {}
     assert modules.prefix in sys.modules
 
@@ -317,5 +343,5 @@ def test_failed_setup_reports_deferred_cleanup_until_earlier_worker_finishes(ins
         assert "\n" not in status["detail"] and status["components"]["driver_signing"]
         assert all(not hook.closed for hook in hooks) and not channel.closed
     assert modules.stop_regulations() and channel.closed
-    assert hooks[0].closed and hooks[1].closed and not hooks[2].closed
+    assert all(hook.closed for hook in hooks[:-1]) and not hooks[-1].closed
     assert "regulations" not in modules.status() and modules.regulation_error is None

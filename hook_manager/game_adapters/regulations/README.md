@@ -5,11 +5,16 @@ a description of a proposed contract or development project, asks the launcher
 for the required decisions, and controls whether the game's original action runs.
 These are private launcher adapters, not a direct game-function API for mods.
 
+Personnel setup checks driver, staff, staffing and academy support together before
+assigning any of their wrappers. A compatibility failure reports one reason and
+leaves the whole personnel group native. An installation error restores owned
+wrappers; development-project integration has its own compatibility checks.
+
 ## Main parts
 
 - [personnel_adapter.py](personnel_adapter.py): `PersonnelAdapter` connects driver
   and staff signing to shared negotiation handling. It also installs the common
-  Formula staffing entries when their planner and signatures are compatible.
+  Formula staffing entries.
 - [academy_adapter.py](academy_adapter.py): `AcademyAdapter` connects academy
   signing, renewal and their player or AI callers.
 - [project_adapter.py](project_adapter.py): `ProjectAdapter` connects aero and

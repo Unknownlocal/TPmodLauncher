@@ -16,44 +16,40 @@ from .guards import RegulationGuards
 
 
 class AcademyAdapter(RegulationGuards):
-    @classmethod
-    def create(cls, state, channel, select, report):
-        try:
-            if not channel.bindings("personnel.contract"):
-                return None
-            return cls(AcademyContractPlanner(state), channel, select)
-        except Exception as error:
-            report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract academy: "
-                   + " ".join(str(error).split())[:512] + "; academy integration skipped; continuing native game")
-            return None
-
-    def __init__(self, planner, channel, select):
+    def __init__(self, state, channel, select):
+        """Prepare academy support without assigning native wrappers."""
         super().__init__(channel, select, "personnel.contract")
-        self.planner = planner
         targets, callers = academy_targets(), academy_caller_targets()
+        self._main()
+        self.planner = planner = AcademyContractPlanner(state)
+        self.signing, self.native_callers = targets, callers
+        resolved = {target.name: target.resolve(self.completed) for target in (*targets, *callers)}
+        if any(value is None for value in resolved.values()):
+            raise HookError("Academy integration needs completed native caller imports")
+        # Check every caller/helper and RNG capability before assigning any
+        # wrapper, so incompatibility cannot leave half an integration active.
+        for target in callers:
+            if target.name.rsplit(".", 1)[1] in ("ai_sign", "ai_renew"):
+                copy_random(planner.state, resolved[target.name][2])
+        screen = resolved[callers[0].name][0]
+        self.callers = AcademyCallers(self, planner.state, preparation_methods(planner.state, screen))
+        for target in (*targets, *callers):
+            self.approve(target)
+
+    def install_prepared(self):
+        """Assign academy wrappers after all personnel support is compatible."""
         try:
             self._main()
-            resolved = {target.name: target.resolve(self.completed) for target in (*targets, *callers)}
-            if any(value is None for value in resolved.values()):
-                raise HookError("Academy integration needs completed native caller imports")
-            # Check every caller/helper and RNG capability before assigning any
-            # wrapper, so incompatibility cannot leave half an integration active.
-            for target in callers:
-                if target.name.rsplit(".", 1)[1] in ("ai_sign", "ai_renew"):
-                    copy_random(planner.state, resolved[target.name][2])
-            screen = resolved[callers[0].name][0]
-            self.callers = AcademyCallers(self, planner.state, preparation_methods(planner.state, screen))
-            for target in (*targets, *callers):
-                self.approve(target)
-            for target in callers:
+            for target in self.native_callers:
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
-            projections = {target.name: self._projection(target.name) for target in targets}
+            projections = {target.name: self._projection(target.name) for target in self.signing}
             for owner in self.subscriptions:
                 self.register(owner, [CallBinding(target.name, target.name, projections[target.name], refuse_with_reason)
-                                      for target in targets])
+                                      for target in self.signing])
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
                 raise HookError("Academy integration did not install completely")
+            return self
         except Exception:
             self.stop()
             raise

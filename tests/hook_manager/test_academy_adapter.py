@@ -122,13 +122,14 @@ def owned(monkeypatch):
 
     planner = SimpleNamespace(state=state, manager=manager, prepare=lambda *a: {
         "clock": {"season": 3, "absolute_week": 114}, "effective": {"season": 3}, "proposal": {}})
+    monkeypatch.setattr(implementation, "AcademyContractPlanner", lambda state: planner)
     return state, screen, planner, Channel(), starts, callers
 
 
 def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
     originals = [target.resolve({})[2] for target in (*targets, *callers)]
-    adapter = implementation.AcademyAdapter(planner, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.AcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     messages = []
     monkeypatch.setattr("hook_manager.game_adapters.academy.callers.draw_refusal", lambda owner, surface, message: messages.append(message))
     before = deepcopy((state.teams, vars(state.drivers[0]), state.driver_manager._ai_signing_query_cache, state._rng.getstate()))
@@ -149,7 +150,7 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.AcademyAdapter(planner, channel, lambda *a: {"selected": "current"})
+    adapter = implementation.AcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         state.academy_manager.ai_sign_drivers(3)
         contract = state.teams["target"]["academy"]["contracts"]["Junior"]
@@ -190,14 +191,8 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
         adapter.stop()
 
 
-def test_academy_factory_skips_unsubscribed_and_rolls_back_partial_installation(monkeypatch):
+def test_academy_failed_installation_restores_all_owned_wrappers(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
-    reports = []
-    monkeypatch.setattr(channel, "bindings", lambda scope: {})
-    monkeypatch.setattr(implementation, "AcademyContractPlanner", lambda *a: pytest.fail("Unsubscribed must skip inspection"))
-    assert implementation.AcademyAdapter.create(state, channel, None, reports.append) is None and not reports
-    monkeypatch.setattr(channel, "bindings", lambda scope: {"a.rules": ((0, "rule"),), "b.rules": ((0, "rule"),)})
-    monkeypatch.setattr(implementation, "AcademyContractPlanner", lambda state: planner)
     original = [target.resolve({})[2] for target in (*targets, *callers)]
     register = implementation.AcademyAdapter.register
 
@@ -207,6 +202,6 @@ def test_academy_factory_skips_unsubscribed_and_rolls_back_partial_installation(
         return register(self, owner, bindings)
 
     monkeypatch.setattr(implementation.AcademyAdapter, "register", partial)
-    assert implementation.AcademyAdapter.create(state, channel, None, reports.append) is None
-    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
+    with pytest.raises(RuntimeError, match="Owned installation failure"):
+        implementation.AcademyAdapter(state, channel, None).install_prepared()
     assert [target.resolve({})[2] for target in (*targets, *callers)] == original

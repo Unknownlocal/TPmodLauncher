@@ -63,19 +63,25 @@ def coordinator(monkeypatch, mode="allow", *, callers=False):
         targets = tuple(CallableTarget("staffing." + role, module.__name__, ("StaffManager",), method,
                                       str(inspect.signature(getattr(type(manager), method))))
                         for role, method in (("onboard", "onboard_joining_team_staff"), ("recover", "ensure_active_teams_have_staff")))
-        def unavailable(state):
-            raise HookError("Owned fixture has no driver manager")
-        monkeypatch.setattr(implementation, "DriverContractPlanner", unavailable)
-        monkeypatch.setattr(implementation, "StaffContractPlanner", lambda state: planner.contracts)
+        class DriverManager:
+            def sign_driver(self, driver):
+                return True
+
+        module.DriverManager = DriverManager
+        driver = DriverManager()
+        driver.state = state
+        state.driver_manager = driver
+        monkeypatch.setattr(implementation, "DriverContractPlanner", lambda state:
+                            SimpleNamespace(state=state, manager=driver))
+        monkeypatch.setattr(implementation, "driver_target", lambda: CallableTarget(
+            "drivers.sign", module.__name__, ("DriverManager",), "sign_driver", "(self, driver)"))
         monkeypatch.setattr(implementation, "StaffingPlanner", lambda state: planner)
         monkeypatch.setattr(implementation, "staff_target", lambda: signing)
         monkeypatch.setattr(implementation, "staffing_targets", lambda: targets)
-        monkeypatch.setattr(implementation, "personnel_caller_targets", lambda kinds: ())
+        monkeypatch.setattr(implementation, "personnel_caller_targets", lambda: ())
         monkeypatch.setattr(implementation, "check_preparation", lambda *args: None)
-        reports = []
-        guards = PersonnelAdapter.create(state, channel, lambda *args: {"selected": "current"}, reports.append)
-        assert guards is not None and guards.staffing is not None
-        assert len(reports) == 1 and "no driver manager" in reports[0]
+        guards = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
+        assert guards.staffing is not None
         return state, manager, person, channel, guards, guards.staffing
     guards = Guards(channel)
     guards.approve(signing)

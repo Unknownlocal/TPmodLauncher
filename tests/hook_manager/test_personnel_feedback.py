@@ -61,11 +61,10 @@ def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatc
     for kind in ("driver", "staff"):
         state, person, negotiations, planner, channel, _, _ = owned(monkeypatch)
         if kind == "staff":
-            planner = SimpleNamespace(state=state, manager=state.staff_manager, prepare=planner.prepare)
             negotiations.row["candidate_type"] = "staff"
         cls = classes[kind]
         originals = cls.handle_event, cls.draw
-        adapter = PersonnelAdapter({kind: planner}, channel, lambda *args: {"selected": "current"})
+        adapter = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
         screen = screen_for(cls, state, kind)
         try:
             cls.handle_event(self=screen, event="sign")
@@ -103,9 +102,8 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
         return binding(cls, kind)
 
     monkeypatch.setattr(feedback, "feedback_bindings", compatible)
-    planners = {"driver": planner, "staff": SimpleNamespace(state=state, manager=state.staff_manager, prepare=planner.prepare)}
     reports = []
-    adapter = PersonnelAdapter(planners, channel, lambda *args: {"selected": "current"}, report=reports.append)
+    adapter = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, report=reports.append).install_prepared()
     screen = screen_for(classes["staff"], state, "staff")
     try:
         assert len(reports) == 1 and "UI COMPATIBILITY FAILED" in reports[0]

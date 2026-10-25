@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Checked shared negotiation callers and optional driver preparation queries."""
+"""Checked shared negotiation callers and driver preparation queries."""
 
 from ...callables import CallableTarget
 
@@ -61,13 +61,7 @@ _PERSONNEL_CALLERS = (
 )
 
 
-def personnel_caller_targets(kinds):
-    # A staff-only integration needs the common negotiation/prestige methods,
-    # but must not depend on driver-only modules completing or remaining compatible.
-    shared = {"uncontested", "decision", "offer", "prestige", "due", "ai_staff", "finish", "stage", "notice", "debug"}
-    # The driver branch includes driver queries/AI/failure classification. Its
-    # final filter excludes staff AI when only driver support is compatible.
+def personnel_caller_targets():
+    """Return the complete shared driver/staff caller mapping."""
     return tuple(CallableTarget("personnel.caller." + role, module, (owner,), method, signature)
-                 for role, module, owner, method, signature in _PERSONNEL_CALLERS
-                 if ("driver" in kinds or role in shared) and (role != "ai_staff" or "staff" in kinds))
-
+                 for role, module, owner, method, signature in _PERSONNEL_CALLERS)

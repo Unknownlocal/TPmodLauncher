@@ -19,104 +19,55 @@ from ..drivers.query_inputs import discard_query_inputs
 from ..personnel.preparation import publish_preparation
 from ..personnel.preparation_methods import check_preparation
 from ..drivers.targets import driver_target
-from ..staff.planner import StaffContractPlanner
 from ..staff.staffing import StaffingPlanner
 from ..staff.targets import staff_target, staffing_targets
 from .staffing_coordinator import StaffingCoordinator
 
 
 class PersonnelAdapter(RegulationGuards):
-    @staticmethod
-    def _caller_targets(state, kinds):
-        targets = personnel_caller_targets(kinds)
-        # An owned/headless state can omit mail; a real mailbox must participate
-        # in the same preflight/install group as the negotiation callers.
-        return (*targets, personnel_mail_target()) if getattr(state, "email_manager", None) is not None else targets
-
-    @classmethod
-    def create(cls, state, channel, select, report):
-        def failure(kind, error):
-            report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract " + kind + ": "
-                   + " ".join(str(error).split())[:512] + "; " + kind
-                   + " integration skipped; continuing native game")
-
-        try:
-            # Disabled/unsubscribed mods must not trigger inspection or hooks.
-            if not channel.bindings("personnel.contract"):
-                return None
-            planners = {}
-            # Select compatible kinds before installing anything. A changed
-            # driver-only helper must not prevent usable staff guards (or vice versa).
-            for kind, factory, target in (("driver", DriverContractPlanner, driver_target),
-                                          ("staff", StaffContractPlanner, staff_target)):
-                try:
-                    planner = factory(state)
-                    check_preparation(state, {kind})
-                    if any(item.resolve({}) is None for item in (target(), *cls._caller_targets(state, {kind}))):
-                        raise HookError("Personnel integration needs completed native caller imports")
-                    planners[kind] = planner
-                except Exception as error:
-                    failure(kind, error)
-            staffing = None
-            if "staff" in planners:
-                try:
-                    # Capture the native signer before installing its live guard.
-                    # Both common staffing entries must be compatible together.
-                    for target in staffing_targets():
-                        resolved = target.resolve({})
-                        if resolved is None or inspect.getattr_static(state.staff_manager, target.attribute) is not resolved[2]:
-                            # A subclass/instance override would evade a wrapper
-                            # on the mapped class, even with the same signature.
-                            raise HookError("Staffing integration needs the mapped native entry points")
-                    staffing = StaffingPlanner(state)
-                except Exception as error:
-                    failure("staffing", error)
-            return cls(planners, channel, select, report=report, staffing=staffing) if planners else None
-        except Exception as error:
-            failure("personnel", error)
-            return None
-
-    def __init__(self, planners, channel, select, *, report=None, staffing=None):
+    def __init__(self, state, channel, select, *, report=None):
+        """Check all signing/staffing support without assigning native wrappers."""
         super().__init__(channel, select, "personnel.contract")
-        self.planners = dict(planners)
-        # One owned signing or complete staffing run may use career inputs at a
-        # time. The registry lock only protects bindings; an admitted signer can
-        # still be executing native writes after leaving that lock.
+        # Reserve career inputs through native writes, not just registry access.
         self._personnel_operation = threading.Lock()
         self.feedback = None
-        self.staffing = StaffingCoordinator(self, staffing) if staffing is not None else None
+        self.report = report or self._report
+        self._main()
+        staffing = StaffingPlanner(state)
+        # Reuse staffing's checked staff planner instead of checking it twice.
+        self.planners = {"driver": DriverContractPlanner(state), "staff": staffing.contracts}
+        self.staffing = StaffingCoordinator(self, staffing)
+        self.callers = PersonnelCallers(self, state)
+        self.signing = (driver_target(), staff_target())
+        self.native_callers = (*personnel_caller_targets(), *staffing_targets())
+        # Headless careers may omit mail. A real mailbox must be covered.
+        if getattr(state, "email_manager", None) is not None:
+            self.native_callers += (personnel_mail_target(),)
+        for target in (*self.signing, *self.native_callers):
+            resolved = target.resolve(self.completed)
+            if resolved is None:
+                raise HookError("Personnel integration requires completed native caller imports")
+            if target.name.startswith("staffing.") and (
+                    inspect.getattr_static(state.staff_manager, target.attribute) is not resolved[2]):
+                # An instance/subclass override would evade the mapped class.
+                raise HookError("Staffing integration needs the mapped native entry points")
+            self.approve(target)
+        check_preparation(state)
+
+    def install_prepared(self):
+        """Install only after the whole personnel group passes compatibility checks."""
         try:
-            if not self.planners or self.planners.keys() - {"driver", "staff"}:
-                raise HookError("Personnel integration needs supported native planners")
-            state = next(iter(self.planners.values())).state
-            if any(planner.state is not state for planner in self.planners.values()):
-                raise HookError("Personnel planners belong to different careers")
-            self.callers = PersonnelCallers(self, state)
-            signing = [factory() for kind, factory in (("driver", driver_target), ("staff", staff_target))
-                       if kind in self.planners]
-            callers = self._caller_targets(state, self.planners)
-            staffing_callers = staffing_targets() if self.staffing is not None else ()
-            # Recheck the complete set here: trusted callers may also construct
-            # this adapter directly, without the factory's per-kind preflight.
-            # This component covers signing and its optional staffing callers;
-            # complete personnel approval also requires the academy component.
             self._main()
-            if any(target.resolve(self.completed) is None for target in (*signing, *callers, *staffing_callers)):
-                raise HookError("Personnel integration requires its native caller modules to finish loading")
-            check_preparation(state, self.planners)
-            for target in (*signing, *callers, *staffing_callers):
-                self.approve(target)
-            # Check every caller before the first wrapper. Parent journals restore
-            # all assignments if installation fails partway through.
-            for target in (*callers, *staffing_callers):
+            for target in self.native_callers:
                 Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             projection = self._projection
             for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projection, refuse_boolean) for target in signing])
+                self.register(owner, [CallBinding(target.name, target.name, projection, refuse_boolean) for target in self.signing])
             self.poll()
             if any(group["state"] != "active" for group in self.groups.values()):
                 raise HookError("Personnel integration did not install completely")
-            self.feedback = PersonnelFeedback(self, state, report or self._report)
+            self.feedback = PersonnelFeedback(self, self.planners["driver"].state, self.report)
+            return self
         except Exception:
             self.stop()
             raise
@@ -180,7 +131,7 @@ class PersonnelAdapter(RegulationGuards):
         finally:
             self._personnel_operation.release()
 
-    def _deny(self, codec, outcome):
+    def _deny(self, refuse, outcome):
         caller = getattr(self._local, "personnel_caller", None)
         if caller:
             # Carry the host status through nested cancellation; only native
@@ -193,7 +144,7 @@ class PersonnelAdapter(RegulationGuards):
         # return values remain the responsibility of this shared signing guard.
         if self.feedback is not None and screen is not None:
             self.feedback.refuse(screen, outcome.message)
-        return super()._deny(codec, outcome)
+        return super()._deny(refuse, outcome)
 
     def stop(self):
         result = super().stop()

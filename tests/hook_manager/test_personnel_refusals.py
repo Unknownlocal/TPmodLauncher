@@ -47,8 +47,8 @@ def repeating(monkeypatch, scenario):
         return dispatch(self, contexts, selections, calls, deadline)
 
     monkeypatch.setattr(type(channel), "__call__", send)
-    adapter = implementation.PersonnelAdapter({"driver": planner}, channel,
-        lambda *args: {"selected": state.selection, "current": [0, 3], "upcoming": [1, 4]})
+    adapter = implementation.PersonnelAdapter(state, channel,
+        lambda *args: {"selected": state.selection, "current": [0, 3], "upcoming": [1, 4]}).install_prepared()
     try:
         yield state, driver, manager, channel, adapter
     finally:
