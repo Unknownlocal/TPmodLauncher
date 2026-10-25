@@ -188,7 +188,7 @@ class RegulationRuntime:
                 if self._publication is not None:
                     raise ValueError("Regulation publication already pending")
                 candidate = PolicyPublication(self._dispatch, message)
-                affected = self._dispatch.runners
+                affected = self._dispatch.states
                 if self._runner.closed or any(self._states[owner] == "unavailable" for owner in affected):
                     raise RuntimeError("Required regulation owner is unavailable")
                 self._publication = candidate
@@ -200,7 +200,7 @@ class RegulationRuntime:
             if operation in ("policy-page", "policy-seal"):
                 if self._publication is None:
                     raise ValueError("No regulation publication is pending")
-                affected = self._dispatch.runners
+                affected = self._dispatch.states
                 if operation == "policy-page":
                     self._publication.append(message)
                     return "staging"
@@ -217,11 +217,14 @@ class RegulationRuntime:
             if operation == "reset":
                 # Reset retires the entire career, not just owners named by an
                 # action. Its generation map must describe all execution views.
-                expected = {owner: runner.generation for owner, runner in self._dispatch.runners.items()}
+                # After reset, installed generations are zero even though the
+                # session publication counter keeps increasing.
+                generation = self._dispatch.group.generation if self._dispatch.group is not None else 0
+                expected = dict.fromkeys(self._dispatch.states, generation)
                 if message["generations"] != expected:
                     raise ValueError("Foreign career reset generations")
                 self._dispatch.reset(message["epoch"], deadline=message["deadline"])
-                for owner in self._dispatch.runners:
+                for owner in self._dispatch.states:
                     self._states[owner] = "bound"
                 self._native = self._activation_pending = False
                 return "reset"
@@ -237,7 +240,7 @@ class RegulationRuntime:
             for owner, row in owners.items():
                 view = self._dispatch.catalog.views[owner]
                 if (self._states[owner] != "active" or type(row) is not dict or set(row) != {"revision", "calls"}
-                        or row["revision"] != view.revision or message["generations"][owner] != self._dispatch.runners[owner].generation
+                        or row["revision"] != view.revision or message["generations"][owner] != self._dispatch.generation
                         or type(row["calls"]) is not list or not 1 <= len(row["calls"]) <= 32):
                     raise ValueError("Stale or foreign regulation owner view")
                 # Wire slots resolve only against admitted ascending IDs. They
@@ -262,7 +265,7 @@ class RegulationRuntime:
             self._unavailable()
         # The native channel knows execution owners only. Definition-only owners
         # remain in pack status, but cannot appear as foreign binding identities.
-        self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.runners
+        self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.states
                                                       if self._states[owner] == "unavailable"))
         if self._server.failed.is_set():
             self._publication = None  # Release partially received policy on terminal I/O failure.

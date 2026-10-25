@@ -36,13 +36,16 @@ class WitWorld:
    value=pending.pop()
    kind=type(value)
    frozen=kind.__module__=='_regulations.frozen'
-   if not frozen and kind not in (dict,list,tuple,set,frozenset,str,int,float,bool,type(None)): continue
+   model=kind.__module__.startswith('_regulations.') and hasattr(value,'__dict__')
+   if not frozen and not model and kind not in (dict,list,tuple,set,frozenset,str,int,float,bool,type(None)): continue
    identity=id(value)
    if identity in seen: continue
    seen.add(identity)
    total+=sys.getsizeof(value)
    if frozen:
     pending.append(value.tokens)
+   elif model:
+    pending.append(vars(value))
    elif kind is dict:
     pending.extend(value.keys())
     pending.extend(value.values())
@@ -119,7 +122,7 @@ def files(case, *, owner=None):
         # The legacy comparison keeps its separate, explicitly selected source.
         entry = entry.replace("state=getattr(sys.modules['runner_guest'],'_resident',None)",
                               "from _loading.runner_bindings import _shared_regulations\n"
-                              f"  state=_shared_regulations.residents[{owner!r}]")
+                              "  state=_shared_regulations")
     result = (("mod.py", entry), ("rules.py", HANDLERS[case.get("rule", "trivial")]))
     if case.get("full_source"):
         remaining = 1024 * 1024 - sum(len(text.encode()) for _, text in result)

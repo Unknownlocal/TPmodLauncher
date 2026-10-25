@@ -12,7 +12,7 @@ from launcher.sandbox import SandboxError
 from mod_runtime._regulations.values import measure
 from launcher.regulations import RegulationDefinitions
 from launcher.regulations.validation.dispatch import ValidationDispatch
-from launcher.regulations.validation.runner import ValidationRunner
+from launcher.regulations.validation.group import ValidationGroup
 import json
 from regulation_support import context, make_mod, selection, validator
 
@@ -108,9 +108,9 @@ def test_watchdog_teardown_cannot_return_a_late_approval(monkeypatch):
                 else '{"action":1,"prepared":1}')
 
     runner = SimpleNamespace(sandbox=SimpleNamespace(phase=phase, call=export), close=lambda: closed.append(True))
-    bound = ValidationRunner(SimpleNamespace(runner=runner), owner="owned.rules")
-    bound.active, bound.epoch, bound.generation, bound.required = True, 1, 1, 1
-    monkeypatch.setattr("launcher.regulations.validation.runner.time.monotonic", lambda: clock[0])
+    bound = ValidationGroup(SimpleNamespace(runner=runner))
+    bound.active, bound.epoch, bound.generation = True, 1, 1
+    monkeypatch.setattr("launcher.regulations.validation.group.time.monotonic", lambda: clock[0])
     with pytest.raises(SandboxError, match="Late"):
-        bound.evaluate(("{}", measure({}), 1), 1, 10.1)
+        bound.evaluate("owned.rules", ("{}", measure({}), 1), 1, 10.1)
     assert closed == [True]

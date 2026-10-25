@@ -12,16 +12,17 @@ adding mod-facing methods or imports.
 | `view.py` | One mod's record, option and binding lookup tables |
 | `install.py` | Bounded transfers and the setup/commit budgets |
 | `action.py` | Encode proposals once and check per-mod call packets |
-| `runner.py` | Checked private guest acknowledgements and ordinary handler execution |
-| `group.py` | Shared record reuse, one proposal table, group completion and reset |
+| `group.py` | One install transaction, checked mod calls, shared proposals and reset |
 | `dispatch.py` | Install career data and run checks in order on the controller thread |
 
 `ValidationDispatch(admitted_definitions, bound_handler)` uses the pack's one
 shared `SharedHandlerRunner`. Its binding table must contain exactly the owners
 with validators. Definition-only packs pass no handler. The runner binds once
 and belongs to one dispatcher, preventing competing record caches or action IDs.
-`ValidationRunner` retains each mod's generation and view; `ValidationGroup`
-manages their shared records, proposals and reset. Author code stays inside Wasm.
+`ValidationGroup` owns the shared install and action state. One manifest describes
+all mods and one table describes the physical records. Each mod's view contains
+only its bindings, rules and choice references. All views use the career's one
+generation. Author code stays inside Wasm.
 
 `publish(native={rule: [effective_option, ...]}, custom={rule: [option_key, ...]})`
 installs all subscribed rules once per career. Include every distinct value that
@@ -40,19 +41,15 @@ Native values are encoded once; already checked private data is borrowed without
 modification. Equal native JSON records share record IDs. New record
 IDs never repeat, including after reset or an aborted publication.
 
-Every validator owner stages and seals before any commits. A partial commit failure
-makes the shared runner unavailable; no old-generation fallback exists. The
-eight-million-base installation formula is split between staging and commit,
-reserving a separate commit crossing allowance. Stage and commit share
-five seconds of per-owner processing time. Work for other owners still consumes
-the original transaction deadline of `1 + 5 * validator_owners` seconds. No phase
-restarts either allowance. This is a watchdog ceiling, not a latency target.
+The complete manifest and every record must arrive and pass validation before
+one commit activates the catalogue. Its acknowledgement covers every mod's view;
+a missing owner, record or mismatched reply makes the runner unavailable.
 
-A shared group supplies already staged record IDs to installation planning.
-Another owner can borrow a common native record without transferring it again.
-After all commits, one operation confirms every owner's complete install.
-It uses the owners' remaining control allowance. Reset counts the old cached data
-and indexes it releases, outside ordinary handler budgets.
+Installation keeps the eight-million base fuel allowance for each owner and
+counts shared records once. Transfer and commit share five seconds per owner in
+total, within the original `1 + 5 * validator_owners` deadline. Commit reserves its
+own portion of that fuel. These are watchdog ceilings, not latency targets.
+Reset counts the cached data and indexes it releases, outside handler budgets.
 
 `evaluate(contexts, selections, calls, deadline=...)` takes shared action tables.
 Each selection has `rule`, `evaluation_season`, `selected`, `current`, `upcoming`.

@@ -156,15 +156,14 @@ def main():
                 def inspect_guests(label):
                     # Offline graph inspection has a separate diagnostic
                     # allowance; its result never authorizes a game action.
-                    report[label] = {}
-                    for owner, mod in mods.items():
-                        view = runtime._dispatch.catalog.views.get(owner)
-                        nodes = sum(record.metric[1] for record in view.records) if view else 0
-                        budget = 8_000_000 + 64_000 * nodes
-                        with mod.sandbox.phase(fuel=budget, seconds=5):
-                            value = mod.event("benchmark.memory", {})
-                            value["inspection_fuel"] = budget - mod.sandbox._store.get_fuel()
-                            report[label][owner] = value
+                    plan = runtime._dispatch.group.active
+                    nodes = plan.metric[1] + sum(record.metric[1] for record in plan.records) if plan else 0
+                    budget = 8_000_000 + 64_000 * nodes
+                    mod = next(iter(mods.values()))
+                    with mod.sandbox.phase(fuel=budget, seconds=5):
+                        value = mod.event("benchmark.memory", {})
+                        value["inspection_fuel"] = budget - mod.sandbox._store.get_fuel()
+                        report[label] = value
 
                 if args.mode == "resident":
                     operation("initial")

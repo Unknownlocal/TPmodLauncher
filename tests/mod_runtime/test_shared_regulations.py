@@ -72,23 +72,14 @@ def reply(group, name, *args, **kwargs):
 
 
 def publish(group, catalog):
-    known, plans = set(), {}
     views = catalog.stage({"native": [{"key": "open", "points": 25}]}, {})
-    for owner, view in views.items():
-        plan = plans[owner] = PolicyInstall(view, 1, 1, known=known)
-        with group.sandbox.phase(fuel=plan.fuel, seconds=5):
-            reply(group, "select-regulation-owner", owner)
-            for name, args, state in plan.operations:
-                value = reply(group, name, *args)
-                if state is not None:
-                    assert value == {"epoch": 1, "generation": 1, "state": state}
-        known.update(record.identity for record in view.records)
-    for owner, plan in plans.items():
-        with group.sandbox.phase(fuel=plan.commit_fuel, seconds=5):
-            reply(group, "select-regulation-owner", owner)
-            assert reply(group, "commit-regulation-policy", 1, 1)["state"] == "active"
-    with group.sandbox.phase(fuel=64_000_000, seconds=5):
-        reply(group, "finish-regulation-publication")
+    plan = PolicyInstall(views, 1, 1)
+    with group.sandbox.phase(fuel=plan.fuel, seconds=5 * len(views)):
+        for name, args, state in plan.operations:
+            value = reply(group, name, *args)
+            if state is not None:
+                assert value == {"epoch": 1, "generation": 1, "state": state}
+        assert reply(group, "commit-regulation-policy", 1, 1)["state"] == "active"
     catalog.commit()
 
 
@@ -113,7 +104,7 @@ def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
             gc.enable()
 
 
-def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False):
+def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False, repeat_owner=False):
     """Exercise private pages; production dispatch separately owns its 100 ms limit."""
     selection = {"rule": "native", "evaluation_season": 2026, "selected": "current",
                  "current": [0, 2026], "upcoming": None}
@@ -131,11 +122,14 @@ def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False):
             calls = [[validator, 0, 0] for validator in list(view.validators)[:count]]
             packet = json.loads(frame.for_owner(view, calls, f"{view.revision}:1:1", shared={})[0])
             text = encode(packet)
-            reply(group, "select-regulation-owner", owner)
-            assert reply(group, "begin-regulation-action", action, 1, 1, len(text.encode()), text) == {
+            assert reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text) == {
                 "action": action, "prepared": len(calls)}
             results[owner] = [reply(group, "validate-resident-regulation", action, slot, fuel=5_000_000)["result"]
                               for slot in range(len(calls))]
+        if repeat_owner:
+            # Multiple calls belong in one packet; a second packet cannot
+            # bypass that mod's per-action call limit.
+            reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text)
         frame.seal()
         # No result leaves this harness before the group checks completion.
         reply(group, "finish-regulation-action", action, fuel=64_000_000)
@@ -157,18 +151,13 @@ def test_shared_binding_rejects_a_peer_function_with_the_same_local_filename(run
             pytest.fail("A peer re-export must not be admitted as this owner's handler")
 
 
-@pytest.mark.parametrize("failure", ["handler", "unused-context"])
+@pytest.mark.parametrize("failure", ["handler", "unused-context", "repeat-owner"])
 def test_failed_shared_action_cannot_leave_other_residents_available(runner_bundle, failure):
     with shared(runner_bundle) as (group, _, catalog, _, cleaned):
         publish(group, catalog)
         ctx = context(points=25, **({"raise": OWNERS[1]} if failure == "handler" else {}))
         with pytest.raises(SandboxError):
-            evaluate(group, catalog, 1, ctx, extra_context=failure == "unused-context")
-        # Ordinary author exceptions first return a resident error. Even if a
-        # caller ignores it, selecting the other owner traps the poisoned group.
-        if not group.closed:
-            with pytest.raises(SandboxError):
-                reply(group, "select-regulation-owner", OWNERS[0])
+            evaluate(group, catalog, 1, ctx, extra_context=failure == "unused-context", repeat_owner=failure == "repeat-owner")
         assert all(member.closed for member in group.members.values()) and cleaned == [True]
 
 
@@ -177,10 +166,6 @@ def test_guest_requires_a_nonempty_manifest_and_reset_before_replacement(runner_
     with shared(runner_bundle) as (group, _, catalog, _, cleaned):
         if replacement:
             publish(group, catalog)
-        reply(group, "select-regulation-owner", OWNERS[0])
         with pytest.raises(SandboxError):
             reply(group, "begin-regulation-policy", 1, 2 if replacement else 1, 1 if replacement else 0)
-        # A failed protocol operation cannot be ignored to use a peer's policy.
-        with pytest.raises(SandboxError):
-            reply(group, "select-regulation-owner", OWNERS[1])
         assert group.closed and cleaned == [True]

@@ -14,24 +14,6 @@ _group = SourceGroup()
 _shared_regulations = RegulationGroup(_group)
 
 
-def _resident_call(method, *arguments):
-    # Author lifecycle events never dispatch these operations. A bad private
-    # operation poisons resident state before the host sees its error reply.
-    try:
-        result = _shared_regulations.call(method, *arguments)
-        return "" if result is None else _encode_regulation(result)
-    except BaseException:
-        _shared_regulations.fail()
-        return '{"error":"Resident regulation failed"}'
-
-
-def _resident_void(method, *arguments):
-    if _resident_call(method, *arguments):
-        # A void export cannot reply with an error; trap so a failed transfer
-        # cannot appear successful and leave policy/action state in use.
-        raise RuntimeError("Resident regulation transfer failed")
-
-
 def _shared_call(method, *arguments):
     """A failed shared operation revokes all resident state before trapping."""
     try:
@@ -65,46 +47,46 @@ class RunnerBindings(_bindings.RunnerBindings):
         return _group.on_event(owner, name, payload)
 
     def begin_regulation_policy(self, epoch, generation, manifest_bytes):
-        return _resident_call("begin_policy", epoch, generation, manifest_bytes)
+        return _encode_regulation(_shared_call("begin_policy", epoch, generation, manifest_bytes))
 
     def put_regulation_policy(self, chunk):
-        _resident_void("put", "manifest", chunk)
+        _shared_call("put", "manifest", chunk)
 
     def seal_regulation_policy_manifest(self):
-        return _resident_call("seal_manifest")
+        return _encode_regulation(_shared_call("seal_manifest"))
 
     def install_regulation_records(self, page):
-        return _resident_call("install_records", page)
+        return _encode_regulation(_shared_call("install_records", page))
 
     def begin_regulation_record(self, slot, bytes):
-        _resident_void("begin_record", slot, bytes)
+        _shared_call("begin_record", slot, bytes)
 
     def put_regulation_record(self, chunk):
-        _resident_void("put_record", chunk)
+        _shared_call("put_record", chunk)
 
     def seal_regulation_record(self):
-        return _resident_call("seal_record")
+        return _encode_regulation(_shared_call("seal_record"))
 
     def seal_regulation_policy(self):
-        return _resident_call("seal_policy")
+        return _encode_regulation(_shared_call("seal_policy"))
 
     def commit_regulation_policy(self, epoch, generation):
-        return _resident_call("commit_policy", epoch, generation)
+        return _encode_regulation(_shared_call("commit_policy", epoch, generation))
 
-    def begin_regulation_action(self, action, epoch, generation, bytes, first):
-        return _resident_call("begin_action", action, epoch, generation, bytes, first)
+    def begin_regulation_action(self, owner, action, epoch, generation, bytes, first):
+        return _encode_regulation(_shared_call("begin_action", owner, action, epoch, generation, bytes, first))
 
     def put_regulation_action(self, chunk):
-        _resident_void("put", "action", chunk)
+        _shared_call("put", "action", chunk)
 
     def seal_regulation_action(self):
-        return _resident_call("seal_action")
+        return _encode_regulation(_shared_call("seal_action"))
 
     def prepare_regulation_slots(self, action):
-        return _resident_call("prepare", action)
+        return _encode_regulation(_shared_call("prepare", action))
 
     def validate_resident_regulation(self, action, slot):
-        return _resident_call("validate", action, slot)
+        return _encode_regulation(_shared_call("validate", action, slot))
 
     def bind_source_regulation(self, index, declaration):
         try:
@@ -118,9 +100,6 @@ class RunnerBindings(_bindings.RunnerBindings):
             return (type(error).__name__ + ": " + str(error))[:512]
         return ""
 
-    def select_regulation_owner(self, owner):
-        _shared_call("select", owner)
-
     def begin_regulation_contexts(self, action, bytes, first):
         return _encode_regulation(_shared_call("begin_contexts", action, bytes, first))
 
@@ -132,9 +111,6 @@ class RunnerBindings(_bindings.RunnerBindings):
 
     def finish_regulation_action(self, action):
         _shared_call("finish_action", action)
-
-    def finish_regulation_publication(self):
-        _shared_call("finish_publication")
 
     def reset_regulation_group(self, epoch):
         return _encode_regulation(_shared_call("reset", epoch))

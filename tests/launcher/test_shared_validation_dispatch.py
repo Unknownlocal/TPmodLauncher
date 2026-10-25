@@ -84,14 +84,20 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_acti
     monkeypatch.setattr(group.sandbox, "call", record)
     publish(session)
     assert session.ready
+    assert session.group.active.operations == []  # Sent JSON fragments must not remain resident.
     with pytest.raises(ValueError, match="already belongs"):
         ValidationDispatch(model, handler)
     records = [value for name, args in traffic if name == "install-regulation-records" for _, value in json.loads(args[0])]
     assert sum("points" in value for value in records) == 1
+    manifest = json.loads("".join(args[0] for name, args in traffic if name == "put-regulation-policy"))
+    native_slots = {base for view in manifest["owners"] for rule, _, base, _ in view["choices"]
+                    if view["rules"][rule] == "native"}
+    assert len(native_slots) == 1
+    assert len(manifest["records"]) == len({row["id"] for row in manifest["records"]})
     assert max(i for i, (name, _) in enumerate(traffic) if name == "seal-regulation-policy") < min(
         i for i, (name, _) in enumerate(traffic) if name == "commit-regulation-policy")
     traffic.clear()
-    requests = {owner: [[f"v{i:02}", 0, 0] for i in range(20 if owner != "b.rules" else 1)] for owner in session.runners}
+    requests = {owner: [[f"v{i:02}", 0, 0] for i in range(20 if owner != "b.rules" else 1)] for owner in session.states}
     requests["a.rules"].insert(0, ["private", 0, 1])
     private_selection = {**selection(), "rule": "a.rules.private"}
     result = session.evaluate([proposal(deny="c.rules")], [selection(), private_selection], requests)
@@ -125,9 +131,13 @@ def test_failed_shared_publication_fences_all_peers_and_preserves_host_view(make
     original = group.sandbox.call
     def fail(name, *args, **kwargs):
         raw = original(name, *args, **kwargs)
-        return "invalid acknowledgement" if name == "finish-regulation-publication" else raw
+        if name == "commit-regulation-policy":
+            value = json.loads(raw)
+            value["generation"] += 1
+            return json.dumps(value)
+        return raw
     monkeypatch.setattr(group.sandbox, "call", fail)
-    with pytest.raises(Exception, match="void acknowledgement"):
+    with pytest.raises(Exception, match="acknowledgement"):
         publish(session)
     assert session.catalog.views is before and not session.ready and group.closed and cleaned == [True]
     assert set(session.states.values()) == {"unavailable"}
@@ -156,7 +166,7 @@ def test_failed_shared_execution_closes_all_members_without_returning_partial_ap
     monkeypatch.setattr(group.sandbox, "call", fail)
     with pytest.raises(Exception):
         session.evaluate([proposal(error="c.rules" if failure == "handler" else "")], [selection()],
-                         {owner: [["v00", 0, 0]] for owner in session.runners})
+                         {owner: [["v00", 0, 0]] for owner in session.states})
     assert group.closed and cleaned == [True] and not session.ready
     assert set(session.states.values()) == {"unavailable"}
     if failure in ("handler", "completion-reply"):

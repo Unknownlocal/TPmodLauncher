@@ -131,8 +131,8 @@ from the 1 MiB file limit. Failed preparation returns no partial owner set.
 
 `PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
 tables once in the pack's shared source runner through `SharedHandlerRunner`.
-It rejects owners using separate runners. Each mod keeps its own IDs, declarations
-and generations. Owners declaring data without validators stay required but need
+It rejects owners using separate runners. Each mod keeps its own IDs and declarations;
+one career generation covers their installed views. Owners declaring data without validators stay required but need
 no guest handler table. A group with one source
 mod uses the same binding path.
 

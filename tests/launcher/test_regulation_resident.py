@@ -15,13 +15,22 @@ from regulation_support import context, make_mod, validator
 from resident_support import packet, policy
 
 
-def test_bad_shared_policy_transfer_traps_and_closes_group(make_mod):
+@pytest.mark.parametrize("fault", ["overflow", "wrong-phase", "unbound"])
+def test_bad_shared_policy_transfer_traps_and_closes_group(make_mod, fault):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
-    SharedHandlerRunner.bind(mod.runner, {mod.manifest.id: [validator()]})
-    mod.sandbox.call("select-regulation-owner", mod.manifest.id)
-    mod.sandbox.call("begin-regulation-policy", 1, 1, 1)
-    with pytest.raises(SandboxError):
-        mod.sandbox.call("put-regulation-policy", "too long")
+    if fault == "unbound":
+        with pytest.raises(SandboxError):
+            mod.sandbox.call("begin-regulation-policy", 1, 1, 1)
+    else:
+        SharedHandlerRunner.bind(mod.runner, {mod.manifest.id: [validator()]})
+        mod.sandbox.call("begin-regulation-policy", 1, 1, 1)
+        with pytest.raises(SandboxError):
+            if fault == "wrong-phase":
+                # This byte fits the declared size, so only the transfer-kind
+                # check can reject a context chunk during policy installation.
+                mod.sandbox.call("put-regulation-contexts", "{")
+            else:
+                mod.sandbox.call("put-regulation-policy", "too long")
     assert mod.sandbox.closed
 
 
@@ -30,8 +39,7 @@ def test_reused_components_are_neither_remeasured_nor_encoded_during_action_prep
     # test. Shared dispatch integration tests execute actual author source in Wasm.
     manifest, records = policy("owned.rules")
     handlers = [(lambda c, r: {"decision": "allow"}, "personnel.contract", "native")]
-    cache = {}
-    catalog = RegulationCatalog(manifest, handlers, cache=cache)
+    catalog = RegulationCatalog(manifest, {"owned.rules": handlers})
     for slot, value in enumerate(records):
         catalog.install(slot, value)
     catalog.seal()
@@ -43,10 +51,8 @@ def test_reused_components_are_neither_remeasured_nor_encoded_during_action_prep
         return original(value)
 
     monkeypatch.setattr(values, "encode", encoding)
-    reused = RegulationCatalog(manifest, handlers, cache=cache)
-    reused.seal()
-    assert reused.records[0] is catalog.records[0]
-    action = RegulationAction(packet(manifest, 8), reused, "policy", contexts=RegulationContexts(1, [context()]))
+    action = RegulationAction(packet(manifest, 8), catalog.views["owned.rules"], "policy",
+                              contexts=RegulationContexts(1, [context()]))
     for _ in range(2):
         for slot in range(4):
             function, ctx, rule = action.take(slot)

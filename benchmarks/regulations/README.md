@@ -17,9 +17,9 @@ those rules.
 
 The current resident mode puts all source owners in one shared runner and binds
 regulations through `RegulationRuntime`. Instrumentation attaches once to the
-physical Store. Guest inspection uses each owner's lifecycle event to inspect
-its retained regulation view; views can share records, so their byte counts
-must not be added as independent allocations.
+physical Store. One lifecycle event inspects the whole shared catalogue, counting
+common records and owner views once. It reports one shared graph rather than
+separate per-owner totals.
 
 Legacy comparison explicitly loads an exported older checkout and its matching
 runner. It does not supply a production fallback. Every frozen source byte must

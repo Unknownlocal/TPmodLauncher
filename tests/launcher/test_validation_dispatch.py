@@ -202,26 +202,6 @@ def test_career_reset_releases_dense_policy_and_preserves_bindings(make_mod):
     assert session.action > action and not previous_ids & {record.identity for record in session.catalog.views[mod.manifest.id].records}
 
 
-def test_partial_multi_owner_commit_cannot_publish_or_revive_old_policy(make_mods, monkeypatch):
-    mods = make_mods(dict.fromkeys(("a.rules", "b.rules"), "def validate(c,r): return {'decision':'allow'}\n"))
-    model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
-    handler = SharedHandlerRunner.bind(mods["a.rules"].runner, model.validators)
-    with pytest.raises(ValueError, match="integer"):
-        ValidationDispatch(model, handler, epoch=0)
-    session = ValidationDispatch(model, handler)
-    assert list(session.runners) == list(model.owner_ids)
-    before = session.catalog.views
-    def failed_commit(*args):
-        raise RuntimeError("injected commit failure")
-    monkeypatch.setattr(session.runners["b.rules"], "commit", failed_commit)
-    with pytest.raises(RuntimeError, match="injected"):
-        session.publish(native={"native": [{"key": "open", "changed": True}]})
-    assert session.catalog.views is before and not session.ready
-    assert session.states == {owner: "unavailable" for owner in mods}
-    assert all(mod.sandbox.closed for mod in mods.values())
-    with pytest.raises(RuntimeError, match="revive"):
-        session.reset(2)
-
 
 @pytest.mark.parametrize("operation", ["publication", "reset"])
 def test_late_host_cleanup_cannot_acknowledge_control_operation(make_mod, monkeypatch, operation):

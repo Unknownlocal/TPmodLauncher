@@ -156,12 +156,12 @@ Invalid operations disable the affected resident state.
 | Module under `_regulations/` | Responsibility |
 | --- | --- |
 | `handlers.py` | Resolve functions belonging to the admitted source owner |
-| `catalog.py` | Store one owner's rules and share installed records |
+| `catalog.py` | Check and store the shared physical record table |
 | `frozen.py` | Store checked JSON values and reconstruct fresh handler inputs |
 | `action.py` | Resolve a proposal's rules and prepare bounded groups of calls |
 | `transfer.py` | Check complete UTF-8 transfers before decoding JSON |
-| `resident.py` | Control setup, staged publication, action lifetime and failure |
-| `group.py` | Share records and action inputs across distinct owner residents |
+| `view.py` | Check one mod's bindings and choices against the shared table |
+| `group.py` | Own the complete install, mod calls, shared inputs and career reset |
 | `contexts.py` | Check a shared proposal table and resolve its numbered references |
 | `policy.py` and `values.py` | Check shared field rules and calculate resource bounds |
 
@@ -178,12 +178,12 @@ cannot stand in for an owned handler merely because its local filename matches.
 Each table keeps its 32-binding limit; there is no 32-binding limit for the whole
 shared runner. Source-owner and regulation-session admission limits still apply.
 
-`RegulationGroup` holds those residents and one cache keyed by the existing
-record IDs. Owner catalogues borrow common records, while their rules, revisions,
-bindings and option data retain their original identities. Installation plans
-can receive already installed record IDs, avoiding another transfer for a second
-owner. Finishing publication checks that every owner has committed. Reset releases the
-career's cached records before another complete install.
+`RegulationGroup` owns one staged or active catalogue, containing one physical
+record table and a checked `RegulationView` for each mod. Record descriptions
+and values cross once. Each view retains its own bindings, rules and choice
+references, without another transfer state or owner-selection cursor.
+The catalogue becomes active only after every owner and record has been checked
+and the complete commit is acknowledged. Reset releases the whole career graph.
 
 One action transfers its context table once. Owner call packets contain context
 indices and their own rule selections; each prepares at most four argument pairs
@@ -197,16 +197,15 @@ keeping bindings and the last action ID. Any failed resident operation makes
 all residents unavailable. These private operations are separate from lifecycle
 events and expose no generic callable API.
 
-The host selects a mod's stored regulation state before calling it. These calls
-run one at a time. All owners use the group's record cache and proposal table;
-each keeps its own bindings and policy state. Career reset clears the whole
-group together. Author host-call identity remains bound to the source module's
+Each action request names its mod explicitly and runs against that mod's view.
+Calls run one at a time, sharing the physical records and proposal table. Career
+reset clears the whole group together. Author host-call identity remains bound to the source module's
 mod ID.
 `ValidationDispatch` connects shared bindings to publication and execution through
 `launcher/regulations/validation/group.py`. It installs each group's common records
 once, sends a shared proposal table and checks completion under the original
-deadline. Generations and status remain per owner, while failure and reset follow
-the shared Store. Pack binding uses one handler for all validator owners and
+deadline. One career generation covers all views; status retains original mod
+IDs, while failure and reset follow the shared Store. Pack binding uses one handler for all validator owners and
 keeps definition-only owners required without creating empty tables.
 
 ## Preparation and session ownership
