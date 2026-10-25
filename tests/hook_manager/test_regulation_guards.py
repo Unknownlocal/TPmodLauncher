@@ -75,6 +75,17 @@ def test_closing_activation_during_a_reply_refuses_without_disabling_owners(monk
         assert engine.last_outcome.status == "unavailable" and set(engine.owners.values()) == {"ready"}
 
 
+def test_changed_selection_during_reply_refuses_without_disabling_healthy_mods(monkeypatch):
+    with guarded(monkeypatch) as (module, engine, channel, _, writes):
+        current = ["open"]
+        engine.policy_identity = lambda: tuple(current)
+        channel.before_reply = lambda: current.__setitem__(0, "limited")
+        assert module.start(1) is False and not writes
+        assert engine.last_outcome.status == "unavailable" and set(engine.owners.values()) == {"ready"}
+        channel.before_reply = lambda: None
+        assert module.start(1) is True and writes == [1]
+
+
 def test_shared_projection_ordering_native_execution_and_identified_owner_failure(monkeypatch):
     with guarded(monkeypatch) as (module, engine, channel, projections, writes):
         assert engine.last_outcome is None

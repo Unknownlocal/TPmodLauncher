@@ -25,9 +25,9 @@ These are private launcher adapters, not a direct game-function API for mods.
   policy updates over an authenticated connection to the launcher on the same
   computer. The game waits for its reply.
 - [native_policy.py](native_policy.py): `NativeRegulationPolicy` prepares the
-  subscribed choices from the career's loaded regulations. It sends this data
-  once, then uses the game's own method to choose a rule for each proposal's
-  season. Later checks send small references to the prepared data.
+  reachable options for subscribed rules from the career's loaded regulations.
+  It sends this data once, then uses the game's own method to choose an option
+  for each proposal's season. Later checks send small references to that data.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -85,9 +85,9 @@ by `CareerPreload`. It checks the attempt number, screen and loading job before
 and after publishing data. Installation and activation check that same owner;
 there is no separate current-career discovery or direct-install fallback.
 Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
-keep those choices until removal. Setup reports which connections succeeded;
-the mod checks still need activation. `staffing` coverage requires both the
-joining-team and missing-role wrappers; loading, season rollover and head-of-aero
+keep the prepared option data until removal. Setup reports which connections
+succeeded; the mod checks still need activation. `staffing` coverage requires both
+the joining-team and missing-role wrappers; loading, season rollover and head-of-aero
 recovery reach these common methods. A changed entry or unsupported planner
 leaves staffing coverage unavailable, even if ordinary signing still installs.
 If validation is active, removal leaves the installation intact for a later
@@ -101,9 +101,14 @@ through the existing reset operation. The next career must publish its data and
 confirm hook coverage before activation; a cancelled setup cannot pass approval
 to another save.
 
-Rule choices must be prepared again if the adopted choices, career season,
-native manager or rule definitions are replaced.
-The current choice's season records when setup observed it in force; native
+Ordinary adoption, scheduling and season rollover use fresh current/upcoming
+references into the options already stored. They do not resend option data or
+replace hooks. The game's own selector decides which option applies to a
+proposal's season. Checks compare the small season/choice inputs before and
+after a reply; staffing compares them again before publishing its full batch.
+A change refuses that attempt without disabling healthy validators.
+Replacing the native manager or rule definitions still requires new preparation.
+The current choice's season records when the check observed it in force; native
 saves do not record its original adoption year. Upcoming dates use the native
 record, or the following season when the record has no date.
 Setup skips saved replacement choices, such as custom future calendar actions,

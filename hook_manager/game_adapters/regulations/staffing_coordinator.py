@@ -89,7 +89,14 @@ class StaffingCoordinator:
                 or owners & channel._unavailable or not owners <= channel._generations.keys()
                 or any(guards.owners.get(owner) != "ready" for owner in owners)):
             return None
-        return channel.epoch, tuple((owner, channel._generations[owner], channel._owners[owner]["revision"])
+        try:
+            selection = guards.policy_identity()
+        except Exception as error:
+            # Unsupported native data must refuse staffing before planning or
+            # publication, rather than escape as an exception in the game worker.
+            guards._report(error)
+            return None
+        return selection, channel.epoch, tuple((owner, channel._generations[owner], channel._owners[owner]["revision"])
                                     for owner in owners)
 
     def _run(self, prepare, *args, **kwargs):

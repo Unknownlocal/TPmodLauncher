@@ -118,6 +118,12 @@ def test_pending_staffing_callers_do_not_prepare_or_fail_healthy_owners(monkeypa
         assert manager.onboard_joining_team_staff("first") == [] and person.contract is None
         assert not channel.actions and set(guards.owners.values()) == {"ready"}
         channel.validation_ready = True
+        def unsupported_selection():
+            raise HookError("Owned native choice is unavailable")
+        guards.policy_identity = unsupported_selection
+        assert manager.onboard_joining_team_staff("first") == [] and not channel.actions
+        assert set(guards.owners.values()) == {"ready"}
+        guards.policy_identity = lambda: None
         prepare = run.planner.prepare_recovery
         def close_after_preparing(*args, **kwargs):
             plan = prepare(*args, **kwargs)
@@ -208,11 +214,20 @@ def test_stale_inputs_and_policy_block_publication_without_overwriting_external_
     class Contract(dict):
         pass
 
-    for change in ("roster", "clock", "policy", "contract", "copy"):
+    for change in ("roster", "clock", "policy", "selection", "contract", "copy"):
         state, manager, person, channel, guards, run = coordinator(monkeypatch)
         extra = SimpleNamespace(name="External", role="chief_designer", retired=True, contract=None)
         if change == "contract":
             person.contract = Contract()
+        if change == "selection":
+            selection = ["open"]
+            guards.policy_identity = lambda: tuple(selection)
+            prepare = run.planner.prepare_recovery
+            def changed_after_plan(*args, **kwargs):
+                plan = prepare(*args, **kwargs)
+                selection[0] = "limited"  # After replies, before live publication.
+                return plan
+            monkeypatch.setattr(run.planner, "prepare_recovery", changed_after_plan)
         if change == "copy":
             # Change the live roster after its private list was copied but before
             # planning. Dispatch-time mutations do not exercise this early gap.

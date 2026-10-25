@@ -267,7 +267,7 @@ def test_unmapped_native_scope_is_rejected_before_guest_binding(make_mod, tmp_pa
 def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod, tmp_path, monkeypatch):
     mods = {
         "a.rules": make_mod("def validate(c,r):\n c['proposal']['budget']=0\n return {'decision':'allow'}\n", owner="a.rules"),
-        "b.rules": make_mod("def validate(c,r):\n if c['proposal']['budget']>5: return {'decision':'deny','message':'Budget refused'}\n return {'decision':'allow'}\n", owner="b.rules")}
+        "b.rules": make_mod("def validate(c,r):\n if r['current']['key']=='closed': return {'decision':'deny','message':'Rule changed'}\n if c['proposal']['budget']>5: return {'decision':'deny','message':'Budget refused'}\n return {'decision':'allow'}\n", owner="b.rules")}
     scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods, semantic_scope="development.project")
     module = ModuleType("owned_project_native_entry")
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -290,7 +290,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
     monkeypatch.setitem(sys.modules, rules.__name__, rules)
     state = SimpleNamespace(season_no=2026, regulation_manager=rules.RegulationManager())
     state.regulation_manager.state = state
-    state.regulation_manager.regulation_defs = {"native": {"options": [{"key": "open"}]}}
+    state.regulation_manager.regulation_defs = {"native": {"options": [{"key": "open"}, {"key": "closed"}]}}
     state.regulation_manager.regulations = {"native": {"current": "open", "upcoming": None}}
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         policy = NativeRegulationPolicy(state, channel)
@@ -325,6 +325,14 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mod,
             assert not writes and projections == [12]
             assert pump(scope, wake, worker.submit(start, 4)) == (True, None)
             assert writes == [4] and projections == [12, 4] and runtime.ready
+            generation, handlers = runtime._dispatch.generation, dict(runtime._handlers)
+            state.regulation_manager.regulations["native"].update(current="closed", upcoming=None)
+            state.season_no += 1
+            assert pump(scope, wake, worker.submit(start, 4)) == (False, "Rule changed")
+            assert writes == [4] and set(engine.owners.values()) == {"ready"}
+            state.regulation_manager.regulations["native"]["current"] = "open"
+            assert pump(scope, wake, worker.submit(start, 4)) == (True, None)
+            assert writes == [4, 4] and runtime._dispatch.generation == generation and runtime._handlers == handlers
         finally:
             engine.stop()
         assert module.start is native

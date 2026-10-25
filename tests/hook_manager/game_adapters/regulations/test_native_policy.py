@@ -68,19 +68,30 @@ def test_prepared_choices_use_native_selection_and_send_small_references(native)
     assert publications[0]["native"]["entry"][0]["parameters"]["limit"]["years"] == 5
 
 
-def test_adoption_or_career_change_requires_another_snapshot(native):
-    state, channel, _ = native
+def test_live_adoption_and_rollover_reuse_acknowledged_choices(native):
+    state, channel, publications = native
     policy = NativeRegulationPolicy(state, channel)
     state.regulation_manager.regulations["entry"]["upcoming"] = None
     with pytest.raises(HookError, match="before publication"):
         policy.publish()
     state.regulation_manager.regulations["entry"]["upcoming"] = "limited"
     policy.publish()
+    previous = policy.identity()
+    state.regulation_manager.regulations["entry"]["upcoming_effective_season"] = 2030
+    assert policy.select("entry", 2029)["selected"] == "current"
+    assert policy.select("entry", 2030)["upcoming"] == [1, 2030]
+    assert policy.identity() != previous
     state.regulation_manager.regulations["entry"]["current"] = "limited"
-    with pytest.raises(HookError, match="new publication"):
-        policy.select("entry", 2027)
-    state.regulation_manager.regulations["entry"]["current"] = "open"
+    state.regulation_manager.regulations["entry"]["upcoming"] = None
+    assert policy.select("entry", 2027) == {"selected": "current", "current": [1, 2027], "upcoming": None}
     state.season_no += 1
+    assert policy.select("entry", 2028)["current"] == [1, 2028]
+    assert policy.select("ordinary", 2029)["upcoming"] == [1, 2029]
+    assert len(publications) == 1
+    state.regulation_manager.regulations["entry"]["current"] = "unknown"
+    with pytest.raises(HookError, match="missing from prepared data"):
+        policy.select("entry", 2028)
+    state.regulation_manager = object()
     with pytest.raises(HookError, match="no longer current"):
         policy.select("entry", 2028)
 

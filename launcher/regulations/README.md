@@ -111,6 +111,10 @@ The [validation package](validation/README.md) owns the combined catalogue,
 updates and reference-based dispatch. Rule data stays in memory between actions.
 Shared owners reuse native records, and each proposal table transfers once per
 runner. Every handler still receives fresh ordinary JSON arguments.
+All reachable options are acknowledged at setup. Ordinary native adoption and
+season changes therefore need only fresh choice references in each action,
+without another publication or handler binding. The game adapter rejects a
+reply or staffing batch if its selection inputs changed during validation.
 
 Up to four invocations share a preparation allowance of 64 million fuel units.
 Each handler has its own five-million fuel and 64 host-call allowance. The whole
@@ -155,9 +159,10 @@ a later prepared career.
 
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
 ordered `policy-page` rows and `policy-seal`. Native publications supply complete
-adopted options; custom publications contain admitted option keys. `None` keeps
-installed options while advancing their generation. Private overlays stay in the
-launcher. One control deadline covers all pages and commits. Readiness stays
+option data for subscribed native rules; custom publications contain admitted
+option keys. `None` keeps installed options while advancing their generation.
+Private overlays stay in the launcher. One control deadline covers all pages and
+commits. Readiness stays
 blocked until commit acknowledgement. `reset(epoch)` clears policy while keeping
 bindings; a new publication and native coverage approval are required and a
 failed Store cannot be revived. Data publication can precede hook approval.

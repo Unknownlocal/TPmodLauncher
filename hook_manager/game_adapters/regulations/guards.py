@@ -19,6 +19,9 @@ class RegulationGuards(CallableAdapters):
     def __init__(self, channel, select, scope):
         super().__init__(channel)
         self.channel, self.select = channel, select
+        # Native policy supplies a cheap freshness check. Fixed trusted selectors
+        # used without a live policy have no changing selection inputs.
+        self.policy_identity = getattr(getattr(select, "__self__", None), "identity", lambda: None)
         self.subscriptions = channel.bindings(scope)
 
     def _register(self, owner, bindings):
@@ -78,6 +81,7 @@ class RegulationGuards(CallableAdapters):
             if remaining <= 0 or not self._guest.acquire(timeout=remaining):
                 raise HookError("Regulation dispatch deadline expired")
             acquired = self._local.dispatching = True
+            policy = self.policy_identity()
             context = data_copy(project())
             # Only small choice references vary by rule. The complete proposal
             # is sent once, and every applicable handler points to context zero.
@@ -96,6 +100,10 @@ class RegulationGuards(CallableAdapters):
             # Decline the write without treating that pause as a mod failure.
             if not getattr(self.channel, "validation_ready", True):
                 return ValidationOutcome("unavailable", "Validation unavailable")
+            if policy != self.policy_identity():
+                # Native choices changed while preparing inputs or waiting for
+                # a reply. Decline this attempt without disabling healthy mods.
+                return ValidationOutcome("unavailable", "Regulation choices changed during validation")
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:

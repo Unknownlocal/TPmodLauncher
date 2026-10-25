@@ -75,7 +75,7 @@ class NativeRegulationPolicy:
         indexes = self._indexes[rule]
         if current not in indexes or upcoming is not None and upcoming not in indexes:
             raise HookError("Native regulation choice is missing from prepared data: " + rule)
-        season = row.get("upcoming_effective_season", self._season + 1) if upcoming is not None else None
+        season = row.get("upcoming_effective_season", self.state.season_no + 1) if upcoming is not None else None
         if season is not None and (type(season) is not int or season < 1):
             raise HookError("Invalid native upcoming regulation season")
         return current, upcoming, season
@@ -84,8 +84,21 @@ class NativeRegulationPolicy:
         # Boolean-only policies have no native choice data to invalidate.
         if (self.channel.closed or self._indexes and (
                 self.state.regulation_manager is not self.manager or self.manager.state is not self.state
-                or self.manager.regulation_defs is not self._definitions or self.state.season_no != self._season)):
+                or self.manager.regulation_defs is not self._definitions
+                or type(self.state.season_no) is not int or self.state.season_no < 1)):
             raise HookError("Prepared native regulation policy is no longer current")
+
+    def identity(self):
+        """Read the small live selection inputs, without copying stored option data.
+
+        All reachable options were acknowledged at setup. Ordinary adoption and
+        rollover change only which of those options the game selects. Guards
+        compare these inputs before and after validation or a staffing batch.
+        """
+        self._current()
+        if not self._indexes:
+            return ()
+        return self.state.season_no, tuple((rule, self._adoption(rule)) for rule in self._indexes)
 
     def publish(self):
         """Send the prepared choices once; successful acknowledgement enables selection.
@@ -98,13 +111,14 @@ class NativeRegulationPolicy:
         self._current()
         if self._published:
             raise HookError("Native regulation policy is already published")
-        if any(self._adoption(rule) != value for rule, value in self._adopted.items()):
+        expected = (self._season, tuple(self._adopted.items())) if self._indexes else None
+        if self._indexes and self.identity() != expected:
             raise HookError("Native regulation choices changed before publication")
         self.channel.publish(native=self._native, custom=self._custom)
         # Socket waits release Python's lock. An acknowledgement for sent data
         # cannot make a career/rule change during that wait safe to use.
         self._current()
-        if any(self._adoption(rule) != value for rule, value in self._adopted.items()):
+        if self._indexes and self.identity() != expected:
             raise HookError("Native regulation choices changed during publication")
         self._published = True
 
@@ -113,9 +127,9 @@ class NativeRegulationPolicy:
         self._current()
         if not self._published or rule not in self._indexes or type(season) is not int or season < 1:
             raise HookError("Native regulation selection is unavailable")
-        current, upcoming, upcoming_season = self._adopted[rule]
-        if self._adoption(rule) != self._adopted[rule]:
-            raise HookError("Native regulation choices need a new publication")
+        # Adoption metadata is live; the option catalogue it references stays
+        # resident. The native selector still decides how each rule uses seasons.
+        current, upcoming, upcoming_season = self._adoption(rule)
         key = self._choose(self.manager, rule, season)
         if key == current:
             selected = "current"
@@ -127,5 +141,5 @@ class NativeRegulationPolicy:
         # choice. This season tags when we observed it in force, not when it was
         # first adopted. Upcoming dates come from the native record/default.
         indexes = self._indexes[rule]
-        return {"selected": selected, "current": [indexes[current], self._season],
+        return {"selected": selected, "current": [indexes[current], self.state.season_no],
                 "upcoming": [indexes[upcoming], upcoming_season] if upcoming is not None else None}
