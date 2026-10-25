@@ -9,6 +9,7 @@ from types import ModuleType
 
 if __package__:
     from .manager import HookError
+    from .career_entry import CareerEntryGate
 
 
 class AdapterModules:
@@ -32,6 +33,7 @@ class AdapterModules:
         self.regulation_error = None
         self.policy = None
         self.regulation_generation = None
+        self.entry_gate = None
 
     def status(self):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
@@ -42,6 +44,8 @@ class AdapterModules:
         result = {"state": self.state, "modules": len(self.sources) if self.state == "loaded" else 0}
         if self.error is not None:
             result["detail"] = self.error
+        if self.entry_gate is not None:
+            result["career_entry"] = "armed"
         if self.channel is not None or self.regulation_error:
             # Installation coverage is not policy readiness. In particular,
             # signing adapters do not install whole-team staffing callers.
@@ -56,6 +60,18 @@ class AdapterModules:
             if self.regulation_error:
                 result["regulations"]["detail"] = self.regulation_error
         return result
+
+    def await_regulations(self):
+        """Arm career input/update protection before trusted setup releases Load Game.
+
+        No pack or mod can select these wrappers. This private operation grants
+        neither regulation readiness nor menu permission by itself.
+        """
+        self.host.manager._main()
+        if self.state == "closed" or self.channel is not None or self.entry_gate is not None:
+            raise HookError("Career entry needs an unused adapter installation")
+        self.entry_gate = CareerEntryGate(self.host.career)
+        return self.status()
 
     def prepare_regulations(self, request, *, report):
         """Publish a career snapshot through a fixed endpoint, without game hooks.
@@ -90,6 +106,7 @@ class AdapterModules:
             self.channel, self.policy = channel, policy
             self.regulation_generation = generation
         except Exception as error:
+            self.stop_regulations()  # Failed preparation must not leave career entry held.
             self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
             report("REGULATIONS COMPATIBILITY FAILED preparation: " + self.regulation_error
                    + "; regulation setup skipped; continuing native game")
@@ -114,7 +131,7 @@ class AdapterModules:
                 or type(request["endpoint"]) is not dict or set(request["endpoint"]) != {"port", "token"}):
             raise HookError("Invalid regulation control fields")
         if operation == "stop-regulations" and self.channel is None:
-            return True  # Failed installation may already have restored everything.
+            return self.stop_regulations()  # Also release a pre-career gate with no channel yet.
         if (self.channel is None or request["generation"] != self.regulation_generation
                 or type(request["endpoint"]["token"]) is not str
                 or request["endpoint"]["token"] != self.channel._token):
@@ -143,6 +160,8 @@ class AdapterModules:
                         if any(vars(owner).get(attribute) is not installed
                                for owner, attribute, _, installed, _ in row["changes"]):
                             raise HookError("Another owner replaced a regulation hook")
+                if self.entry_gate is not None:
+                    self.entry_gate.allow(policy.state)
                 channel.validation_ready = True
             return True
         except Exception as error:
@@ -261,6 +280,9 @@ class AdapterModules:
             self.regulation_error = None
             self.policy = None
             self.regulation_generation = None
+            if self.entry_gate is not None:
+                self.entry_gate.stop()
+                self.entry_gate = None
         return True
 
     def load(self):

@@ -80,6 +80,18 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
             "staff_prestige_check": "native", "staffing": False}
         assert host.adapters.stop_regulations()
         closed.clear()
+        ui = ModuleType("ui.screen_manager")
+        ui.ScreenManager = type("ScreenManager", (), {
+            "handle_event": lambda self, event: "native event", "update": lambda self: "native update"})
+        monkeypatch.setitem(sys.modules, ui.__name__, ui)
+        screen_manager = ui.ScreenManager()
+        screen_manager.current = SimpleNamespace(state=career)
+        monkeypatch.setattr(host.career, "_screen_manager", lambda: screen_manager)
+        rejected = pulse("await-regulations", target="author-selected")
+        assert rejected["regulation_notices"] and host.adapters.entry_gate is None
+        assert pulse("await-regulations")["adapters"]["career_entry"] == "armed"
+        cached_update = screen_manager.update
+        assert screen_manager.update() is None
         published = []
         channel._token = "0" * 64
         channel.publish = lambda **data: published.append(data)
@@ -96,6 +108,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert pulse("install-regulations", regulations=control)["regulation_control"] is True
         active = pulse("activate-regulations", regulations=control)
         assert active["regulation_control"] is True and active["adapters"]["regulations"]["state"] == "active"
+        assert screen_manager.update() == "native update"
         guard = host.CallableAdapters()
         host.adapters.regulations.append(guard)
         # The worker behaviour itself is tested with a real thread in the
@@ -106,6 +119,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
         assert pulse("stop-regulations", regulations=control)["regulation_control"] is True
+        assert host.adapters.entry_gate is None and cached_update() == "native update"
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
@@ -127,13 +141,21 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
     assert client.request("adapters")["adapters"]["state"] == "loaded"
     assert sent[0].keys() == {"type", "id", "operation"}
     assert sent[0]["operation"] == "adapters"
+    client.request("await-regulations")
+    assert sent[-1].keys() == {"type", "id", "operation"} and sent[-1]["operation"] == "await-regulations"
     with pytest.raises(BridgeError, match="no menu declarations"):
         client.request("adapters", buttons=[])
 
 
 def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch):
     client, sent, threads, closed = bridge(), [], [], []
-    monkeypatch.setattr(client, "_post", lambda record, timeout: sent.append(record))
+    def post(record, timeout):
+        sent.append(record)
+        if record.get("operation") == "stop-regulations":
+            assert closed == [True]
+            client._message({"type": "send", "payload": {
+                "event": "reply", "id": record["id"], "status": {"regulation_control": True}}}, lambda *args: None)
+    monkeypatch.setattr(client, "_post", post)
     def service():
         threads.append(threading.get_ident())
         client._message({"type": "send", "payload": {
@@ -152,4 +174,5 @@ def test_preparation_wait_services_only_controller_transport_and_cancels_on_fail
     with pytest.raises(RuntimeError, match="Controller service failed"):
         client.prepare_regulations(runtime, 1)
     assert closed == [True] and client.waiters == {}
-    assert sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
+    assert sent[-2] == {"type": "manager-cancel", "id": sent[-3]["id"]}
+    assert sent[-1]["operation"] == "stop-regulations" and sent[-1]["regulations"] == sent[-3]["regulations"]

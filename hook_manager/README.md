@@ -77,6 +77,14 @@ It also displays loading progress and guards New Season, Load Game and Continue
 Season until loading and menu-registration outcomes settle. Ownership and
 registry generations keep stale acknowledgements from removing later entries.
 
+`career_entry.py` provides a separate private wait for regulation setup. Trusted
+setup can arm it around the displayed screen manager's input and update methods.
+Menus and loading screens keep running; a displayed career waits until its own
+regulation activation succeeds. Drawing and the main loop continue normally.
+Permission belongs to that career object, so another loaded save must wait again.
+Cleanup restores only owned wrappers. Normal launcher startup does not arm this
+gate or release its existing menu-loading guard.
+
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence
 acknowledgement. `themes.py` validates palettes and adapts the existing Color Pack

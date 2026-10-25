@@ -20,7 +20,7 @@ PYTHON_SOURCES = (
     # Transport stays in the flat core. Complete adapters load separately into
     # their own module namespaces through the trusted adapters operation.
     "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",
-    "pack_discovery", "career_discovery", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "career_discovery", "career_entry", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -98,7 +98,7 @@ class Bridge:
                 regulations=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
         if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters",
-                             "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations"):
+                             "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -188,17 +188,29 @@ class Bridge:
 
     def prepare_regulations(self, runtime, generation):
         """Publish rule data without hooks, servicing Wasm on its owning thread."""
+        control = {"generation": generation, "endpoint": runtime.endpoint}
         try:
             # Match the channel's five-second publication allowance per owner,
             # plus authentication and time to enter the game's main thread.
             return self.request("prepare-regulations", timeout=3 + 5 * len(runtime.definitions.owner_ids),
-                                regulations={"generation": generation, "endpoint": runtime.endpoint},
+                                regulations=control,
                                 _service=runtime.poll)
         except BaseException:
-            # Cancelling a queued bridge request cannot interrupt an operation
-            # already inside Python. Closing transport releases its socket wait.
-            runtime.close()
+            # A cancelled request might never enter native preparation. Restore
+            # its pre-career gate too, even when no channel was acquired there.
+            self._restore_regulations(runtime, control)
             raise
+
+    def _restore_regulations(self, runtime, control):
+        """Close transport first, then request owned native restoration even if close raises."""
+        try:
+            runtime.close()
+        finally:
+            # Closing releases an in-flight socket wait. The existing bounded
+            # bridge WAIT/retry path handles admitted workers before restoration.
+            cleanup = self.request("stop-regulations", regulations=control)
+        if cleanup.get("regulation_control") is not True:
+            raise BridgeError("Native regulation cleanup was not confirmed")
 
     def activate_regulations(self, runtime, generation):
         """Install closed guards, approve real coverage, then enable them together."""
@@ -218,14 +230,7 @@ class Bridge:
             runtime.finish_native_activation()
             return status
         except BaseException:
-            # Closing transport prevents allowances even if cleanup must wait
-            # for an already admitted native operation to finish.
-            try:
-                runtime.close()
-            finally:
-                cleanup = self.request("stop-regulations", regulations=control)
-            if cleanup.get("regulation_control") is not True:
-                raise BridgeError("Native regulation cleanup was not confirmed")
+            self._restore_regulations(runtime, control)
             raise
 
     def set_menu(self, buttons):

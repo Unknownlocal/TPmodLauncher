@@ -210,6 +210,8 @@ def test_preparation_failure_closes_candidate_and_reports_native_fallback(instal
     modules, _, channel, _, hooks = installation
     channel._rules, channel._custom = set(), set()
     modules.host.RegulationChannel = lambda endpoint: channel
+    released = []
+    modules.entry_gate = SimpleNamespace(stop=lambda: released.append(True))
     def publish(**data):
         if failure == "publication":
             raise HookError("Publication failed")
@@ -221,6 +223,7 @@ def test_preparation_failure_closes_candidate_and_reports_native_fallback(instal
     assert len(notices) == 1 and "continuing native game" in notices[0]
     assert modules.channel is None and modules.policy is None and channel.closed
     assert modules.regulations == [] and all(not hook.closed for hook in hooks)
+    assert released == [True] and modules.entry_gate is None
 
 
 @contextmanager

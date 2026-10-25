@@ -87,6 +87,18 @@ def pulse(sources, digest, instance, game_root, request_json):
         elif request == {"operation": "adapters"}:
             module.adapters.load()
             response = module.manager.request({"operation": "status"})
+        elif type(request) is dict and request.get("operation") == "await-regulations":
+            notices = []
+            try:
+                if set(request) != {"operation"}:
+                    raise ValueError("Career entry accepts no payload")
+                module.adapters.await_regulations()
+            except Exception as error:
+                notices.append("REGULATIONS COMPATIBILITY FAILED career.entry: "
+                               + " ".join(str(error).split())[:512]
+                               + "; career entry skipped; continuing native game")
+            response = module.manager.request({"operation": "status"})
+            response["regulation_notices"] = notices
         elif type(request) is dict and request.get("operation") == "prepare-regulations":
             if set(request) != {"operation", "regulations"}:
                 raise ValueError("Invalid regulation control fields")
