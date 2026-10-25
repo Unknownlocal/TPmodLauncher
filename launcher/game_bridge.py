@@ -98,7 +98,7 @@ class Bridge:
                 regulations=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
         if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters",
-                             "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations"):
+                             "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
@@ -120,13 +120,21 @@ class Bridge:
                 raise BridgeError("Expected bounded theme declarations")
         elif themes is not None:
             raise BridgeError("This operation accepts no theme declarations")
-        if operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations"):
-            if (type(regulations) is not dict or set(regulations) != {"generation", "endpoint"}
+        if operation in ("prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
+            fields = {"generation", "endpoint"}
+            if operation == "install-regulations" and type(regulations) is dict and "native_rules" in regulations:
+                fields.add("native_rules")
+            if (type(regulations) is not dict or set(regulations) != fields
                     or type(regulations["generation"]) is not int or regulations["generation"] < 1
                     or type(regulations["endpoint"]) is not dict or set(regulations["endpoint"]) != {"port", "token"}
                     or len(json.dumps(regulations).encode("utf-8")) > 512
                     or (not callable(_service) if operation in ("prepare-regulations", "retire-regulations") else _service is not None)):
                 raise BridgeError("Expected bounded regulation setup and controller service")
+            if "native_rules" in fields:
+                values = regulations["native_rules"]
+                if (type(values) is not dict or values.keys() - {"rookie_contract_length_check", "staff_prestige_check"}
+                        or any(type(value) is not bool for value in values.values())):
+                    raise BridgeError("Expected native regulation check booleans")
         elif regulations is not None or _service is not None:
             raise BridgeError("This operation accepts no regulation setup or service")
         if not math.isfinite(timeout) or timeout <= 0:
@@ -220,11 +228,24 @@ class Bridge:
             raise BridgeError("Native regulation retirement was not confirmed")
         return result
 
+    def restore_native_rules(self, runtime, generation):
+        """Remove failed policy bypasses while retaining its unavailable action guards."""
+        control = {"generation": generation, "endpoint": runtime.endpoint}
+        try:
+            runtime.close()
+        finally:
+            result = self.request("restore-native-rules", regulations=control)
+        if result.get("regulation_control") is not True:
+            raise BridgeError("Native regulation rule restoration was not confirmed")
+        return result
+
     def activate_regulations(self, runtime, generation):
         """Install closed guards, approve real coverage, then enable them together."""
         control = {"generation": generation, "endpoint": runtime.endpoint}
         try:
-            status = self.request("install-regulations", regulations=control)
+            # Values come from the acknowledged policy, not a mod-selected
+            # native target. Only installation carries this fixed boolean record.
+            status = self.request("install-regulations", regulations=dict(control, native_rules=runtime.native_rules()))
             if status.get("regulation_control") == "stale":
                 self.retire_regulations(runtime, generation)
                 return status

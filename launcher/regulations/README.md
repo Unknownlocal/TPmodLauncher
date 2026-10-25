@@ -68,10 +68,16 @@ enabled sections are rejected; native fields use the last value, as in the game.
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
 
-Native switches are checked and included in rule revisions, but automatic
-installation is not connected. `RegulationRuntime.bind()` rejects a candidate
-containing them before binding handlers or opening transport. It cannot report
-an unenforced switch as ready.
+Native switches are checked and included in rule revisions. After career data
+is acknowledged, `RegulationRuntime.native_rules()` supplies their values to
+the fixed installation request. Activation requires each declared switch to
+report `native` for true or `disabled` for false. A skipped incompatible switch
+cannot become ready; failed activation restores the installed hooks.
+Switch-only mods use an empty data publication and need no validation handlers.
+If a required owner fails after setup, the controller closes transport and uses
+the fixed `restore-native-rules` request to remove the bypasses. Ordinary action
+guards stay installed and refuse unchecked actions; failure cannot remove a
+custom restriction by reverting the whole installation to native behaviour.
 
 `ValidationDispatch.native_rules()` copies the fixed booleans for private game
 setup after checking the current career, publication and readiness. Publication
@@ -162,8 +168,8 @@ ordered `policy-page` rows and `policy-seal`. Native publications supply complet
 option data for subscribed native rules; custom publications contain admitted
 option keys. `None` keeps installed options while advancing their generation.
 Private overlays stay in the launcher. One control deadline covers all pages and
-commits. Readiness stays
-blocked until commit acknowledgement. `reset(epoch)` clears policy while keeping
+commits. Readiness stays blocked until commit acknowledgement. `reset(epoch)`
+clears policy while keeping
 bindings; a new publication and native coverage approval are required and a
 failed Store cannot be revived. Data publication can precede hook approval.
 Reset may retire a complete publication before activation when loading is

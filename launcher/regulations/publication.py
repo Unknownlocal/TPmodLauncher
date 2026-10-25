@@ -7,7 +7,9 @@ from hook_manager.game_adapters.regulations.protocol import regulation_integer, 
 class PolicyPublication:
     def __init__(self, dispatch, message):
         plan = message["plan"]
-        if type(plan) is not list or not plan or len(plan) > len(dispatch.catalog.subscribers):
+        # Switch-only policies have no option records. Their empty publication
+        # still needs the normal begin/seal acknowledgement for this career.
+        if type(plan) is not list or len(plan) > len(dispatch.catalog.subscribers):
             raise ValueError("Invalid regulation publication plan")
         self.native, self.custom, self._expected = {}, {}, []
         # _expected includes only rules that will send records. A None membership

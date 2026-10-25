@@ -2,15 +2,12 @@
 """Private native switches, admission and publication fences; no game needed."""
 
 import json
-from unittest.mock import Mock
 
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.runtime import RegulationRuntime
 from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.validation import dispatch as dispatch_module
-from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 OWNER = "example.rules"
@@ -112,15 +109,3 @@ def test_late_publication_fences_switch_only_owners_without_guest_handlers(monke
         dispatch.publish()
     with pytest.raises(RuntimeError, match="cannot revive"):
         dispatch.reset(8)
-
-
-def test_switch_binding_remains_gated_before_normal_native_installation_exists():
-    definitions = prepare(document({ROOKIE: False, PRESTIGE: False}))
-    mod = SharedSourceMod.__new__(SharedSourceMod)
-    mod.runner = Mock()
-    runtime = RegulationRuntime(definitions, {OWNER: mod})
-    with pytest.raises(ValueError, match="not available for binding"):
-        runtime.bind()
-    assert runtime.status == {"ready": False, "owners": {OWNER: "unavailable"}}
-    assert runtime._server is None
-    mod.runner.close.assert_called_once_with()

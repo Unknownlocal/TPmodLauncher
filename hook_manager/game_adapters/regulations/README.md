@@ -120,5 +120,10 @@ use ordinary validators and the regulations adopted for the proposed contract's
 season. Driver proposals include the original game's rookie-check applicability,
 even when its native cap is disabled. Setup does not declare a policy ready for
 use. The launcher activates the captured loading attempt only after confirming
-complete coverage for its required checks. Native-switch declarations remain
-blocked at runtime binding.
+complete coverage for its required checks. The fixed installation request
+carries checked native-switch booleans. A requested bypass must report an
+installed wrapper before activation; an incompatible skipped switch keeps the
+pack unready and setup restores the hooks it installed.
+After an owner fails, `restore-native-rules` removes only bypass helpers and
+closes the validation gate. Ordinary signing/project guards remain installed
+so unavailable custom checks still refuse actions.

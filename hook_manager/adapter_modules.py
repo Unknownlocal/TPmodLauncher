@@ -11,6 +11,9 @@ if __package__:
     from .manager import HookError
     from .career_preload import CareerPreload
 
+NATIVE_RULE_GROUPS = {"rookie_contract_length_check": "drivers.rookie-check",
+                      "staff_prestige_check": "staff.prestige-check"}
+
 
 class AdapterModules:
     """Own one bridge's fixed module bundle and its temporary import finder.
@@ -149,8 +152,11 @@ class AdapterModules:
         A stale loading attempt returns "stale" so setup retires only its career.
         """
         self.host.manager._main()
-        if (operation not in ("install-regulations", "activate-regulations", "stop-regulations", "retire-regulations")
-                or type(request) is not dict or set(request) != {"generation", "endpoint"}
+        fields = {"generation", "endpoint"}
+        if operation == "install-regulations" and type(request) is dict and "native_rules" in request:
+            fields.add("native_rules")
+        if (operation not in ("install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules")
+                or type(request) is not dict or set(request) != fields
                 or type(request["generation"]) is not int or request["generation"] < 1
                 or type(request["endpoint"]) is not dict or set(request["endpoint"]) != {"port", "token"}):
             raise HookError("Invalid regulation control fields")
@@ -173,6 +179,17 @@ class AdapterModules:
         if operation == "stop-regulations":
             self.channel.validation_ready = False
             return self.stop_regulations()
+        if operation == "restore-native-rules":
+            # Failed validators must keep refusing actions. Restore only the
+            # bypass helpers; leave signing/project guards and their ownership.
+            self.channel.validation_ready = False
+            for hook in tuple(self.regulations):
+                if hook.groups.keys() & set(NATIVE_RULE_GROUPS.values()):
+                    hook.stop()
+                    self.regulations.remove(hook)
+            for key in NATIVE_RULE_GROUPS:
+                self.coverage[key] = "native"
+            return True
         if operation == "retire-regulations":
             channel = self.channel
             channel.validation_ready = False
@@ -197,7 +214,8 @@ class AdapterModules:
             if operation == "install-regulations":
                 if self.coverage:
                     raise HookError("Prepared regulation hooks are already installed")
-                self.install_regulations(policy.state, channel, policy.select, native_rules={}, report=report)
+                self.install_regulations(policy.state, channel, policy.select,
+                                         native_rules=request.get("native_rules", {}), report=report)
             else:
                 if not self.coverage or channel.validation_ready:
                     raise HookError("Regulation activation needs a pending installation")
@@ -261,8 +279,7 @@ class AdapterModules:
             groups = {name for hook in self.regulations for name, row in hook.groups.items() if row["state"] == "active"}
             # A requested bypass is "disabled" only if its wrapper installed.
             # "skipped" means compatibility checks left that native rule intact.
-            for key, group in (("rookie_contract_length_check", "drivers.rookie-check"),
-                               ("staff_prestige_check", "staff.prestige-check")):
+            for key, group in NATIVE_RULE_GROUPS.items():
                 self.coverage[key] = "native" if native_rules.get(key, True) else "disabled" if group in groups else "skipped"
             return dict(self.coverage)
         except BaseException as error:

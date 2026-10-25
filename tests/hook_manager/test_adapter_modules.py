@@ -161,7 +161,7 @@ def test_incompatible_rule_selection_reports_skip_and_closes_candidate_channel(i
 
 
 def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
-    modules, career, channel, _, hooks = installation
+    modules, career, channel, adapters, hooks = installation
     channel._token = "0" * 64
     channel._rules, channel._custom = set(), set()
     published = []
@@ -185,11 +185,26 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     with pytest.raises(HookError, match="does not own"):
         modules.control_regulations("install-regulations", dict(request, generation=2), report=pytest.fail)
     assert modules.channel is channel and not channel.closed
-    assert modules.control_regulations("install-regulations", request, report=pytest.fail)
+    values = []
+    original = adapters.native_rules.install_native_rules
+    def install_switches(state, switches, **kwargs):
+        values.append(dict(switches))
+        return original(state, switches, **kwargs)
+    adapters.native_rules.install_native_rules = install_switches
+    switches = {"rookie_contract_length_check": False, "staff_prestige_check": True}
+    assert modules.control_regulations("install-regulations", dict(request, native_rules=switches), report=pytest.fail)
+    assert values == [switches]
     assert not channel.validation_ready and modules.status()["regulations"]["state"] == "installed"
     assert modules.policy.state is career and modules.policy._published
     assert modules.control_regulations("activate-regulations", request, report=pytest.fail)
     assert channel.validation_ready and modules.status()["regulations"]["state"] == "active"
+    with pytest.raises(HookError, match="does not own"):
+        modules.control_regulations("restore-native-rules", dict(request, generation=2), report=pytest.fail)
+    assert modules.control_regulations("restore-native-rules", request, report=pytest.fail)
+    assert not channel.validation_ready and not channel.closed
+    assert hooks[0].closed and all(not hook.closed for hook in hooks[1:])
+    assert modules.regulations == list(hooks[1:]) and modules.policy is not None
+    assert modules.coverage["rookie_contract_length_check"] == "native"
     assert modules.stop_regulations() and channel.closed
     assert modules.policy is None and modules.regulation_generation is None
 

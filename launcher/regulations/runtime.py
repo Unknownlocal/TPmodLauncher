@@ -46,10 +46,6 @@ class RegulationRuntime:
         self._attempted = True
         groups = {}
         try:
-            # Admission can describe bridges before their execution support is
-            # installed. Never treat them as harmless definition-only owners.
-            if self.definitions.native_rules:
-                raise ValueError("Native regulation rule bridges are not available for binding")
             validators_by_owner = self.definitions.validators
             for validators in validators_by_owner.values():
                 for validator in validators:
@@ -111,6 +107,15 @@ class RegulationRuntime:
     def status(self):
         return {"ready": self.ready, "owners": dict(self._states)}
 
+    def native_rules(self):
+        """Copy admitted switches for installation after career data is acknowledged."""
+        self._owning_thread()
+        if (self.closed or not self._bound or self._publication is not None or not self._dispatch.ready
+                or any(state == "unavailable" or self._mods[owner].sandbox.closed
+                       for owner, state in self._states.items())):
+            raise RuntimeError("Native rule policy is unavailable")
+        return self._dispatch.native_rules(epoch=self._dispatch.epoch, generation=self._dispatch.generation)
+
     def confirm_native(self, components, *, pending=False):
         """Accept installation coverage for every scope used by this pack.
 
@@ -132,6 +137,12 @@ class RegulationRuntime:
         missing = sorted(key for key in self._required_components if components.get(key) is not True)
         if missing:
             raise ValueError("Incomplete native regulation coverage: " + ", ".join(missing))
+        if self.definitions.native_rules:
+            # A skipped incompatible switch leaves the original rule in place.
+            # Never activate a requested bypass merely because signing installed.
+            for name, enabled in self.native_rules().items():
+                if components.get(name) != ("native" if enabled else "disabled"):
+                    raise ValueError("Incomplete native regulation switch coverage: " + name)
         if pending and not self._dispatch.ready:
             raise RuntimeError("Native activation needs committed regulation data")
         self._activation_pending = pending

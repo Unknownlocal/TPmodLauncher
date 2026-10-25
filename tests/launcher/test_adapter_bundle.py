@@ -115,6 +115,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert active["regulation_control"] is True and active["adapters"]["regulations"]["state"] == "active"
         assert screen_manager.update() == "native update"
         assert cached_preload(screen, career) is True
+        assert pulse("restore-native-rules", regulations=control)["regulation_control"] is True
+        assert host.adapters.channel is channel and not channel.validation_ready
         guard = host.CallableAdapters()
         host.adapters.regulations.append(guard)
         # The worker behaviour itself is tested with a real thread in the
@@ -181,6 +183,14 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
     assert sent[0]["operation"] == "adapters"
     client.request("await-regulations")
     assert sent[-1].keys() == {"type", "id", "operation"} and sent[-1]["operation"] == "await-regulations"
+    control = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
+    client.request("install-regulations", regulations=dict(control, native_rules={"staff_prestige_check": False}))
+    assert sent[-1]["regulations"]["native_rules"] == {"staff_prestige_check": False}
+    for values in ({"arbitrary.target": False}, {"staff_prestige_check": 0}):
+        with pytest.raises(BridgeError, match="booleans"):
+            client.request("install-regulations", regulations=dict(control, native_rules=values))
+    with pytest.raises(BridgeError, match="bounded regulation setup"):
+        client.request("activate-regulations", regulations=dict(control, native_rules={}))
     with pytest.raises(BridgeError, match="no menu declarations"):
         client.request("adapters", buttons=[])
 

@@ -76,7 +76,8 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
     owner = mod.manifest.id
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
-            owner: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
+            owner: {"schema": 1, "validators": [validator()], "native_rules": {
+                "rookie_contract_length_check": False, "staff_prestige_check": True}}}}), encoding="utf-8")
     progress, menus, operations, channels = [], [], [], []
     client = control_bridge(monkeypatch, lambda operation: {})
     with ExitStack() as resources:
@@ -109,11 +110,20 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                         channel.publish(native={"native": [{"key": "open"}]})
                         reply({"adapters": {"regulations": {"state": "prepared"}}})
                 worker.submit(publish)
+            elif operation == "restore-native-rules":
+                assert scope.regulations.closed
+                reply({"regulation_control": True})
             else:
                 assert not scope.regulations.ready
+                if operation == "install-regulations":
+                    assert record["regulations"]["native_rules"] == {
+                        "rookie_contract_length_check": False, "staff_prestige_check": True}
+                else:
+                    assert "native_rules" not in record["regulations"]
                 reply({"regulation_control": True, "adapters": {"regulations": {
                     "state": "installed" if operation == "install-regulations" else "active",
-                    "career_generation": record["regulations"]["generation"], "components": PERSONNEL_COMPONENTS}}})
+                    "career_generation": record["regulations"]["generation"], "components": dict(PERSONNEL_COMPONENTS,
+                        rookie_contract_length_check="disabled", staff_prestige_check="native")}}})
         monkeypatch.setattr(client, "_post", post)
         scope.poll()
         assert scope._regulation_armed and not scope.regulations.ready and not menus
@@ -134,6 +144,61 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         scope.career_preload({"state": "waiting", "generation": 9})
         assert scope.regulations.ready and channels[0].epoch == 3
         assert mod.runner is runner and scope.regulations._handlers == handlers
+        mod.close()
+        scope.poll()
+        scope.poll()
+        assert operations[-1] == "restore-native-rules" and operations.count("restore-native-rules") == 1
+        assert scope.regulations.closed and scope._regulation_failed
+        scope.career_preload({"state": "waiting", "generation": 10})
+        assert operations[-1] == "restore-native-rules"
+
+
+def test_switch_only_policy_requires_complete_installation_and_fresh_career_publication(make_mod, tmp_path, monkeypatch):
+    mod = make_mod("", owner="switch.rules")
+    switches = {"rookie_contract_length_check": False, "staff_prestige_check": True}
+    (tmp_path / "regulations.json").write_text(json.dumps({"mod_extensions": {
+        mod.manifest.id: {"schema": 1, "native_rules": switches}}}), encoding="utf-8")
+    wake = threading.Event()
+    with closing(PackMods(tmp_path, lambda _: None, wake=wake.set)) as scope:
+        scope.mods, scope.finished, scope._pack_root = {mod.manifest.id: mod}, True, tmp_path
+        runtime = scope.bind_regulations(scopes=set())
+        assert runtime._handlers == {} and not runtime.ready
+        with pytest.raises(RuntimeError, match="unavailable"):
+            runtime.native_rules()
+        with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+            pump(scope, wake, worker.submit(channel.publish))
+            values = runtime.native_rules()
+            assert values == switches
+            values.clear()
+            assert runtime.native_rules() == switches
+            for report in ({}, {"rookie_contract_length_check": "skipped"},
+                           {"rookie_contract_length_check": "disabled", "staff_prestige_check": "disabled"}):
+                with pytest.raises(ValueError, match="switch coverage"):
+                    runtime.confirm_native(report, pending=True)
+                assert not runtime.ready and not mod.sandbox.closed
+            report = {"rookie_contract_length_check": "disabled", "staff_prestige_check": "native"}
+            runtime.confirm_native(report, pending=True)
+            assert not runtime.ready
+            runtime.finish_native_activation()
+            assert runtime.ready
+            pump(scope, wake, worker.submit(channel.reset, 2))
+            with pytest.raises(RuntimeError, match="unavailable"):
+                runtime.native_rules()
+            pump(scope, wake, worker.submit(channel.publish))
+            assert runtime.native_rules() == switches and not runtime.ready
+            restored = []
+            def restore(operation):
+                assert operation == "restore-native-rules" and runtime.closed
+                restored.append(operation)
+                return {"regulation_control": True}
+            scope._bridge = control_bridge(monkeypatch, restore)
+            scope._regulation_generation = 2
+            mod.close()
+            with pytest.raises(RuntimeError, match="unavailable"):
+                runtime.native_rules()
+            scope.poll()
+            scope.poll()
+            assert restored == ["restore-native-rules"] and runtime.closed
 
 
 @pytest.mark.parametrize("cancel_at", ["install-regulations", "activate-regulations"])

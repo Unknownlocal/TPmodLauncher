@@ -126,7 +126,7 @@ class PackMods:
         The controller delivers changes on its Store-owning thread. A repeated
         waiting notice must not publish again or install a second set of hooks.
         """
-        if self.closed or not self._regulation_armed:
+        if self.closed or not self._regulation_armed or self._regulation_failed:
             return
         if status.get("state") == "unavailable":
             raise RuntimeError("Native regulation loading protection became unavailable")
@@ -569,6 +569,19 @@ class PackMods:
             finally:
                 self._regulation_dispatching = False
             status = self.regulations.status
+            if (self._bridge is not None and self._regulation_generation is not None
+                    and not self.regulations.closed and "unavailable" in status["owners"].values()
+                    and any(not enabled for values in self.regulations.definitions.native_rules.values()
+                            for enabled in values.values())):
+                # Close transport before bridge work to release waiting guards.
+                # Keep those guards installed: failed custom rules cannot become
+                # permission to sign. Only native bypass helpers are restored.
+                self._regulation_failed = self._regulation_dispatching = True
+                try:
+                    self._bridge.restore_native_rules(self.regulations, self._regulation_generation)
+                finally:
+                    self._regulation_dispatching = False
+                status = self.regulations.status
             if status != self._regulation_status:
                 self._regulation_status = status
                 self._publish_ui()
