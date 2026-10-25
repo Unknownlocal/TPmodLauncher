@@ -35,7 +35,7 @@ function fail(error) {
 
 function enqueue(operation, id, buttons, loading, settings, themes, regulations) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');

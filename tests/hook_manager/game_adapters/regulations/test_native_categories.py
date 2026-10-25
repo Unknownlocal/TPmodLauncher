@@ -17,7 +17,7 @@ from hook_manager.manager import HookError, Manager
 def native(monkeypatch, tmp_path):
     module = ModuleType("managers.regulation_manager")
     class RegulationManager:
-        def _load_regulation_defs(self):
+        def _load_regulation_defs(self) -> "Dict[str, Dict[str, Any]]":
             self.calls += 1
             self.work()
             if self.failure:

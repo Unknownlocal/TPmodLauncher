@@ -112,7 +112,8 @@ class PackMods:
             return
         from launcher.regulations.runtime import SCOPE_COMPONENTS
 
-        self.bind_regulations(scopes=set(SCOPE_COMPONENTS))
+        self.bind_regulations(scopes=set(SCOPE_COMPONENTS),
+                              native_categories=lambda: self._bridge.regulation_defaults(self._pack_root))
         if self._regulation_owners:
             categories = self.regulations.definitions.custom_categories
             # Only enabled, bound owners reach this fixed data-only operation.

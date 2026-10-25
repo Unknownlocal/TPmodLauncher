@@ -98,7 +98,8 @@ def test_callable_coverage_is_separate_from_parent_hook_manager(monkeypatch):
                                             "*/hook_manager/career_preload.py",
                                             "*/hook_manager/game_adapters/regulations/native_policy.py",
                                             "*/hook_manager/game_adapters/regulations/native_categories.py",
-                                            "*/hook_manager/game_adapters/regulations/native_scripts.py"]
+                                            "*/hook_manager/game_adapters/regulations/native_scripts.py",
+                                            "*/hook_manager/game_adapters/regulations/native_defaults.py"]
     assert config.get_option("run:branch") and config.get_option("run:relative_files")
 
 

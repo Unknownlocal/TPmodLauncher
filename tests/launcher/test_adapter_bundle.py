@@ -75,7 +75,27 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         career.data_dir = tmp_path
         native = ModuleType("managers.regulation_manager")
         native.RegulationManager = type("RegulationManager", (), {"_load_regulation_defs": lambda self: {"native": {}}})
+        native.RegulationManager._load_regulation_defs.__annotations__ = {"return": "Dict[str, Dict[str, Any]]"}
         monkeypatch.setitem(sys.modules, native.__name__, native)
+        native.ENTRY_REGULATIONS = [{"key": "native", "options": [{"key": "open"}]}]
+        native.CAR_PROFILE_REGULATION, native.CALENDAR_REGULATION = {"key": "profile"}, {"key": "calendar"}
+        native.FORMULA_FUEL_REGULATIONS = native.BONUS_REGULATIONS = []
+        class TyreModel:
+            @classmethod
+            def load(cls, path: "str") -> "'TyreModel'":
+                return None
+        native.TyreModel = TyreModel
+        native.regulation_for_model = lambda model: {"key": "compound"}
+        host.discovery.snapshot = {"state": "ready", "series": "formula", "root": str(tmp_path)}
+        native.__spec__ = SimpleNamespace(_initializing=True)
+        request = json.dumps(json.dumps({"operation": "regulation-defaults"}))
+        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation definitions are loading"
+        native.__spec__._initializing = False
+        defaults = pulse("regulation-defaults")
+        assert defaults["regulation_notices"] == []
+        assert defaults["regulation_defaults"]["pack"] == str(tmp_path)
+        assert defaults["regulation_defaults"]["categories"][0] == native.ENTRY_REGULATIONS[0]
+        assert host.adapters.categories is None  # Reading definitions installs no loading hooks.
         governance = ModuleType("managers.formula_regulation_governance")
         def construct(self, state, saved_bootstrap=None):
             self.state = state
@@ -203,11 +223,18 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
     def post(record, timeout):
         sent.append(record)
         client._message({"type": "send", "payload": {
-            "event": "reply", "id": record["id"], "status": {"adapters": {"state": "loaded"}}}}, lambda *args: None)
+            "event": "reply", "id": record["id"], "status": {"adapters": {"state": "loaded"},
+                "regulation_defaults": {"pack": str(ROOT), "categories": [{"key": "native"}]}}}}, lambda *args: None)
     monkeypatch.setattr(client, "_post", post)
     assert client.request("adapters")["adapters"]["state"] == "loaded"
     assert sent[0].keys() == {"type", "id", "operation"}
     assert sent[0]["operation"] == "adapters"
+    assert client.regulation_defaults(ROOT) == [{"key": "native"}]
+    assert set(sent[-1]) == {"type", "id", "operation"} and sent[-1]["operation"] == "regulation-defaults"
+    with pytest.raises(BridgeError, match="selected pack"):
+        client.regulation_defaults(ROOT / "other-pack")
+    with pytest.raises(BridgeError, match="no regulation setup"):
+        client.request("regulation-defaults", regulations={"target": "author-selected"})
     client.request("await-regulations")
     assert sent[-1].keys() == {"type", "id", "operation"} and sent[-1]["operation"] == "await-regulations"
     client.request("await-regulations", regulations={"pack": str(ROOT), "categories": [{"key": "owned.rule"}]})

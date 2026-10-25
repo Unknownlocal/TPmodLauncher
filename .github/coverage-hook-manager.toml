@@ -3,4 +3,4 @@
 [tool.coverage.run]
 branch = true
 relative_files = true
-omit = ["*/hook_manager/callables/*", "*/hook_manager/career_preload.py", "*/hook_manager/game_adapters/regulations/native_policy.py", "*/hook_manager/game_adapters/regulations/native_categories.py", "*/hook_manager/game_adapters/regulations/native_scripts.py"]
+omit = ["*/hook_manager/callables/*", "*/hook_manager/career_preload.py", "*/hook_manager/game_adapters/regulations/native_policy.py", "*/hook_manager/game_adapters/regulations/native_categories.py", "*/hook_manager/game_adapters/regulations/native_scripts.py", "*/hook_manager/game_adapters/regulations/native_defaults.py"]

@@ -20,6 +20,17 @@ Without eligible owners, this path reads no files.
 `from_bytes()` accepts bounded bytes and checked source copies. Trusted callers
 supply mapped context names and any native fallback categories.
 
+Normal startup supplies those fallback categories through a private, read-only
+bridge request. Preparation requests them once, only when an enabled mod section
+is present. The game supplies its built-in definitions and the compound default
+for the selected pack's tyre model. The request waits for ongoing imports to
+finish before loading its fixed regulation definition module. It has a ten-second
+limit. File-defined categories keep precedence; fallbacks allow references
+without being inserted into the file document.
+The request checks the selected pack and copies at most 128 categories within
+1 MiB. It constructs no career and installs no hooks. Compatibility failures
+are reported through command-line output and logs, leaving native play available.
+
 [`json_ingest`](../json_ingest/README.md) decodes UTF-8 and selects fields.
 `converter.py` selects native data and enabled mod sections; `owner_converter.py`
 checks each section and creates an `OwnerDefinition`. `RegulationSession` checks

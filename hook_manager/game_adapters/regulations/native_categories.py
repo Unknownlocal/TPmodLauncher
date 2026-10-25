@@ -36,8 +36,9 @@ class NativeCategories(Manager):
         if len(self.categories) != len(request["categories"]):
             raise HookError("Prepared categories contain duplicate keys")
         try:
+            # Return annotations are part of the native method's checked signature.
             target = CallableTarget("regulations.categories", "managers.regulation_manager",
-                                    ("RegulationManager",), "_load_regulation_defs", "(self)")
+                                    ("RegulationManager",), "_load_regulation_defs", "(self) -> 'Dict[str, Dict[str, Any]]'")
             # Install before releasing career selection. A deferred worker import
             # could otherwise finish loading a career before a main-thread poll.
             if target.resolve({}) is None:

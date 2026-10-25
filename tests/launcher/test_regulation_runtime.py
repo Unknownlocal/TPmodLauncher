@@ -74,8 +74,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
     """Real binding/publication/activation; only native hook coverage is simulated."""
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     owner = mod.manifest.id
-    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
-        {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
+    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [], "mod_extensions": {
             owner: {"schema": 1, "categories": [{"key": owner + ".policy", "label": "Policy", "default": "open",
                 "options": [{"id": 1, "key": "open", "name": "Open"}]}], "scripted_changes": [
                 {"key": owner + ".policy", "new_regulation": {"key": "open"}, "effective_season": 2}],
@@ -97,7 +96,10 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
             def reply(status):
                 client._message({"type": "send", "payload": {
                     "event": "reply", "id": record["id"], "status": status}}, lambda *args: None)
-            if operation == "await-regulations":
+            if operation == "regulation-defaults":
+                reply({"regulation_defaults": {"pack": str(tmp_path),
+                    "categories": [{"key": "native", "options": [{"key": "open"}]}]}})
+            elif operation == "await-regulations":
                 # Career selection must still be blocked while protection arms.
                 assert progress[-1]["state"] == "loading" and not menus
                 assert record["regulations"] == {"pack": str(tmp_path),
@@ -139,7 +141,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         assert scope.regulations.ready and menus[-1] and progress[-1]["state"] == "complete"
         for generation in (7, 6):
             scope.career_preload({"state": "waiting", "generation": generation})
-        assert operations == ["await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
+        assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
         handlers = dict(scope.regulations._handlers)
         runner = mod.runner
         scope.career_preload({"state": "left", "generation": 7})
@@ -253,7 +255,8 @@ def test_startup_does_not_release_menu_without_confirmed_native_loading_protecti
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
             mod.manifest.id: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
     progress, menus = [], []
-    client = SimpleNamespace(request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable"}}})
+    client = SimpleNamespace(regulation_defaults=lambda pack: (),
+        request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable"}}})
     with closing(PackMods(tmp_path, lambda _: None, bridge=client,
                           set_loading=progress.append, set_menu=menus.append)) as scope:
         scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1

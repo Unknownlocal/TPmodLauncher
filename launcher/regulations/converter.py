@@ -74,12 +74,18 @@ def convert(content, enabled_sources, *, scopes, native_categories=()):
         raw = decode(content, max_bytes=schema.MAX_FILE_BYTES, allow_bom=True)
         if type(raw) is not JsonObject:
             raise ValueError("Regulations must be a JSON object")
-        native, base = _native(raw, native_categories)
         # Do not even consume the extension envelope without eligible owners.
         # Disabled sections remain raw: their schema and duplicate keys are ignored.
         sections = raw.member("mod_extensions", JsonObject()) if sources else JsonObject()
         if type(sections) is not JsonObject:
             raise ValueError("Enabled regulation extensions need an object envelope")
+        if callable(native_categories):
+            # The trusted caller may need a bridge read. Omitted enabled sections
+            # contribute no rules, so they must not require native inspection.
+            # Launcher code supplies this function; JSON cannot name or call it.
+            selected = any(sections.member(owner, _MISSING) is not _MISSING for owner in sources)
+            native_categories = native_categories() if selected else ()
+        native, base = _native(raw, native_categories)
         # Each attempt owns its lazy derived-data cache and provisional session.
         # Neither survives a failed conversion or a later pack reload.
         index = PreparationIndex()

@@ -35,6 +35,10 @@ These are private launcher adapters, not a direct game-function API for mods.
 - [native_scripts.py](native_scripts.py): `NativeScripts` keeps enabled mods'
   scheduled rule choices when governance is constructed and saved policy is
   restored. These are JSON declarations; the game schedules and applies them.
+- [native_defaults.py](native_defaults.py): reads built-in category defaults from
+  the game's fixed definition module, including the compound default for the
+  selected pack. It waits for ongoing imports before loading that module, then
+  returns copied data without constructing a career or installing hooks.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -82,8 +86,8 @@ normal code without a second mod approval.
 Adapters check game method names and accepted arguments before installation.
 Incompatibility is reported in command-line output and logs, and the affected
 integration is skipped. Failed installation restores changes already made.
-Importing these modules installs nothing; installation and removal belong to trusted launcher
-code. Mods cannot choose native targets or call the private callable adapter.
+Importing these modules installs nothing; trusted launcher code owns installation
+and removal. Mods cannot choose native targets or call the private callable adapter.
 
 The private `AdapterModules.install_regulations` method owns the signing and
 project adapters and native switches for a career supplied by trusted setup.

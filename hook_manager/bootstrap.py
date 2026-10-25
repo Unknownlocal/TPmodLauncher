@@ -86,6 +86,20 @@ def pulse(sources, digest, instance, game_root, request_json):
         elif request == {"operation": "adapters"}:
             module.adapters.load()
             response = module.manager.request({"operation": "status"})
+        elif request == {"operation": "regulation-defaults"}:
+            notices = []
+            defaults = None
+            try:
+                defaults = module.adapters.regulation_defaults()
+                if defaults is None:
+                    # Keep this same bounded request pending while native imports
+                    # continue. No callback or worker is added to the game.
+                    return "WAIT: native regulation definitions are loading"
+            except Exception as error:
+                notices.append("REGULATIONS COMPATIBILITY FAILED defaults: "
+                               + " ".join(str(error).split())[:512] + "; default integration skipped")
+            response = module.manager.request({"operation": "status"})
+            response["regulation_defaults"], response["regulation_notices"] = defaults, notices
         elif type(request) is dict and request.get("operation") == "await-regulations":
             notices = []
             try:

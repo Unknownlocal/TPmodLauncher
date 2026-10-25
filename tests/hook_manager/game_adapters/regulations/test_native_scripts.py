@@ -45,6 +45,7 @@ def native(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, module.__name__, module)
     regulation = ModuleType("managers.regulation_manager")
     regulation.RegulationManager = type("RegulationManager", (), {"_load_regulation_defs": lambda self: {}})
+    regulation.RegulationManager._load_regulation_defs.__annotations__ = {"return": "Dict[str, Dict[str, Any]]"}
     monkeypatch.setitem(sys.modules, regulation.__name__, regulation)
     category = {"key": "owned.rule", "default": "open", "options": [{"id": 1, "key": "open", "name": "Open"}]}
     script = {"id": "owned:change", "key": "owned.rule", "new_regulation": {"key": "open"}, "effective_season": 2}

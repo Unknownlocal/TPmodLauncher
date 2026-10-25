@@ -35,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot planner caller_targets callers",
-    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories native_scripts",
+    "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories native_scripts native_defaults",
 }
 
 
@@ -97,7 +97,7 @@ class Bridge:
     def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
                 regulations=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters",
+        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters", "regulation-defaults",
                              "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
         if operation == "menu":
@@ -206,6 +206,19 @@ class Bridge:
                     self._post({"type": "manager-cancel", "id": token}, 0.25)
                 except Exception:
                     pass  # close() still unloads the script after a failed cleanup request.
+
+    def regulation_defaults(self, pack):
+        """Accept plain defaults only for this scope's already selected pack."""
+        # The game chooses the folder from startup discovery. This argument only
+        # verifies the reply; it cannot request another folder or native target.
+        defaults = self.request("regulation-defaults", timeout=10).get("regulation_defaults")
+        if (type(defaults) is not dict or set(defaults) != {"pack", "categories"}
+                or defaults["pack"] != str(pack) or type(defaults["categories"]) is not list
+                or len(defaults["categories"]) > 128
+                or len(json.dumps(defaults["categories"], ensure_ascii=False, allow_nan=False,
+                                  separators=(",", ":")).encode("utf-8")) > 1024 * 1024):
+            raise BridgeError("Native regulation defaults were not confirmed for the selected pack")
+        return defaults["categories"]
 
     def prepare_regulations(self, runtime, generation):
         """Publish rule data without hooks, servicing Wasm on its owning thread."""

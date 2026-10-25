@@ -90,6 +90,19 @@ class AdapterModules:
             raise
         return self.status()
 
+    def regulation_defaults(self):
+        """Read fixed native defaults for the process's captured startup pack."""
+        self.host.manager._main()
+        pack = self.host.discovery.poll()
+        if pack.get("state") != "ready" or pack.get("series") != "formula":
+            raise HookError("Regulation defaults need the selected Formula pack")
+        self.load()
+        if self.state != "loaded":
+            raise HookError(self.error or "Adapter modules are not loaded")
+        reader = self.host.adapter_code.game_adapters.regulations.native_defaults
+        categories = reader.read_native_defaults(pack["root"])
+        return {"pack": pack["root"], "categories": categories} if categories is not None else None
+
     def _career_left(self):
         """Stop new mod-checked actions; retirement waits for admitted work."""
         if self.channel is not None:

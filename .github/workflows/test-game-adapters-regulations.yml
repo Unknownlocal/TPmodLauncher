@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Test native regulation loading, scripts and policy
+name: Test native regulation defaults, loading and policy
 
 on:
   workflow_call:

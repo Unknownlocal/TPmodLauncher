@@ -85,6 +85,8 @@ def test_native_and_disabled_sections_keep_existing_json_semantics(tmp_path):
     content = b'{"categories":[],"native_extra":{"x":1,"x":2},"mod_extensions":{"off":{"schema":false,"schema":[],"nested":{"x":1,"x":2}}}}'
     result = RegulationDefinitions.from_bytes(content, {"example.rules": source()}, scopes=SCOPES)
     assert result.document == {"categories": [], "native_extra": {"x": 2}} and result.owners == {}
+    RegulationDefinitions.from_bytes(content, {"example.rules": source()}, scopes=SCOPES,
+        native_categories=lambda: pytest.fail("Omitted owners must not inspect native defaults"))
     assert RegulationDefinitions.from_bytes(b'{"mod_extensions":null}', {}, scopes=set()).document == {}
     assert RegulationDefinitions.read(tmp_path / "absent", {}, scopes=set()) is None
     with pytest.raises(ValueError, match="declaration fields"):
@@ -107,7 +109,7 @@ def test_category_cannot_replace_native_fallback_or_foreign_definition():
     data = document()
     fallback = category()
     with pytest.raises(ValueError, match="collides"):
-        prepare(data, native_categories=[fallback])
+        prepare(data, native_categories=lambda: [fallback])
     data["mod_extensions"]["example.rules"]["categories"][0]["key"] = "another.mod.policy"
     with pytest.raises(ValueError, match="namespace"):
         prepare(data)
