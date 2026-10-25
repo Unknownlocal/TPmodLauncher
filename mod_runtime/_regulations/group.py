@@ -79,7 +79,7 @@ class RegulationGroup:
             raise ValueError("Stale or busy shared regulation action")
         for resident in self.residents.values():
             if (resident.active is None or resident.staged is not None or resident.transfer is not None
-                    or resident.action is not None or resident.generation != resident.required):
+                    or resident.action is not None):
                 raise ValueError("Shared regulation policy is not current")
         # The global action table admits 1024 contexts. Each still has the usual
         # 4 KiB invocation bound; chunks are only 4 KiB, not the complete table.
@@ -123,20 +123,14 @@ class RegulationGroup:
         self.contexts = None
 
     def finish_publication(self):
-        """Retire old cached records once all owner commits have completed."""
+        """Confirm every owner's complete initial install before actions begin."""
         self.check()
         if self.contexts is not None or self.transfer is not None:
             raise ValueError("Shared regulation action is busy")
-        reachable = set()
         for resident in self.residents.values():
-            if (resident.staged is not None or resident.transfer is not None or resident.action is not None
-                    or resident.generation != resident.required):
+            if (resident.active is None or resident.staged is not None
+                    or resident.transfer is not None or resident.action is not None):
                 raise ValueError("Shared regulation publication is incomplete")
-            if resident.active is not None:
-                reachable.update(resident.active.by_id)
-        for identity in tuple(self.records):
-            if identity not in reachable:
-                del self.records[identity]
 
     def reset(self, epoch):
         self.check()

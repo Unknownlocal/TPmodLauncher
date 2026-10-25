@@ -28,7 +28,8 @@ match the selected bundle; an incompatible checkout stops the run.
 Clean timing has no diagnostic patches or tracemalloc. Diagnostic runs record
 JSON counts, socket bytes, guest arguments, fuel and process memory separately.
 Reports include the runner hash, loaded source hashes and Python versions.
-Warm actions are separated from policy publication, changes, reset and reload.
+Warm actions are separated from the complete initial install, career reset and
+fresh install after reset. Adoption selects already installed options.
 Unexpected errors or wrong decisions stop the case. Resource/deadline failures
 are recorded as unavailable rather than successful throughput.
 

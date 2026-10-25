@@ -147,15 +147,16 @@ new mod-facing methods or host imports and do not route through lifecycle events
 A matching built bundle is required whenever its trusted guest sources change.
 
 Handler bindings become fixed when resident setup begins. Each owner keeps checked
-regulation data in memory across actions. Updates are staged and checked before
-commit makes them active. Generations and action IDs reject stale requests.
+regulation data in memory across actions. Each career's complete install is staged
+and checked before commit makes it active. Generations and action IDs reject
+stale requests.
 Reset drops career data and actions while retaining the owner's binding identity.
 Invalid operations disable the affected resident state.
 
 | Module under `_regulations/` | Responsibility |
 | --- | --- |
 | `handlers.py` | Resolve functions belonging to the admitted source owner |
-| `catalog.py` | Store one owner's rules and reuse unchanged records |
+| `catalog.py` | Store one owner's rules and share installed records |
 | `frozen.py` | Store checked JSON values and reconstruct fresh handler inputs |
 | `action.py` | Resolve a proposal's rules and prepare bounded groups of calls |
 | `transfer.py` | Check complete UTF-8 transfers before decoding JSON |
@@ -181,7 +182,8 @@ shared runner. Source-owner and regulation-session admission limits still apply.
 record IDs. Owner catalogues borrow common records, while their rules, revisions,
 bindings and option data retain their original identities. Installation plans
 can receive already installed record IDs, avoiding another transfer for a second
-owner. Finishing a publication removes records no active owner needs.
+owner. Finishing publication checks that every owner has committed. Reset releases the
+career's cached records before another complete install.
 
 One action transfers its context table once. Owner call packets contain context
 indices and their own rule selections; each prepares at most four argument pairs

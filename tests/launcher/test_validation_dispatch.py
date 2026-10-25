@@ -97,10 +97,13 @@ def test_catalog_borrows_admission_and_projects_shared_effective_native_data_onc
     native[0]["points"].append(999)
     assert json.loads(first[0][2].text)["points"] == [25]
     catalog.commit()
+    catalog.reset()
     with pytest.raises(ValueError, match="collide"):
-        catalog.stage({"native": [{"key": "open", "points": 1, "parameters": {"points": 1}}]}, {})
+        catalog.stage({"native": [{"key": "open", "points": 1, "parameters": {"points": 1}}],
+                       "fallback": [{"key": "open"}]}, {"a.rules.private": ["open"]})
     with pytest.raises(ValueError, match="custom"):
-        catalog.stage({"a.rules.private": [{"key": "open", "parameters": {"custom": "replacement"}}]}, {})
+        catalog.stage({"native": [{"key": "open"}], "fallback": [{"key": "open"}],
+                       "a.rules.private": [{"key": "open"}]}, {})
 
 
 def test_validation_dispatch_warm_actions_use_references_and_independent_arguments(make_mods, monkeypatch):
@@ -147,10 +150,6 @@ def validate(c,r):
     monkeypatch.setattr(catalog_module, "encode", no_payload_encode)
     monkeypatch.setattr(action_module, "encode", no_payload_encode)
     traffic.clear()
-    session.publish(native={"native": None})
-    assert sum(name == "begin-regulation-policy" for name in traffic) == 2
-    assert not any("record" in name for name in traffic)
-    traffic.clear()
     ctx = context()
     ctx["proposal"] = {"expect": 35, "empty": []}
     requests = {owner: [["check", 0, 0]] * 32 for owner in mods}
@@ -183,20 +182,18 @@ def test_host_composed_limits_cover_chunked_actions_before_author_execution(make
     assert mod.sandbox.closed and not session.ready
 
 
-def test_control_replacement_counts_retirement_and_reset_preserves_bindings(make_mod):
+def test_career_reset_releases_dense_policy_and_preserves_bindings(make_mod):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     session = dispatch({mod.manifest.id: mod})
-    # Many adopted payloads share a key, then a tiny publication retires them.
-    session.publish(native={"native": [{"key": "open", "values": [{} for _ in range(950)], "marker": index} for index in range(320)]})
+    # Cover dense cached data and a record whose page wrapper needs chunking.
+    choices = [{"key": "open", "values": [{} for _ in range(950)], "marker": index} for index in range(320)]
+    session.publish(native={"native": choices + [{"key": "open", "p": "x" * 4088}]})
+    assert any(record.metric[0] == 4096 for record in session.catalog.views[mod.manifest.id].records)
     # Repeated actions must not spend their bounded preparation/handler fuel
     # collecting the large, unchanged resident payload graph.
     for _ in range(4):
         assert session.evaluate([context()], [selection()], {mod.manifest.id: [["check", 0, 0]] * 32})[mod.manifest.id] == [{"decision": "allow"}] * 32
     previous_ids = {record.identity for record in session.catalog.views[mod.manifest.id].records}
-    session.publish(native={"native": [{"key": "open", "p": "x" * 4088}]})
-    assert any(record.metric[0] == 4096 for record in session.catalog.views[mod.manifest.id].records)
-    session.publish(native={"native": [{"key": "open"}]})
-    assert session.evaluate([context()], [selection()], {mod.manifest.id: [["check", 0, 0]]})[mod.manifest.id] == [{"decision": "allow"}]
     action = session.action
     session.reset(2)
     assert not session.ready and not mod.sandbox.closed
@@ -213,7 +210,6 @@ def test_partial_multi_owner_commit_cannot_publish_or_revive_old_policy(make_mod
         ValidationDispatch(model, handler, epoch=0)
     session = ValidationDispatch(model, handler)
     assert list(session.runners) == list(model.owner_ids)
-    session.publish(native={"native": [{"key": "open"}]})
     before = session.catalog.views
     def failed_commit(*args):
         raise RuntimeError("injected commit failure")

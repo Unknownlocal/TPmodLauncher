@@ -80,7 +80,8 @@ class ValidationDispatch:
         try:
             started = time.monotonic()
             native, custom = {} if native is None else native, {} if custom is None else custom
-            affected = self.catalog.affected(native, custom)
+            self.catalog.check_publication(native, custom)
+            affected = self.runners
             if any(self.states[owner] == "unavailable" or self.runners[owner].handler.runner.closed for owner in affected):
                 raise RuntimeError("A required resident owner is unavailable")
             self.generation = integer(self.generation + 1, 64, positive=True)
@@ -90,10 +91,9 @@ class ValidationDispatch:
             deadline = limit if deadline is None else min(limit, deadline)
             for owner in affected:
                 self.states[owner] = "dirty"
-                self.runners[owner].required = self.generation
             views = self.catalog.stage(native, custom)
             if views:
-                self.group.begin_publication(tuple(views))
+                self.group.begin_publication()
             # Seal every affected owner before committing any replacement.
             # A partial commit closes the runner; old views cannot authorise it.
             for owner, view in views.items():

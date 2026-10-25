@@ -9,11 +9,9 @@ class PolicyPublication:
         plan = message["plan"]
         # Switch-only policies have no option records. Their empty publication
         # still needs the normal begin/seal acknowledgement for this career.
-        if type(plan) is not list or len(plan) > len(dispatch.catalog.subscribers):
+        if type(plan) is not list or len(plan) != len(dispatch.catalog.rules):
             raise ValueError("Invalid regulation publication plan")
         self.native, self.custom, self._expected = {}, {}, []
-        # _expected includes only rules that will send records. A None membership
-        # is carried to catalog publication without consuming any page rows.
         seen = set()
         for row in plan:
             if type(row) is not list or len(row) != 5:
@@ -25,21 +23,15 @@ class PolicyPublication:
             mapping = self.native if kind == "native" else self.custom
             for number in (size, nodes):
                 regulation_integer(number)
-            if count is None:
-                if size or nodes:
-                    raise ValueError("Unchanged rule cannot contain records")
-                mapping[rule] = None
-            else:
-                # These are coarse bounds on totals for this rule's wire entries.
-                # append() checks each actual record and then the exact totals;
-                # the declared count never becomes a preallocated array size.
-                if type(count) is not int or not 1 <= count < 2**32 or not count <= nodes <= 1024 * count or not count <= size <= 8192 * count:
-                    raise ValueError("Invalid finite regulation record counts")
-                mapping[rule] = []
-                self._expected.append([kind, rule, count, size, nodes])
-        self.affected = dispatch.catalog.affected(self.native, self.custom)
+            # Counts are declarations, not allocation sizes. Pages verify each
+            # record and the exact totals before any guest install can begin.
+            if type(count) is not int or not 1 <= count < 2**32 or not count <= nodes <= 1024 * count or not count <= size <= 8192 * count:
+                raise ValueError("Invalid finite regulation record counts")
+            mapping[rule] = []
+            self._expected.append([kind, rule, count, size, nodes])
+        dispatch.catalog.check_publication(self.native, self.custom)
         generation = dispatch.generation + 1
-        if message["generations"] != dict.fromkeys(self.affected, generation):
+        if message["generations"] != dict.fromkeys(dispatch.catalog.owners, generation):
             raise ValueError("Foreign regulation publication generations")
         self.identity = {key: message[key] for key in ("id", "epoch", "deadline", "generations")}
         # Page numbering spans this publication, rather than restarting per rule.

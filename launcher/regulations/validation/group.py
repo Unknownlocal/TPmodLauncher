@@ -27,36 +27,30 @@ class ValidationGroup:
         """Reuse the existing checked phase/acknowledgement code for group exports."""
         return next(iter(self.runners.values()))
 
-    def begin_publication(self, owners):
+    def begin_publication(self):
         started = time.monotonic()
         if self.publication is not None:
             raise ValueError("Shared publication is already pending")
-        records = {record.identity: record for runner in self.runners.values() if runner.active is not None
-                   for record in runner.active.records}
-        self.publication = owners, records
+        self.publication = set()
         # Common host bookkeeping spends the group's remaining control time;
         # it does not receive a fresh allowance after the owner commits.
         self._overhead = time.monotonic() - started
 
     def stage(self, owner, view, epoch, generation, deadline):
-        _, records = self.publication
-        self.runners[owner].stage(view, epoch, generation, deadline, known=records.keys())
+        records = self.publication
+        self.runners[owner].stage(view, epoch, generation, deadline, known=records)
         started = time.monotonic()
-        records.update((record.identity, record) for record in view.records)
+        records.update(record.identity for record in view.records)
         self._overhead += time.monotonic() - started
 
     def finish_publication(self, deadline):
         try:
             started = time.monotonic()
-            owners, previous = self.publication
-            active = [runner.active for runner in self.runners.values() if runner.active is not None]
-            reachable = {record.identity for view in active for record in view.records}
-            # Old payloads remain in the group's cache after individual commits.
-            # Count their final release here, together with every index scanned.
-            nodes = sum(view.manifest()[1][1] for view in active)
-            nodes += sum(record.metric[1] for identity, record in previous.items() if identity not in reachable)
-            fuel = install_fuel(0, nodes, len(previous), 1, 0)
-            seconds = sum(self.runners[owner]._control_left for owner in owners)
+            # Every owner has committed its initial view. Finish uses the
+            # remaining install allowance, never a validator's ordinary fuel.
+            nodes = sum(runner.active.manifest()[1][1] for runner in self.runners.values())
+            fuel = install_fuel(0, nodes, len(self.publication), 1, 0)
+            seconds = sum(runner._control_left for runner in self.runners.values())
             seconds -= self._overhead + time.monotonic() - started
             with self.helper._phase(fuel, seconds, deadline):
                 self.helper._ack("finish-regulation-publication", (), None, 0, 0)
@@ -117,7 +111,7 @@ class ValidationGroup:
                 self.helper._ack("reset-regulation-group", (epoch,), "reset", epoch, 0)
             for runner in self.runners.values():
                 runner.active = runner.staged = None
-                runner.epoch, runner.generation, runner.required = epoch, 0, 0
+                runner.epoch, runner.generation = epoch, 0
             self.publication = self.action = None
         except BaseException:
             self.handler.runner.close()

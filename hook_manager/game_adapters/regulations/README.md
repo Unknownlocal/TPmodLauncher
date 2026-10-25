@@ -22,7 +22,7 @@ These are private launcher adapters, not a direct game-function API for mods.
   prestige switches from admitted booleans. Missing settings keep the
   game's checks. Trusted setup owns the returned hooks and their removal.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
-  policy updates over an authenticated connection to the launcher on the same
+  complete career installs over an authenticated connection to the launcher on the same
   computer. The game waits for its reply.
 - [native_policy.py](native_policy.py): `NativeRegulationPolicy` prepares the
   reachable options for subscribed rules from the career's loaded regulations.
@@ -69,8 +69,9 @@ from these calculated development inputs; mod code owns any resulting refusal.
 - `unavailable`: required validation could not complete, so the action stops.
 
 Messages have size limits, and preparation and communication share one deadline.
-Policy updates replace stored rule choices before actions use them; they do not
-resend all regulation data with every check. Repeated, unchanged personnel
+Each career installs all reachable rule choices before actions use them. Later
+checks select those stored choices without resending their data. A new career
+requires reset and a fresh complete install. Repeated, unchanged personnel
 refusals can be reused within one operation. Successful signing permission is
 never cached.
 

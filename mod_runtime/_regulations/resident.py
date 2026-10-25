@@ -14,9 +14,9 @@ class RegulationResident:
         self.cache = cache
         self.identity, self.active, self.staged = None, None, None
         self.transfer, self.action, self.contexts = None, None, None
-        # epoch identifies the career; generation is active, required is the
-        # newest requested publication (which may still be incomplete).
-        self.epoch, self.generation, self.required = 0, 0, 0
+        # One installed generation belongs to this career until reset. Before
+        # commit there is no active view that could authorise an action.
+        self.epoch, self.generation = 0, 0
         self.last_action, self.failed = 0, False
         self.staged_ready = False
 
@@ -32,32 +32,20 @@ class RegulationResident:
             raise ValueError("Resident owner is unavailable")
 
     def ack(self, state):
-        return {"epoch": self.epoch, "generation": self.required, "state": state}
+        return {"epoch": self.epoch, "generation": self.generation, "state": state}
 
     def begin_policy(self, epoch, generation, length):
         self.check()
         integer(epoch, 64, positive=True)
         integer(generation, 64, positive=True)
-        # One operation owns the mutable staging area. Updating during an action
-        # would invalidate the references that action has already resolved.
-        if self.action is not None or self.transfer is not None or self.staged is not None:
-            raise ValueError("Resident state is busy")
-        # Initial setup may establish a career; later career changes require reset.
-        if self.epoch not in (0, epoch) or generation <= self.required:
+        if self.active is not None or self.action is not None or self.transfer is not None or self.staged is not None:
+            raise ValueError("Reset before installing another resident policy")
+        if self.epoch not in (0, epoch) or generation <= self.generation:
             raise ValueError("Stale resident policy")
         self.bindings = self.handlers.seal()
-        self.epoch, self.required = epoch, generation
-        # required advances before receiving data: old active generations cannot
-        # authorize an action while the replacement is partial or uncommitted.
-        integer(length)
+        integer(length, positive=True)
+        self.epoch, self.generation = epoch, generation
         self.staged_ready = False
-        if length == 0:
-            if self.active is None:
-                raise ValueError("No active view for a metadata-only publication")
-            # Membership/payloads are unchanged. Stage their existing immutable
-            # view instead of retransferring a potentially large manifest.
-            self.staged = self.active
-            return self.ack("manifest")
         self.transfer = RegulationTransfer("manifest", length)
         return self.ack("receiving")
 
@@ -79,7 +67,7 @@ class RegulationResident:
         packet = loads(self.finish("manifest"))
         self.staged = RegulationCatalog(packet, self.bindings, cache=self.cache)
         # Bindings anchor the first owner's identity. Once admitted, that source
-        # revision survives policy updates and career resets for this Store.
+        # revision survives career resets for this Store.
         if self.staged.identity[0] != self.handlers.owner:
             raise ValueError("Resident policy belongs to another source owner")
         if self.identity is not None and self.staged.identity != self.identity:
@@ -127,20 +115,17 @@ class RegulationResident:
         policy = self.policy()
         if self.staged_ready:
             raise ValueError("Repeated resident policy seal")
-        # Metadata-only publication borrows the already sealed active catalog;
-        # its new publication still needs this explicit seal before commit.
-        if policy is not self.active:
-            policy.seal()
+        policy.seal()
         self.staged_ready = True
         return self.ack("sealed")
 
     def commit_policy(self, epoch, generation):
         policy = self.policy()
         # Completion alone is insufficient: commit must identify the exact staged
-        # publication, so an acknowledgement from an older update cannot activate it.
-        if (epoch, generation) != (self.epoch, self.required) or not self.staged_ready:
+        # publication; another career's acknowledgement cannot activate it.
+        if (epoch, generation) != (self.epoch, self.generation) or not self.staged_ready:
             raise ValueError("Unsealed or foreign resident publication")
-        self.active, self.staged, self.generation = policy, None, generation
+        self.active, self.staged = policy, None
         self.revision = f"{self.identity[1]}:{epoch}:{generation}"
         return self.ack("active")
 
@@ -151,7 +136,7 @@ class RegulationResident:
             raise ValueError("Stale resident career reset")
         self.active = self.staged = self.transfer = self.action = None
         self.contexts = None
-        self.epoch, self.generation, self.required = epoch, 0, 0
+        self.epoch, self.generation = epoch, 0
         self.staged_ready = False
         # Keep action IDs increasing across careers so an old request cannot
         # match a new career's action. Bindings and owner identity also survive.
@@ -160,11 +145,10 @@ class RegulationResident:
     def begin_action(self, action, epoch, generation, length, first, *, contexts):
         self.check()
         integer(action, 64, positive=True)
-        # Both the active and required generations must match: an old active view
-        # cannot authorize work while its replacement is staged or incomplete.
+        # Only the committed view of this career can authorise an action.
         if (self.action is not None or self.transfer is not None or self.staged is not None
                 or self.active is None or action <= self.last_action
-                or (epoch, generation) != (self.epoch, self.generation) or generation != self.required):
+                or (epoch, generation) != (self.epoch, self.generation)):
             raise ValueError("Stale, unavailable or busy resident action")
         if integer(length, positive=True) > 384 * 1024:
             raise ValueError("Resident action packet exceeds its bound")

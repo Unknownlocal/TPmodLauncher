@@ -74,7 +74,7 @@ def publish(session):
     return session.publish(native={"native": [{"key": "open", "points": [25]}]}, custom={"a.rules.private": ["open"]})
 
 
-def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_updates_and_reset(make_shared_dispatch, monkeypatch):
+def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_actions_and_career_reset(make_shared_dispatch, monkeypatch):
     session, group, calls, _, model, handler = make_shared_dispatch(count=20)
     traffic = []
     original = group.sandbox.call
@@ -101,9 +101,6 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_upda
     assert sum(name == "begin-regulation-contexts" for name, _ in traffic) == 1
     assert all(json.loads(args[-1])["contexts"] == [0] for name, args in traffic if name == "begin-regulation-action")
     traffic.clear()
-    assert session.publish(custom={"a.rules.private": None}) == {"a.rules": 2}
-    assert [session.runners[owner].generation for owner in session.runners] == [2, 1, 1]
-    assert not any("record" in name for name, _ in traffic)
     first, second = proposal(), proposal()
     second["clock"]["absolute_week"] = 9
     traffic.clear()
@@ -112,13 +109,6 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_upda
     table = next(json.loads(args[-1]) for name, args in traffic if name == "begin-regulation-contexts")
     assert table == [first, second]
     traffic.clear()
-    # Exercise group-cache retirement and reset with enough cached nodes that
-    # their cleanup needs the counted control allowance, rather than handler fuel.
-    session.publish(native={"native": [{"key": "open", "points": [30], "values": [{} for _ in range(600)], "marker": i}
-                                       for i in range(24)]})
-    traffic.clear()
-    session.publish(native={"native": [{"key": "open", "points": [30]}]})
-    assert sum("points" in value for name, args in traffic if name == "install-regulation-records" for _, value in json.loads(args[0])) == 1
     action = session.action
     traffic.clear()
     session.reset(2)
@@ -129,9 +119,8 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_upda
     assert session.action > action and session.ready
 
 
-def test_failed_shared_publication_fences_unaffected_peers_and_preserves_host_view(make_shared_dispatch, monkeypatch):
+def test_failed_shared_publication_fences_all_peers_and_preserves_host_view(make_shared_dispatch, monkeypatch):
     session, group, _, cleaned, _, _ = make_shared_dispatch()
-    publish(session)
     before = session.catalog.views
     original = group.sandbox.call
     def fail(name, *args, **kwargs):
@@ -139,7 +128,7 @@ def test_failed_shared_publication_fences_unaffected_peers_and_preserves_host_vi
         return "invalid acknowledgement" if name == "finish-regulation-publication" else raw
     monkeypatch.setattr(group.sandbox, "call", fail)
     with pytest.raises(Exception, match="void acknowledgement"):
-        session.publish(custom={"a.rules.private": None})
+        publish(session)
     assert session.catalog.views is before and not session.ready and group.closed and cleaned == [True]
     assert set(session.states.values()) == {"unavailable"}
     with pytest.raises(RuntimeError, match="revive"):
@@ -199,3 +188,19 @@ def test_shared_completion_keeps_original_deadline_and_rejects_late_cleanup(make
     assert len(deadlines) == 4 and len(set(deadlines)) == 1
     assert group.closed and cleaned == [True]
     assert session.states["a.rules"] == session.states["c.rules"] == "unavailable"
+
+
+@pytest.mark.parametrize("invalid", ["partial", "unchanged", "repeat"])
+def test_only_a_complete_initial_policy_can_be_installed(make_shared_dispatch, invalid):
+    session, group, _, cleaned, _, _ = make_shared_dispatch()
+    if invalid == "repeat":
+        publish(session)
+    before = session.catalog.views
+    with pytest.raises(ValueError):
+        if invalid == "repeat":
+            publish(session)
+        else:
+            session.publish(native={"native": None if invalid == "unchanged" else [{"key": "open"}]},
+                            custom={"a.rules.private": ["open"]} if invalid == "unchanged" else {})
+    assert session.catalog.views is before and not session.ready
+    assert group.closed and cleaned == [True]

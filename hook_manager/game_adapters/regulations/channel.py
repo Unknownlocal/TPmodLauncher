@@ -19,10 +19,10 @@ class RegulationChannel:
         # Prepared career setup closes this gate before installing any hooks.
         self.validation_ready = True
         self._lock, self._sequence, self._action = threading.Lock(), 0, 0
-        # _generation numbers publications across the session; _generations
-        # records each owner's last acknowledged publication. A rule update may
-        # advance some owners while unrelated owners keep an older valid view.
+        # Publication IDs increase across careers; each career installs once.
+        # The explicit flag also covers switch-only packs with no owner tables.
         self._unavailable, self._generations, self._generation = set(), {}, 0
+        self._published = False
         try:
             if (type(endpoint) is not dict or set(endpoint) != {"port", "token"}
                     or type(endpoint["port"]) is not int or not 1 <= endpoint["port"] <= 65535
@@ -113,44 +113,43 @@ class RegulationChannel:
         return reply["result"]
 
     def publish(self, *, native=None, custom=None):
-        """Only changed rules cross the socket; private values stay launcher-owned."""
+        """Install every subscribed rule once; reset before loading another career."""
         self._enter()
         try:
-            # An omitted mapping changes no rules. A present rule mapped to None
-            # explicitly reuses its installed membership with a new generation.
+            if self._published:
+                raise HookError("Regulation policy is already installed; reset for a new career")
             native, custom = {} if native is None else native, {} if custom is None else custom
             if type(native) is not dict or type(custom) is not dict or native.keys() & custom.keys():
                 raise HookError("Invalid regulation publication")
             keys = native.keys() | custom.keys()
-            if not keys <= self._rules or native.keys() & self._custom or not custom.keys() <= self._custom:
+            if keys != self._rules or native.keys() & self._custom or not custom.keys() <= self._custom:
                 raise HookError("Foreign regulation publication")
-            affected = {owner for owner, row in self._owners.items() if keys.intersection(row["rules"])}
+            affected = self._owners.keys()
             if affected & self._unavailable:
                 raise HookError("Required regulation owner is unavailable")
             generation = regulation_integer(self._generation + 1, positive=True)
             generations = dict.fromkeys(sorted(affected), generation)
             deadline = time.monotonic() + 1 + 5 * len(affected)
-            # Plan rows are [kind, rule, count-or-None, total bytes, total nodes].
-            # Preflight the complete membership before sending any pages; None
-            # contributes no records and is valid only for an installed rule.
+            # Preflight all finite choices before sending any pages. Declared
+            # byte/node totals let the receiver verify completeness as it streams.
             plan = []
             for kind, mapping in (("native", native), ("custom", custom)):
                 for rule, values in mapping.items():
-                    if values is not None and (type(values) is not list or not values):
+                    if type(values) is not list or not values:
                         raise HookError("Expected complete reachable regulation choices")
                     size = nodes = 0
-                    for value in values or ():
+                    for value in values:
                         _, record_bytes, record_nodes = regulation_policy_value(kind, value)
                         size += record_bytes
                         nodes += record_nodes
-                    plan.append([kind, rule, None if values is None else len(values), size, nodes])
+                    plan.append([kind, rule, len(values), size, nodes])
             result = self._exchange(self._message("policy-begin", self.epoch, generations, deadline, plan=plan))
             if result is not None:
                 if result != "staging":
                     raise HookError("Invalid policy begin acknowledgement")
                 rows = ([rule, index, regulation_policy_value(kind, value)[0]]
                         for kind, mapping in (("native", native), ("custom", custom)) for rule, values in mapping.items()
-                        if values is not None for index, value in enumerate(values))
+                        for index, value in enumerate(values))
                 # Wait for each page acknowledgement before producing the next.
                 # This bounds queued data without buffering one large JSON policy.
                 for index, page in enumerate(regulation_pages(rows)):
@@ -167,7 +166,8 @@ class RegulationChannel:
                 raise HookError("Invalid policy commit acknowledgement")
             # Keep pending generations out of action admission until every guest
             # commits and the matching native acknowledgement arrives.
-            self._generations.update(generations)
+            self._generations = generations
+            self._published = True
             self._generation = generation
         except Exception:
             self.close()
@@ -188,7 +188,7 @@ class RegulationChannel:
                 raise HookError("Validation unavailable")
             # Career data is gone, so no owner can act until republished. Keep
             # session publication/action counters increasing to reject old IDs.
-            self.epoch, self._generations = epoch, {}
+            self.epoch, self._generations, self._published = epoch, {}, False
         except Exception:
             self.close()
             raise

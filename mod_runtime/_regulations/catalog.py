@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Keep one mod's installed rules in the shared interpreter.
 
-Check incoming rule tables before they can be used. Unchanged records are reused
-across updates; new values use FrozenValue so later validation calls do not pay
+Check incoming rule tables before they can be used. Owners share installed
+records; values use FrozenValue so later validation calls do not pay
 for garbage-collector scans of the cached dict/list trees.
 """
 
@@ -37,9 +37,8 @@ class RegulationCatalog:
                 raise ValueError("Foreign resident binding")
         if set(self.rules) != {rule for _, _, rule in bindings}:
             raise ValueError("Unreferenced resident rule")
-        self.descriptors, self.records, self.by_id = [], {}, {}
-        # Borrow the group's records, including those staged by an earlier mod.
-        # Updates use this same cache, so unchanged IDs need no payload transfer.
+        self.descriptors, self.records = [], {}
+        # Borrow common records already transferred for another mod in this install.
         self.cache = cache
         totals = [0, 0, 0]
         if type(packet["records"]) is not list:
@@ -68,7 +67,7 @@ class RegulationCatalog:
                 # a changed kind or measurement under that ID is a protocol error.
                 if old[:2] != (descriptor["kind"], metric):
                     raise ValueError("Resident record identity was changed")
-                self.records[slot], self.by_id[identity] = old, old
+                self.records[slot] = old
         fields(packet["totals"], ("bytes", "nodes", "integer_work"))
         if totals != [integer(packet["totals"][key], 63) for key in ("bytes", "nodes", "integer_work")]:
             raise ValueError("Resident publication totals differ")
@@ -116,7 +115,7 @@ class RegulationCatalog:
         # Keep the checked value in the flat cache format. Validation creates
         # ordinary argument copies from it rather than passing cached data out.
         record = kind, metric, FrozenValue(value)
-        self.records[slot] = self.by_id[identity] = record
+        self.records[slot] = record
         self.cache[identity] = record
 
     def install_page(self, packet):

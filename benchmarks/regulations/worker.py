@@ -114,7 +114,13 @@ def main():
                 if not hello:
                     raise RuntimeError(process.stderr.read())
                 report["native"] = json.loads(hello)
-                runtime.confirm_native()
+                if args.mode == "resident":
+                    # This owned transport probe supplies the installation report;
+                    # it does not install hooks into a running game.
+                    runtime.confirm_native(dict(driver_signing=True, staff_signing=True,
+                                                academy_signing=True, staffing=True))
+                else:
+                    runtime.confirm_native()
 
                 def operation(name):
                     meter.phase = name
@@ -136,6 +142,9 @@ def main():
                     if not line:
                         raise RuntimeError(process.stderr.read())
                     result = json.loads(line)
+                    if args.mode == "resident" and name == "reload" and result["status"] == "pass":
+                        runtime.confirm_native(dict(driver_signing=True, staff_signing=True,
+                                                    academy_signing=True, staffing=True))
                     if tracemalloc.is_tracing():
                         result["host_allocated_bytes"], result["host_allocated_peak_bytes"] = tracemalloc.get_traced_memory()
                         tracemalloc.stop()
@@ -166,7 +175,7 @@ def main():
                     if not operation("action"):
                         break
                 if args.mode == "resident" and runtime.ready:
-                    for name in ("metadata", "changed", "reset", "reload", "action_after_reload"):
+                    for name in ("reset", "reload", "action_after_reload"):
                         if not operation(name):
                             break
                         if args.diagnostics and name == "reset":

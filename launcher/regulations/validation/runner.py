@@ -14,7 +14,7 @@ class ValidationRunner:
     def __init__(self, handler, *, owner):
         self.handler, self.active, self.staged = handler, None, None
         self.owner = owner
-        self.epoch, self.generation, self.required = 0, 0, 0
+        self.epoch, self.generation = 0, 0
 
     def _phase(self, fuel, seconds, deadline):
         remaining = min(seconds, deadline - time.monotonic())
@@ -42,16 +42,15 @@ class ValidationRunner:
         if value != {"epoch": epoch, "generation": generation, "state": state}:
             raise SandboxError("Foreign resident policy acknowledgement")
 
-    def stage(self, view, epoch, generation, deadline, *, known=None):
+    def stage(self, view, epoch, generation, deadline, *, known=()):
         try:
             started = time.monotonic()
-            self.required = generation
-            # The host fences the old generation before any transfer starts,
-            # including failures during plan construction or binding comparison.
+            if self.active is not None:
+                raise ValueError("Reset before installing another career policy")
             validators = self.handler.validators[self.owner]
             if (self.staged is not None or view.owner != self.owner or view.validators != validators):
                 raise ValueError("Resident view differs from admitted handler bindings")
-            plan = PolicyInstall(view, self.active, epoch, generation, known=known)
+            plan = PolicyInstall(view, epoch, generation, known=known)
             # Shared phases first select the owner's stored regulation state.
             # Count that extra export in both staging and commit allowances.
             crossing = 250_000
@@ -61,7 +60,7 @@ class ValidationRunner:
                 for name, args, state in plan.operations:
                     self._ack(name, args, state, epoch, generation)
             self._control_left = 5 - (time.monotonic() - started)
-            self.staged, self.epoch = view, epoch
+            self.staged, self.epoch, self.generation = view, epoch, generation
         except BaseException:
             self.handler.runner.close()
             raise
@@ -69,7 +68,7 @@ class ValidationRunner:
     def commit(self, epoch, generation, deadline):
         try:
             started = time.monotonic()
-            if self.staged is None or (epoch, generation) != (self.epoch, self.required):
+            if self.staged is None or (epoch, generation) != (self.epoch, self.generation):
                 raise ValueError("No matching staged resident publication")
             # Other owners may take time to stage. Carry this Store's unspent
             # allowance into commit; the original transaction deadline still runs
@@ -77,7 +76,7 @@ class ValidationRunner:
             with self._phase(self._commit_fuel, self._control_left, deadline):
                 self._select()
                 self._ack("commit-regulation-policy", (epoch, generation), "active", epoch, generation)
-            self.active, self.staged, self.generation = self.staged, None, generation
+            self.active, self.staged = self.staged, None
             self._control_left -= time.monotonic() - started
         except BaseException:
             self.handler.runner.close()
@@ -85,7 +84,7 @@ class ValidationRunner:
 
     def evaluate(self, packet, action, deadline):
         try:
-            if self.active is None or self.staged is not None or self.required != self.generation:
+            if self.active is None or self.staged is not None:
                 raise ValueError("Resident owner has no current published view")
             text, metric, remaining = packet
             chunks = list(_chunks(text.encode("utf-8")))

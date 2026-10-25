@@ -24,7 +24,6 @@ class OwnerView:
                 self.choices.append((rule, key, base, overlay))
                 records[base.identity], records[overlay.identity] = base, overlay
         self.records = tuple(records.values())
-        self.signature = tuple((rule, key, base.identity, overlay.identity) for rule, key, base, overlay in self.choices)
         self._manifest = None
 
     def manifest(self):
@@ -49,8 +48,3 @@ class OwnerView:
             integer(metric[0], positive=True)
             self._manifest = text, metric
         return self._manifest
-
-    def retirement_nodes(self, replacement=None):
-        retained = {record.identity for record in replacement.records} if replacement is not None else set()
-        # Even shared payloads leave an old catalog's reference/index graph behind.
-        return self.manifest()[1][1] + sum(record.metric[1] for record in self.records if record.identity not in retained)

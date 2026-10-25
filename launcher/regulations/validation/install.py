@@ -6,18 +6,10 @@ from mod_runtime.source_transfer import _chunks
 
 
 class PolicyInstall:
-    def __init__(self, view, previous, epoch, generation, *, known=None):
+    def __init__(self, view, epoch, generation, *, known=()):
         self.operations = []
-        if view is previous:
-            self.operations = [("begin-regulation-policy", (epoch, generation, 0), "manifest"),
-                               ("seal-regulation-policy", (), "sealed")]
-            self.fuel = install_fuel(0, 0, 0, 3, 0)
-            self.commit_fuel = 1_250_000
-            return
         text, metric = view.manifest()
-        if known is None:
-            known = {record.identity for record in previous.records} if previous is not None else set()
-        # A shared publisher carries the union of installed/staged record IDs.
+        # A shared publisher carries the union of already staged record IDs.
         # Another owner then borrows the native record instead of sending it again.
         incoming = [(slot, record) for slot, record in enumerate(view.records) if record.identity not in known]
         self.operations.append(("begin-regulation-policy", (epoch, generation, metric[0]), "receiving"))
@@ -43,16 +35,13 @@ class PolicyInstall:
         if page:
             self._page(page)
         self.operations.append(("seal-regulation-policy", (), "sealed"))
-        retired = previous.retirement_nodes(view) if previous is not None else 0
         self.fuel = install_fuel(metric[0] + sum(record.metric[0] for _, record in incoming),
-                                 metric[1] + retired + sum(record.metric[1] for _, record in incoming),
+                                 metric[1] + sum(record.metric[1] for _, record in incoming),
                                  len(view.records), len(self.operations) + 1,
                                  metric[3] + sum(record.metric[3] for _, record in incoming))
-        # Reserve part of the same allowance for commit: replacing active can
-        # release a large old graph, even after all new records have been staged.
-        # 1M comes from the formula's 8M base; 250k is the commit crossing. The
-        # retirement-node allowance moves here too, rather than being added twice.
-        self.commit_fuel = 1_250_000 + 64_000 * retired
+        # Commit still gets its reserved base and crossing allowance, but there
+        # is no old career graph to replace: reset releases that graph first.
+        self.commit_fuel = 1_250_000
 
     def _page(self, rows):
         self.operations.append(("install-regulation-records", ("[" + ",".join(rows) + "]",), "records"))

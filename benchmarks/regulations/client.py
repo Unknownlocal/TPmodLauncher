@@ -83,13 +83,8 @@ def main():
                             raise ValueError("Benchmark decision mismatch")
                     elif operation == "reset":
                         channel.reset(channel.epoch + 1)
-                    elif operation in ("initial", "changed", "metadata", "reload"):
-                        if operation == "changed":
-                            for options in native.values():
-                                for option in options:
-                                    option["parameters"]["value"] += 1
-                        channel.publish(native={rule: None for rule in native} if operation == "metadata" else native,
-                                        custom={rule: None for rule in custom} if operation == "metadata" else custom)
+                    elif operation in ("initial", "reload"):
+                        channel.publish(native=native, custom=custom)
                     else:
                         raise ValueError("Unknown benchmark operation")
                     response = {"status": "pass"}

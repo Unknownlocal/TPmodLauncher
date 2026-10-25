@@ -145,7 +145,7 @@ per owner. Calls return `{"decision":"allow"}` or
 characters. Conditions stay in mod code.
 
 The [validation package](validation/README.md) owns the combined catalogue,
-updates and reference-based dispatch. Rule data stays in memory between actions.
+career installation and reference-based dispatch. Rule data stays in memory between actions.
 Shared owners reuse native records, and each proposal table transfers once per
 runner. Every handler still receives fresh ordinary JSON arguments.
 All reachable options are acknowledged at setup. Ordinary native adoption and
@@ -194,17 +194,17 @@ coverage again. A cancelled attempt can retire data published before activation,
 without closing the pack's interpreter or validators. Stale notices cannot retire
 a later prepared career.
 
-`publish(native=..., custom=...)` streams changed rules through `policy-begin`,
-ordered `policy-page` rows and `policy-seal`. Native publications supply complete
-option data for subscribed native rules; custom publications contain admitted
-option keys. `None` keeps installed options while advancing their generation.
-Private overlays stay in the launcher. One control deadline covers all pages and
-commits. Readiness stays blocked until commit acknowledgement. `reset(epoch)`
-clears policy while keeping
-bindings; a new publication and native coverage approval are required and a
-failed Store cannot be revived. Data publication can precede hook approval.
-Reset may retire a complete publication before activation when loading is
-cancelled; actions still require approved hooks.
+`publish(native=..., custom=...)` installs every subscribed rule through
+`policy-begin`, ordered `policy-page` rows and `policy-seal`. Native records contain
+all reachable choices; custom records name admitted option keys. Partial updates,
+unchanged-membership markers and a second install in the same career are rejected.
+Private option data stays in the launcher. One deadline covers all pages and
+guest commits; readiness waits for the complete acknowledgement.
+
+`reset(epoch)` clears career data while retaining bindings. The next career needs
+a complete install and fresh native coverage approval. Reset cannot revive a failed
+runner. It may also retire data when loading is cancelled before activation;
+actions still require approved hooks.
 
 Actions carry shared contexts/selections and owner binding-slot references.
 Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up to

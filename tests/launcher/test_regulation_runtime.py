@@ -306,7 +306,9 @@ def test_published_data_rejects_unacknowledged_or_stale_actions_before_author_co
         assert runtime._dispatch.ready and not runtime.ready
         if rejected == "stale-generation":
             runtime.confirm_native(PERSONNEL_COMPONENTS)
-            pump(scope, wake, worker.submit(channel.publish, native={"native": None}))
+            pump(scope, wake, worker.submit(channel.reset, 2))
+            pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+            runtime.confirm_native(PERSONNEL_COMPONENTS)
             channel._generations[mod.manifest.id] -= 1
         action = worker.submit(channel, [context()], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
@@ -575,9 +577,6 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
         pump(scope, wake, worker.submit(channel.publish, native={"native": choices}))
         assert runtime.ready and progress[-1]["state"] == "complete" and len(menus) == len(menus[0]) == 1
         catalog = runtime._dispatch.catalog
-        active = catalog.views["b.rules"]
-        pump(scope, wake, worker.submit(channel.publish, native={"native": None}))
-        assert catalog.views["b.rules"] is active
         pump(scope, wake, worker.submit(channel.reset, 2))
         assert not runtime.ready and not catalog.views
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))

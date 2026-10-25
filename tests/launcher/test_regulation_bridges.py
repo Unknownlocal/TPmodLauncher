@@ -82,15 +82,14 @@ def test_switch_preparation_uses_existing_policy_identity_and_requires_republica
     assert values == expected
     values.clear()
     assert dispatch.native_rules(epoch=7, generation=1) == expected
-    dispatch.publish()
-    for epoch, generation in ((7, 1), (8, 2)):
-        with pytest.raises(ValueError, match="Stale"):
-            dispatch.native_rules(epoch=epoch, generation=generation)
     dispatch.reset(8)
     with pytest.raises(RuntimeError, match="unavailable"):
-        dispatch.native_rules(epoch=8, generation=2)
+        dispatch.native_rules(epoch=8, generation=1)
     dispatch.publish()
-    assert dispatch.native_rules(epoch=8, generation=3) == expected
+    for epoch, generation in ((7, 1), (8, 1)):
+        with pytest.raises(ValueError, match="Stale"):
+            dispatch.native_rules(epoch=epoch, generation=generation)
+    assert dispatch.native_rules(epoch=8, generation=2) == expected
 
 
 def test_late_publication_fences_switch_only_owners_without_guest_handlers(monkeypatch):

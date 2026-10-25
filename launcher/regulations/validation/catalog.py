@@ -2,11 +2,9 @@
 """Keep one launcher-side catalog for all participating regulation mods.
 
 Share native rule values among subscribing mods while keeping each mod's custom
-rules and extra option data separate. Track which mods use each rule so updates
-only need to visit affected mods. Sandboxes retain their own copies.
+rules and extra option data separate. Each career installs all subscribed rules
+once. The shared runner retains the installed copies.
 """
-
-from collections import ChainMap
 
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.values import bounded, integer, measure, text
@@ -30,11 +28,8 @@ class CombinedCatalog:
                        for owner, model in owners.items() if model.validators}
         self.custom = {row["key"]: (owner, {option["key"]: option for option in row["options"]})
                        for owner, model in owners.items() for row in model.categories}
-        self.subscribers = {}
-        for owner, (_, validators, _) in self.owners.items():
-            for rule in {row["rule"] for row in validators}:
-                self.subscribers.setdefault(rule, set()).add(owner)
-        self.views, self._choices, self._records = {}, {}, {}
+        self.rules = {row["rule"] for _, validators, _ in self.owners.values() for row in validators}
+        self.views = {}
         self._next = 0
         self._staged = None
         self._published, self._failed = False, False
@@ -42,7 +37,7 @@ class CombinedCatalog:
     @property
     def native_values_ready(self):
         """Include native-only declarations even without a guest handler."""
-        return not self._native_rules or (not self._failed and self._published and self._staged is None)
+        return not self._failed and self._published
 
     def native_rules(self):
         """Copy fixed switches only after a complete policy publication."""
@@ -53,26 +48,26 @@ class CombinedCatalog:
     def fail_native_values(self):
         # Native-only rules have no guest state to fence. Retire their values
         # too, including when a deadline expires after catalogue commit.
-        if self._native_rules:
-            self._published, self._failed = False, True
+        self._published, self._failed = False, True
 
-    def affected(self, native, custom):
-        if type(native) is not dict or type(custom) is not dict or set(native) & set(custom):
-            raise ValueError("Expected disjoint native and custom rule updates")
-        keys = native.keys() | custom.keys()
-        if not keys <= self.subscribers.keys():
-            raise ValueError("Publication targets an unsubscribed rule")
+    def check_publication(self, native, custom):
+        """Require one complete membership after admission or career reset."""
+        if self._failed:
+            raise RuntimeError("Native rule policy is unavailable")
+        if self._published or self._staged is not None:
+            raise ValueError("Regulation policy is already installed; reset for a new career")
+        if type(native) is not dict or type(custom) is not dict or native.keys() & custom.keys():
+            raise ValueError("Expected disjoint native and custom rule maps")
+        if native.keys() | custom.keys() != self.rules:
+            raise ValueError("Publication must cover every required rule")
         if any(key not in self.native for key in native) or any(key not in self.custom for key in custom):
             raise ValueError("Native publication cannot replace custom definitions")
-        if not self.views and keys != self.subscribers.keys():
-            raise ValueError("Initial publication must cover every required rule")
-        return set().union(*(self.subscribers[key] for key in keys))
 
     def _record(self, cache, namespace, rule, key, kind, value, *, borrow=False):
         if type(value) is not dict:
             raise ValueError("Expected a plain regulation payload object")
-        # Admitted private payloads cannot change during this pack session. Their
-        # owner/rule/option identity avoids even an encoding on later publications.
+        # Private values share by owner/rule/option; native values also include
+        # their encoded payload because saved choices can reuse an option key.
         identity = namespace, rule, key, kind
         if borrow and identity in cache:
             return cache[identity]
@@ -110,37 +105,21 @@ class CombinedCatalog:
         return tuple(result)
 
     def stage(self, native, custom):
-        if self._failed:
-            raise RuntimeError("Native rule policy is unavailable")
-        if self._staged is not None:
-            raise ValueError("A catalog publication is already staged")
-        affected = self.affected(native, custom)
-        # Stage only new records; unchanged canonical objects and their lookup
-        # index are borrowed until commit flattens the retained reachable set.
-        cache, choices = ChainMap({}, self._records), dict(self._choices)
+        self.check_publication(native, custom)
+        # Build one candidate without changing the installed views. Only commit
+        # exposes it after every owner's complete guest install is acknowledged.
+        cache, choices = {}, {}
         for rule, options in native.items():
-            if options is None:
-                # Explicit generation-only update: retain every adopted choice.
-                # Initial setup cannot borrow membership that was never installed.
-                if rule not in choices:
-                    raise ValueError("Unchanged membership needs an active native rule")
-                continue
             choices[rule] = self._native_choices(rule, options, cache)
         for rule, keys in custom.items():
-            if keys is None:
-                # Custom rules use the same unchanged-membership signal; a real
-                # change below still resolves keys against admitted data only.
-                if rule not in choices:
-                    raise ValueError("Unchanged membership needs an active custom rule")
-                continue
             owner, admitted = self.custom[rule]
             if (type(keys) is not list or not keys or any(type(key) is not str or key not in admitted for key in keys)
                     or len(set(keys)) != len(keys)):
                 raise ValueError("Custom choices must resolve against admitted owner options")
             choices[rule] = tuple((key, self._record(cache, owner, rule, key, "parameters",
                                                   admitted[key].get("parameters", {}), borrow=True)) for key in keys)
-        views = dict(self.views)
-        for owner in sorted(affected):
+        views = {}
+        for owner in self.owners:
             revision, validators, model = self.owners[owner]
             owned = {}
             for rule in sorted({row["rule"] for row in validators}):
@@ -151,19 +130,14 @@ class CombinedCatalog:
                     value = model.option_data.get(rule, {}).get(key, {})
                     overlay = self._record(cache, owner, rule, key, "option_data", value, borrow=True)
                     owned[rule].append((key, base, overlay))
-            view = OwnerView(owner, revision, validators, owned)
-            previous = self.views.get(owner)
-            views[owner] = previous if previous is not None and previous.signature == view.signature else view
-        self._staged = choices, views, cache
-        return {owner: views[owner] for owner in sorted(affected)}
+            views[owner] = OwnerView(owner, revision, validators, owned)
+        self._staged = views
+        return views
 
     def commit(self):
         if self._staged is None:
             raise ValueError("No staged catalog publication")
-        self._choices, self.views, cache = self._staged
-        reachable = {record.identity for view in self.views.values() for record in view.records}
-        self._records = {key: record for key, record in cache.items() if record.identity in reachable}
-        self._staged = None
+        self.views, self._staged = self._staged, None
         self._published = True
 
     def abort(self):
@@ -173,6 +147,6 @@ class CombinedCatalog:
         if self._failed:
             raise RuntimeError("Reset cannot revive an unavailable native rule policy")
         self._published = False
-        self.views, self._choices, self._records = {}, {}, {}
+        self.views = {}
         self._staged = None
         # IDs never repeat, even across a career reset or an aborted publication.

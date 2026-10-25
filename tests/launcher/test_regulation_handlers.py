@@ -17,13 +17,13 @@ import json
 from regulation_support import context, make_mod, selection, validator
 
 
-def session(mod, rows=None):
+def session(mod, rows=None, *, options=None):
     data = {"categories": [{"key": "native", "options": [{"key": "open"}]}],
             "mod_extensions": {mod.manifest.id: {"schema": 1, "validators": rows or [validator()]}}}
     model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), {mod.manifest.id: mod.snapshot}, scopes={"personnel.contract"})
     handler = SharedHandlerRunner.bind(mod.runner, model.validators)
     dispatch = ValidationDispatch(model, handler)
-    dispatch.publish(native={"native": [{"key": "open"}]})
+    dispatch.publish(native={"native": options or [{"key": "open"}]})
     return dispatch
 
 
@@ -36,20 +36,18 @@ def test_custom_rookie_validator_uses_native_applicability_and_adopted_rule_data
   return {'decision':'deny', 'message':'Rookie contract too long'}
  return {'decision':'allow'}
 """)
-    bound = session(mod)
-    bound.publish(native={"native": [{"key": "open", "parameters": {"max_years": 3}}]})
+    bound = session(mod, options=[{"key": "open", "parameters": {"max_years": years}} for years in (3, 5)])
     ctx = context()
     ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
                        "proposed": {"length_weeks": 208}}
     calls = {mod.manifest.id: [["check", 0, 0]]}
-    def decision():
-        return bound.evaluate([ctx], [selection()], calls)[mod.manifest.id][0]
+    def decision(index=0):
+        return bound.evaluate([ctx], [selection(index)], calls)[mod.manifest.id][0]
     assert decision() == {"decision": "deny", "message": "Rookie contract too long"}
     ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = False
     assert decision() == {"decision": "allow"}
     ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = True
-    bound.publish(native={"native": [{"key": "open", "parameters": {"max_years": 5}}]})
-    assert decision() == {"decision": "allow"}
+    assert decision(1) == {"decision": "allow"}
 
 
 def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(make_mod, monkeypatch):

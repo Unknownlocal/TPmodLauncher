@@ -75,7 +75,7 @@ def publish(group, catalog):
     known, plans = set(), {}
     views = catalog.stage({"native": [{"key": "open", "points": 25}]}, {})
     for owner, view in views.items():
-        plan = plans[owner] = PolicyInstall(view, None, 1, 1, known=known)
+        plan = plans[owner] = PolicyInstall(view, 1, 1, known=known)
         with group.sandbox.phase(fuel=plan.fuel, seconds=5):
             reply(group, "select-regulation-owner", owner)
             for name, args, state in plan.operations:
@@ -170,3 +170,17 @@ def test_failed_shared_action_cannot_leave_other_residents_available(runner_bund
             with pytest.raises(SandboxError):
                 reply(group, "select-regulation-owner", OWNERS[0])
         assert all(member.closed for member in group.members.values()) and cleaned == [True]
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_guest_requires_a_nonempty_manifest_and_reset_before_replacement(runner_bundle, replacement):
+    with shared(runner_bundle) as (group, _, catalog, _, cleaned):
+        if replacement:
+            publish(group, catalog)
+        reply(group, "select-regulation-owner", OWNERS[0])
+        with pytest.raises(SandboxError):
+            reply(group, "begin-regulation-policy", 1, 2 if replacement else 1, 1 if replacement else 0)
+        # A failed protocol operation cannot be ignored to use a peer's policy.
+        with pytest.raises(SandboxError):
+            reply(group, "select-regulation-owner", OWNERS[1])
+        assert group.closed and cleaned == [True]

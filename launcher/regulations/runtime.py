@@ -188,7 +188,7 @@ class RegulationRuntime:
                 if self._publication is not None:
                     raise ValueError("Regulation publication already pending")
                 candidate = PolicyPublication(self._dispatch, message)
-                affected = candidate.affected
+                affected = self._dispatch.runners
                 if self._runner.closed or any(self._states[owner] == "unavailable" for owner in affected):
                     raise RuntimeError("Required regulation owner is unavailable")
                 self._publication = candidate
@@ -200,7 +200,7 @@ class RegulationRuntime:
             if operation in ("policy-page", "policy-seal"):
                 if self._publication is None:
                     raise ValueError("No regulation publication is pending")
-                affected = self._publication.affected
+                affected = self._dispatch.runners
                 if operation == "policy-page":
                     self._publication.append(message)
                     return "staging"
