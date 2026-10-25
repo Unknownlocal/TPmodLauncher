@@ -169,7 +169,7 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
                                       calls=[], native_refuse=False, native_error=False)
         assert other.sign_driver("target", "Foreign") == (True, "Signed") and other.state.calls == ["sign"]
         assert state.calls == ["sign", "renew", "sign"]
-        # Reuse one worker: rejection after leaving its enrolled operation must
+        # Reuse one worker: rejection after leaving its scoped operation must
         # not retain the earlier allowance, and must not run a second renewal.
         channel.mode = "allow"
         outcomes = []
@@ -182,7 +182,6 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
             outcomes.append(adapter.last_outcome)
 
         worker = threading.Thread(target=invoke)
-        adapter.enroll(worker)
         worker.start()
         worker.join(2)
         assert not worker.is_alive() and outcomes == ["allow", None]

@@ -52,9 +52,10 @@ Trusted adapters choose the methods and expected arguments, supply copied inputs
 and define how a refusal returns to the game. One wrapper runs every registered
 check for its method. The game's own refusals stay intact. Failed mod checks
 remain unavailable until removed; their wrappers stay installed to prevent
-unchecked actions. Only the main thread changes registrations, and changes wait
-until active operations finish. Game worker threads must register before using
-an `operation()` block.
+unchecked actions. Only the main thread changes registrations, while no operation
+is active. Trusted native wrappers use an `operation()` block to grant a worker
+access only while that operation runs. Direct worker calls outside such a block
+cannot run required validation.
 Existing decorators are checked and called intact. The bootstrap polls pending
 work and retries shutdown while operations finish. These registration and native
 call facilities are private; no mod permission or bridge request exposes them.

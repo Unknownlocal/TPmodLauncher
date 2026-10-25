@@ -40,12 +40,12 @@ class AcademyCallers:
                     self.notices.pop(owner, None)
                 return result
             # Clear before worker admission too: a reused thread may still hold
-            # an allowance from its earlier enrolled operation.
+            # an allowance from its earlier scoped operation.
             guards._local.outcome = None
             if threading.current_thread() is not threading.main_thread() and not getattr(guards._local, "operation", False):
                 # Reject before creating or publishing drafts. Trusted workers
-                # must enter the same enrolled operation scope as direct guards.
-                guards._report(HookError("Academy caller operation is not enrolled"))
+                # must enter the same trusted operation scope as direct guards.
+                guards._report(HookError("Academy caller needs a scoped worker operation"))
                 return None
             previous = getattr(guards._local, "academy_caller", None)
             frame = {"initiator": "player" if role == "ui" else "ai", "refusal": None,

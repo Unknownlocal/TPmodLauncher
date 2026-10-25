@@ -411,8 +411,6 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods
                     "state": "active" if channel.validation_ready else "installed", "career_generation": 1,
                     "components": {"development_projects": engine.groups["project"]["state"] == "active", "staffing": False}}}}
             scope.activate_native_regulations(control_bridge(monkeypatch, control), 1)
-            thread = worker.submit(threading.current_thread).result(timeout=1)
-            engine.enroll(thread)
 
             def start(budget):
                 with engine.operation():

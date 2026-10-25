@@ -80,7 +80,7 @@ class RegulationGuards(CallableAdapters):
             if (getattr(self._local, "dispatching", False)
                     or threading.current_thread() is not threading.main_thread()
                     and not getattr(self._local, "operation", False)):
-                raise HookError("Unenrolled thread or reentrant regulation validation")
+                raise HookError("Unscoped worker or reentrant regulation validation")
             if any(self.owners[owner] != "ready" for owner in participants):
                 return ValidationOutcome("unavailable", "Validation unavailable")
             remaining = deadline - time.monotonic()

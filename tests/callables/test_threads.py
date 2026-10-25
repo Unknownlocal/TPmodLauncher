@@ -11,7 +11,7 @@ from hook_manager.manager import HookError
 from .support import approve, project
 
 
-def test_worker_enrollment_poll_and_mutation_exclusion(host):
+def test_worker_scope_nesting_poll_and_mutation_exclusion(host):
     mutations, results = [], []
     entered, release = threading.Event(), threading.Event()
     module, engine = host()
@@ -23,10 +23,13 @@ def test_worker_enrollment_poll_and_mutation_exclusion(host):
         with engine.operation():
             entered.set()
             assert release.wait(3)
+            with pytest.raises(HookError, match="nested"):
+                with engine.operation():
+                    pytest.fail("Nested worker scope was admitted")
             results.append(module.method(7))
+        results.append(module.method(8))  # The same thread has lost its grant.
 
     thread = threading.Thread(target=worker)
-    engine.enroll(thread)
     thread.start()
     try:
         assert entered.wait(3)
@@ -36,11 +39,7 @@ def test_worker_enrollment_poll_and_mutation_exclusion(host):
     finally:
         release.set()
         thread.join(3)
-    assert not thread.is_alive() and results == [True] and mutations == [7]
-    unknown = threading.Thread(target=lambda: results.append(module.method(8)))
-    unknown.start()
-    unknown.join(3)
-    assert results == [True, False] and mutations == [7]
+    assert not thread.is_alive() and results == [True, False] and mutations == [7]
 
 
 def test_registration_excludes_worker_admission_until_publication(host, monkeypatch):
@@ -57,7 +56,6 @@ def test_registration_excludes_worker_admission_until_publication(host, monkeypa
             results.append(module.method(1))
 
     thread = threading.Thread(target=worker)
-    engine.enroll(thread)
     original_install = engine._install_ready
 
     def install(name):
@@ -87,7 +85,6 @@ def test_waiting_worker_cannot_enter_a_closed_engine(host):
             results.append("rejected")
 
     thread = threading.Thread(target=worker)
-    engine.enroll(thread)
     with engine._lock:
         thread.start()
         assert attempted.wait(3)
@@ -104,7 +101,6 @@ def test_escaped_removed_wrapper_does_not_hold_lock_while_native_joins_worker(ho
     def method(value):
         thread = threading.Thread(target=lambda: completed.append(module.second(value)))
         threads.append(thread)
-        engine.enroll(thread)
         original_run = thread.run
 
         def run():

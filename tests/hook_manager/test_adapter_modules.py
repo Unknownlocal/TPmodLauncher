@@ -308,7 +308,6 @@ def active_worker(guard):
             entered.set()
             assert release.wait(3)
     thread = threading.Thread(target=worker)
-    guard.enroll(thread)
     thread.start()
     try:
         assert entered.wait(3)

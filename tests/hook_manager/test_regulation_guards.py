@@ -126,7 +126,7 @@ def test_shared_projection_ordering_native_execution_and_identified_owner_failur
         assert engine.last_outcome.status == "allow" and engine.last_refusal is None
 
 
-def test_unenrolled_worker_cannot_bypass_shared_required_validation(monkeypatch):
+def test_unscoped_worker_cannot_bypass_shared_required_validation(monkeypatch):
     with guarded(monkeypatch) as (module, engine, channel, projections, writes):
         results = []
         def invoke():

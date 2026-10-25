@@ -45,17 +45,16 @@ guards.register("owned.guard", [host.CallBinding(
     "rule", "owned.guard", lambda arguments, result: {"effective": {"season": 1}, "proposal": {"value": arguments["value"]}},
     host.refuse_boolean,
 )])
-assert guarded(1) is False and calls == []
-channel.allowed = True
 
 
 def worker():
     with guards.operation():
+        assert guarded(1) is False and calls == []
+        channel.allowed = True
         assert guarded(2) is True
 
 
 thread = threading.Thread(target=worker)
-guards.enroll(thread)
 thread.start()
 thread.join(2)
 assert not thread.is_alive() and calls == [2]
@@ -87,7 +86,6 @@ shutdown = None
 while not host.manager.closed and time.monotonic() < deadline:
     if (output / "shutdown-request").exists() and shutdown is None:
         shutdown = threading.Thread(target=shutdown_worker)
-        guards.enroll(shutdown)
         shutdown.start()
     time.sleep(.02)
 if shutdown is not None:

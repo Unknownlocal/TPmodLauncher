@@ -55,7 +55,7 @@ class ProjectCallers:
         guards._local.outcome = None
         guards._local.project_caller = caller
         # Treat preparation and the nested start as one operation for registry
-        # changes/shutdown. The nested guard still checks worker enrollment.
+        # changes/shutdown. The nested guard still checks scoped worker access.
         with guards._lock:
             guards._active += 1
         try:

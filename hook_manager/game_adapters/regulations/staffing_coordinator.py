@@ -2,7 +2,7 @@
 """Validate a complete private staff operation before publishing its native writes."""
 
 import threading
-from contextlib import contextmanager
+from contextlib import nullcontext
 
 from ...manager import HookError
 from ..personnel.cancellation import PersonnelCancellation
@@ -29,27 +29,6 @@ class StaffingCoordinator:
             raise HookError("Staffing coordinator needs matching pre-hook native staff planning")
         self.guards, self.planner = guards, planner
 
-    @contextmanager
-    def _caller_operation(self):
-        """Admit a native worker only for its fixed, owned staffing entry call."""
-        guards, current = self.guards, threading.current_thread()
-        if current is threading.main_thread() or getattr(guards._local, "operation", False):
-            yield
-            return
-        # These wrappers are trusted admission points, not mod-selected targets.
-        # Register the actual Thread object before operation() and revoke only
-        # our temporary grant. An earlier enrolment belongs to its existing owner.
-        with guards._lock:
-            already = current in guards._threads
-            guards._threads.add(current)
-        try:
-            with guards.operation():
-                yield
-        finally:
-            if not already:
-                with guards._lock:
-                    guards._threads.discard(current)
-
     def wrap(self, role, original, signature):
         """Keep native list/None returns while discarding an unapproved batch."""
         def wrapped(*args, **kwargs):
@@ -61,7 +40,11 @@ class StaffingCoordinator:
                 # Other careers, private manager copies and explicitly removed
                 # staff bindings use native code, including its usual arguments.
                 return original(*args, **kwargs)
-            with self._caller_operation():
+            # A worker joins its outer trusted scope, or receives access only
+            # until this fixed native wrapper returns. Main-thread calls need none.
+            scoped = (threading.current_thread() is not threading.main_thread()
+                      and not getattr(guards._local, "operation", False))
+            with guards.operation() if scoped else nullcontext():
                 result = (self.onboard(bound.arguments["team_name"], contract_years=bound.arguments["contract_years"])
                           if role == "onboard" else self.recover(bound.arguments["roles"]))
             if result.published:
@@ -107,13 +90,12 @@ class StaffingCoordinator:
             if guards.closed:
                 raise HookError("Staffing coordinator is closed")
             current = threading.current_thread()
-            # Enrollment grants this particular Thread object; operation() marks
-            # its admitted work. Both are needed, while main-thread runs retain
-            # the existing idle-operation check.
+            # Direct worker calls need an outer scope from trusted native code.
+            # Main-thread runs keep their existing idle-operation requirement.
             if current is threading.main_thread():
                 guards._main()
-            elif current not in guards._threads or not getattr(guards._local, "operation", False):
-                raise HookError("Staffing requires an enrolled native worker operation")
+            elif not getattr(guards._local, "operation", False):
+                raise HookError("Staffing requires a scoped native worker operation")
             if (getattr(guards._local, "staffing_caller", None) is not None
                     or getattr(guards._local, "dispatching", False)):
                 raise HookError("Nested staffing preparation is not supported")

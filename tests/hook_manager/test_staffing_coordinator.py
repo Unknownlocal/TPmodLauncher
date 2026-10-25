@@ -142,8 +142,7 @@ def test_pending_staffing_callers_do_not_prepare_or_fail_healthy_owners(monkeypa
         guards.stop()
 
 
-@pytest.mark.parametrize("enrolled", [False, True])
-def test_native_staffing_worker_grant_lasts_only_for_the_call(monkeypatch, enrolled):
+def test_native_staffing_worker_grant_lasts_only_for_the_call(monkeypatch):
     _, manager, person, channel, guards, run = coordinator(monkeypatch, callers=True)
     entered, release = threading.Event(), threading.Event()
     results, errors = [], []
@@ -154,19 +153,18 @@ def test_native_staffing_worker_grant_lasts_only_for_the_call(monkeypatch, enrol
     def worker():
         try:
             results.append(manager.ensure_active_teams_have_staff())
-            results.append((threading.current_thread() in guards._threads, guards._local.operation))
+            with pytest.raises(HookError, match="scoped native worker"):
+                run.recover()
         except BaseException as error:
             errors.append(error)
     thread = threading.Thread(target=worker)
-    if enrolled:
-        guards.enroll(thread)
     try:
         thread.start()
         assert entered.wait(2)
-        assert not guards.try_stop() and thread in guards._threads
+        assert not guards.try_stop()
         release.set()
         thread.join(3)
-        assert not thread.is_alive() and not errors and results == [None, (enrolled, False)]
+        assert not thread.is_alive() and not errors and results == [None]
         assert person.contract == {"team": "first"} and len(manager.staff) == 2 and guards._active == 0
     finally:
         release.set()
@@ -301,14 +299,10 @@ def test_generation_error_and_unadmitted_worker_leave_staffing_private(monkeypat
                 run.recover()
             except HookError as error:
                 errors.append(str(error))
-        for enrolled in (False, True):
-            thread = threading.Thread(target=worker)
-            if enrolled:
-                guards.enroll(thread)
-            thread.start()
-            thread.join(2)
-            assert not thread.is_alive()
-        assert len(errors) == 2
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(2)
+        assert not thread.is_alive() and len(errors) == 1
         assert manager.staff == [person] and person.contract is None and not guards._active
     finally:
         guards.stop()
@@ -335,7 +329,6 @@ def test_admitted_worker_outcomes_freeze_configuration_and_clean_up(monkeypatch)
             except BaseException as error:
                 errors.append(error)
         thread = threading.Thread(target=worker)
-        guards.enroll(thread)
         try:
             thread.start()
             assert entered.wait(2)
@@ -418,8 +411,6 @@ def test_busy_personnel_operations_cannot_overlap_and_worker_can_retry(monkeypat
                 errors.append(error)
 
         threads = [threading.Thread(target=call) for call in (first_worker, second_worker)]
-        for thread in threads:
-            guards.enroll(thread)
         try:
             threads[0].start()
             assert entered.wait(2)

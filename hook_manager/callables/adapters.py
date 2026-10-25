@@ -4,7 +4,6 @@
 from contextlib import contextmanager
 import math
 import threading
-from weakref import WeakSet
 
 # Normal imports resolve these dependencies; the fixed game bundle supplies them
 # earlier in its shared private namespace, where __package__ is None.
@@ -39,7 +38,7 @@ class CallableAdapters(Manager):
         # Registry changes and guest waiting use separate locks. Status and
         # cleanup can re-enter the registry without waiting behind guest work.
         self._lock, self._guest = threading.RLock(), threading.Lock()
-        self._local, self._threads = threading.local(), WeakSet()
+        self._local = threading.local()
         # Pin configuration for both guarded calls and whole worker scopes.
         self._active = 0
 
@@ -55,26 +54,14 @@ class CallableAdapters(Manager):
                 raise HookError("Callable adapters require private callable targets")
             return super().approve(target)
 
-    def enroll(self, thread):
-        """Grant a particular native Thread object, before its trusted operation starts."""
-        with self._lock:
-            self._main()
-            if not isinstance(thread, threading.Thread):
-                raise HookError("Expected a native operation thread")
-            # Object identity avoids granting a later thread a recycled OS ID;
-            # weak references do not keep finished Thread objects alive.
-            self._threads.add(thread)
-
     @contextmanager
     def operation(self):
-        """Enter a trusted worker operation; thread IDs alone never grant access."""
-        current = threading.current_thread()
+        """Grant this worker access only for the duration of trusted native work."""
         with self._lock:
-            # Admission and shutdown share the lock: a worker waiting here must
-            # recheck enrollment/closure after any intervening configuration.
-            if (self.closed or current not in self._threads
-                    or getattr(self._local, "operation", False)):
-                raise HookError("Native worker operation is not enrolled or is nested")
+            # Only fixed native wrappers enter this private scope. Admission and
+            # shutdown share the lock, so a waiting worker rechecks closure.
+            if self.closed or getattr(self._local, "operation", False):
+                raise HookError("Native worker operation is closed or nested")
             self._local.operation = True
             self._active += 1
         try:
@@ -169,7 +156,7 @@ class CallableAdapters(Manager):
 
     def poll(self):
         with self._lock:
-            # Bridge pulses may arrive while an enrolled worker waits on a guest.
+            # Bridge pulses may arrive while a scoped worker waits on a guest.
             # Report current readiness and defer mutations until the operation ends.
             if self._active:
                 return self.status()
@@ -214,7 +201,6 @@ class CallableAdapters(Manager):
                 self._main()
                 for owner in list(self.owners):
                     self.remove_owner(owner)
-                self._threads.clear()
             return super().stop()
 
     def try_stop(self):

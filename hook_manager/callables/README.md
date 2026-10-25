@@ -27,8 +27,10 @@ integration; mods cannot approve targets or provide these helper mappings.
 
 Normal imports use this package. The game bridge executes a fixed source list in
 dependency order in its private namespace. `Manager` owns deferred imports and
-the record of assignments needed to restore native methods. Enrolled workers and
-active calls prevent configuration changes or cleanup until their work finishes.
+the record of assignments needed to restore native methods. A trusted native
+wrapper grants worker access with an `operation()` block; leaving it removes that
+access, even after an error. Nested blocks are rejected. Active scopes and calls
+prevent configuration changes or cleanup until their work finishes.
 
 The separate [`tests/callables/`](../../tests/callables/) suite covers native
 wrapper behaviour, shared ownership, worker safety, guest access restrictions
