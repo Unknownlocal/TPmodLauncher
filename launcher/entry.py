@@ -107,6 +107,7 @@ def main(argv=None) -> int:
                 cache=cache,
                 runner_bundle=runner_bundle,
                 wake=bridge.wake,
+                bridge=bridge,
             ),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.

@@ -335,6 +335,8 @@ class Controller:
                 self.pack_mods[pid].settings_status(payload.get("status", {}))
             elif event == "themes" and pid in self.pack_mods:
                 self.pack_mods[pid].themes_status(payload.get("status", {}))
+            elif event == "career-preload" and pid in self.pack_mods:
+                self.pack_mods[pid].career_preload(payload.get("status", {}))
             elif event in ("waiting", "transport", "compatibility"):
                 self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
         elif kind == "lost" and not self.stopping:

@@ -119,6 +119,13 @@ controller-thread execution under an absolute deadline. The private runtime wait
 for confirmation from the trusted game adapter before the rules become ready.
 Shared handlers bind once per runner. Required owner identities survive group
 cleanup, including owners that declare data without validators.
+After pack loading, `PackMods` binds admitted handlers and confirms that the
+native loading adapter is armed before enabling career selection. Mod UI stays
+withheld until the selected career's rules are prepared and its hooks activated.
+The bridge sends loading-status changes to the controller, which runs those
+steps once for the captured attempt. Setup errors use normal controller cleanup;
+unconfirmed hooks cannot leave the pack marked ready. A second career in the
+same process requires a fresh session rather than reusing the first approval.
 Native fields are preserved and condition logic stays in mod source. This private
 loader entry point does not admit regulation permissions through the public mod API.
 

@@ -50,6 +50,7 @@ class PackMods:
         cache=None,
         runner_bundle=None,
         wake=None,
+        bridge=None,
     ):
         # game_root and report come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
@@ -95,6 +96,55 @@ class PackMods:
         self._regulation_dispatching = False
         self.regulations, self._regulation_status = None, None
         self._regulation_owners, self._regulation_wake = set(), wake
+        self._bridge = bridge
+        self._regulation_armed = False
+        self._regulation_generation = None
+
+    def _start_regulations(self):
+        """Bind once, then protect native loading before enabling career selection.
+
+        Menu readiness cannot wait for a career that the user has yet to select.
+        Mod UI still waits for that career's completed regulation activation.
+        """
+        if (self._bridge is None or not self.finished or not self._regulation_owners
+                or self._regulations_prepared or self._regulation_failed):
+            return
+        from launcher.regulations.runtime import SCOPE_COMPONENTS
+
+        self.bind_regulations(scopes=set(SCOPE_COMPONENTS))
+        if self._regulation_owners:
+            status = self._bridge.request("await-regulations")
+            if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
+                raise RuntimeError("Native regulation loading protection was not confirmed")
+            self._regulation_armed = True
+        self._progress("complete")
+
+    def career_preload(self, status):
+        """Prepare only the attempt captured by the game's loading adapter.
+
+        The controller delivers changes on its Store-owning thread. A repeated
+        waiting notice must not publish again or install a second set of hooks.
+        """
+        if self.closed or not self._regulation_armed:
+            return
+        if status.get("state") == "unavailable":
+            raise RuntimeError("Native regulation loading protection became unavailable")
+        if status.get("state") != "waiting":
+            return
+        generation = status.get("generation")
+        if type(generation) is not int or generation < 1:
+            raise ValueError("Invalid native regulation loading attempt")
+        if self._regulation_generation is not None:
+            if generation <= self._regulation_generation:
+                return
+            # This pack session owns one native career. A later attempt cannot
+            # reuse its approval; controller cleanup restores native behaviour.
+            raise RuntimeError("A new career needs a fresh regulation session")
+        self._regulation_generation = generation
+        self.prepare_native_regulations(self._bridge, generation)
+        if self._regulation_failed:
+            raise RuntimeError("Native regulation preparation was not confirmed")
+        self.activate_native_regulations(self._bridge, generation)
 
     def _regulation_waiting(self):
         return (not self.closed and (self._regulation_failed or (bool(self._regulation_owners)
@@ -116,6 +166,9 @@ class PackMods:
                     raise ManifestError("Required regulation owner became unavailable before binding")
             definitions = self.prepare_regulations(scopes=scopes, native_categories=native_categories)
             if definitions is None:
+                self._regulation_owners.clear()
+                self._publish_ui()
+                self._progress("complete")
                 return None
             # Capability requests with no selected declaration contribute no resources.
             # Keep declared/unavailable owners required; cleanup is not disabling.
@@ -443,7 +496,9 @@ class PackMods:
         if state in ("loading", "complete") and self._regulation_waiting():
             failed = self._regulation_failed or (self.regulations is not None
                      and "unavailable" in self.regulations.status["owners"].values())
-            state = "error" if failed else "loading"
+            # The native preload adapter protects the selected career after
+            # the menu opens. Required mod UI remains held by _ui_waiting().
+            state = "error" if failed else "complete" if self.finished and self._regulation_armed else "loading"
         if self.set_loading is not None:
             self.set_loading(
                 dict(
@@ -487,6 +542,7 @@ class PackMods:
         """Advance only ready work on the owning controller thread; never wait on a compiler."""
         if self.closed:
             return
+        self._start_regulations()
         if self.regulations is not None:
             # This runs on the controller/Store owner before any synchronous UI
             # bridge request. The I/O thread only wakes this loop and queues data.

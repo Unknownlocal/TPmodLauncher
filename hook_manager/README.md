@@ -81,8 +81,10 @@ when regulation preparation is pending. Each attempt gets a new setup
 number, so a cancelled job's reply cannot release a retry of the same career.
 This adapter alone tracks which screen, career and loading job belong to the
 attempt. Setup checks those captured objects without searching the game's stack.
-Cleanup restores owned helper copies. Normal launcher startup does not install
-this adapter or release its existing menu-loading guard.
+Cleanup restores owned helper copies. For a pack with admitted regulation
+declarations, the launcher arms this adapter before enabling career selection.
+Changes in loading status reach the controller once; it prepares and activates
+the captured attempt before the game completes loading.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence

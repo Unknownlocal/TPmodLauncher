@@ -40,6 +40,21 @@ utils._ACTIVE_PACK_CACHE.clear()
 sys.path.insert(0, str(Path(__file__).parent))
 hub = importlib.import_module("ui.screens.hub_screen")
 HubScreen = hub.HubScreen
+# A disposable loading job lets the client check status-change delivery through
+# the real JavaScript bridge. It performs no actual game or asset work.
+preload_module = ModuleType("ui.session_preload")
+def advance_session_preload(screen, state):
+    return True
+preload_module.advance_session_preload = hub.advance_session_preload = advance_session_preload
+sys.modules[preload_module.__name__] = preload_module
+game = ModuleType("game_state")
+game.GameState = type("GameState", (), {})
+sys.modules[game.__name__] = game
+loading_screen = HubScreen()
+loading_screen.manager = type("OwnedManager", (), {})()
+loading_screen.manager.current = loading_screen
+loading_screen.state = game.GameState()
+loading_screen._preload_job = type("OwnedJob", (), {})()
 options = importlib.import_module("ui.screens.options_screen")
 from native_themes_fixture import modules
 theme_path = output / "display_settings.json"
@@ -90,6 +105,8 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if host.adapters.preload is not None:
+        assert hub.advance_session_preload(loading_screen, loading_screen.state) is False
     if host.menu.loading["state"] == "error" and host.themes.placeholder is None:
         assert "code-mod:owned.theme" not in packs.COLOR_PACK_LABELS
         (output / "themes-error-cleaned").touch()

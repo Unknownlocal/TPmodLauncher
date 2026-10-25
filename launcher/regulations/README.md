@@ -131,14 +131,23 @@ Socket data cannot supply Python code or native function targets.
 request to publish the loaded career's rule data before any game hooks install.
 While waiting for the game's reply, the bridge services regulation requests on
 the controller thread. Mod cleanup defers UI updates until that reply arrives,
-so it cannot start a second bridge request during preparation. This private
-setup step is separate from normal startup and does not approve hook coverage.
+so it cannot start a second bridge request during preparation. Publication alone
+does not approve hook coverage.
 
 `PackMods.activate_native_regulations()` installs hooks with validation held off,
 checks the installation report, then asks the game to enable them. Readiness and
 mod UI remain held until that final reply. Failure closes transport and requests
 native cleanup. Healthy validators are not permanently disabled by a temporary
 refusal during installation. These fixed controls cannot name arbitrary methods.
+
+Normal startup binds admitted handlers once and arms `CareerPreload` before
+enabling career selection. Mod UI still waits for regulation readiness.
+The bridge reports changes to the captured loading attempt; `PackMods` prepares
+and activates it on the controller thread. Repeated or older waiting notices do
+not repeat setup. No enabled declarations means no native loading hooks.
+Setup failures use the controller's normal cleanup, restoring native hooks and
+reporting the failure in command-line output and the log. Loading another career in the same
+process requires a fresh session; it cannot inherit the first approval.
 
 `publish(native=..., custom=...)` streams changed rules through `policy-begin`,
 ordered `policy-page` rows and `policy-seal`. Native publications supply complete
@@ -172,7 +181,8 @@ from trusted setup, never from mod declarations.
 
 `PackMods` reserves eligible rule owners before any source import or activation.
 Failure does not release those reservations. Desired UI stays staged while rules
-are unready; published UI is cleared on failure, and loading cannot report ready.
+are unready; published UI is cleared on failure. The menu may open once native
+loading protection is armed, while regulation readiness still waits for the career.
 Cleanup removes all failed peers' declarations before publishing replacements.
 During validation it defers native UI updates until the reply has been released,
 so UI acknowledgement cannot block that reply. Shutdown stops transport before

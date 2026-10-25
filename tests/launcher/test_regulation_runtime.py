@@ -70,6 +70,91 @@ def control_bridge(monkeypatch, control):
     return client
 
 
+def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(make_mod, tmp_path, monkeypatch):
+    """Real binding/publication/activation; only native hook coverage is simulated."""
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    owner = mod.manifest.id
+    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
+        {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
+            owner: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
+    progress, menus, operations = [], [], []
+    client = control_bridge(monkeypatch, lambda operation: {})
+    with ExitStack() as resources:
+        worker = resources.enter_context(ThreadPoolExecutor(max_workers=1))
+        scope = resources.enter_context(closing(PackMods(tmp_path, lambda _: None, bridge=client,
+            set_loading=progress.append, set_menu=menus.append)))
+        scope.mods, scope.finished, scope._pack_root, scope.total = {owner: mod}, True, tmp_path, 1
+        scope._regulation_owners = {owner}
+        scope.menu.add(owner, "owned", "Owned", "Message")
+        scope._progress("complete")  # Pack loading has finished; rules still hold the menu.
+        def post(record, timeout):
+            operation = record["operation"]
+            operations.append(operation)
+            def reply(status):
+                client._message({"type": "send", "payload": {
+                    "event": "reply", "id": record["id"], "status": status}}, lambda *args: None)
+            if operation == "await-regulations":
+                # Career selection must still be blocked while protection arms.
+                assert progress[-1]["state"] == "loading" and not menus
+                reply({"adapters": {"career_preload": {"state": "armed"}}})
+            elif operation == "prepare-regulations":
+                def publish():
+                    channel = resources.enter_context(closing(RegulationChannel(scope.regulations.endpoint)))
+                    channel.publish(native={"native": [{"key": "open"}]})
+                    reply({"adapters": {"regulations": {"state": "prepared"}}})
+                worker.submit(publish)
+            else:
+                assert not scope.regulations.ready
+                reply({"regulation_control": True, "adapters": {"regulations": {
+                    "state": "installed" if operation == "install-regulations" else "active",
+                    "career_generation": 7, "components": PERSONNEL_COMPONENTS}}})
+        monkeypatch.setattr(client, "_post", post)
+        scope.poll()
+        assert scope._regulation_armed and not scope.regulations.ready and not menus
+        assert progress[-1]["state"] == "complete"
+        scope.poll()  # Binding and arming happen once, without a status request loop.
+        scope.career_preload({"state": "waiting", "generation": 7})
+        assert scope.regulations.ready and menus[-1] and progress[-1]["state"] == "complete"
+        for generation in (7, 6):
+            scope.career_preload({"state": "waiting", "generation": generation})
+        assert operations == ["await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
+        with pytest.raises(RuntimeError, match="fresh regulation session"):
+            scope.career_preload({"state": "waiting", "generation": 8})
+
+
+def test_startup_needs_no_native_hooks_for_omitted_regulation_sections(make_mod, tmp_path):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    (tmp_path / "regulations.json").write_text('{}', encoding="utf-8")
+    client = SimpleNamespace(request=lambda *args: pytest.fail("No rules need native protection"))
+    progress, menus = [], []
+    with closing(PackMods(tmp_path, lambda _: None, bridge=client,
+                          set_loading=progress.append, set_menu=menus.append)) as scope:
+        scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1
+        scope._regulation_owners = {mod.manifest.id}
+        scope.menu.add(mod.manifest.id, "owned", "Owned", "Message")
+        scope.poll()
+        assert scope.regulations.ready and not scope._regulation_owners
+        assert menus[-1] and progress[-1]["state"] == "complete"
+
+
+def test_startup_does_not_release_menu_without_confirmed_native_loading_protection(make_mod, tmp_path):
+    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
+    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
+        {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
+            mod.manifest.id: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
+    progress, menus = [], []
+    client = SimpleNamespace(request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable"}}})
+    with closing(PackMods(tmp_path, lambda _: None, bridge=client,
+                          set_loading=progress.append, set_menu=menus.append)) as scope:
+        scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1
+        scope._regulation_owners = {mod.manifest.id}
+        scope.menu.add(mod.manifest.id, "owned", "Owned", "Message")
+        scope._progress("complete")
+        with pytest.raises(RuntimeError, match="loading protection was not confirmed"):
+            scope.poll()
+        assert not scope._regulation_armed and not menus and progress[-1]["state"] == "loading"
+
+
 def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod})

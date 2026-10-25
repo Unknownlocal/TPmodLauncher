@@ -85,8 +85,8 @@ by `CareerPreload`. It checks the attempt number, screen and loading job before
 and after publishing data. Installation and activation check that same owner;
 there is no separate current-career discovery or direct-install fallback.
 Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
-keep those choices until removal. Setup reports which connections succeeded; this does not
-mean the mod checks are ready to run. `staffing` coverage requires both the
+keep those choices until removal. Setup reports which connections succeeded;
+the mod checks still need activation. `staffing` coverage requires both the
 joining-team and missing-role wrappers; loading, season rollover and head-of-aero
 recovery reach these common methods. A changed entry or unsupported planner
 leaves staffing coverage unavailable, even if ordinary signing still installs.
@@ -109,4 +109,6 @@ The native switches only enable or disable their named checks. Custom restrictio
 use ordinary validators and the regulations adopted for the proposed contract's
 season. Driver proposals include the original game's rookie-check applicability,
 even when its native cap is disabled. Setup does not declare a policy ready for
-use. The normal launcher does not activate these hooks.
+use. The launcher activates the captured loading attempt only after confirming
+complete coverage for its required checks. Native-switch declarations remain
+blocked at runtime binding.

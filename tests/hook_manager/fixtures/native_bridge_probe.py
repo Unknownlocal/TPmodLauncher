@@ -3,6 +3,7 @@
 
 import importlib.util, json, runpy, sys, time
 from pathlib import Path
+from types import SimpleNamespace
 
 root = Path(__file__).resolve().parent.parent
 
@@ -105,6 +106,22 @@ try:
     while not (output / "settings-again-acknowledged").exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert (output / "settings-again-acknowledged").exists(), messages
+    attempts = []
+    pid = next(iter(controller.sessions))
+    controller.pack_mods[pid] = SimpleNamespace(career_preload=attempts.append, poll=lambda: None, close=lambda: None,
+        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None)
+    current.request("await-regulations")
+    deadline = time.monotonic() + 3
+    while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    waiting = [row for row in attempts if row["state"] == "waiting"]
+    assert len(waiting) == 1, attempts
+    for _ in range(3):
+        current.request("status")
+        controller.poll()
+    assert sum(row["state"] == "waiting" for row in attempts) == 1, attempts
+    assert current.request("stop-regulations", regulations={"generation": waiting[0]["generation"],
+        "endpoint": {"port": 1, "token": "0" * 64}})["regulation_control"] is True
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:

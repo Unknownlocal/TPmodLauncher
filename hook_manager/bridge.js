@@ -18,6 +18,7 @@ let themesPending = false;
 let themesState = null;
 let preloadFailureReported = false;
 let preloadWatching = false;
+let preloadState = null;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -132,6 +133,10 @@ observer = Process.attachModuleObserver({
                         // Deferred screen imports can fail compatibility after
                         // arming. Keep existing status pulses and report once.
                         preloadWatching = !!preload && preload.state !== 'unavailable';
+                        if (preload && JSON.stringify(preload) !== preloadState) {
+                            preloadState = JSON.stringify(preload);
+                            send({ event: 'career-preload', status: preload });
+                        }
                         if (!preloadFailureReported && preload && preload.state === 'unavailable') {
                             preloadFailureReported = true;
                             send({ event: 'compatibility', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
