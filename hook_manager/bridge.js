@@ -16,7 +16,8 @@ let settingsWatching = false;
 let settingsState = null;
 let themesPending = false;
 let themesState = null;
-let careerFailureReported = false;
+let preloadFailureReported = false;
+let preloadWatching = false;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -84,7 +85,7 @@ observer = Process.attachModuleObserver({
                 onEnter() {
                     // Before SaveThread executes, this thread still holds the GIL and its thread state.
                     // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending)) return;
+                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending && !preloadWatching)) return;
                     if (!initialized() || finalizing()) return;
                     const state = threadState();
                     if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
@@ -127,13 +128,16 @@ observer = Process.attachModuleObserver({
                         }
                         // Startup can finish after manager readiness; report its pack once per process.
                         const pack = response.status.pack;
-                        const career = response.status.career;
+                        const preload = response.status.adapters && response.status.adapters.career_preload;
+                        // Deferred screen imports can fail compatibility after
+                        // arming. Keep existing status pulses and report once.
+                        preloadWatching = !!preload && preload.state !== 'unavailable';
+                        if (!preloadFailureReported && preload && preload.state === 'unavailable') {
+                            preloadFailureReported = true;
+                            send({ event: 'compatibility', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
+                        }
                         for (const detail of response.status.regulation_notices || []) {
                             send({ event: 'compatibility', detail });
-                        }
-                        if (!careerFailureReported && career && career.state === 'unavailable') {
-                            careerFailureReported = true;
-                            send({ event: 'compatibility', detail: career.detail });
                         }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;

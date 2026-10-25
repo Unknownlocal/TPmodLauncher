@@ -19,12 +19,6 @@ adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
-`career_discovery.py` reads which career the game's main loop is displaying.
-It adds no game hooks and keeps no career alive. Bridge replies include a
-number that changes when the career changes or closes, so delayed setup can
-check that it still concerns the same save. Discovery failures are reported
-without stopping the game.
-
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
 and callable classes. It leaves the game's import path alone,
@@ -32,7 +26,7 @@ removes its temporary importer after loading and removes owned definitions on
 shutdown. Failed imports roll back their definitions. Loading installs no game
 hooks and does not declare regulations ready.
 
-The private `prepare-regulations` request supplies a career number and an
+The private `prepare-regulations` request supplies a loading-attempt number and an
 authenticated local connection. It loads the fixed bundle and publishes a
 snapshot of the career's rule data without installing game hooks. Prepared data
 and its connection stay owned until cleanup. A failed preparation closes its
@@ -42,7 +36,7 @@ Fixed installation and activation requests reuse that prepared snapshot. Wrapped
 actions are refused temporarily while the launcher checks complete hook coverage;
 this does not disable healthy validators. Activation rechecks the career, rule
 choices and installed wrappers before enabling them together. Control requests
-must match the prepared connection and career. A stop request restores owned
+must match the prepared connection and loading attempt. A stop request restores owned
 hooks, waiting for admitted operations to finish before removing them.
 
 ### Hooks, discovery and native UI
@@ -77,13 +71,18 @@ It also displays loading progress and guards New Season, Load Game and Continue
 Season until loading and menu-registration outcomes settle. Ownership and
 registry generations keep stale acknowledgements from removing later entries.
 
-`career_entry.py` provides a separate private wait for regulation setup. Trusted
-setup can arm it around the displayed screen manager's input and update methods.
-Menus and loading screens keep running; a displayed career waits until its own
-regulation activation succeeds. Drawing and the main loop continue normally.
-Permission belongs to that career object, so another loaded save must wait again.
-Cleanup restores only owned wrappers. Normal launcher startup does not arm this
-gate or release its existing menu-loading guard.
+`career_preload.py` extends the game's existing loading wait. Continue Season,
+Load Game and new-season creation share one preload helper, imported into three
+screen modules. Trusted setup wraps those fixed copies, including later imports.
+Native asset loading runs normally. Once it completes, the helper reports
+unfinished until that loading job's regulation activation succeeds. Input,
+drawing and screen transitions remain native. The existing loading message shows
+when regulation preparation is pending. Each attempt gets a new setup
+number, so a cancelled job's reply cannot release a retry of the same career.
+This adapter alone tracks which screen, career and loading job belong to the
+attempt. Setup checks those captured objects without searching the game's stack.
+Cleanup restores owned helper copies. Normal launcher startup does not install
+this adapter or release its existing menu-loading guard.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence

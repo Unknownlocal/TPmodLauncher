@@ -20,7 +20,7 @@ PYTHON_SOURCES = (
     # Transport stays in the flat core. Complete adapters load separately into
     # their own module namespaces through the trusted adapters operation.
     "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/action_transfer", "game_adapters/regulations/channel",
-    "pack_discovery", "career_discovery", "career_entry", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -197,7 +197,7 @@ class Bridge:
                                 _service=runtime.poll)
         except BaseException:
             # A cancelled request might never enter native preparation. Restore
-            # its pre-career gate too, even when no channel was acquired there.
+            # its preload wrappers too, even when no channel was acquired there.
             self._restore_regulations(runtime, control)
             raise
 

@@ -20,7 +20,7 @@ jobs:
 
   career:
     if: ${{ github.run_attempt == '1' }}
-    uses: ./.github/workflows/test-career-discovery.yml
+    uses: ./.github/workflows/test-career-preload.yml
     with:
       ref: ${{ inputs.ref }}
 

@@ -12,7 +12,7 @@ PORTABLE = "not embedded and not native and not frida_build and not legacy and n
 SUITES = {
     "launcher": "tests/launcher/",
     "hook_manager": "tests/hook_manager/",
-    "career_discovery": "tests/hook_manager/career/",
+    "career_preload": "tests/hook_manager/career/",
     "native_regulation_policy": "tests/hook_manager/game_adapters/regulations/",
     # This package has its own test owner even though its source is under hook_manager.
     "callables": "tests/callables/",
@@ -78,11 +78,9 @@ def main(argv=None):
         # its measurements in its own artifact instead of the parent's report.
         source = {"callables": "hook_manager.callables", "ci": ".github",
                   "mod_runtime_loading": "mod_runtime",
-                  "career_discovery": "hook_manager.career_discovery",
+                  "career_preload": "hook_manager.career_preload",
                   "native_regulation_policy": "hook_manager.game_adapters.regulations.native_policy"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
-        if options.suite == "career_discovery":
-            pytest_args.append("--cov=hook_manager.career_entry")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
             # assigning the private subpackage to its separate coverage report.

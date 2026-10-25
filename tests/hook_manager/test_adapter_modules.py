@@ -74,11 +74,6 @@ def installation(host, monkeypatch):
     game.GameState = type("GameState", (), {})
     monkeypatch.setitem(sys.modules, "game_state", game)
     career = game.GameState()
-    def current(generation):
-        if generation != 1:
-            raise HookError("The requested career is no longer current")
-        return career
-    host.career = SimpleNamespace(current=current)
     channel = SimpleNamespace(closed=False)
     def close():
         # Connections and installed objects must stop before definitions vanish.
@@ -108,14 +103,24 @@ def install(installation):
         native_rules={"rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
 
 
+def capture(installation):
+    """Stand in for the native loading owner; its real checks have their own suite."""
+    modules, career, _, _, _ = installation
+    def current(generation):
+        if generation != 1:
+            raise HookError("The requested loading attempt is no longer current")
+        return career
+    modules.preload = SimpleNamespace(generation=1, current=current, allow=lambda state: None, stop=lambda: None,
+                                     loading_status=lambda: {"state": "waiting", "generation": 1})
+    return modules.preload
+
+
 def test_installation_reports_components_without_claiming_full_scope(installation):
     modules, _, channel, _, hooks = installation
     hooks[1].staffing = object()  # The signing factory also completed staffing hooks.
     with pytest.raises(HookError, match="native GameState"):
         modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
     assert not channel.closed and modules.channel is None
-    with pytest.raises(HookError, match="no longer current"):
-        modules.install_current_regulations(0, channel, native_rules={}, report=pytest.fail)
     assert not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": False, "academy_signing": False,
@@ -142,14 +147,17 @@ def test_setup_exception_restores_prior_components_and_closes_channel(installati
     assert modules.prefix in sys.modules
 
 
-def test_incompatible_rule_selection_reports_skip_before_taking_channel(installation):
+def test_incompatible_rule_selection_reports_skip_and_closes_candidate_channel(installation):
     modules, _, channel, _, hooks = installation
     channel._rules, channel._custom = {"missing.native.rule"}, set()
+    modules.host.RegulationChannel = lambda endpoint: channel
+    capture(installation)
     reports = []
-    assert modules.install_current_regulations(1, channel, native_rules={}, report=reports.append) is None
+    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=reports.append)
+    assert result["regulations"]["state"] == "unavailable"
     assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
     assert modules.channel is None and modules.policy is None and modules.regulations == []
-    assert all(not hook.closed for hook in hooks) and not channel.closed
+    assert all(not hook.closed for hook in hooks) and channel.closed
 
 
 def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
@@ -162,6 +170,10 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     request = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
     with pytest.raises(HookError, match="preparation fields"):
         modules.prepare_regulations(dict(request, target="arbitrary"), report=pytest.fail)
+    notices = []
+    modules.prepare_regulations(request, report=notices.append)
+    assert "captured native loading attempt" in notices[0] and modules.channel is None and not channel.closed
+    capture(installation)
     result = modules.prepare_regulations(request, report=pytest.fail)
     assert result["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
     assert published == [{"native": {}, "custom": {}}]
@@ -189,11 +201,12 @@ def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation,
     channel.publish = lambda **data: None
     modules.host.RegulationChannel = lambda endpoint: channel
     request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
+    capture(installation)
     modules.prepare_regulations(request, report=pytest.fail)
     modules.control_regulations("install-regulations", request, report=pytest.fail)
     owner, installed, foreign = SimpleNamespace(), object(), object()
     if failure == "career_change":
-        modules.host.career.current = lambda generation: object()
+        modules.preload.current = lambda generation: object()
     else:
         owner.method = foreign
         hooks[0].groups["drivers.rookie-check"]["changes"].append((owner, "method", object(), installed, True))
@@ -211,11 +224,12 @@ def test_preparation_failure_closes_candidate_and_reports_native_fallback(instal
     channel._rules, channel._custom = set(), set()
     modules.host.RegulationChannel = lambda endpoint: channel
     released = []
-    modules.entry_gate = SimpleNamespace(stop=lambda: released.append(True))
+    preload = capture(installation)
+    preload.stop = lambda: released.append(True)
     def publish(**data):
         if failure == "publication":
             raise HookError("Publication failed")
-        modules.host.career.current = lambda generation: object()
+        preload.current = lambda generation: object()
     channel.publish = publish
     notices = []
     result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=notices.append)
@@ -223,7 +237,7 @@ def test_preparation_failure_closes_candidate_and_reports_native_fallback(instal
     assert len(notices) == 1 and "continuing native game" in notices[0]
     assert modules.channel is None and modules.policy is None and channel.closed
     assert modules.regulations == [] and all(not hook.closed for hook in hooks)
-    assert released == [True] and modules.entry_gate is None
+    assert released == [True] and modules.preload is None
 
 
 @contextmanager

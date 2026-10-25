@@ -48,7 +48,6 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.callables = module.CallableAdapters()
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
-            module.career = module.CareerDiscovery()
             module.menu = module.MenuAdapter()
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)
@@ -91,12 +90,12 @@ def pulse(sources, digest, instance, game_root, request_json):
             notices = []
             try:
                 if set(request) != {"operation"}:
-                    raise ValueError("Career entry accepts no payload")
+                    raise ValueError("Career preloading accepts no payload")
                 module.adapters.await_regulations()
             except Exception as error:
-                notices.append("REGULATIONS COMPATIBILITY FAILED career.entry: "
+                notices.append("REGULATIONS COMPATIBILITY FAILED career.preload: "
                                + " ".join(str(error).split())[:512]
-                               + "; career entry skipped; continuing native game")
+                               + "; preload integration skipped; continuing native game")
             response = module.manager.request({"operation": "status"})
             response["regulation_notices"] = notices
         elif type(request) is dict and request.get("operation") == "prepare-regulations":
@@ -140,12 +139,12 @@ def pulse(sources, digest, instance, game_root, request_json):
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
-            module.career.stop()
         response["callables"] = (module.callables.status() if module.callables.closed
                                  else module.callables.poll())
+        if module.adapters.preload is not None:
+            module.adapters.preload.poll()
         response["adapters"] = module.adapters.status()
         response["pack"] = module.discovery.poll()
-        response["career"] = module.career.poll()
         response["menu"] = module.menu.poll()
         loading = response["menu"].get("loading", {})
         if (loading.get("state") in ("complete", "error") or loading.get("timed_out")

@@ -80,11 +80,12 @@ code. Mods cannot choose native targets or call the private callable adapter.
 
 The private `AdapterModules.install_regulations` method owns the signing and
 project adapters and native switches for a career supplied by trusted setup.
-`install_current_regulations` checks that the currently displayed career still
-matches the number from the launcher's earlier status request before setup.
-It prepares `NativeRegulationPolicy` as the selector, so callers do not supply a
-selection function. The stored policy belongs to the installed adapters and is
-released with them. Setup reports which connections succeeded; this does not
+Private preparation takes its career from the game's loading attempt captured
+by `CareerPreload`. It checks the attempt number, screen and loading job before
+and after publishing data. Installation and activation check that same owner;
+there is no separate current-career discovery or direct-install fallback.
+Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
+keep those choices until removal. Setup reports which connections succeeded; this does not
 mean the mod checks are ready to run. `staffing` coverage requires both the
 joining-team and missing-role wrappers; loading, season rollover and head-of-aero
 recovery reach these common methods. A changed entry or unsupported planner

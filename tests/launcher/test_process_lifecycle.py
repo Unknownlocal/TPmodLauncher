@@ -126,7 +126,7 @@ def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig)
     controller.start()
     try:
         session = controller.sessions[10]
-        detail = "REGULATIONS COMPATIBILITY FAILED career.discovery; continuing native game"
+        detail = "REGULATIONS COMPATIBILITY FAILED career.preload; continuing native game"
         controller.events.put(("bridge", (10, session, {
             "type": "send", "payload": {"event": "compatibility", "detail": detail}})))
         controller.poll()

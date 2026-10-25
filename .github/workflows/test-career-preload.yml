@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-name: Test native career discovery and entry
+name: Test native career preloading
 
 on:
   workflow_call:
@@ -17,4 +17,4 @@ jobs:
     uses: ./.github/workflows/portable.yml
     with:
       ref: ${{ inputs.ref }}
-      suite: career_discovery
+      suite: career_preload

@@ -48,7 +48,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
     try:
         assert pulse("status")["adapters"] == {"state": "idle", "modules": 0}
         host = sys.modules[name]
-        assert host.career.status() == {"state": "pending", "generation": 0}
+        assert not hasattr(host, "career")  # The loading adapter is the only career owner.
         finders, paths, before = tuple(sys.meta_path), tuple(sys.path), set(sys.modules)
         assert pulse("adapters")["adapters"]["state"] == "loaded"
         prefix = host.adapters.prefix
@@ -72,43 +72,48 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))
         career = game.GameState()
-        monkeypatch.setattr(host.career, "current", lambda generation: career)
-        coverage = host.adapters.install_current_regulations(1, channel, native_rules={}, report=pytest.fail)
-        assert host.adapters.policy is not None
-        assert coverage == {"driver_signing": False, "staff_signing": False, "academy_signing": False,
-            "development_projects": False, "rookie_contract_length_check": "native",
-            "staff_prestige_check": "native", "staffing": False}
-        assert host.adapters.stop_regulations()
-        closed.clear()
         ui = ModuleType("ui.screen_manager")
         ui.ScreenManager = type("ScreenManager", (), {
             "handle_event": lambda self, event: "native event", "update": lambda self: "native update"})
         monkeypatch.setitem(sys.modules, ui.__name__, ui)
         screen_manager = ui.ScreenManager()
         screen_manager.current = SimpleNamespace(state=career)
-        monkeypatch.setattr(host.career, "_screen_manager", lambda: screen_manager)
+        helper = ModuleType("ui.session_preload")
+        helper.advance_session_preload = lambda screen, state: True
+        monkeypatch.setitem(sys.modules, helper.__name__, helper)
+        for name in ("hub_screen", "load_game_screen", "team_select_screen"):
+            module = ModuleType("ui.screens." + name)
+            module.advance_session_preload = helper.advance_session_preload
+            monkeypatch.setitem(sys.modules, module.__name__, module)
+        screen = type("OwnedLoadingScreen", (), {})()
+        screen.manager, screen.state = screen_manager, career
+        screen._preload_job = type("OwnedPreloadJob", (), {})()
+        screen_manager.current = screen
         rejected = pulse("await-regulations", target="author-selected")
-        assert rejected["regulation_notices"] and host.adapters.entry_gate is None
-        assert pulse("await-regulations")["adapters"]["career_entry"] == "armed"
-        cached_update = screen_manager.update
-        assert screen_manager.update() is None
+        assert rejected["regulation_notices"] and host.adapters.preload is None
+        assert pulse("await-regulations")["adapters"]["career_preload"] == {"state": "armed"}
+        cached_preload = sys.modules["ui.screens.hub_screen"].advance_session_preload
+        assert cached_preload(screen, career) is False
+        generation = host.adapters.preload.generation
+        assert screen_manager.update() == "native update"  # No general input/update interception.
         published = []
         channel._token = "0" * 64
         channel.publish = lambda **data: published.append(data)
         monkeypatch.setattr(host, "RegulationChannel", lambda endpoint: channel)
-        prepared = pulse("prepare-regulations", regulations={"generation": 1,
+        prepared = pulse("prepare-regulations", regulations={"generation": generation,
             "endpoint": {"port": 1, "token": "0" * 64}})
         assert prepared["regulation_notices"] == []
-        assert prepared["adapters"]["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
+        assert prepared["adapters"]["regulations"] == {"state": "prepared", "components": {}, "career_generation": generation}
         assert published == [{"native": {}, "custom": {}}] and host.adapters.regulations == []
-        control = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
-        rejected = pulse("install-regulations", regulations=dict(control, generation=2))
+        control = {"generation": generation, "endpoint": {"port": 1, "token": channel._token}}
+        rejected = pulse("install-regulations", regulations=dict(control, generation=generation + 1))
         assert rejected["regulation_control"] is False and rejected["regulation_notices"]
         assert host.adapters.channel is channel
         assert pulse("install-regulations", regulations=control)["regulation_control"] is True
         active = pulse("activate-regulations", regulations=control)
         assert active["regulation_control"] is True and active["adapters"]["regulations"]["state"] == "active"
         assert screen_manager.update() == "native update"
+        assert cached_preload(screen, career) is True
         guard = host.CallableAdapters()
         host.adapters.regulations.append(guard)
         # The worker behaviour itself is tested with a real thread in the
@@ -119,11 +124,20 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch)
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
         assert pulse("stop-regulations", regulations=control)["regulation_control"] is True
-        assert host.adapters.entry_gate is None and cached_update() == "native update"
+        assert host.adapters.preload is None and cached_preload(screen, career) is True
+        pulse("await-regulations")
+        assert sys.modules["ui.screens.hub_screen"].advance_session_preload(screen, career) is False
+        replacement = host.adapters.preload
+        assert replacement.generation > generation
+        assert pulse("prepare-regulations", regulations=control)["regulation_notices"]
+        assert host.adapters.preload is replacement and not replacement.closed
+        # Delayed channel-free cleanup still belongs to the previous attempt.
+        assert pulse("stop-regulations", regulations=control)["regulation_control"] is False
+        assert host.adapters.preload is replacement and not replacement.closed
+        assert pulse("stop-regulations", regulations=dict(control, generation=replacement.generation))["regulation_control"] is True
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
-        assert host.career.status()["state"] == "stopped"
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:
