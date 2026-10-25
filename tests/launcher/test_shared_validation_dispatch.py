@@ -106,15 +106,6 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_acti
     assert calls == [("a.rules", "a.rules.private")] + [("a.rules", "native")] * 20 + [("b.rules", "native")] + [("c.rules", "native")] * 20
     assert sum(name == "begin-regulation-contexts" for name, _ in traffic) == 1
     assert all(json.loads(args[-1])["contexts"] == [0] for name, args in traffic if name == "begin-regulation-action")
-    traffic.clear()
-    first, second = proposal(), proposal()
-    second["clock"]["absolute_week"] = 9
-    traffic.clear()
-    assert session.evaluate([first, second], [selection()], {"b.rules": [["v00", 0, 0]], "c.rules": [["v00", 1, 0]]}) == {
-        owner: [{"decision": "allow"}] for owner in ("b.rules", "c.rules")}
-    table = next(json.loads(args[-1]) for name, args in traffic if name == "begin-regulation-contexts")
-    assert table == [first, second]
-    traffic.clear()
     action = session.action
     traffic.clear()
     session.reset(2)
@@ -145,7 +136,7 @@ def test_failed_shared_publication_fences_all_peers_and_preserves_host_view(make
         session.reset(2)
 
 
-@pytest.mark.parametrize("failure", ["handler", "context-reply", "handler-reply", "completion-reply"])
+@pytest.mark.parametrize("failure", ["handler", "context-reply", "handler-reply", "completion-reply", "multiple-proposals", "duplicate-validator"])
 def test_failed_shared_execution_closes_all_members_without_returning_partial_approval(make_shared_dispatch, monkeypatch, failure):
     session, group, calls, cleaned, _, _ = make_shared_dispatch()
     publish(session)
@@ -165,10 +156,14 @@ def test_failed_shared_execution_closes_all_members_without_returning_partial_ap
         return raw
     monkeypatch.setattr(group.sandbox, "call", fail)
     with pytest.raises(Exception):
-        session.evaluate([proposal(error="c.rules" if failure == "handler" else "")], [selection()],
-                         {owner: [["v00", 0, 0]] for owner in session.states})
+        ctx = proposal(error="c.rules" if failure == "handler" else "")
+        session.evaluate([ctx, ctx] if failure == "multiple-proposals" else [ctx], [selection()],
+                         {owner: [["v00", 0, 0]] * (2 if failure == "duplicate-validator" else 1)
+                          for owner in session.states})
     assert group.closed and cleaned == [True] and not session.ready
     assert set(session.states.values()) == {"unavailable"}
+    if failure in ("multiple-proposals", "duplicate-validator"):
+        assert not calls  # Invalid shapes must fail before any mod runs.
     if failure in ("handler", "completion-reply"):
         assert calls[:2] == [("a.rules", "native"), ("b.rules", "native")]
     with pytest.raises(RuntimeError, match="unavailable"):

@@ -36,6 +36,59 @@ def action(channel, deadline):
     return channel([{}], [{}], {"owned.rules": [[0, 0, 0]]}, deadline)
 
 
+def test_maximum_admitted_action_and_refusals_roundtrip_in_single_frames():
+    from mod_runtime._regulations.values import bounded, measure
+
+    # Check capacity separately from 100 ms handler timing. Socket waits still
+    # use a finite real deadline so an encoding/read failure cannot hang the test.
+    owners = [f"m{i:02}" + "x" * 125 for i in range(32)]
+    ctx = {"schema": 1, "scope": "personnel.contract", "operation": "commit", "initiator": "player",
+           "clock": {"season": 2026, "absolute_week": 4},
+           "effective": {"season": 2026, "start_week": 4, "end_week": None}, "proposal": {}}
+    selections = [{"rule": f"r{i:03}" + "x" * 252, "evaluation_season": 2026, "selected": "current",
+                   "current": [2**32 - 1, 2026], "upcoming": [2**32 - 1, 10**3000]} for i in range(256)]
+    # Large season integers are allowed. Even with one shared proposal they can
+    # make a valid action exceed 256 KiB; do not silently restrict those values.
+    # Rule IDs have the same width and all values match, so one expanded
+    # argument proves the byte/node bounds for every selection in this fixture.
+    rule = {"schema": 1, "key": selections[0]["rule"], "revision": f"{'f' * 64}:{2**64 - 1}:{2**64 - 1}",
+            "evaluation_season": 2026, "selected": "current",
+            "current": {"key": "open", "effective_season": 2026, "parameters": {}, "option_data": {}},
+            "upcoming": {"key": "open", "effective_season": 10**3000, "parameters": {}, "option_data": {}}}
+    bounded(measure({"context": ctx, "regulation": rule}))
+    message = {"version": 2, "token": "a" * 64, "id": 2**64 - 1, "epoch": 2**64 - 1,
+               "action": 2**64 - 1, "op": "action", "deadline": .1,
+               "generations": dict.fromkeys(owners, 2**64 - 1), "contexts": [ctx], "selections": selections,
+               "owners": {owner: {"revision": "f" * 64,
+                          "calls": [[i, 0, n * 8 + i] for i in range(8)]} for n, owner in enumerate(owners)}}
+    response = {**regulation_header(message, check_deadline=False), "result": {
+        owner: [{"decision": "deny", "message": "\U0001f600" * 160}] * 8 for owner in owners}}
+    assert 256 * 1024 < len(regulation_encode(message)) < REGULATION_FRAME_BYTES
+    sender, receiver = socket.socketpair()
+    # Close sockets before joining the writer if the receiver fails early.
+    with ThreadPoolExecutor(max_workers=1) as worker, sender, receiver:
+        sender.setblocking(False)
+        receiver.setblocking(False)
+        deadline = time.monotonic() + 3
+        for value in (message, response):
+            future = worker.submit(regulation_write, sender, value, deadline)
+            assert regulation_read(receiver, deadline) == value
+            future.result(timeout=3)
+
+
+@pytest.mark.parametrize("shape", ["multiple-proposals", "owner-call-count", "session-call-count"])
+def test_impossible_action_tables_are_rejected_before_queueing(shape):
+    owners = {f"m{i}": {"revision": "f" * 64, "calls": [[slot, 0, 0] for slot in range(32)]}
+              for i in range(9 if shape == "session-call-count" else 1)}
+    if shape == "owner-call-count":
+        owners["m0"]["calls"].append([32, 0, 0])
+    value = {"version": 2, "token": "a" * 64, "id": 1, "epoch": 1, "action": 1, "op": "action",
+             "deadline": time.monotonic() + .05, "generations": dict.fromkeys(owners, 1),
+             "contexts": [{}] * (2 if shape == "multiple-proposals" else 1), "selections": [{}], "owners": owners}
+    with pytest.raises(ValueError, match="single-proposal"):
+        regulation_header(value)
+
+
 def test_length_framing_accepts_fragmented_messages_and_rejects_oversized_prefixes():
     sender, receiver = socket.socketpair()
     with sender, receiver, ThreadPoolExecutor(max_workers=1) as worker:

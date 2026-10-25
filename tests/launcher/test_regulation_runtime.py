@@ -570,7 +570,7 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
         assert not runtime.ready  # A transport handshake is not native readiness.
         runtime.confirm_native(PERSONNEL_COMPONENTS)
         assert not runtime.ready
-        # More than one socket frame of adopted replacements sharing a key.
+        # Several policy pages of adopted replacements sharing a key.
         # Membership is input-derived; it is not limited to current/upcoming.
         choices = [{"key": "open", "padding": "x" * 1024, "marker": index} for index in range(260)]
         pump(scope, wake, worker.submit(channel.publish, native={"native": choices}))
@@ -587,10 +587,10 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
         assert threads == [threading.get_ident()]
         reply_sent = threading.Event()
         from launcher.regulations import server as transport
-        write = transport.regulation_send_action
+        write = transport.regulation_write
 
-        def send_reply(connection, value, **kwargs):
-            write(connection, value, **kwargs)
+        def send_reply(connection, value, deadline):
+            write(connection, value, deadline)
             reply_sent.set()
 
         def publish_after_reply(records):
@@ -599,7 +599,7 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
             assert reply_sent.wait(timeout=1)
             menus.append(records)
 
-        monkeypatch.setattr(transport, "regulation_send_action", send_reply)
+        monkeypatch.setattr(transport, "regulation_write", send_reply)
         scope.set_menu = publish_after_reply
         future = worker.submit(channel, [context()], [selection()], {"a.rules": [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
@@ -634,17 +634,12 @@ def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(ma
             process.stdin.flush()
             assert json.loads(reader.submit(process.stdout.readline).result(timeout=5)) == {"connected": True}
             runtime.confirm_native(PERSONNEL_COMPONENTS)
-            contexts = [context() for _ in range(72)]
-            for index, ctx in enumerate(contexts):
-                ctx["proposal"] = {"padding": "x" * 3450, "identity": index}
-            tables = {"contexts": contexts, "selections": [selection()],
-                      "calls": {owner: [[0, index, 0] for index in range(offset * 24, (offset + 1) * 24)]
-                                for offset, owner in enumerate(mods)}}
-            assert len(json.dumps(tables, separators=(",", ":")).encode()) > 256 * 1024
+            tables = {"contexts": [context()], "selections": [selection()],
+                      "calls": {owner: [[0, 0, 0]] for owner in mods}}
             process.stdin.write(json.dumps(tables) + "\n")
             process.stdin.flush()
             reply = reader.submit(process.stdout.readline)
-            assert json.loads(pump(scope, wake, reply)) == {owner: [{"decision": "allow"}] * 24 for owner in mods}
+            assert json.loads(pump(scope, wake, reply)) == {owner: [{"decision": "allow"}] for owner in mods}
             assert process.wait(timeout=5) == 0, process.stderr.read()
     finally:
         if process.poll() is None:

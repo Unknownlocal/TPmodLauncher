@@ -6,6 +6,10 @@ real Wasm execution under the ordinary 100 ms action deadline. No game is launch
 Nationality and salary conditions are mod functions; the launcher does not own
 those rules.
 
+Each action shares one proposal across distinct declared validators. The maximum
+case uses 32 owners with eight validators each, matching the 256-validator session
+limit. Node and byte cases fill the same shared proposal's argument allowance.
+
 | File | Responsibility |
 | --- | --- |
 | `run.py` | Run selected cases in separate timing and diagnostic processes |

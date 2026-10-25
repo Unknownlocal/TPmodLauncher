@@ -116,10 +116,10 @@ per pytest session when no shared bundle is supplied.
 Regulation dispatch checks stay in the existing launcher and hook-manager suites.
 They cover real Wasm binding, copied/bounded resident arguments, staged policy
 publication, career reset and shared-runner failure, plus authenticated framing
-and shutdown. One native check sends a fragmented shared action from the owned
+and shutdown. One native check sends a single shared proposal from the owned
 CPython client to three mod owners in one shared Wasm Store under the same
-deadline. Logical maximum framing capacity has a separate clock-controlled transport check; it
-does not assert that arbitrary maximum-size actions complete within 100 ms.
+deadline. A separate bounded transport check verifies maximum request and refusal
+sizes; it does not promise that maximum-size actions complete within 100 ms.
 It joins the existing native acceptance selection; no additional CI job or
 per-test runner build is needed.
 

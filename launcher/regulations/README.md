@@ -206,10 +206,11 @@ a complete install and fresh native coverage approval. Reset cannot revive a fai
 runner. It may also retire data when loading is cancelled before activation;
 actions still require approved hooks.
 
-Actions carry shared contexts/selections and owner binding-slot references.
-Frames are bounded to 256 KiB. Larger actions use ordered base64 fragments, up to
-8,912,896 decoded bytes/46 parts, assembled before parsing. Large refusal results
-also use bounded fragments. All fragments share the original action deadline.
+Each action carries one shared proposal, rule selections and owner binding-slot
+references. Each declared validator runs once, up to 256 per action. Requests and
+replies each use one JSON frame, bounded to 2 MiB. This allows long season integers
+within the existing argument limits. Policy data still travels in bounded pages;
+partial socket reads and writes keep the original deadline.
 An identified group failure can keep the connection open; broken transport makes
 every required owner unavailable. There is no reconnection or stale approval reuse.
 The server has a private wakeup connection so shutdown can interrupt an idle read

@@ -9,7 +9,6 @@ import time
 
 from hook_manager.game_adapters.regulations.framing import regulation_read, regulation_write
 from hook_manager.game_adapters.regulations.protocol import regulation_header
-from hook_manager.game_adapters.regulations.action_transfer import regulation_receive_action, regulation_send_action
 from .transport_request import TransportRequest
 
 
@@ -101,7 +100,6 @@ class RegulationServer:
                             raise ValueError("Invalid correlated regulation request")
                         if not continuation:
                             sequence = message["id"]
-                        message = regulation_receive_action(connection, message) if message["op"] == "action-part" else message
                         request = TransportRequest(message)
                         # Publish before checking stop, as for accepted sockets:
                         # close() must release even a long control-event wait.
@@ -115,10 +113,7 @@ class RegulationServer:
                             raise TimeoutError("Regulation controller missed the action deadline")
                         if self._stop.is_set():
                             return
-                        if message["op"] == "action":
-                            regulation_send_action(connection, request.response, reply=True)
-                        else:
-                            regulation_write(connection, request.response, message["deadline"])
+                        regulation_write(connection, request.response, message["deadline"])
                         if message["op"] == "policy-begin" and "error" not in request.response:
                             pending = {key: header[key] for key in ("id", "epoch", "deadline", "generations")}
                         elif message["op"] == "policy-seal" or "error" in request.response:

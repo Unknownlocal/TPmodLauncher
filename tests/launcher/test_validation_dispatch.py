@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Production host catalog/dispatch; existing guest tests own raw protocol cases."""
 
-from copy import deepcopy
 import json
 from types import SimpleNamespace
 
@@ -30,8 +29,11 @@ def definitions(sources, *, sections=None, fallback=()):
                                             native_categories=fallback)
 
 
-def dispatch(mods):
-    model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
+def dispatch(mods, *, count=1):
+    sections = {owner: {"schema": 1,
+                       "validators": [validator("check" if i == 0 else f"check{i:02}") for i in range(count)],
+                       "option_data": {"native": {"open": {"owner": owner}}}} for owner in mods}
+    model = definitions({owner: mod.snapshot for owner, mod in mods.items()}, sections=sections)
     handler = SharedHandlerRunner.bind(next(iter(mods.values())).runner, model.validators)
     return ValidationDispatch(model, handler)
 
@@ -121,7 +123,7 @@ def validate(c,r):
  retained=(c,r)
  return {{'decision':'allow'}}
 """ for owner in ("a.rules", "b.rules")})
-    session = dispatch(mods)
+    session = dispatch(mods, count=32)
     traffic = []
     sandbox = next(iter(mods.values())).sandbox
     original = sandbox.call
@@ -152,7 +154,7 @@ def validate(c,r):
     traffic.clear()
     ctx = context()
     ctx["proposal"] = {"expect": 35, "empty": []}
-    requests = {owner: [["check", 0, 0]] * 32 for owner in mods}
+    requests = {owner: [["check" if i == 0 else f"check{i:02}", 0, 0] for i in range(32)] for owner in mods}
     assert session.evaluate([ctx], [selection(2)], requests) == {owner: [{"decision": "allow"}] * 32 for owner in mods}
     ctx["proposal"]["expect"] = 25
     assert session.evaluate([ctx], [selection()], {owner: [["check", 0, 0]] for owner in mods}) == {
@@ -160,7 +162,7 @@ def validate(c,r):
     assert not any("policy" in name or "record" in name for name in traffic)
 
 
-def test_host_composed_limits_cover_chunked_actions_before_author_execution(make_mod):
+def test_host_composed_limits_apply_before_author_execution(make_mod):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     session = dispatch({mod.manifest.id: mod})
     session.publish(native={"native": [{"key": "open"}]})
@@ -170,12 +172,11 @@ def test_host_composed_limits_cover_chunked_actions_before_author_execution(make
     ctx = context()
     ctx["proposal"]["padding"] = ""
     ctx["proposal"]["padding"] = "x" * (4096 - values.measure({"context": ctx, "regulation": rule})[0])
-    assert session.evaluate([ctx], [selection()], {mod.manifest.id: [["check", 0, 0]] * 8})[mod.manifest.id] == [{"decision": "allow"}] * 8
+    assert session.evaluate([ctx], [selection()], {mod.manifest.id: [["check", 0, 0]]})[mod.manifest.id] == [{"decision": "allow"}]
     ctx = context()
     ctx["proposal"]["values"] = []
     ctx["proposal"]["values"] = [{} for _ in range(1024 - values.measure({"context": ctx, "regulation": rule})[1])]
-    contexts = [deepcopy(ctx) for _ in range(16)]
-    assert len(session.evaluate(contexts, [selection()], {mod.manifest.id: [["check", i, 0] for i in range(16)]})[mod.manifest.id]) == 16
+    assert session.evaluate([ctx], [selection()], {mod.manifest.id: [["check", 0, 0]]})[mod.manifest.id] == [{"decision": "allow"}]
     ctx["proposal"]["values"].append({})
     with pytest.raises(ValueError, match="limits"):
         session.evaluate([ctx], [selection()], {mod.manifest.id: [["check", 0, 0]]})
@@ -184,7 +185,7 @@ def test_host_composed_limits_cover_chunked_actions_before_author_execution(make
 
 def test_career_reset_releases_dense_policy_and_preserves_bindings(make_mod):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
-    session = dispatch({mod.manifest.id: mod})
+    session = dispatch({mod.manifest.id: mod}, count=32)
     # Cover dense cached data and a record whose page wrapper needs chunking.
     choices = [{"key": "open", "values": [{} for _ in range(950)], "marker": index} for index in range(320)]
     session.publish(native={"native": choices + [{"key": "open", "p": "x" * 4088}]})
@@ -192,7 +193,7 @@ def test_career_reset_releases_dense_policy_and_preserves_bindings(make_mod):
     # Repeated actions must not spend their bounded preparation/handler fuel
     # collecting the large, unchanged resident payload graph.
     for _ in range(4):
-        assert session.evaluate([context()], [selection()], {mod.manifest.id: [["check", 0, 0]] * 32})[mod.manifest.id] == [{"decision": "allow"}] * 32
+        assert session.evaluate([context()], [selection()], {mod.manifest.id: [["check" if i == 0 else f"check{i:02}", 0, 0] for i in range(32)]})[mod.manifest.id] == [{"decision": "allow"}] * 32
     previous_ids = {record.identity for record in session.catalog.views[mod.manifest.id].records}
     action = session.action
     session.reset(2)

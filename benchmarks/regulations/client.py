@@ -2,7 +2,6 @@
 """Owned native client process; all input construction precedes timed operations."""
 
 import argparse
-from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -42,22 +41,17 @@ def main():
         ctx["proposal"]["padding"] = "x" * remaining
     elif case.get("context") == "integer":
         ctx["proposal"]["value"] = 10**3000
-    count = case["calls"] * len(owners) if case.get("context") else 1
-    contexts = [deepcopy(ctx) for _ in range(count)]
-    for index, value in enumerate(contexts):
-        # Fixed-width identities keep an exact byte-boundary fixture exact.
-        value["proposal"]["context_token"] = f"{index:04}"
+    contexts = [ctx]  # Every declared validator checks this same proposal once.
     selections, selection_slots, calls, legacy = [], {}, {}, {}
-    for owner_index, owner in enumerate(owners):
+    for owner in owners:
         calls[owner], legacy[owner] = [], []
         for index, rule in enumerate(expanded[owner]):
             if rule["key"] not in selection_slots:
                 selection_slots[rule["key"]] = len(selections)
                 selections.append({"rule": rule["key"], "evaluation_season": 2026, "selected": "current",
                                    "current": [0, 2026], "upcoming": None})
-            context_slot = owner_index * case["calls"] + index if case.get("context") else 0
-            calls[owner].append([bindings[owner][index], context_slot, selection_slots[rule["key"]]])
-            legacy[owner].append({"validator": f"v{bindings[owner][index]:02}", "context": contexts[context_slot], "regulation": rule})
+            calls[owner].append([bindings[owner][index], 0, selection_slots[rule["key"]]])
+            legacy[owner].append({"validator": f"v{bindings[owner][index]:02}", "context": ctx, "regulation": rule})
     subscribed = {row["rule"] for section in sections.values() for row in section["validators"]}
     native = {rule: options for rule, options in native.items() if rule in subscribed}
     custom = {row["key"]: [row["options"][0]["key"]] for section in sections.values() for row in section.get("categories", [])}

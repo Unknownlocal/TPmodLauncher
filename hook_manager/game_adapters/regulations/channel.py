@@ -9,7 +9,6 @@ if __package__:
     from ...manager import HookError
     from .framing import regulation_decisions, regulation_read, regulation_write
     from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value
-    from .action_transfer import regulation_receive_action, regulation_send_action
 
 
 class RegulationChannel:
@@ -74,7 +73,7 @@ class RegulationChannel:
         return result
 
     def _enter(self):
-        # One logical operation owns the stream through all pages/fragments.
+        # One logical operation owns the stream through all policy pages.
         # Policy phases share this request ID rather than reserving new IDs.
         if self.closed or not self._lock.acquire(blocking=False):
             raise HookError("Regulation channel is unavailable or already busy")
@@ -84,18 +83,11 @@ class RegulationChannel:
         return {"version": 2, "token": self._token, "id": self._sequence, "op": op,
                 "epoch": epoch, "generations": generations, "deadline": deadline, **body}
 
-    def _exchange(self, message, *, action=False):
+    def _exchange(self, message):
         expected = regulation_header(message)
-        # Policy is already streamed as bounded pages. Only actions and their
-        # results can require logical-message fragmentation on this path.
-        if action:
-            regulation_send_action(self._connection, message)
-        else:
-            regulation_write(self._connection, message, message["deadline"])
+        regulation_write(self._connection, message, message["deadline"])
         try:
             reply = regulation_read(self._connection, message["deadline"])
-            if action:
-                reply = regulation_receive_action(self._connection, reply, reply=True)
             actual = regulation_header(reply, reply=True)
         except ValueError as error:
             raise HookError("Invalid regulation reply") from error
@@ -209,7 +201,7 @@ class RegulationChannel:
             generations = {owner: self._generations[owner] for owner in calls}
             owners = {owner: {"revision": self._owners[owner]["revision"], "calls": rows} for owner, rows in calls.items()}
             result = self._exchange(self._message("action", self.epoch, generations, deadline, action=self._action,
-                                                 contexts=contexts, selections=selections, owners=owners), action=True)
+                                                 contexts=contexts, selections=selections, owners=owners))
             if result is not None:
                 if type(result) is not dict or result.keys() != calls.keys():
                     raise HookError("Incomplete regulation owners")

@@ -123,16 +123,14 @@ class ValidationDispatch:
             if self.group.handler.runner.closed or any(self.states[owner] != "active" for owner in calls):
                 raise RuntimeError("A required resident owner is unavailable")
             frame = PreparedAction(contexts, selections)
-            references = {}
             packets = {owner: frame.for_owner(self.catalog.views[owner], calls[owner],
-                                             f"{self.catalog.views[owner].revision}:{self.epoch}:{self.generation}",
-                                             shared=references)
+                                             f"{self.catalog.views[owner].revision}:{self.epoch}:{self.generation}")
                        for owner in self.states if owner in calls}
-            shared = frame.for_group(references)
+            shared = frame.for_group()
             frame.seal()
             self.action = integer(self.action + 1, 64, positive=True)
             # Preflight every packet before author code runs. Transfer the shared
-            # proposals once, execute in owner order, then finish before replying.
+            # proposal once, execute in owner order, then finish before replying.
             self.group.begin_action(shared, self.action, deadline)
             results = {owner: self.group.evaluate(owner, packet, self.action, deadline)
                        for owner, packet in packets.items()}

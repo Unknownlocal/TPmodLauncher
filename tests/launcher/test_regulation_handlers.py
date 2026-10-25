@@ -53,7 +53,7 @@ def test_custom_rookie_validator_uses_native_applicability_and_adopted_rule_data
 def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(make_mod, monkeypatch):
     mod = make_mod("from helpers import validate\ndef mutate(c,r):\n c['proposal']['leaked']=True\n r['current']['option_data']['leaked']=True\n return {'decision':'allow'}\n",
                    extra=(("helpers.py", "def validate(c,r):\n assert 'leaked' not in c['proposal'] and 'leaked' not in r['current']['option_data']\n return {'decision':'deny','message':'\U0001f600'*160}\n"),))
-    bound = session(mod, [validator("b"), validator("a", "rules.mutate")])
+    bound = session(mod, [validator("a", "rules.mutate"), *[validator(f"b{i:02}") for i in range(31)]])
     ctx = context()
     before = deepcopy(ctx)
     deadlines = []
@@ -65,7 +65,7 @@ def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(m
         return arm(deadline)
 
     monkeypatch.setattr(watchdog, "arm", arm_deadline)
-    results = bound.evaluate([ctx], [selection()], {mod.manifest.id: [["a", 0, 0]] + [["b", 0, 0]] * 31})
+    results = bound.evaluate([ctx], [selection()], {mod.manifest.id: [["a", 0, 0]] + [[f"b{i:02}", 0, 0] for i in range(31)]})
     assert results[mod.manifest.id] == [{"decision": "allow"}] + [{"decision": "deny", "message": "\U0001f600" * 160}] * 31
     assert ctx == before and not mod.sandbox.closed
     assert len(deadlines) == 3 and len(set(deadlines)) == 1 and watchdog.token is None
@@ -86,12 +86,12 @@ def test_binding_failure_closes_the_owner_without_publishing_partial_handlers(ma
 
 def test_each_handler_keeps_ordinary_fuel_and_still_traps_runaway_code(make_mod):
     mod = make_mod("def validate(c,r):\n if c['proposal'].get('exhaust'):\n  while True: pass\n total=0\n for i in range(1000): total+=i\n return {'decision':'allow'}\n")
-    bound = session(mod)
-    assert bound.evaluate([context()], [selection()], {mod.manifest.id: [["check", 0, 0]] * 4})[mod.manifest.id] == [{"decision": "allow"}] * 4
+    bound = session(mod, [validator(f"check{i}") for i in range(4)])
+    assert bound.evaluate([context()], [selection()], {mod.manifest.id: [[f"check{i}", 0, 0] for i in range(4)]})[mod.manifest.id] == [{"decision": "allow"}] * 4
     ctx = context()
     ctx["proposal"]["exhaust"] = True
     with pytest.raises(SandboxError, match="fuel"):
-        bound.evaluate([ctx], [selection()], {mod.manifest.id: [["check", 0, 0]]})
+        bound.evaluate([ctx], [selection()], {mod.manifest.id: [["check0", 0, 0]]})
     assert mod.sandbox.closed
 
 

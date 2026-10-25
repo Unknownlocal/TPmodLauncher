@@ -18,7 +18,7 @@ CASES = {
     "rule32": dict(owners=1, calls=32, payload="nodes"),
     "catalog": dict(owners=1, calls=32, rules=32, options=32, payload="catalog", full_source=True),
     "dense_catalog": dict(owners=1, calls=32, rules=32, options=10, payload="nodes", full_source=True),
-    "maximum_calls": dict(owners=32, calls=32, bindings=8, context="rows"),
+    "maximum_calls": dict(owners=32, calls=8, bindings=8),
 }
 
 ENTRY = '''import sys,json
@@ -92,7 +92,7 @@ def inputs(name):
     for owner in owners:
         rules = [owner + ".private"] if case.get("private") else list(native)
         validators = [{"id": f"v{index:02}", "rule": rules[index % len(rules)], "scope": "personnel.contract",
-                       "handler": "rules.validate"} for index in range(case.get("bindings", count))]
+                       "handler": "rules.validate"} for index in range(case.get("bindings", case["calls"]))]
         sections[owner] = {"schema": 1, "validators": validators}
         if case.get("private"):
             sections[owner]["categories"] = [{"key": rules[0], "label": "Owned", "default": "opt00",
@@ -135,8 +135,7 @@ def tables(case, owners, native, sections, revisions):
     for owner in owners:
         expanded[owner], bindings[owner] = [], []
         declared = sections[owner]["validators"]
-        for index in range(case["calls"]):
-            binding = index * len(declared) // case["calls"]
+        for binding in range(case["calls"]):
             rule = declared[binding]["rule"]
             private = case.get("private")
             option = sections[owner]["categories"][0]["options"][0] if private else native[rule][0]

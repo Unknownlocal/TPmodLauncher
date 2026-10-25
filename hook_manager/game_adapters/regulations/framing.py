@@ -6,7 +6,10 @@ import select
 import struct
 import time
 
-REGULATION_FRAME_BYTES = 256 * 1024  # Logical actions may span bounded frames.
+# Each used selection is smaller than its expanded 4 KiB handler argument.
+# 256 selections, one proposal and owner/call headers fit below 2 MiB, even
+# with long season integers. Replies fit too; policy still travels in pages.
+REGULATION_FRAME_BYTES = 2 * 1024 * 1024
 
 
 def _regulation_pairs(pairs):
@@ -79,12 +82,6 @@ def _regulation_transfer(connection, count, deadline, outgoing=None, interrupt=N
 def regulation_write(connection, value, deadline):
     data = regulation_encode(value)
     _regulation_transfer(connection, len(data), deadline, outgoing=data)
-
-
-def regulation_write_encoded(connection, data, deadline):
-    """Write JSON already encoded for logical sizing, without encoding it again."""
-    framed = _regulation_frame(data)
-    _regulation_transfer(connection, len(framed), deadline, outgoing=framed)
 
 
 def regulation_read(connection, deadline, *, interrupt=None):

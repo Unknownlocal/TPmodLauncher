@@ -8,18 +8,6 @@ import time
 if __package__:
     from .framing import regulation_encode
 
-# Up to 1,024 contexts plus 1,024 selections at 4 KiB per entry, with another
-# 512 KiB for owner/call/header metadata. This bounds the logical message;
-# each socket frame has its own smaller limit.
-REGULATION_ACTION_BYTES = 8_912_896
-# Base64 expands these bytes to 260,780 bytes, leaving space for the fixed
-# fragment header inside a 256 KiB frame. Owner tables stay in the inner JSON.
-REGULATION_PART_BYTES = 195_584
-# Replies can contain 32 owners * 32 refusals: up to 160 four-byte characters
-# plus decision JSON, then owner names/metadata and the common envelope.
-REGULATION_RESULT_BYTES = 1024 * (160 * 4 + 64) + 32 * (128 * 4 + 128) + 1024
-
-
 def regulation_policy_value(kind, value):
     """Normalize only native operational data; custom values are admitted keys."""
     if kind == "native":
@@ -76,16 +64,10 @@ def regulation_header(message, *, check_deadline=True, reply=False):
     additions = {
         "policy-begin": {"plan"}, "policy-page": {"page", "rows"}, "policy-seal": set(),
         "reset": set(), "action": {"action", "contexts", "selections", "owners"},
-        "action-part": {"action", "index", "parts", "bytes", "data"},
-        "action-result-part": {"action", "index", "parts", "bytes", "data"},
     }
     if type(message) is not dict or type(message.get("op")) is not str or message["op"] not in additions:
         raise ValueError("Unknown regulation operation")
-    if message["op"].endswith("-part"):
-        # Owner tables belong to the completed document. Repeating long owner
-        # names on each fragment would overflow the fixed base64 frame margin.
-        common.remove("generations")
-    elif reply:
+    if reply:
         # Replies echo correlation, not the request's context/policy body. Keep
         # success and fixed-error shapes closed under the same header checks.
         identity = {"action"} if message["op"] == "action" else {"page"} if message["op"] == "policy-page" else set()
@@ -106,7 +88,7 @@ def regulation_header(message, *, check_deadline=True, reply=False):
         # Reset may precede policy installation. Only that operation can refer
         # to generation zero; actions always require acknowledged positive IDs.
         regulation_integer(generation, positive=message["op"] != "reset")
-    limit = .1 if message["op"].startswith("action") else 1 + 5 * len(generations)
+    limit = .1 if message["op"] == "action" else 1 + 5 * len(generations)
     deadline = message["deadline"]
     # The controller may need to construct an error header for an expired queued
     # request. Disabling this check validates its shape only; poll() still refuses
@@ -115,9 +97,20 @@ def regulation_header(message, *, check_deadline=True, reply=False):
             or (check_deadline and not 0 < deadline - time.monotonic() <= limit)):
         raise ValueError("Invalid regulation original deadline")
     header = {key: message[key] for key in common}
-    if message["op"].startswith("action"):
+    if message["op"] == "action":
         regulation_integer(message["action"], positive=True)
         header["action"] = message["action"]
+    if message["op"] == "action" and not reply:
+        contexts, selections, owners = message["contexts"], message["selections"], message["owners"]
+        # Current adapters check one proposal, with at most the session's 256
+        # declared validators. Reject impossible tables before queueing or encoding.
+        if (type(contexts) is not list or len(contexts) != 1
+                or type(selections) is not list or not 1 <= len(selections) <= 256
+                or type(owners) is not dict or not owners or owners.keys() != generations.keys()
+                or any(type(row) is not dict or type(row.get("calls")) is not list
+                       or not 1 <= len(row["calls"]) <= 32 for row in owners.values())
+                or sum(len(row["calls"]) for row in owners.values()) > 256):
+            raise ValueError("Invalid single-proposal regulation action")
     if message["op"] == "policy-page":
         regulation_integer(message["page"])
         header["page"] = message["page"]
