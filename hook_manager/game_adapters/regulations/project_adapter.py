@@ -70,6 +70,14 @@ class ProjectAdapter(RegulationGuards):
                                       initiator=caller["initiator"] if caller else "unknown")
         return project
 
+    def _validate(self, original, signature, entries, args, kwargs):
+        """Apply this career's checks only to its own aero and chassis managers."""
+        # Class hooks also see other careers; leave their calls entirely native.
+        bound = signature.bind(*args, **kwargs)
+        if not any(bound.arguments["self"] is manager for manager in self.planner.managers):
+            return original(*args, **kwargs)
+        return super()._validate(original, signature, entries, args, kwargs)
+
     def _proposal_identity(self, arguments):
         """Include future-chassis rule inputs in before/after comparisons."""
         technical = None

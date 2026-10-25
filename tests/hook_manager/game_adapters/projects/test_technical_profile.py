@@ -73,18 +73,19 @@ def test_identity_compares_inputs_not_normalised_row_objects_and_rejects_new_pol
         profile.prepare()
 
 
-def test_future_project_refuses_changed_technical_inputs_without_disabling_validators(native, monkeypatch):
+def test_project_guard_keeps_foreign_calls_native_and_rejects_changed_owned_inputs(native, monkeypatch):
     state, profile, calculations = native
     owner, writes = "owned.rules", []
     channel = SimpleNamespace(_unavailable=set(), bindings=lambda scope: {owner: ((0, "rule"),)})
     channel.before_reply = lambda: None
+    channel.decision = {"decision": "allow"}
     contexts = []
 
     class Channel:
         def __call__(self, proposals, selections, calls, deadline):
             contexts.extend(proposals)
             channel.before_reply()
-            return {owner: [{"decision": "allow"}]}
+            return {owner: [channel.decision]}
 
     # The transport fixture is callable; the real guard still owns admission,
     # before/after identities, the shared proposal and the native write boundary.
@@ -93,7 +94,7 @@ def test_future_project_refuses_changed_technical_inputs_without_disabling_valid
     engine = object.__new__(ProjectAdapter)
     RegulationGuards.__init__(engine, wire, lambda *args: {"selected": "current", "current": [0, 1], "upcoming": None},
                              "development.project")
-    engine.planner = SimpleNamespace(managers=(None, state.regulation_manager), technical=profile)
+    engine.planner = SimpleNamespace(managers=(SimpleNamespace(), state.regulation_manager), technical=profile)
     native_module = ModuleType("owned_technical_project")
     monkeypatch.setitem(sys.modules, native_module.__name__, native_module)
 
@@ -111,6 +112,17 @@ def test_future_project_refuses_changed_technical_inputs_without_disabling_valid
         ResultContract({"shape": "bool", "denied": {"literal": False}, "accepted": {"path": [], "one_of": [True]}}))])
     engine.poll()
     try:
+        # The class hook also sees other careers. Their calls stay native even
+        # while this career's validators refuse both owned manager types.
+        channel.decision = {"decision": "deny", "message": "Project refused"}
+        assert native_module.start(self=SimpleNamespace(), project_type="future") is True
+        assert writes == ["future"] and not contexts and not calculations
+        for manager in engine.planner.managers:
+            assert native_module.start(manager, "current") is False
+            assert engine.last_refusal == "Project refused"
+        assert writes == ["future"]
+        channel.decision = {"decision": "allow"}
+        writes.clear()
         row = state.regulation_manager.regulations[module._RULE]
         for name, value in (("current_severity", "major"), ("announcement_sent", True)):
             channel.before_reply = lambda: row.__setitem__(name, value)
