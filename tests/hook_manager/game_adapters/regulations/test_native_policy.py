@@ -130,6 +130,45 @@ def test_saved_replacement_with_an_existing_key_is_not_treated_as_base_data(nati
         policy.select("entry", 2029)
 
 
+@pytest.mark.parametrize("key,limit,index", [("limited", 99, 2), ("saved_action", 99, 2), ("limited", 2, 1)])
+def test_loaded_calendar_action_uses_its_own_prepared_reference(native, monkeypatch, key, limit, index):
+    state, channel, publications = native
+    monkeypatch.setattr(sys.modules["managers.regulation_manager"], "CALENDAR_KEY", "ordinary", raising=False)
+    row = state.regulation_manager.regulations["ordinary"]
+    action = {"key": key, "name": "Saved action", "limit": limit}
+    row.update(upcoming=key, upcoming_option=action)
+    policy = NativeRegulationPolicy(state, channel)
+    policy.publish()
+    options = publications[0]["native"]["ordinary"]
+    assert options[index] == {"key": key, "parameters": {"limit": limit}}
+    assert options[1]["parameters"] == {"limit": 2}  # Base data is unchanged.
+    assert policy.select("ordinary", 2027) == {"selected": "current", "current": [0, 2027], "upcoming": [index, 2028]}
+    assert policy.select("ordinary", 2028)["selected"] == "upcoming"
+    before = policy.identity()
+    row.pop("upcoming_option")
+    row.update(current="open", upcoming=None)
+    state.season_no += 1
+    assert policy.identity() != before
+    assert policy.select("ordinary", 2028) == {"selected": "current", "current": [0, 2028], "upcoming": None}
+    assert len(publications) == 1
+    row.update(upcoming=key, upcoming_option=dict(action))
+    with pytest.raises(HookError, match="needs a new preparation"):
+        policy.select("ordinary", 2029)
+
+
+def test_saved_calendar_action_rejects_mismatched_or_ambiguous_keys(native, monkeypatch):
+    state, channel, _ = native
+    monkeypatch.setattr(sys.modules["managers.regulation_manager"], "CALENDAR_KEY", "ordinary", raising=False)
+    row = state.regulation_manager.regulations["ordinary"]
+    row["upcoming_option"] = {"key": "wrong", "limit": 99}
+    with pytest.raises(HookError, match="does not match"):
+        NativeRegulationPolicy(state, channel)
+    row["upcoming_option"]["key"] = "limited"
+    row["current"] = "limited"
+    with pytest.raises(HookError, match="ambiguous"):
+        NativeRegulationPolicy(state, channel)
+
+
 def test_boolean_only_setup_skips_native_inspection_and_incompatible_selector_is_rejected(native):
     _, channel, publications = native
     channel._rules = set()

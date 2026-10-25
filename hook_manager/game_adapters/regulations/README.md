@@ -111,9 +111,12 @@ Replacing the native manager or rule definitions still requires new preparation.
 The current choice's season records when the check observed it in force; native
 saves do not record its original adoption year. Upcoming dates use the native
 record, or the following season when the record has no date.
-Setup skips saved replacement choices, such as custom future calendar actions,
-whose data cannot be resolved by the loaded option name alone. These cases are
-reported through the same compatibility message.
+Setup also stores a calendar action already present in a loaded save. Its
+operational values have their own reference when they differ from the base
+option with the same name. Rollover can remove the action without resending
+data. Native staging replaces the whole saved action; a new action object needs
+new preparation. Other saved replacement families and ambiguous current/future
+values sharing one key are skipped with the compatibility message.
 
 The native switches only enable or disable their named checks. Custom restrictions
 use ordinary validators and the regulations adopted for the proposed contract's

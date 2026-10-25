@@ -2,6 +2,7 @@
 """Prepare subscribed rule choices once and let the game select between them."""
 
 from copy import deepcopy
+import sys
 
 from ...callables import CallableTarget
 from ...manager import HookError
@@ -20,6 +21,7 @@ class NativeRegulationPolicy:
     def __init__(self, state, channel):
         self.state, self.channel = state, channel
         self._native, self._custom, self._indexes, self._adopted = {}, {}, {}, {}
+        self._saved = {}
         self._published = False
         # The channel already combines every owner's subscriptions. Prepare
         # each rule once, even when many mods subscribe to the same choice.
@@ -62,23 +64,60 @@ class NativeRegulationPolicy:
                 self._custom[rule] = list(indexes)
             else:
                 self._native[rule] = choices
+            self._prepare_saved(rule)
             self._adopted[rule] = self._adoption(rule)
+
+    def _prepare_saved(self, rule):
+        """Include a loaded calendar action without replacing the base options."""
+        row = self.manager.regulations[rule]
+        raw = row.get("upcoming_option")
+        if raw is None:
+            return
+        native = sys.modules["managers.regulation_manager"]
+        if rule != getattr(native, "CALENDAR_KEY", None) or rule in self._custom:
+            raise HookError("Saved regulation replacement needs its native data adapter: " + rule)
+        value, _, _ = regulation_policy_value("native", raw)
+        if value["key"] != row.get("upcoming"):
+            raise HookError("Saved calendar action does not match its upcoming choice")
+        choices = self._native[rule]
+        # The catalogue already accepts distinct payloads sharing a key. Reuse
+        # an identical record, but never replace the base option's current index.
+        if value in choices:
+            index = choices.index(value)
+        else:
+            index = len(choices)
+            choices.append(deepcopy(value))
+        # Retain the native copy only to recognise it later. Published values
+        # are independent, and native staging never edits this copy in place.
+        self._saved[rule] = raw, index
 
     def _adoption(self, rule):
         """Read only the small current/upcoming identity, not complete rule data."""
         row = self.manager.regulations[rule]
-        # Native calendar saves can replace an option's data without changing
-        # its key. A definition lookup cannot resolve that saved action safely.
-        if row.get("upcoming_option") is not None:
-            raise HookError("Saved regulation replacement needs its native data adapter: " + rule)
         current, upcoming = row["current"], row.get("upcoming")
         indexes = self._indexes[rule]
-        if current not in indexes or upcoming is not None and upcoming not in indexes:
+        upcoming_index = indexes.get(upcoming)
+        raw = row.get("upcoming_option")
+        if raw is not None:
+            saved = self._saved.get(rule)
+            # Native staging replaces the whole copied action, and rollover
+            # removes it. A new object needs publication before it can be used;
+            # ordinary checks do not encode or copy that payload again.
+            if saved is None or raw is not saved[0]:
+                raise HookError("Saved regulation replacement needs a new preparation: " + rule)
+            upcoming_index = saved[1]
+            if self._native[rule][upcoming_index]["key"] != upcoming:
+                raise HookError("Saved calendar action does not match its upcoming choice")
+            if current == upcoming and upcoming_index != indexes.get(current):
+                # The native selector returns only a key; it cannot distinguish
+                # different current/upcoming payloads with that very same key.
+                raise HookError("Saved calendar action has an ambiguous current choice")
+        if current not in indexes or upcoming is not None and upcoming_index is None:
             raise HookError("Native regulation choice is missing from prepared data: " + rule)
         season = row.get("upcoming_effective_season", self.state.season_no + 1) if upcoming is not None else None
         if season is not None and (type(season) is not int or season < 1):
             raise HookError("Invalid native upcoming regulation season")
-        return current, upcoming, season
+        return current, upcoming, season, upcoming_index
 
     def _current(self):
         # Boolean-only policies have no native choice data to invalidate.
@@ -129,7 +168,7 @@ class NativeRegulationPolicy:
             raise HookError("Native regulation selection is unavailable")
         # Adoption metadata is live; the option catalogue it references stays
         # resident. The native selector still decides how each rule uses seasons.
-        current, upcoming, upcoming_season = self._adoption(rule)
+        current, upcoming, upcoming_season, upcoming_index = self._adoption(rule)
         key = self._choose(self.manager, rule, season)
         if key == current:
             selected = "current"
@@ -142,4 +181,4 @@ class NativeRegulationPolicy:
         # first adopted. Upcoming dates come from the native record/default.
         indexes = self._indexes[rule]
         return {"selected": selected, "current": [indexes[current], self.state.season_no],
-                "upcoming": [indexes[upcoming], upcoming_season] if upcoming is not None else None}
+                "upcoming": [upcoming_index, upcoming_season] if upcoming is not None else None}
