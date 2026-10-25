@@ -34,7 +34,7 @@ ADAPTER_SOURCES = {
     "personnel": "__init__ caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation",
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
-    "projects": "__init__ targets methods snapshot planner caller_targets callers",
+    "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",
     "regulations": "__init__ framing protocol action_transfer channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories native_scripts native_defaults",
 }
 

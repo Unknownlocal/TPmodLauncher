@@ -21,6 +21,7 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     state = NativeObject()
     state.aero_manager, state.development_manager = NativeObject(), NativeObject()
     monkeypatch.setattr(planner_module, "project_methods", lambda state: {})
+    monkeypatch.setattr(planner_module, "TechnicalProfile", lambda state: None)
     channel = NativeObject()
     channel.bindings = lambda scope: {"owned.rules": ((0, "rule"),)}
     # This case isolates initialization reporting. Native install/rollback is
@@ -80,6 +81,9 @@ def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_m
     # The portable fixture supplies checked-helper stand-ins. The developer probe
     # separately runs the strict identity checks and actual native helper bodies.
     monkeypatch.setattr(planner_module, "project_methods", lambda *args: methods)
+    technical = {"key": "native-era", "severity": "minor"}
+    monkeypatch.setattr(planner_module, "TechnicalProfile", lambda state: type("Profile", (), {
+        "prepare": lambda self: dict(technical)})())
     planner = planner_module.ProjectPlanner(state)
     before = deepcopy(state.teams)
     aero_args = {"self": aero, "team_name": "team", "part_key": "wing", "staff": 100,
@@ -102,6 +106,8 @@ def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_m
     assert current["proposal"]["package_key"] == future["proposal"]["package_key"] == "spec_b"
     assert current["effective"] == {"season": 3, "start_week": 108, "end_week": None}
     assert future["effective"] == {"season": 4, "start_week": 108, "end_week": None}
+    assert future["proposal"]["technical_regulation"] == technical
+    assert "technical_regulation" not in current["proposal"] and "technical_regulation" not in spec["proposal"]
     assert current["proposal"]["staff"] == current["proposal"]["technical_staff"] == 4
     assert state.teams == before and aero.state is chassis.state is state
     aero.meta["amount_m"] = float("nan")

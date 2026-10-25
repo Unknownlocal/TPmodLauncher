@@ -6,32 +6,44 @@ caller preparation to trusted guard users. It imports no regulation dispatch,
 launcher definitions or sandbox runtime. Importing installs no hooks and forces
 no game modules to load.
 
-Inspected executable provenance:
-`e1812f2fce94c16e02df8056f62ef976e6c8d3b877101d3019fb77005059f773`.
 Runtime checks method paths and exposed signatures, including defaults and
 annotations. Matching signatures accept body changes; there is no bytecode or
-executable hash gate. Native behavior is covered by developer conformance checks.
+executable hash gate.
 
-| Native entry | Source line | Native refusal | Normalized inputs / first writes |
-| --- | ---: | --- | --- |
-| `AeroDevelopmentManager.start_project` | 475 | `False` | Checks eligibility, initializes aero dictionaries, clamps both staff counts, chooses a budget, creates a project and can charge its concept fee. |
-| `AeroDevelopmentManager.start_spec_upgrade` | 543 | `False` | Checks eligibility/spec availability, normalizes staff and budget, calculates design duration and inserts the upgrade. |
-| `DevelopmentManager.start_project` | 983 | `False` | Checks eligibility, initializes development dictionaries, chooses/clamps staff, discards `weekly_spend`, selects a total budget and applies the current-package multiplier before creating the project. Handles both `current` and `future`. |
+| Native entry | Native refusal | Native action |
+| --- | --- | --- |
+| `AeroDevelopmentManager.start_project` | `False` | Checks eligibility, limits staff, chooses a budget, creates a project and can charge its concept fee. |
+| `AeroDevelopmentManager.start_spec_upgrade` | `False` | Checks eligibility and available specifications, limits staff, chooses a budget and creates the upgrade. |
+| `DevelopmentManager.start_project` | `False` | Handles current and future chassis projects. Checks eligibility, limits staff, chooses a total budget and applies the current-package budget multiplier where relevant. |
 
 ## Preparing terms
 
-Construct `ProjectPlanner(state)` after ordinary native imports finish. It raises
-on incompatibility. The consuming adapter owns reporting and installation; the
-regulation consumer is `../regulations/project_adapter.py`.
+`ProjectPlanner(state)` uses the game's loaded helpers to prepare a proposed
+project. The [regulation adapter](../regulations/project_adapter.py) reports
+incompatibility and installs the checks.
 
-`prepare(target, arguments)` takes a private `projects.*` target name and fully
-bound native arguments. It returns owned `clock`, `effective` and `proposal`
+`prepare(target, arguments)` takes a private `projects.*` target name and the
+native arguments, including defaults. It returns copied `clock`, `effective` and `proposal`
 data: employer, aero/chassis family, action, part/period/package/budget and final
 staff, technical staff and spend terms. Regulation schema/scope/actor/operation
 fields are assembled separately by `regulations/contexts.py`.
 
-Native eligibility helpers are not read-only: project stores use `setdefault`,
-part readers normalize history, and budget/staff helpers can initialize data.
+Future chassis proposals also include `proposal.technical_regulation`: the native
+era `key`, `severity`, `retention`, `concept_strength`,
+`concept_attribute_multipliers` and `upcoming` flag. Until a change is announced,
+the game supplies the current profile. After announcement it supplies the future
+profile. These operational effects do not apply to aero/spec or current chassis
+admission, so those proposals omit the field.
+
+`TechnicalProfile` in `technical_profile.py` checks the native read helpers once.
+It runs them on a copied technical choice record because native reads normalise
+that record. The definition is borrowed read-only, and the returned nested data
+is copied. No live career record changes during preparation. Future-project
+guards compare severity and announcement inputs around validation as well as
+the ordinary rule choices; a change refuses that attempt without disabling mods.
+
+Native eligibility helpers can change data: project readers create missing
+records, part readers normalise history, and budget/staff helpers can initialise data.
 The snapshot copies only headquarters, allocations and package choice needed by
 inspected helpers, borrowing stable budget definitions read-only. Neither starts
 nor eligibility methods run during planning; there is no whole-career copy.
@@ -57,10 +69,7 @@ shared validator dispatch and native guard bindings. It checks all three starts
 and eleven callers/helpers before installation and restores partial failure.
 Native support itself has no mod registration or rule-selection responsibility.
 
-Optional ignored tools under `tools/regulations/` compare actual native bodies on
-owned fixtures with game Python 3.13: three entry descriptors, twelve planning
-comparisons and twenty-seven guard/caller checks. Eligibility/finance/presentation
-dependencies outside mapped calculations use fixture stubs. This is not live
-career, complete worker-transaction or public-admission acceptance. Developer
-archive generalization remains deferred. Portable checks remain in the existing
-hook-manager suite; no separate CI jobs or runner builds are introduced.
+Project preparation tests have their own child workflow under the game-adapter
+tests and reuse prepared CI dependencies. Developer probes compare native methods
+on separate test data with the game's Python interpreter. Those probes do not
+establish live-game acceptance.

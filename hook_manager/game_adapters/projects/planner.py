@@ -9,6 +9,7 @@ or charge money before a trusted caller has accepted the proposal.
 from ...manager import HookError, data_copy
 from .methods import project_methods
 from .snapshot import ProjectSnapshot
+from .technical_profile import TechnicalProfile
 
 
 class ProjectPlanner:
@@ -18,6 +19,7 @@ class ProjectPlanner:
         self.state = state
         self.methods = project_methods(state)
         self.managers = state.aero_manager, state.development_manager
+        self.technical = TechnicalProfile(state)
 
     def prepare(self, target, arguments):
         if target not in ("projects.aero.start", "projects.aero.spec", "projects.chassis.start"):
@@ -85,7 +87,7 @@ class ProjectPlanner:
         # created_week is available now; no scheduled end exists at admission.
         # Keep native proposal data independent of regulation schema/operation
         # metadata so other trusted game adapters can use the same preparation.
-        return data_copy({
+        prepared = data_copy({
             "clock": {"season": scratch.state.season_no, "absolute_week": week},
             "effective": {"season": scratch.state.season_no + int(period == "future"), "start_week": week, "end_week": None},
             "proposal": {"employer": {"ref": scratch.reference, "name": team_name, "kind": "team"},
@@ -93,3 +95,8 @@ class ProjectPlanner:
                          "design_period": period, "package_key": package, "budget_key": budget, "weekly_spend_m": None,
                          "total_budget_m": amount, "staff": staff, "technical_staff": technical},
         })
+        if chassis and period == "future":
+            # Only future chassis calculations apply these native rule effects.
+            # The profile is proposal data; mod code still owns the decision.
+            prepared["proposal"]["technical_regulation"] = self.technical.prepare()
+        return prepared

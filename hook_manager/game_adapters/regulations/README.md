@@ -54,6 +54,13 @@ A planner calculates proposed terms without changing the live career.
 scope. Each action shares one proposal across the mods registered to check it.
 It uses the regulations adopted for the season that the proposal concerns.
 
+Future chassis contexts include the native operational technical profile under
+`proposal.technical_regulation`. Its era, severity and effects follow the game's
+announcement behaviour. The project adapter prepares it once on private inputs
+and checks for relevant changes before accepting the mod replies. Aero/spec and
+current chassis proposals omit that field. Rule option data remains separate
+from these calculated development inputs; mod code owns any resulting refusal.
+
 [outcome.py](outcome.py) keeps three results distinct:
 
 - `allow`: all required mod checks permit the action. The game's own checks can

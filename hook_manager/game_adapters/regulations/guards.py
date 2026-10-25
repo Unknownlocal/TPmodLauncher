@@ -56,15 +56,21 @@ class RegulationGuards(CallableAdapters):
         bound.apply_defaults()
         codec, projection = entries[0][1].result, entries[0][1].project
         participants = {key[0] for key, _ in entries}
-        outcome = self._decision(lambda: projection(dict(bound.arguments), None), participants)
+        outcome = self._decision(lambda: projection(dict(bound.arguments), None), participants,
+                                 identity=lambda: self._proposal_identity(bound.arguments))
         self._local.outcome = outcome
         if outcome.status != "allow":
             return self._deny(codec, outcome)
         return self._execute(original, args, kwargs)
 
-    def _decision(self, project, participants):
+    def _proposal_identity(self, arguments):
+        """Capture inputs that must stay unchanged during this validation."""
+        return self.policy_identity()
+
+    def _decision(self, project, participants, *, identity=None):
         """Check one proposal without executing native code or choosing its return shape."""
         deadline = time.monotonic() + self.seconds
+        identity = identity or self.policy_identity
         acquired = False
         try:
             if not getattr(self.channel, "validation_ready", True):
@@ -81,7 +87,7 @@ class RegulationGuards(CallableAdapters):
             if remaining <= 0 or not self._guest.acquire(timeout=remaining):
                 raise HookError("Regulation dispatch deadline expired")
             acquired = self._local.dispatching = True
-            policy = self.policy_identity()
+            policy = identity()
             context = data_copy(project())
             # Only small choice references vary by rule. The complete proposal
             # is sent once, and every applicable handler points to context zero.
@@ -100,7 +106,7 @@ class RegulationGuards(CallableAdapters):
             # Decline the write without treating that pause as a mod failure.
             if not getattr(self.channel, "validation_ready", True):
                 return ValidationOutcome("unavailable", "Validation unavailable")
-            if policy != self.policy_identity():
+            if policy != identity():
                 # Native choices changed while preparing inputs or waiting for
                 # a reply. Decline this attempt without disabling healthy mods.
                 return ValidationOutcome("unavailable", "Regulation choices changed during validation")

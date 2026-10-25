@@ -70,6 +70,13 @@ class ProjectAdapter(RegulationGuards):
                                       initiator=caller["initiator"] if caller else "unknown")
         return project
 
+    def _proposal_identity(self, arguments):
+        """Include future-chassis rule inputs in before/after comparisons."""
+        technical = None
+        if arguments.get("self") is self.planner.managers[1] and arguments.get("project_type") == "future":
+            technical = self.planner.technical.identity()
+        return self.policy_identity(), technical
+
     def _wrapper(self, name, binding, target, original, signature):
         if target.name.startswith("projects.caller."):
             wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)

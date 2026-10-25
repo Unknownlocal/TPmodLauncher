@@ -14,6 +14,7 @@ SUITES = {
     "hook_manager": "tests/hook_manager/",
     "career_preload": "tests/hook_manager/career/",
     "native_regulation_policy": "tests/hook_manager/game_adapters/regulations/",
+    "project_context": "tests/hook_manager/game_adapters/projects/",
     # This package has its own test owner even though its source is under hook_manager.
     "callables": "tests/callables/",
     "mod_runtime": "tests/mod_runtime/",
@@ -79,6 +80,7 @@ def main(argv=None):
         source = {"callables": "hook_manager.callables", "ci": ".github",
                   "mod_runtime_loading": "mod_runtime",
                   "career_preload": "hook_manager.career_preload",
+                  "project_context": "hook_manager.game_adapters.projects",
                   "native_regulation_policy": "hook_manager.game_adapters.regulations.native_policy"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
         if options.suite == "native_regulation_policy":
