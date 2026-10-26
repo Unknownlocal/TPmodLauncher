@@ -27,6 +27,9 @@ Replace `<GAME_FOLDER>` with the full path from **Browse local files**, it's the
 Keep the quotes, `--` and `%command%` as shown, then start the game through Steam.
 Steam supplies the game executable and its arguments after `--`.
 
+Closing the launcher console or pressing Ctrl+C also asks the game to close,
+as if you had clicked its Close button.
+
 For help with the path, double-click the release ZIP's optional
 `modLauncher/SteamLaunchOptions.cmd` helper. It generates your launch line and
 copies it to the clipboard; press **Ctrl+V** in Steam's Launch Options field.

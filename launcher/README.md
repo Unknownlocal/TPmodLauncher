@@ -25,6 +25,13 @@ and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
+On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
+Ctrl+Break. It sends normal window-close requests only to game processes owned
+by this controller, while the controller thread closes mods and removes hooks.
+Process handles and executable checks protect against targeting an unrelated
+process. Windows limits console-close cleanup time, so the helper waits briefly
+for normal game exit and reports if it is still pending; it does not force-kill.
+
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,
 then exchanges bounded status, pack, loading, menu, settings and palette data.

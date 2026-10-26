@@ -170,6 +170,24 @@ def test_initial_setup_failure_resumes_game_and_removes_tracking(rig):
     assert all(not session.gating for session in device.sessions.values())
 
 
+def test_console_close_during_setup_does_not_start_game(rig, monkeypatch):
+    device, controller, _, _ = rig
+    controller.shutdown = SimpleNamespace(requested=threading.Event())
+    enumerate_processes = device.enumerate_processes
+
+    def closing(**options):
+        controller.shutdown.requested.set()
+        return enumerate_processes(**options)
+
+    monkeypatch.setattr(device, "enumerate_processes", closing)
+    try:
+        controller.start()
+        assert not device.processes and not controller.sessions and not controller.held
+    finally:
+        controller.close()
+    assert not device.handlers and not controller.cleanup_failed
+
+
 def test_children_are_verified_and_helpers_and_late_children_are_released(
     rig, tmp_path
 ):

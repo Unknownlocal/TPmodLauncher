@@ -10,6 +10,8 @@ from pathlib import Path
 import queue
 import time
 
+from launcher.console_shutdown import ConsoleShutdown
+
 
 class LaunchError(RuntimeError):
     """Raised when the game command or its process tracking cannot be used safely."""
@@ -102,6 +104,7 @@ class Controller:
         clock=time.monotonic,
         bridge_factory=None,
         mods_factory=None,
+        shutdown=None,
     ):
         # device is Frida's local device; command is validated argv; report receives one log line.
         # bridge_factory optionally supplies our trusted script for each verified session.
@@ -131,6 +134,7 @@ class Controller:
         self.next_check = 0.0
         self.stopping = False
         self.cleanup_failed = False
+        self.shutdown = shutdown
 
     def _subscribe(self, signal, callback):
         # Retain the exact callback so close() can remove only our subscription.
@@ -168,6 +172,8 @@ class Controller:
             self.bridges.pop(pid, None)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
+        if self.shutdown is not None:
+            self.shutdown.track(pid)
         session = self.device.attach(pid)
         self.parents.add(pid)
         # Store the session before enabling gating so partial setup is still cleaned up.
@@ -219,6 +225,8 @@ class Controller:
 
     def start(self):
         """Spawn, attach and enable child tracking before allowing the game to run."""
+        if self.shutdown is not None and self.shutdown.requested.is_set():
+            return
         # Refuse a second game instance even if the existing one was launched normally.
         if any(
             process.parameters.get("path")
@@ -231,6 +239,10 @@ class Controller:
         # Native callbacks only queue events; the controller thread owns all session changes.
         self._subscribe("child-added", lambda child: self.events.put(("child", child)))
         self._subscribe("lost", lambda: self.events.put(("lost", None)))
+        # Enumeration/setup can outlast a console-close event. Do not start a
+        # fresh game after the user has already asked this controller to exit.
+        if self.shutdown is not None and self.shutdown.requested.is_set():
+            return
         pid = self.device.spawn(
             self.command,
             envp=os.environ.copy(),
@@ -257,6 +269,11 @@ class Controller:
             return
         self.held.add(child.pid)
         try:
+            if self.stopping and self.shutdown is not None and self.shutdown.requested.is_set():
+                # A pack-switch replacement can already be gated when Close
+                # arrives. Track it for window shutdown before releasing it.
+                if self._matches(child.pid):
+                    self.shutdown.track(child.pid)
             if not self.stopping:
                 # Unrelated helpers are resumed without attachment; only the game gets a session.
                 if self._matches(child.pid):
@@ -457,7 +474,7 @@ def run_launcher(
     """Run one controller and return 0 on normal exit, 1 on failure or 130 on interruption."""
     # Acquire ownership before opening the log: a rejected duplicate must leave it untouched.
     with controller_lock(lock_path):
-        with reporter(log_path) as logger:
+        with reporter(log_path) as logger, ConsoleShutdown(command[0], logger.info) as shutdown:
             try:
                 controller = Controller(
                     frida.get_local_device(),
@@ -466,15 +483,21 @@ def run_launcher(
                     restart_grace=restart_grace,
                     bridge_factory=bridge_factory,
                     mods_factory=mods_factory,
+                    shutdown=shutdown,
                 )
                 code = 0
                 try:
                     controller.start()
-                    while not controller.poll(timeout=0.25):
+                    while not shutdown.requested.is_set() and not controller.poll(timeout=0.25):
                         pass
-                    logger.info("GAME SESSION ENDED")
+                    if shutdown.requested.is_set():
+                        logger.info("CONSOLE CLOSE requested; closing owned game windows")
+                        code = 130
+                    else:
+                        logger.info("GAME SESSION ENDED")
                 except KeyboardInterrupt:
-                    logger.info("INTERRUPTED; releasing tracking")
+                    shutdown.request()
+                    logger.info("INTERRUPTED; closing owned game windows")
                     code = 130
                 except Exception as error:
                     logger.error("LAUNCHER ERROR: %s", error)
