@@ -3,6 +3,7 @@
 
 import inspect
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -365,18 +366,47 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
         state, driver, negotiations, planner, channel, _, _ = owned(monkeypatch)
         channel.mode, state.native_refuse = mode, True
         channel.message = "Rule says driver will not renew this reserve role contract"
-        adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
+        reports = []
+        adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"},
+                                                  report=reports.append).install_prepared()
         try:
-            assert negotiations.ai_manage_drivers("reserve") is None
+            def advance():
+                result = negotiations.ai_manage_drivers("reserve")
+                return result, adapter.last_outcome, getattr(adapter._local, "operation", False)
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                result, outcome, admitted = worker.submit(advance).result(timeout=3)
+            assert result is None and not admitted
             assert state.writes == ({"deny": ["cooldown"], "allow": [2, "cooldown"], "failed": []}[mode])
-            assert adapter.last_outcome.status == {"failed": "unavailable"}.get(mode, mode)
+            assert outcome.status == {"failed": "unavailable"}.get(mode, mode)
             assert driver.contract is None and not adapter._active
+            assert len(reports) == (1 if mode == "failed" else 0)
+            if reports:
+                assert "VALIDATION FAILED scope=personnel.contract" in reports[0] and "Owned handler failed" in reports[0]
             if mode != "failed":
                 assert negotiations.row["permanent_block"] is (mode == "allow")
                 assert negotiations.row["blocked_role"] is None
                 assert negotiations.row["failure_reason"] == (channel.message if mode == "deny" else "Native driver will not renew")
         finally:
             adapter.stop()
+
+
+def test_weekly_worker_policy_refusal_does_not_disable_later_player_signing(monkeypatch):
+    state, driver, negotiations, _, channel, _, _ = owned(monkeypatch)
+    negotiations.records = {"first": negotiations.row}
+    negotiations.markets = [(["first"], driver)]
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
+    try:
+        def advance():
+            result = negotiations.resolve_due_decisions()
+            return result, getattr(adapter._local, "operation", False)
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            assert worker.submit(advance).result(timeout=3) == (None, False)
+        assert driver.contract is None and adapter.owners == {"owned.rules": "ready"} and not adapter.errors
+        channel.mode = "allow"
+        assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
+        assert driver.contract == {"salary": 2} and not adapter._active
+    finally:
+        adapter.stop()
 
 
 def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(monkeypatch):

@@ -40,7 +40,7 @@ class AdapterModules:
         self.preload = None
         self.categories = None
         self.regulation_screen = None
-        # Deferred UI imports/draws can fail after their setup request returned.
+        # UI imports and game-worker validation can fail after setup returned.
         # Keep a bounded pack-owned outbox for the next ordinary bridge response.
         self.regulation_notices = deque(maxlen=16)
 
@@ -304,7 +304,8 @@ class AdapterModules:
                 try:
                     # Constructors only prepare support. A late academy failure
                     # must not leave earlier driver/staff/staffing wrappers behind.
-                    personnel.append(adapters.personnel_adapter.PersonnelAdapter(state, channel, select, report=report))
+                    personnel.append(adapters.personnel_adapter.PersonnelAdapter(
+                        state, channel, select, report=self.regulation_notices.append))
                     personnel.append(adapters.academy_adapter.AcademyAdapter(state, channel, select))
                 except Exception as error:
                     for hook in reversed(personnel):

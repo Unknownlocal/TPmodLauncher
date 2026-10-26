@@ -27,7 +27,7 @@ from .staffing_coordinator import StaffingCoordinator
 class PersonnelAdapter(RegulationGuards):
     def __init__(self, state, channel, select, *, report=None):
         """Check all signing/staffing support without assigning native wrappers."""
-        super().__init__(channel, select, "personnel.contract")
+        super().__init__(channel, select, "personnel.contract", report=report)
         # Reserve career inputs through native writes, not just registry access.
         self._personnel_operation = threading.Lock()
         self.feedback = None

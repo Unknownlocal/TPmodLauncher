@@ -179,3 +179,9 @@ pack unready and setup restores the hooks it installed.
 After an owner fails, `restore-native-rules` removes only bypass helpers and
 closes the validation gate. Ordinary signing/project guards remain installed
 so unavailable custom checks still refuse actions.
+
+Automated negotiation callers admit the game's weekly worker while they run.
+Nested offers keep that permission; leaving the caller removes any permission
+it introduced. Direct signing from an unrelated worker remains refused. A
+personnel validation error keeps its cause in the adapter and sends it to the
+next CLI/log update. The game retains the short Validation unavailable message.

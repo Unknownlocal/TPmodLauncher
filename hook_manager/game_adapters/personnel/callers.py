@@ -2,6 +2,8 @@
 """Keep offer preparation private and distinguish policy refusal from unavailability."""
 
 from copy import copy, deepcopy
+from contextlib import nullcontext
+import threading
 
 from .cancellation import PersonnelCancellation
 from .market_preparation import MarketPreparation
@@ -116,21 +118,27 @@ class PersonnelCallers:
             with guards._lock:
                 guards._active += 1
             try:
-                if role == "offer":
-                    return self._offer(original, bound, frame, previous)
-                try:
-                    result = original(*bound.args, **bound.kwargs)
-                except PersonnelCancellation as refused:
-                    frame["refusal"] = refused.outcome
-                    if refused.outcome.status == "unavailable" and previous is not None:
-                        # AI can ignore an inner uncontested-signing result.
-                        # Keep unwinding until its owning caller can stop too.
-                        previous["refusal"] = refused.outcome
-                        raise
-                    if role in _MARKET_CALLERS:
-                        return None
-                    return False, str(refused)
-                return (False, frame["refusal"].message) if frame["refusal"] else result
+                # Weekly progression runs on a native worker. Grant access only
+                # inside these mapped automated callers; nested offers retain
+                # that scope, while arbitrary worker signings remain refused.
+                scoped = (role in _MARKET_CALLERS and threading.current_thread() is not threading.main_thread()
+                          and not getattr(guards._local, "operation", False))
+                with guards.operation() if scoped else nullcontext():
+                    if role == "offer":
+                        return self._offer(original, bound, frame, previous)
+                    try:
+                        result = original(*bound.args, **bound.kwargs)
+                    except PersonnelCancellation as refused:
+                        frame["refusal"] = refused.outcome
+                        if refused.outcome.status == "unavailable" and previous is not None:
+                            # AI can ignore an inner uncontested-signing result.
+                            # Keep unwinding until its owning caller can stop too.
+                            previous["refusal"] = refused.outcome
+                            raise
+                        if role in _MARKET_CALLERS:
+                            return None
+                        return False, str(refused)
+                    return (False, frame["refusal"].message) if frame["refusal"] else result
             finally:
                 # Native prechecks may return or raise without ever signing.
                 # Preserve their usual initialization unless a guard refused it.
