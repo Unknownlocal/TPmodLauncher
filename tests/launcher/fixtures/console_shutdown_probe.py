@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 
 def publish_ready(path, record):
@@ -16,8 +17,8 @@ def publish_ready(path, record):
     temporary.replace(path)
 
 
-def window(output):
-    """Run a hidden native window that records normal WM_CLOSE and Python exit."""
+def window(output, ignore_close=False):
+    """Run a hidden window, optionally ignoring Close to test forced shutdown."""
     user, kernel = c.WinDLL("user32"), c.WinDLL("kernel32")
     callback = c.WINFUNCTYPE(c.c_ssize_t, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
 
@@ -44,7 +45,8 @@ def window(output):
     def receive(hwnd, message, wp, lp):
         if message == 0x0010:
             output.with_suffix(".closed").write_text("normal window close", encoding="utf-8")
-            user.DestroyWindow(hwnd)
+            if not ignore_close:
+                user.DestroyWindow(hwnd)
             return 0
         if message == 0x0002:
             user.PostQuitMessage(0)
@@ -66,7 +68,7 @@ def window(output):
 
 
 if sys.argv[1] == "window":
-    window(Path(sys.argv[2]))
+    window(Path(sys.argv[2]), len(sys.argv) > 3)
 else:
     root = Path(__file__).resolve().parent.parent
 
@@ -78,7 +80,14 @@ else:
 
     frida = load("test_binding", "native_test_binding.py").load(root)
     load("dependencies", "bundled_dependencies.py").load_source_packages(root)
-    from launcher.process_lifecycle import run_launcher
+    from launcher.process_lifecycle import Controller, run_launcher
+
+    if sys.argv[1] == "blocked":
+        def blocked_cleanup(self):
+            # Stand in for a controller stuck inside native bridge cleanup.
+            (root / "cleanup-started").touch()
+            time.sleep(15)
+        Controller.close = blocked_cleanup
 
     kernel = c.WinDLL("kernel32")
     kernel.GetConsoleWindow.restype = w.HWND

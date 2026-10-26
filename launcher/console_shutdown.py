@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Turn a Windows console close into normal close requests for owned game windows."""
+"""Close owned game processes when their Windows launcher console closes."""
 
 import ctypes as c
 from ctypes import wintypes as w
@@ -18,6 +18,7 @@ class ConsoleShutdown:
         self.requested, self.finished = threading.Event(), threading.Event()
         self._lock, self._processes, self._posted = threading.RLock(), {}, set()
         self._handler, self._deadline = None, None
+        self._forced = False
 
     def __enter__(self):
         if os.name != "nt":
@@ -32,6 +33,7 @@ class ConsoleShutdown:
             (self._kernel.QueryFullProcessImageNameW, (w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD)), w.BOOL),
             (self._kernel.WaitForSingleObject, (w.HANDLE, w.DWORD), w.DWORD),
             (self._kernel.CloseHandle, (w.HANDLE,), w.BOOL),
+            (self._kernel.TerminateProcess, (w.HANDLE, w.UINT), w.BOOL),
             (self._user.EnumWindows, (self._enumerator, w.LPARAM), w.BOOL),
             (self._user.GetWindowThreadProcessId, (w.HWND, c.POINTER(w.DWORD)), w.DWORD),
             (self._user.PostMessageW, (w.HWND, w.UINT, w.WPARAM, w.LPARAM), w.BOOL),
@@ -46,8 +48,9 @@ class ConsoleShutdown:
         """Pin an already owned game process, rechecking its executable path."""
         if os.name != "nt":
             return
-        # Query + synchronise rights suffice: no process termination rights.
-        handle = self._kernel.OpenProcess(0x1000 | 0x100000, False, pid)
+        # Retain termination rights now: reopening a PID during shutdown could
+        # target a replacement process rather than the game we verified.
+        handle = self._kernel.OpenProcess(0x1000 | 0x100000 | 1, False, pid)
         if not handle:
             raise c.WinError(c.get_last_error())
         try:
@@ -104,8 +107,20 @@ class ConsoleShutdown:
         self.request()
         # Windows runs this on another thread. Returning immediately would let
         # it terminate Python before the controller releases mods and hooks.
-        self.finished.wait(4.5)
+        if not self.finished.wait(4.0):
+            # The controller may itself be stuck in native cleanup. This OS
+            # callback must enforce the fallback before Windows ends Python.
+            self._force_close()
+            self.finished.wait(.4)
         return True
+
+    def _force_close(self):
+        """Terminate surviving owned handles after the normal-close allowance."""
+        with self._lock:
+            for handle in self._processes.values():
+                if self._kernel.WaitForSingleObject(handle, 0) == 258:
+                    if self._kernel.TerminateProcess(handle, 1):
+                        self._forced = True
 
     def __exit__(self, *_):
         try:
@@ -118,8 +133,16 @@ class ConsoleShutdown:
                         if not self._alive():
                             break
                     time.sleep(.05)
-                self.report("GAME CLOSE " + ("pending; normal close request timed out"
-                            if self._alive() else "complete"))
+                self._force_close()
+                # TerminateProcess is asynchronous. Bound confirmation across
+                # all handles, rather than granting every process a new wait.
+                deadline = time.monotonic() + .25
+                with self._lock:
+                    for handle in self._processes.values():
+                        self._kernel.WaitForSingleObject(handle, max(0, int((deadline - time.monotonic()) * 1000)))
+                    pending = self._alive()
+                self.report("GAME CLOSE " + ("pending; process exit not confirmed" if pending
+                            else "forced" if self._forced else "complete"))
         finally:
             if self._handler is not None:
                 self._kernel.SetConsoleCtrlHandler(self._handler, False)

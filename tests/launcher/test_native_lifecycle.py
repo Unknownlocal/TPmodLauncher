@@ -100,7 +100,8 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
 
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Windows console close")
-def test_closing_console_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path):
+@pytest.mark.parametrize("blocked", [False, True], ids=["normal", "blocked-cleanup"])
+def test_closing_console_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path, blocked):
     import ctypes as c
     from ctypes import wintypes as w
 
@@ -120,8 +121,11 @@ def test_closing_console_closes_owned_game_window_and_leaves_other_instance(nati
     user.PostMessageW.argtypes, user.PostMessageW.restype = (w.HWND, w.UINT, w.WPARAM, w.LPARAM), w.BOOL
     startup = subprocess.STARTUPINFO()
     startup.dwFlags, startup.wShowWindow = subprocess.STARTF_USESHOWWINDOW, subprocess.SW_HIDE
-    process = subprocess.Popen([str(client), "-B", str(probe), "controller", str(target), "-B",
-                                str(probe), "window", str(owned)],
+    command = [str(client), "-B", str(probe), "blocked" if blocked else "controller", str(target), "-B",
+               str(probe), "window", str(owned)]
+    if blocked:
+        command.append("ignore-close")
+    process = subprocess.Popen(command,
         creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=startup,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     other, owned_handle = None, None
@@ -146,12 +150,15 @@ def test_closing_console_closes_owned_game_window_and_leaves_other_instance(nati
         assert console and user.PostMessageW(console, 0x0010, 0, 0)
         stdout, stderr = process.communicate(timeout=12)
         assert owned.with_suffix(".closed").exists(), stdout + stderr
-        assert owned.with_suffix(".exited").exists(), stdout + stderr
+        assert owned.with_suffix(".exited").exists() == (not blocked), stdout + stderr
         assert kernel.WaitForSingleObject(owned_handle, 2000) == 0
         assert other.poll() is None and not unrelated.with_suffix(".closed").exists()
         log = (root / "logs/console-test.log").read_text(encoding="utf-8")
-        assert "CONSOLE CLOSE requested" in log and "CONTROLLER STOPPED; cleanup complete" in log
-        assert "GAME CLOSE complete" in log and "CLEANUP ERROR" not in log
+        assert "CONSOLE CLOSE requested" in log and "CLEANUP ERROR" not in log
+        if blocked:
+            assert (root / "cleanup-started").exists()
+        else:
+            assert "CONTROLLER STOPPED; cleanup complete" in log and "GAME CLOSE complete" in log
     finally:
         if process.poll() is None:
             process.kill()

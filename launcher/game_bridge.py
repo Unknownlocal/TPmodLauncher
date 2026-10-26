@@ -189,7 +189,7 @@ class Bridge:
             return response["status"]
         except queue.Empty as error:
             raise BridgeError(
-                "Timed out waiting for Python main-thread entry"
+                f"Timed out waiting for Python main-thread entry ({operation})"
             ) from error
         finally:
             with self.lock:

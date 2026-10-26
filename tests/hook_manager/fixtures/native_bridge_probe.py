@@ -16,8 +16,8 @@ def load(name, filename):
 
 
 frida = load("test_binding", "native_test_binding.py").load(root)
-lifecycle = load("lifecycle", "process_lifecycle.py")
-bridge = load("bridge", "game_bridge.py")
+load("dependencies", "bundled_dependencies.py").load_source_packages(root)
+from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 output = Path(sys.argv[3])
 messages = []
 # The bridge receives the installation folder beside this isolated launcher copy.
@@ -39,6 +39,9 @@ try:
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages), messages
     current = next(iter(controller.bridges.values()))
+    # The helper waits for a worker that crosses another SaveThread hook.
+    # This must finish without locking that worker out of JavaScript with the GIL.
+    assert current.set_loading(dict(state="loading", loaded=0, failed=0, total=31))["menu"]["loading"]["total"] == 31
     current.set_loading(dict(state="loading", loaded=0, failed=0, total=1))
     status = current.set_menu(
         [

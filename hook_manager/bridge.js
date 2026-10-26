@@ -63,9 +63,8 @@ observer = Process.attachModuleObserver({
                 : /^libpython3\.13\.so(?:\.\d+)*$/.test(name);
             if (!supported) throw new Error('Unsupported Python library: ' + name);
             if (Process.arch !== 'x64') throw new Error('Bridge requires x64 CPython 3.13');
-            const options = { scheduling: 'exclusive' };
-            function api(name, result, args) {
-                return new NativeFunction(module.getExportByName(name), result, args, options);
+            function api(name, result, args, scheduling = 'exclusive') {
+                return new NativeFunction(module.getExportByName(name), result, args, { scheduling });
             }
             const version = api('Py_GetVersion', 'pointer', []);
             if (!version().readUtf8String().startsWith('3.13.')) throw new Error('Unsupported Python version');
@@ -78,7 +77,10 @@ observer = Process.attachModuleObserver({
             const clearError = api('PyErr_Clear', 'void', []);
             const addModule = api('PyImport_AddModule', 'pointer', ['pointer']);
             const moduleDict = api('PyModule_GetDict', 'pointer', ['pointer']);
-            const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer']);
+            // Python execution may release the GIL. Let a worker's SaveThread
+            // hook enter JavaScript, see busy and return; holding the JS lock
+            // here could strand that worker with the GIL we need to reacquire.
+            const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer'], 'cooperative');
             const utf8 = api('PyUnicode_AsUTF8', 'pointer', ['pointer']);
             const decref = api('Py_DecRef', 'void', ['pointer']);
             const mainName = Memory.allocUtf8String('__main__');

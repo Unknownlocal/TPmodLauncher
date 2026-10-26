@@ -29,8 +29,9 @@ On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
 Ctrl+Break. It sends normal window-close requests only to game processes owned
 by this controller, while the controller thread closes mods and removes hooks.
 Process handles and executable checks protect against targeting an unrelated
-process. Windows limits console-close cleanup time, so the helper waits briefly
-for normal game exit and reports if it is still pending; it does not force-kill.
+process. The helper allows four seconds for normal game exit, then force-closes
+any owned game processes still running. The console callback can enforce this
+even if the controller is stuck in cleanup.
 
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,

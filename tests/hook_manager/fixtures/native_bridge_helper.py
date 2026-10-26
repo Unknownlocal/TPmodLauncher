@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Owned Python target for hook activation, timeout coordination and restoration."""
 
-import importlib, json, sys, time
+import importlib, json, os, sys, time
 
 # No threading module exists yet: the bridge must wait rather than choose the wrong main thread.
 time.sleep(0.1)
@@ -11,11 +11,34 @@ from pathlib import Path
 from types import ModuleType
 
 output = Path(sys.argv[1])
+(output / "target.pid").write_text(str(os.getpid()), encoding="ascii")
 deadline = time.monotonic() + 15
 while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadline:
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
+
+# Reproduce the bridge lock ordering with real Python threads. Evaluating the
+# loading request releases the GIL; the worker must be able to pass its native
+# SaveThread hook, release the GIL itself, and finish that request's wait.
+loading_start = threading.Event()
+
+def loading_worker():
+    loading_start.wait()
+    time.sleep(.001)
+
+loading_thread = threading.Thread(target=loading_worker, daemon=True)
+loading_thread.start()
+original_loading = host.menu.set_loading
+
+def set_loading(record):
+    if record["total"] == 31:
+        loading_start.set()
+        loading_thread.join(timeout=2)
+        assert not loading_thread.is_alive(), "Bridge blocked a worker holding the GIL"
+    return original_loading(record)
+
+host.menu.set_loading = set_loading
 
 
 # Finish an owned Formula-like startup after the bridge has already become ready.

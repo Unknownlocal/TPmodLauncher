@@ -14,6 +14,10 @@ enters Python on its main thread with the GIL held. Requests run one at a time
 with deadlines, covering status, shutdown, native UI registration, loading
 progress, private adapter-definition loading and regulation preparation.
 
+During Python evaluation, the bridge lets other game threads pass its entry
+check. The busy guard keeps them from starting another operation. Holding the
+script lock while Python releases the GIL could otherwise deadlock a worker.
+
 `bootstrap.py` creates a private manager, pack discovery, menu, settings and theme
 adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored

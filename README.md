@@ -29,6 +29,8 @@ Steam supplies the game executable and its arguments after `--`.
 
 Closing the launcher console or pressing Ctrl+C also asks the game to close,
 as if you had clicked its Close button.
+If the game has not exited after four seconds, the launcher force-closes its
+remaining game processes.
 
 For help with the path, double-click the release ZIP's optional
 `modLauncher/SteamLaunchOptions.cmd` helper. It generates your launch line and
