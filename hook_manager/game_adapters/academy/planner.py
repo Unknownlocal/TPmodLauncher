@@ -4,7 +4,7 @@
 from types import MethodType, SimpleNamespace
 
 from ...manager import HookError, data_copy
-from ..employment import person_identity
+from ..employment import employer_identity, person_identity
 from .methods import academy_methods
 from .terms import academy_terms
 
@@ -77,7 +77,7 @@ class AcademyContractPlanner:
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "sign" if target == "academy.sign" else "renew",
                          "person": person_identity(driver, "driver"),
-                         "employer": {"ref": "academy:" + str(id(owner)), "name": employer, "kind": "academy"},
+                         "employer": employer_identity(owner, employer, "academy"),
                          "contract_kind": "academy", "existing": academy_terms(prior, season, calendar),
                          "proposed": terms},
         })

@@ -7,7 +7,7 @@ from ...manager import HookError, data_copy
 from .methods import driver_methods
 from .snapshot import DriverContractSnapshot, rookie_check_applies
 from .rookie_check import native_rookie_limit
-from ..employment import BONUS_KEYS, contract_terms, person_identity
+from ..employment import BONUS_KEYS, contract_terms, employer_identity, person_identity
 from .terms import return_owner_loans
 
 
@@ -111,7 +111,7 @@ class DriverContractPlanner:
             "effective": {"season": state.season_no + int(start == next_start),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "renew" if prior and prior.get("team") == employer else "sign", "person": person,
-                         "employer": {"ref": "team:" + str(id(self.state.teams[employer])), "name": employer, "kind": "team"},
+                         "employer": employer_identity(self.state.teams[employer], employer, "team"),
                          "native_checks": {"rookie_contract_length_applies": rookie},
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
         })

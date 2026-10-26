@@ -19,7 +19,8 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     manager = SimpleNamespace(drivers=[driver], _ai_signing_query_cache={"live": "untouched"},
                               _ai_car_package_components_cache={"live": "untouched"},
                               normalize_contract_status=lambda record: record)
-    state = SimpleNamespace(driver_manager=manager, teams={"target": {"entry_count": 2}},
+    state = SimpleNamespace(driver_manager=manager, teams={"target": {"entry_count": 2,
+                            "nationality": "GB", "prestige_base": 40, "heritage_prestige": 70., "form_prestige": 52.}},
                             game_mode="formula", player_team="target", season_no=3, week_index=9)
     manager.state = state
 
@@ -75,13 +76,17 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     assert result["clock"] == {"season": 3, "absolute_week": 114}
     assert result["effective"] == {"season": 4, "start_week": 157, "end_week": 261}
     assert proposal["action"] == "renew" and proposal["person"]["nationality"] == "GB"
+    assert proposal["employer"] == {"ref": "team:" + str(id(state.teams["target"])), "name": "target", "kind": "team",
+                                    "nationality": "GB", "prestige_base": 40, "heritage_prestige": 70., "form_prestige": 52.}
     assert proposal["native_checks"] == {"rookie_contract_length_applies": True}
     assert proposal["person"]["role"] is None and proposal["proposed"]["role"] == "main"
     assert proposal["existing"]["status"] == proposal["proposed"]["status"] == "equal"
     proposal["person"]["nationality"] = "changed"
+    proposal["employer"]["nationality"] = "changed"
     proposal["proposed"]["bonuses_m"]["point"] = 99
     preview = regulation_context("personnel.contract", planner.prepare(arguments), operation="preview")
     assert preview["operation"] == "preview" and preview["proposal"]["proposed"]["bonuses_m"]["point"] == .1
+    assert preview["proposal"]["employer"]["nationality"] == "GB"
     with pytest.raises(HookError, match="Unsupported regulation proposal context"):
         regulation_context("personnel.contract", prepared, operation="activate")
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache,

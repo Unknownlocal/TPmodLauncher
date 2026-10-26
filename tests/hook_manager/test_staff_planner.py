@@ -15,7 +15,8 @@ def test_staff_terms_resolve_employer_and_cover_without_live_effects(monkeypatch
     agreement = {"team": "other", "start_week": 105, "length_weeks": 52, "salary_m": 1.0}
     staff = SimpleNamespace(name="Engineer", role="Head Of Engine", nationality="GB", age=41,
                             contract=agreement, future_contract=None)
-    supplier = SimpleNamespace(active=True, acquired=False, departing=False)
+    supplier = SimpleNamespace(active=True, acquired=False, departing=False,
+                               nationality="DE", prestige_base=30, heritage_prestige=40., form_prestige=50.)
     manager = SimpleNamespace(staff=[staff])
     state = SimpleNamespace(staff_manager=manager, teams={"target": {"headquarters": {"engine_plant": 0}}},
                             game_mode="formula", season_no=3, week_index=9,
@@ -47,12 +48,16 @@ def test_staff_terms_resolve_employer_and_cover_without_live_effects(monkeypatch
     assert result["effective"] == {"season": 3, "start_week": 114, "end_week": 157}
     proposal = result["proposal"]
     assert proposal["person"]["role"] == "Head Of Engine" and proposal["proposed"]["role"] == "head_of_engine"
-    assert proposal["employer"]["kind"] == "supplier" and proposal["proposed"]["duration_weeks"] == 43
+    assert proposal["proposed"]["duration_weeks"] == 43
+    assert proposal["employer"] == {"ref": "supplier:" + str(id(supplier)), "name": "target", "kind": "supplier",
+                                    "nationality": "DE", "prestige_base": 30, "heritage_prestige": 40., "form_prestige": 50.}
     assert proposal["proposed"]["bonuses_m"] == {"point": .1, "win": -2., "podium": 0.}
     proposal["proposed"]["bonuses_m"]["point"] = 99
     arguments.update(signer_kind="team", allow_current_cover=False, contract_start_week=157, bonuses=None)
     future = planner.prepare(arguments)
     assert future["effective"] == {"season": 4, "start_week": 157, "end_week": 261}
+    assert all(future["proposal"]["employer"][key] is None
+               for key in ("nationality", "prestige_base", "heritage_prestige", "form_prestige"))
     assert future["proposal"]["proposed"]["bonuses_m"] == {"point": None, "win": None, "podium": None}
     assert before[:3] == (vars(staff), state.teams, vars(supplier)) and before[3] == bonuses
     for incomplete in (True, None, float("nan")):

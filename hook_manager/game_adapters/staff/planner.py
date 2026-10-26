@@ -5,7 +5,7 @@ import math
 from types import MethodType, SimpleNamespace
 
 from ...manager import HookError, data_copy
-from ..employment import BONUS_KEYS, contract_terms, person_identity
+from ..employment import BONUS_KEYS, contract_terms, employer_identity, person_identity
 from .methods import staff_methods
 
 
@@ -91,6 +91,6 @@ class StaffContractPlanner:
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "renew" if prior and prior.get("team") == employer else "sign",
                          "person": person_identity(staff, "staff"),
-                         "employer": {"ref": kind + ":" + str(id(owner)), "name": employer, "kind": kind},
+                         "employer": employer_identity(owner, employer, kind),
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
         })

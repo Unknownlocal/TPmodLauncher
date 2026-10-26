@@ -141,6 +141,11 @@ synchronous Python handlers through `validators`. The supported scopes are
 `personnel.contract` and `development.project`; trusted adapters select the game
 methods and prepare copied proposals.
 
+For `personnel.contract`, `context["proposal"]["employer"]` contains `ref`, `name`
+and `kind`, plus `prestige_base`, `heritage_prestige`, `form_prestige` and
+`nationality` from the loaded employer. Missing values are `null`; prestige values
+are finite numbers and nationality is a string. Other employer fields stay private.
+
 The runner calls each handler with fresh `context` and `regulation` dictionaries.
 Handlers return allow/deny dictionaries; conditions stay in mod Python. The
 selected option supplies parameters for the proposal's effective season. Optional

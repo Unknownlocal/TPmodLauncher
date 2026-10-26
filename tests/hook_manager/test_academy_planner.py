@@ -15,7 +15,8 @@ def test_academy_sign_and_renew_prepare_full_season_terms_without_live_writes(mo
     contract = {"start_season": 1, "term_seasons": 3, "annual_cost_m": .8}
     driver = SimpleNamespace(name="Junior", nationality="GB", age=16, talent=40,
                              academy_contract={"team": "stale", "term_seasons": 99})
-    owner = {"name": "target", "academy": {"contracts": {driver.name: contract}}, "balance_m": 50.}
+    owner = {"name": "target", "academy": {"contracts": {driver.name: contract}}, "balance_m": 50.,
+             "nationality": "GB", "prestige_base": 40, "heritage_prestige": 70., "form_prestige": 52.}
     manager = SimpleNamespace()
     state = SimpleNamespace(academy_manager=manager, driver_manager=SimpleNamespace(drivers=[driver]),
                             teams={"target": owner}, game_mode="formula", season_no=3, week_index=9)
@@ -36,7 +37,9 @@ def test_academy_sign_and_renew_prepare_full_season_terms_without_live_writes(mo
     assert signed["clock"] == {"season": 3, "absolute_week": 130}
     assert signed["effective"] == {"season": 3, "start_week": 121, "end_week": 241}
     proposal = signed["proposal"]
-    assert proposal["contract_kind"] == proposal["employer"]["kind"] == "academy"
+    assert proposal["contract_kind"] == "academy"
+    assert proposal["employer"] == {"ref": "academy:" + str(id(owner)), "name": "target", "kind": "academy",
+                                    "nationality": "GB", "prestige_base": 40, "heritage_prestige": 70., "form_prestige": 52.}
     assert proposal["person"]["ref"] == "driver:" + str(id(driver)) and proposal["existing"] is None
     assert proposal["proposed"]["duration_seasons"] == 2 and proposal["proposed"]["annual_retainer_m"] == .7
     assert proposal["proposed"]["annual_salary_m"] is None

@@ -48,3 +48,19 @@ def person_identity(person, kind):
             or result["age"] is not None and type(result["age"]) is not int):
         raise HookError("Person identity fields do not match the employment proposal")
     return result
+
+
+def employer_identity(record, name, kind):
+    """Describe the loaded employer without exposing its full career record."""
+    # Teams/academies use dictionaries; native suppliers use objects. Read only
+    # these four fields, preserving absent values as None rather than inventing
+    # nationality or recalculating prestige during a signing check.
+    values = {key: record.get(key) if type(record) is dict else getattr(record, key, None)
+              for key in ("prestige_base", "heritage_prestige", "form_prestige", "nationality")}
+    if values["nationality"] is not None and type(values["nationality"]) is not str:
+        raise HookError("Employer nationality must be a native string or None")
+    for key in ("prestige_base", "heritage_prestige", "form_prestige"):
+        value = values[key]
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            raise HookError("Employer prestige must be a finite native number or None")
+    return {"ref": kind + ":" + str(id(record)), "name": name, "kind": kind, **values}
