@@ -17,6 +17,6 @@ def validate_contract(context, regulation):
     proposal = context["proposal"]
     if proposal.get("native_checks", {}).get("rookie_contract_length_applies", False):
         maximum = regulation[regulation["selected"]]["parameters"]["max_years"]
-        if proposal["proposed"]["length_weeks"] > maximum * 52:
+        if proposal["proposed"]["duration_weeks"] > maximum * 52:
             return {"decision": "deny", "message": f"Rookie contracts may last at most {maximum} years."}
     return {"decision": "allow"}

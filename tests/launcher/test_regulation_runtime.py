@@ -159,7 +159,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
         assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
         ctx = context()
         ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
-                           "proposed": {"length_weeks": 208}}
+                           "proposed": {"duration_weeks": 208}}
         choice = dict(selection(), rule=category, upcoming=[1, 2028])
         def check():
             return pump(scope, wake, worker.submit(channels[0], [ctx], [choice],
