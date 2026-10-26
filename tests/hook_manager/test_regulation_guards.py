@@ -44,18 +44,19 @@ def guarded(monkeypatch):
     module = ModuleType("owned_shared_regulation_guard")
     monkeypatch.setitem(sys.modules, module.__name__, module)
     channel, projections, writes = Channel(), [], []
+    error = ValueError("Native failure")
 
     def native(value):
         writes.append(value)
         if value == 0:
-            raise ValueError("Native failure")
+            raise error
         return value > 0
 
     def project(arguments, result):
         projections.append(arguments["value"])
         return {"scope": "development.project", "effective": {"season": 3}, "proposal": {"value": arguments["value"]}}
 
-    module.start = native
+    module.start, module.error = native, error
     engine = RegulationGuards(channel, lambda rule, season: {"selected": "current", "current": [0, 3], "upcoming": None}, "development.project")
     engine.approve(CallableTarget("start", module.__name__, (), "start", str(inspect.signature(native))))
     for owner in channel._owners:
@@ -95,27 +96,28 @@ def test_shared_projection_ordering_native_execution_and_identified_owner_failur
         assert set(engine.owners.values()) == {"ready"}
         channel.validation_ready = True
         channel.mode = "deny"
-        assert module.start(12) is False and not writes and engine.last_refusal == "a.rules"
+        assert module.start(12) is False and not writes and engine.last_outcome.message == "a.rules"
         assert engine.last_outcome.status == "deny"
         contexts, selections, calls = channel.actions[-1]
         assert len(contexts) == len(selections) == 1 and projections == [12]
         assert calls == {"a.rules": [[0, 0, 0], [2, 0, 0]], "b.rules": [[0, 0, 0]]}
         channel.mode = "allow"
         assert module.start(4) is True and writes == [4] and projections == [12, 4]
-        assert engine.last_outcome.status == "allow" and engine.last_refusal is None
+        assert engine.last_outcome.status == "allow"
         assert module.start(-1) is False and engine.last_outcome.status == "allow"
-        with pytest.raises(ValueError, match="Native failure"):
+        with pytest.raises(ValueError, match="Native failure") as caught:
             module.start(0)
+        assert caught.value is module.error
         assert writes == [4, -1, 0] and set(engine.owners.values()) == {"ready"}
         assert engine.last_outcome.status == "allow"
         # Mod messages are arbitrary display text. Even the host's usual error
         # wording must remain a policy deny when that is what the mod returned.
         channel.mode, channel.message = "deny", "Validation unavailable"
         assert module.start(5) is False and engine.last_outcome.status == "deny"
-        assert engine.last_refusal == "Validation unavailable" and set(engine.owners.values()) == {"ready"}
+        assert engine.last_outcome.message == "Validation unavailable" and set(engine.owners.values()) == {"ready"}
         channel.mode = "failed"
         assert module.start(1) is False
-        assert engine.last_outcome.status == "unavailable" and engine.last_refusal == "Validation unavailable"
+        assert engine.last_outcome.status == "unavailable" and engine.last_outcome.message == "Validation unavailable"
         assert engine.owners == {"a.rules": "ready", "b.rules": "unavailable"}
         attempts = len(channel.actions)
         assert module.start(2) is False and len(channel.actions) == attempts and writes == [4, -1, 0]
@@ -123,7 +125,7 @@ def test_shared_projection_ordering_native_execution_and_identified_owner_failur
         engine.remove_owner("b.rules")
         channel.mode = "allow"
         assert module.start(3) is True and set(channel.actions[-1][2]) == {"a.rules"}
-        assert engine.last_outcome.status == "allow" and engine.last_refusal is None
+        assert engine.last_outcome.status == "allow"
 
 
 def test_unscoped_worker_cannot_bypass_shared_required_validation(monkeypatch):

@@ -145,7 +145,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         published = []
         channel._token = "0" * 64
         channel.publish = lambda **data: published.append(data)
-        monkeypatch.setattr(host, "RegulationChannel", lambda endpoint: channel)
+        monkeypatch.setattr(host.adapter_code.game_adapters.regulations.channel, "RegulationChannel", lambda endpoint: channel)
         prepared = pulse("prepare-regulations", regulations={"generation": generation,
             "endpoint": {"port": 1, "token": "0" * 64}})
         assert prepared["regulation_notices"] == []

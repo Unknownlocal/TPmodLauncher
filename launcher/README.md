@@ -91,13 +91,12 @@ A failure closes the affected Store and runs its cleanup.
 
 `shared_runner_host.py` supplies the host-call routing for
 `mod_runtime.shared_runtime.SharedPythonRunner`. One shared Store serves several
-logical source handles. Each source module imports a `wit_world` API bound to
+logical source mods. Each source module imports a `wit_world` API bound to
 its admitted mod ID; the host selects that ID's provider table for diagnostics,
 menus, settings and themes. Other source IDs and ownerless calls are rejected.
 These tables retain ordinary permission checks, while mods sharing Python can
 borrow one another's API modules. They provide routing, not mutual isolation.
-Only the group owns closure and cleanup; a member handle cannot free memory
-that its peers still use. Closing a source entry closes the whole group,
+The group owns closure and cleanup. Closing a source entry closes the whole group,
 revokes every member's registrations before replacement UI is sent, and logs
 the affected IDs once. Unactivated peers are included in failure counts.
 

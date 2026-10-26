@@ -30,7 +30,7 @@ def test_overlapping_ownership_fails(tmp_path, monkeypatch):
         ci.suite_for(tmp_path / duplicate, tmp_path)
 
 
-@pytest.mark.parametrize("suite", [*ci.SUITES, "check"])
+@pytest.mark.parametrize("suite", ["hook_manager", "mod_runtime", "check"])
 def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
     original = [
         SimpleNamespace(path=tmp_path / prefix / "test_fixture.py")

@@ -100,14 +100,8 @@ class RunnerBindings(_bindings.RunnerBindings):
             return (type(error).__name__ + ": " + str(error))[:512]
         return ""
 
-    def begin_regulation_contexts(self, action, bytes, first):
-        return _encode_regulation(_shared_call("begin_contexts", action, bytes, first))
-
-    def put_regulation_contexts(self, chunk):
-        _shared_call("put_contexts", chunk)
-
-    def seal_regulation_contexts(self):
-        return _encode_regulation(_shared_call("seal_contexts"))
+    def begin_regulation_contexts(self, action, proposal):
+        return _encode_regulation(_shared_call("begin_contexts", action, proposal))
 
     def finish_regulation_action(self, action):
         _shared_call("finish_action", action)

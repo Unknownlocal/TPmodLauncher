@@ -76,16 +76,9 @@ class ValidationGroup:
             if self.action is not None or self.staged is not None:
                 raise ValueError("Shared regulation group is busy")
             text, metric, count = packet
-            chunks = list(_chunks(text.encode("utf-8")))
-            fuel = entry_fuel(metric[0], metric[1], len(chunks) + 2, metric[3])
-            sandbox = self.handler.runner.sandbox
+            fuel = entry_fuel(metric[0], metric[1], 1, metric[3])
             with self._phase(fuel, .1, deadline):
-                reply = sandbox.call("begin-regulation-contexts", action, metric[0], chunks[0])
-                if len(chunks) > 1:
-                    self._contexts(reply, action, 0)
-                    for chunk in chunks[1:]:
-                        self._ack("put-regulation-contexts", (chunk,), None, 0, 0)
-                    reply = sandbox.call("seal-regulation-contexts")
+                reply = self.handler.runner.sandbox.call("begin-regulation-contexts", action, text)
                 self._contexts(reply, action, count)
             self.action = action, metric
         except BaseException:

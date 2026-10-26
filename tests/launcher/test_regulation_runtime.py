@@ -426,7 +426,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods
             def start(budget):
                 with engine.operation():
                     result = module.start(budget)
-                    return result, engine.last_refusal
+                    return result, engine.last_outcome.message
 
             assert pump(scope, wake, worker.submit(start, 12)) == (False, "Budget refused")
             assert not writes and projections == [12]

@@ -4,7 +4,7 @@
 from launcher.sandbox import Limits
 from ._source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES
 
-# SharedSources gives each owner's transfer and import separate allowances.
+# Shared source loading gives each owner's transfer and import separate allowances.
 # Activation/events keep their ordinary five-million fuel/one-second limit.
 SOURCE_FUEL = 256_000_000
 SOURCE_SECONDS = 5.0

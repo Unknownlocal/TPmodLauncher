@@ -7,7 +7,7 @@ from .contexts import RegulationContexts
 from .handlers import RegulationHandlers
 from .policy import decode, decision
 from .transfer import RegulationTransfer
-from .values import integer, loads
+from .values import integer, loads, text
 
 
 class RegulationGroup:
@@ -145,35 +145,21 @@ class RegulationGroup:
         self.active, self.staged = policy, None
         return self.ack("active")
 
-    def begin_contexts(self, action, length, first):
+    def begin_contexts(self, action, proposal):
         self.check()
         integer(action, 64, positive=True)
         if not self.sealed or action <= self.last_action or self.transfer is not None or self.contexts is not None:
             raise ValueError("Stale or busy shared regulation action")
         if self.active is None or self.staged is not None or self.action is not None:
             raise ValueError("Shared regulation policy is not current")
-        self._action_owners.clear()
-        # The global action table admits 1024 contexts. Each still has the usual
-        # 4 KiB invocation bound; chunks are only 4 KiB, not the complete table.
-        if integer(length, positive=True) > 4 * 1024 * 1024:
-            raise ValueError("Shared regulation contexts exceed their transfer bound")
+        # A complete context+rule argument fits 4 KiB. Removing its nonempty
+        # rule leaves enough room for [context], so this transfer needs no pages.
+        if len(text(proposal, 4096).encode("utf-8")) > 4096:
+            raise ValueError("Shared regulation context exceeds its transfer bound")
+        self.contexts = RegulationContexts(action, loads(proposal))
         self.last_action = action
-        self.transfer = RegulationTransfer("contexts", length)
-        self.transfer.put(first)
-        if self.transfer.remaining == 0:
-            return self.seal_contexts()
-        return {"action": action, "contexts": 0}
-
-    def put_contexts(self, chunk):
-        self.put("contexts", chunk)
-
-    def seal_contexts(self):
-        self.check()
-        if self.transfer is None:
-            raise ValueError("Missing shared regulation context transfer")
-        values = loads(self.finish("contexts"))
-        self.contexts = RegulationContexts(self.last_action, values)
-        return {"action": self.last_action, "contexts": len(self.contexts.rows)}
+        self._action_owners.clear()
+        return {"action": action, "contexts": 1}
 
     def begin_action(self, owner, action, epoch, generation, length, first):
         self.check()

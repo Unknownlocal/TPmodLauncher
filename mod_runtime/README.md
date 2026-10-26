@@ -74,12 +74,12 @@ only when its portable bytes match a fresh read of the verified runner.
 
 ## Shared source loading
 
-`shared_sources.py` supplies a private loading adapter for a runner created by
-its caller. It transfers several verified snapshots, then loads a separate entry
+`shared_sources.py` supplies `transfer_sources()` for a runner created by its
+caller. It transfers several verified snapshots, then loads a separate entry
 object for each original mod ID. Transfer completes for every member before
 the first entry is imported. Loading does not activate entries; activation and
-events address each entry by its mod ID. A loading failure closes the whole
-shared runner. The adapter creates no Store and binds no host providers.
+events address each entry by its mod ID. The caller owns cleanup on failure;
+this function creates no Store and binds no host providers.
 
 Under `_loading/`, `source_group.py` holds the members and their entry names.
 Each member uses its own `SourceLoader` and a module-name prefix derived from
@@ -104,9 +104,9 @@ still apply after admission.
 ## Shared runtime ownership and host calls
 
 `shared_runtime.py` owns one `SharedPythonRunner`, including its Store, source
-loading and group cleanup. `source_handle.py` supplies a `SourceHandle` for each
-member, carrying its manifest and availability. Activation and string events
-call the shared runner directly with that member's ID. Closing the group, or a
+loading and group cleanup. Its read-only `manifests` table holds each admitted
+mod's metadata. Activation and string events call the runner with the mod's ID.
+The runner's `closed` state records availability for every member. Closing it, or a
 guest failure, makes every member unavailable and runs group cleanup once.
 Creation, calls and closure stay on the Store's creating thread.
 
@@ -162,7 +162,7 @@ Invalid operations disable the affected resident state.
 | `transfer.py` | Check complete UTF-8 transfers before decoding JSON |
 | `view.py` | Check one mod's bindings and choices against the shared table |
 | `group.py` | Own the complete install, mod calls, shared inputs and career reset |
-| `contexts.py` | Check a shared proposal table and resolve its numbered references |
+| `contexts.py` | Check the single shared proposal and its slot-zero reference |
 | `policy.py` and `values.py` | Check shared field rules and calculate resource bounds |
 
 Each handler receives its own ordinary dictionaries and lists. Stable regulation
@@ -185,28 +185,21 @@ references, without another transfer state or owner-selection cursor.
 The catalogue becomes active only after every owner and record has been checked
 and the complete commit is acknowledged. Reset releases the whole career graph.
 
-One action transfers its context table once. Owner call packets contain context
-indices and their own rule selections; each prepares at most four argument pairs
-at a time. Context preparation handles the cached data's first garbage-collector
-scan, keeping that work outside later handler allowances.
-The shared table holds up to 1024 contexts, with a 4 MiB transfer ceiling
-and 4 KiB chunks. The ordinary limit for the combined context and rule still applies.
-Finishing the group action checks that no calls remain prepared and every input
-context was used. Group reset clears cached records and contexts together while
-keeping bindings and the last action ID. Any failed resident operation makes
-all residents unavailable. These private operations are separate from lifecycle
-events and expose no generic callable API.
+An action transfers one complete shared proposal. Its context-plus-rule argument
+fits 4 KiB, so the proposal needs no paging. Owner packets reference slot zero and
+run each declared validator once, in order. Policy and owner-packet transfers
+still use pages where needed. Preparation copies at most four argument pairs
+at a time and handles the cached data's first garbage-collector scan outside
+handler allowances. Completion checks that no calls remain and the proposal
+was used. Reset clears career data while retaining bindings and the last action
+ID. Failed operations make the whole group unavailable. These private operations
+are separate from lifecycle events and expose no generic callable API.
 
-Each action request names its mod explicitly and runs against that mod's view.
-Calls run one at a time, sharing the physical records and proposal table. Career
-reset clears the whole group together. Author host-call identity remains bound to the source module's
-mod ID.
 `ValidationDispatch` connects shared bindings to publication and execution through
-`launcher/regulations/validation/group.py`. It installs each group's common records
-once, sends a shared proposal table and checks completion under the original
-deadline. One career generation covers all views; status retains original mod
-IDs, while failure and reset follow the shared Store. Pack binding uses one handler for all validator owners and
-keeps definition-only owners required without creating empty tables.
+`launcher/regulations/validation/group.py`. Mod calls run one at a time against
+their own views under the original deadline. Pack binding uses one handler table
+for all validator owners and keeps definition-only owners required without empty
+guest tables.
 
 ## Preparation and session ownership
 

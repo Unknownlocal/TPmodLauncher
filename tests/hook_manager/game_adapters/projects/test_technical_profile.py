@@ -119,7 +119,7 @@ def test_project_guard_keeps_foreign_calls_native_and_rejects_changed_owned_inpu
         assert writes == ["future"] and not contexts and not calculations
         for manager in engine.planner.managers:
             assert native_module.start(manager, "current") is False
-            assert engine.last_refusal == "Project refused"
+            assert engine.last_outcome.message == "Project refused"
         assert writes == ["future"]
         channel.decision = {"decision": "allow"}
         writes.clear()

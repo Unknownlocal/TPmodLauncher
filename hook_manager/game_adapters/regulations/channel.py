@@ -5,10 +5,9 @@ import socket
 import threading
 import time
 
-if __package__:
-    from ...manager import HookError
-    from .framing import regulation_decisions, regulation_read, regulation_write
-    from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value
+from ...manager import HookError
+from .framing import regulation_decisions, regulation_read, regulation_write
+from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value
 
 
 class RegulationChannel:

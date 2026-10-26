@@ -39,11 +39,11 @@ class SharedHandlerRunner:
                 raise SandboxError("Expected an admitted shared Python runner")
             if getattr(runner, "_regulation_handlers", None) is not None:
                 raise ValueError("Shared regulation handlers must bind once per runner")
-            if type(validators) is not dict or not validators or not validators.keys() <= runner.members.keys():
+            if type(validators) is not dict or not validators or not validators.keys() <= runner.manifests.keys():
                 raise ValueError("Expected admitted shared regulation owners")
             tables = {}
             for owner in sorted(validators):
-                manifest = runner.members[owner].manifest
+                manifest = runner.manifests[owner]
                 if manifest.api != "0.4.0" or "regulations" not in manifest.capabilities:
                     raise SandboxError("Expected an admitted regulation source owner")
                 tables[owner] = ordered_bindings(validators[owner])

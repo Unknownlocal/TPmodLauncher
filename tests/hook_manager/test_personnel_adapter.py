@@ -397,7 +397,7 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         # remain on the native record, but it is not this attempt's outcome.
         negotiations.row["native_precheck_failure"] = True
         assert negotiations._execute_offer(negotiations.row, driver) is False
-        assert adapter.last_outcome is None and adapter.last_refusal is None
+        assert adapter.last_outcome is None
         assert negotiations.row["execution_block_reason"] == "Validation unavailable"
         negotiations.row.pop("native_precheck_failure")
     finally:
@@ -417,7 +417,7 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         state.native_refuse = True
         negotiations.pending["decision"] = {"status": "pending"}
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
-        assert state.writes[-2:] == [2, "backup"] and adapter.last_refusal is None
+        assert state.writes[-2:] == [2, "backup"]
         assert adapter.last_outcome.status == "allow"
         other = type(state.driver_manager)()
         other.state = SimpleNamespace(writes=[], native_refuse=False)

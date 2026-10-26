@@ -32,7 +32,6 @@ def validate(c,r):
  c['proposal']['changed'] = r['current']['parameters']['changed'] = True
  count += 1
  wit_world.report(str(count))
- if c['proposal'].get('raise') == OWNER: raise ValueError('deliberate handler failure')
  return {{'decision':'allow'}}
 '''
 
@@ -56,8 +55,8 @@ def shared(runner_bundle, *, count=1, peer_handler=False):
     definitions = RegulationDefinitions.from_bytes(encode(data).encode(), sources, scopes={"personnel.contract"})
     with SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values():
-            group.activate(member.manifest.id)
+        for owner in group.manifests:
+            group.activate(owner)
         binding = SharedHandlerRunner.bind(group, definitions.validators)
         yield group, binding, CombinedCatalog(definitions), calls, cleaned
     assert cleaned == [True]
@@ -104,28 +103,29 @@ def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
             gc.enable()
 
 
-def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False, repeat_owner=False):
-    """Exercise private pages; production dispatch separately owns its 100 ms limit."""
+def evaluate(group, catalog, action, ctx, *, count=1, fault=None):
+    """Exercise guest admission directly; normal dispatch preflights these inputs."""
     selection = {"rule": "native", "evaluation_season": 2026, "selected": "current",
                  "current": [0, 2026], "upcoming": None}
     frame = PreparedAction([ctx], [selection])
-    contexts = encode([ctx, ctx] if extra_context else [ctx])
-    # Split even this small table to exercise partial transfer and explicit seal.
-    split = len(contexts) // 2
+    contexts = encode([ctx, ctx] if fault == "extra-context" else [ctx])
     results = {}
     with group.sandbox.phase(fuel=128_000_000, seconds=1):
-        assert reply(group, "begin-regulation-contexts", action, len(contexts.encode()), contexts[:split]) == {
-            "action": action, "contexts": 0}
-        reply(group, "put-regulation-contexts", contexts[split:])
-        assert reply(group, "seal-regulation-contexts")["contexts"] == (2 if extra_context else 1)
+        assert reply(group, "begin-regulation-contexts", action, contexts) == {
+            "action": action, "contexts": 1}
         for owner, view in catalog.views.items():
             calls = [[validator, 0, 0] for validator in list(view.validators)[:count]]
             text = frame.for_owner(view, calls, f"{view.revision}:1:1")[0]
+            if fault == "repeat-validator":
+                # Bypass host preflight to check the guest's once-per-validator fence.
+                packet = json.loads(text)
+                packet["calls"] *= 2
+                text = encode(packet)
             assert reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text) == {
                 "action": action, "prepared": len(calls)}
             results[owner] = [reply(group, "validate-resident-regulation", action, slot, fuel=5_000_000)["result"]
                               for slot in range(len(calls))]
-        if repeat_owner:
+        if fault == "repeat-owner":
             # Multiple calls belong in one packet; a second packet cannot
             # bypass that mod's per-action call limit.
             reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text)
@@ -135,7 +135,7 @@ def evaluate(group, catalog, action, ctx, *, count=1, extra_context=False, repea
     return results
 
 
-def test_split_context_transfer_keeps_fresh_arguments_across_owner_calls(runner_bundle):
+def test_shared_proposal_keeps_fresh_arguments_across_owner_calls(runner_bundle):
     with shared(runner_bundle, count=2) as (group, _, catalog, calls, _):
         publish(group, catalog)
         for action in (1, 2):
@@ -150,14 +150,14 @@ def test_shared_binding_rejects_a_peer_function_with_the_same_local_filename(run
             pytest.fail("A peer re-export must not be admitted as this owner's handler")
 
 
-@pytest.mark.parametrize("failure", ["handler", "unused-context", "repeat-owner"])
+@pytest.mark.parametrize("failure", ["extra-context", "repeat-validator", "repeat-owner"])
 def test_failed_shared_action_cannot_leave_other_residents_available(runner_bundle, failure):
     with shared(runner_bundle) as (group, _, catalog, _, cleaned):
         publish(group, catalog)
-        ctx = context(points=25, **({"raise": OWNERS[1]} if failure == "handler" else {}))
+        ctx = context(points=25)
         with pytest.raises(SandboxError):
-            evaluate(group, catalog, 1, ctx, extra_context=failure == "unused-context", repeat_owner=failure == "repeat-owner")
-        assert all(member.closed for member in group.members.values()) and cleaned == [True]
+            evaluate(group, catalog, 1, ctx, fault=failure)
+        assert group.closed and cleaned == [True]
 
 
 @pytest.mark.parametrize("replacement", [False, True])

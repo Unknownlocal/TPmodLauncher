@@ -5,8 +5,7 @@ import math
 import json
 import time
 
-if __package__:
-    from .framing import regulation_encode
+from .framing import regulation_encode
 
 def regulation_policy_value(kind, value):
     """Normalize only native operational data; custom values are admitted keys."""

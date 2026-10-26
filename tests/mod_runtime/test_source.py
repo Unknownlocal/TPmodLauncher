@@ -97,9 +97,8 @@ class WitWorld(wit_world.WitWorld):
     (mod / "src/helpers/__init__.py").write_bytes(b'raise AssertionError("changed after snapshot")')
     messages = []
     with SharedPythonRunner(runner_bundle, (snapshot,), {snapshot.manifest.id: {"report": messages.append}}) as group:
-        member = group.members[snapshot.manifest.id]
-        group.activate(member.manifest.id)
-        assert group.on_event(member.manifest.id, "probe", "{}") == "{}"
+        group.activate(snapshot.manifest.id)
+        assert group.on_event(snapshot.manifest.id, "probe", "{}") == "{}"
     assert messages == ["original snapshot"]
 
 

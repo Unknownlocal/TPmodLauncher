@@ -21,7 +21,8 @@ bootstrap function without resending its source. Author Python runs in Wasm.
 
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
-and callable classes. It leaves the game's import path alone,
+and callable classes. Regulation transport loads only in this private bundle;
+bootstrap carries no second copy. It leaves the game's import path alone,
 removes its temporary importer after loading and removes owned definitions on
 shutdown. Failed imports roll back their definitions. Loading installs no game
 hooks and does not declare regulations ready.

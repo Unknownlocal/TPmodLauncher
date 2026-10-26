@@ -10,6 +10,7 @@ import pytest
 
 from hook_manager.game_adapters.regulations import native_rules
 from hook_manager.game_adapters.drivers import rookie_check
+from hook_manager.game_adapters.staff import prestige_switch
 from hook_manager.manager import HookError
 
 
@@ -25,7 +26,8 @@ def native(monkeypatch):
     staff = ModuleType("managers.staff_manager")
     exec('''class StaffManager:
  def required_prestige(self, staff: 'Staff') -> 'int':
-  return 15
+  self.calls.append(staff)
+  return getattr(staff, 'requirement', 15)
 ''', staff.__dict__)
     for module in (driver, staff):
         monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -36,14 +38,15 @@ def native(monkeypatch):
     monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: target)
     state = SimpleNamespace(driver_manager=driver.DriverManager(), staff_manager=staff.StaffManager())
     state.driver_manager.state = state.staff_manager.state = state
-    state.driver_manager.calls = 0
+    state.driver_manager.calls, state.staff_manager.calls = 0, []
     return state, driver.DriverManager, staff.StaffManager
 
 
-def test_default_switches_need_no_rookie_hook_or_inspection(native, monkeypatch):
+def test_default_switches_need_no_hook_or_inspection(native, monkeypatch):
     state, drivers, staff = native
     originals = drivers.formula_rookie_contract_year_limit, staff.required_prestige
     monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: pytest.fail("Default inspected"))
+    monkeypatch.setattr(prestige_switch, "staff_prestige_target", lambda: pytest.fail("Default inspected"))
     for values in ({}, {"rookie_contract_length_check": True, "staff_prestige_check": True}):
         assert native_rules.install_native_rules(state, values, report=pytest.fail) == ()
         assert (drivers.formula_rookie_contract_year_limit, staff.required_prestige) == originals
@@ -122,3 +125,44 @@ def test_unexpected_setup_failure_restores_previously_installed_hook(native, mon
     with pytest.raises(RuntimeError, match="Setup interrupted"):
         native_rules.install_native_rules(state, {"rookie_contract_length_check": False}, report=pytest.fail)
     assert drivers.formula_rookie_contract_year_limit is original
+
+
+def test_disabled_minimum_avoids_native_calculation_and_restores_owned_helper(native):
+    state, _, staff = native
+    original = staff.required_prestige
+    reports = []
+    adapter = prestige_switch.StaffPrestigeSwitch.create(state, enabled=False, report=reports.append)
+    assert adapter is not None and not reports
+    escaped = state.staff_manager.required_prestige
+    owned = state.staff_manager
+    try:
+        # This object lacks native inputs: disabling the check must not evaluate
+        # the original formula before returning a replacement requirement.
+        assert escaped(staff=object()) == 0 and state.staff_manager.calls == []
+        other = staff()
+        other.calls = []
+        other.state = SimpleNamespace(staff_manager=other)
+        candidate = SimpleNamespace(requirement=17)
+        assert other.required_prestige(candidate) == 17
+        state.staff_manager = other
+        assert escaped(candidate) == 17  # The old career no longer owns this manager.
+        state.staff_manager = owned
+        adapter.remove("staff.prestige-check")
+        assert not adapter.closed
+        assert staff.required_prestige is original
+        assert escaped(candidate) == 17
+    finally:
+        adapter.stop()
+    assert staff.required_prestige is original
+    assert escaped(SimpleNamespace(requirement=23)) == 23
+
+
+def test_incompatible_helper_is_reported_and_skipped(native):
+    state, _, staff = native
+    def changed(self, staff, extra=None):
+        return 17
+    staff.required_prestige = changed
+    reports = []
+    assert prestige_switch.StaffPrestigeSwitch.create(state, enabled=False, report=reports.append) is None
+    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "skipped" in reports[0]
+    assert staff.required_prestige is changed

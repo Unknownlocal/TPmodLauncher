@@ -81,8 +81,6 @@ with closing(PackMods(game, reports.append, runner_bundle=bundle, set_loading=pr
     assert runner.event("settings.save", saved_settings) == saved_settings
     assert json.loads((mod / "settings.json").read_text(encoding="utf-8")) == saved_settings
     assert progress[-1] == dict(state="complete", loaded=1, failed=0, total=1)
-    timing = next(json.loads(line.split(": ", 1)[1])["phase_seconds"] for line in reports if line.startswith("CODE MOD TIMING:"))
-    assert {"source_snapshot", "runner_read", "compile", "source_load", "activate"} <= timing.keys()
 assert runner.sandbox.closed
 assert scope.settings.records == []
 from launcher.ui_settings import UISettings

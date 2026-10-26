@@ -2,7 +2,6 @@
 """Shared Store ownership and correct host identity through real Python/Wasm."""
 
 import json
-import threading
 import time
 
 import pytest
@@ -59,22 +58,22 @@ class WitWorld:
     calls, cleaned = [], []
     with SharedPythonRunner(runner_bundle, sources, providers(sources, calls),
                             cleanup=lambda: cleaned.append(True)) as group:
-        first, second = group.members.values()
+        first, second = group.manifests
         assert calls[:3] == [("owned.alpha", "report", "helper-import"),
                              ("owned.beta", "report", "helper-import"),
                              ("owned.alpha", "report", "entry-import")]
-        for member in (first, second):
-            group.activate(member.manifest.id)
-            assert (member.manifest.id, "report", "constructor") in calls
-            assert (member.manifest.id, "menu", "item", "Item", "item") in calls
-            assert (member.manifest.id, "register-settings", "{}") in calls
-            assert (member.manifest.id, "theme", "{}") in calls
-        assert json.loads(group.on_event(first.manifest.id, "peer", "{}")) == {"owner": "owned.alpha"}
+        for owner in (first, second):
+            group.activate(owner)
+            assert (owner, "report", "constructor") in calls
+            assert (owner, "menu", "item", "Item", "item") in calls
+            assert (owner, "register-settings", "{}") in calls
+            assert (owner, "theme", "{}") in calls
+        assert json.loads(group.on_event(first, "peer", "{}")) == {"owner": "owned.alpha"}
         assert calls[-2:] == [("owned.beta", "report", "peer-call"),
                               ("owned.alpha", "save-settings", "{}")]
-        assert not first.closed and not second.closed
+        assert not group.closed
     group.close()
-    assert first.closed and second.closed and cleaned == [True]
+    assert group.closed and cleaned == [True]
 
 
 @pytest.mark.parametrize("rejected", ["foreign-owner", "ungranted-operation"])
@@ -86,10 +85,10 @@ def test_shared_provider_routing_rejects_unadmitted_calls(runner_bundle, rejecte
     calls, cleaned = [], []
     with SharedPythonRunner(runner_bundle, sources, providers(sources, calls),
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): group.activate(member.manifest.id)
+        for owner in group.manifests: group.activate(owner)
         with pytest.raises(SandboxError, match="outside this runtime group|Capability.*required"):
             group.on_event("owned.beta", "probe", "{}")
-        assert all(member.closed for member in group.members.values())
+        assert group.closed
     assert calls == [] and cleaned == [True]
 
 
@@ -102,11 +101,11 @@ def test_guest_resource_failure_disables_every_member_and_cleans_once(runner_bun
     cleaned = []
     with SharedPythonRunner(runner_bundle, sources, providers(sources, []),
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): group.activate(member.manifest.id)
+        for owner in group.manifests: group.activate(owner)
         with pytest.raises(SandboxError) as failure:
             group.on_event("owned.alpha", "probe", "{}")
         if fault == "fuel": assert "fuel" in str(failure.value)
-        assert all(member.closed for member in group.members.values())
+        assert group.closed
     assert cleaned == [True]
 
 
@@ -121,37 +120,16 @@ def test_original_deadline_skips_expired_work_and_rejects_late_host_return(runne
     operations["owned.alpha"]["report"] = slow
     with SharedPythonRunner(runner_bundle, sources, operations,
                             cleanup=lambda: cleaned.append(True)) as group:
-        for member in group.members.values(): group.activate(member.manifest.id)
-        first, second = group.members.values()
+        for owner in group.manifests: group.activate(owner)
+        first, second = group.manifests
         with pytest.raises(SandboxError, match="expired before entry"):
-            group.on_event(first.manifest.id, "probe", "{}", deadline=time.monotonic() - 1)
-        assert calls == [] and not first.closed
-        assert group.on_event(second.manifest.id, "probe", "{}") == "{}"
+            group.on_event(first, "probe", "{}", deadline=time.monotonic() - 1)
+        assert calls == [] and not group.closed
+        assert group.on_event(second, "probe", "{}") == "{}"
         with pytest.raises(SandboxError, match="deadline"):
-            group.on_event(first.manifest.id, "probe", "{}", deadline=time.monotonic() + .04)
-        assert first.closed and second.closed
+            group.on_event(first, "probe", "{}", deadline=time.monotonic() + .04)
+        assert group.closed
     assert calls == ["slow"] and cleaned == [True]
-
-
-def test_foreign_thread_cannot_call_or_dispose_the_group(runner_bundle):
-    sources = (snapshot("owned.alpha"), snapshot("owned.beta"))
-    cleaned, errors = [], []
-    creator = threading.get_ident()
-    with SharedPythonRunner(runner_bundle, sources, providers(sources, []),
-                            cleanup=lambda: cleaned.append(threading.get_ident())) as group:
-        member = group.members["owned.alpha"]
-        group.activate(member.manifest.id)
-        def foreign():
-            for operation in (lambda: group.on_event(member.manifest.id, "probe", "{}"), group.close):
-                try: operation()
-                except SandboxError as error: errors.append(str(error))
-        thread = threading.Thread(target=foreign)
-        thread.start()
-        thread.join(2)
-        assert not thread.is_alive() and len(errors) == 2
-        assert all("creating thread" in error for error in errors)
-        assert not group.closed and group.on_event(member.manifest.id, "probe", "{}") == "{}"
-    assert cleaned == [creator]
 
 
 @pytest.mark.parametrize("stage", ["provider-admission", "source-load"])

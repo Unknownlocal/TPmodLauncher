@@ -22,9 +22,8 @@ world code-runner {
     // One shared catalogue retains original owner tables. Action requests name
     // the owner explicitly; author host-call identity stays source-bound.
     export bind-source-regulation: func(index: u32, declaration: string) -> string;
-    export begin-regulation-contexts: func(action: u64, bytes: u32, first: string) -> string;
-    export put-regulation-contexts: func(chunk: string);
-    export seal-regulation-contexts: func() -> string;
+    // The single shared proposal fits one bounded JSON value.
+    export begin-regulation-contexts: func(action: u64, proposal: string) -> string;
     export finish-regulation-action: func(action: u64);
     export reset-regulation-group: func(epoch: u64) -> string;
 

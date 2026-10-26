@@ -123,7 +123,8 @@ def validate(c,r):
  retained=(c,r)
  return {{'decision':'allow'}}
 """ for owner in ("a.rules", "b.rules")})
-    session = dispatch(mods, count=32)
+    # Cross the four-argument preparation boundary; maximum-size cases live separately.
+    session = dispatch(mods, count=5)
     traffic = []
     sandbox = next(iter(mods.values())).sandbox
     original = sandbox.call
@@ -154,8 +155,8 @@ def validate(c,r):
     traffic.clear()
     ctx = context()
     ctx["proposal"] = {"expect": 35, "empty": []}
-    requests = {owner: [["check" if i == 0 else f"check{i:02}", 0, 0] for i in range(32)] for owner in mods}
-    assert session.evaluate([ctx], [selection(2)], requests) == {owner: [{"decision": "allow"}] * 32 for owner in mods}
+    requests = {owner: [["check" if i == 0 else f"check{i:02}", 0, 0] for i in range(5)] for owner in mods}
+    assert session.evaluate([ctx], [selection(2)], requests) == {owner: [{"decision": "allow"}] * 5 for owner in mods}
     ctx["proposal"]["expect"] = 25
     assert session.evaluate([ctx], [selection()], {owner: [["check", 0, 0]] for owner in mods}) == {
         owner: [{"decision": "allow"}] for owner in mods}

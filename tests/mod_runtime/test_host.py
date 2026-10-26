@@ -37,9 +37,8 @@ class WitWorld:
     with pytest.raises(SandboxError, match="Capability.*required"):
         with SharedPythonRunner(runner_bundle, (snapshot,), {OWNER: {operation: lambda *args: calls.append(args)}},
                                 cleanup=lambda: cleaned.append(True)) as group:
-            member = group.members[OWNER]
-            group.activate(member.manifest.id)
-            group.on_event(member.manifest.id, "probe", "{}")
+            group.activate(OWNER)
+            group.on_event(OWNER, "probe", "{}")
     assert calls == [] and cleaned == [True]
 
 

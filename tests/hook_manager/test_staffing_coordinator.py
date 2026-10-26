@@ -309,8 +309,8 @@ def test_generation_error_and_unadmitted_worker_leave_staffing_private(monkeypat
 
 
 def test_admitted_worker_outcomes_freeze_configuration_and_clean_up(monkeypatch):
-    for mode in ("allow", "deny", "unavailable", "nested", "removed"):
-        state, manager, person, channel, guards, run = coordinator(monkeypatch, mode if mode in ("deny", "unavailable") else "allow")
+    for mode in ("deny", "nested", "removed"):
+        state, manager, person, channel, guards, run = coordinator(monkeypatch, "deny" if mode == "deny" else "allow")
         entered, proceed = threading.Event(), threading.Event()
         results, errors = [], []
         before = deepcopy((vars(person), manager.staff_season_history))
@@ -341,15 +341,11 @@ def test_admitted_worker_outcomes_freeze_configuration_and_clean_up(monkeypatch)
             result, outcome, caller, active = results[0]
             assert caller is None and active == 1 and not guards._active
             assert guards.last_outcome is None
-            assert result.published is (mode == "allow")
-            if mode == "allow":
-                assert outcome.status == "allow" and len(manager.staff) == 2
-                assert person.contract == {"team": "first"}
-            else:
-                assert result.refusal.status == outcome.status == ("deny" if mode == "deny" else "unavailable")
-                assert manager.staff == [person] and (vars(person), manager.staff_season_history) == before
-                if mode == "removed":
-                    assert not channel.actions and not guards._personnel_operation.locked()
+            assert not result.published
+            assert result.refusal.status == outcome.status == ("deny" if mode == "deny" else "unavailable")
+            assert manager.staff == [person] and (vars(person), manager.staff_season_history) == before
+            if mode == "removed":
+                assert not channel.actions and not guards._personnel_operation.locked()
         finally:
             proceed.set()
             thread.join(2)

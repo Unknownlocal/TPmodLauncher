@@ -53,8 +53,7 @@ class AdapterModules:
             if self.categories is not None and self.categories.errors:
                 result["career_preload"] = {"state": "unavailable", "detail": self.categories.errors[-1]}
         if self.channel is not None or self.regulation_error:
-            # Installation coverage is not policy readiness. In particular,
-            # signing adapters do not install whole-team staffing callers.
+            # Installing all required native hooks does not yet activate checks.
             state = ("cleanup_pending" if self.channel is not None else "unavailable") if self.regulation_error else (
                 "installed" if self.coverage else "prepared" if self.policy is not None else "bound")
             result["regulations"] = {"state": state,
@@ -147,7 +146,7 @@ class AdapterModules:
                 self.categories.check(state)
             channel = self.channel
             if channel is None:
-                channel = self.host.RegulationChannel(request["endpoint"])
+                channel = self.host.adapter_code.game_adapters.regulations.channel.RegulationChannel(request["endpoint"])
             elif request["endpoint"].get("token") != channel._token:
                 raise HookError("Regulation preparation does not own this connection")
             channel.validation_ready = False

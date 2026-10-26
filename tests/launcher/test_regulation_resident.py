@@ -27,8 +27,8 @@ def test_bad_shared_policy_transfer_traps_and_closes_group(make_mod, fault):
         with pytest.raises(SandboxError):
             if fault == "wrong-phase":
                 # This byte fits the declared size, so only the transfer-kind
-                # check can reject a context chunk during policy installation.
-                mod.sandbox.call("put-regulation-contexts", "{")
+                # check can reject an action chunk during policy installation.
+                mod.sandbox.call("put-regulation-action", "{")
             else:
                 mod.sandbox.call("put-regulation-policy", "too long")
     assert mod.sandbox.closed
@@ -37,8 +37,8 @@ def test_bad_shared_policy_transfer_traps_and_closes_group(make_mod, fault):
 def test_reused_components_are_neither_remeasured_nor_encoded_during_action_preparation(monkeypatch):
     # Trusted fixture functions stand in for admitted bindings in this accounting
     # test. Shared dispatch integration tests execute actual author source in Wasm.
-    manifest, records = policy("owned.rules")
-    handlers = [(lambda c, r: {"decision": "allow"}, "personnel.contract", "native")]
+    manifest, records = policy("owned.rules", count=8)
+    handlers = [(lambda c, r: {"decision": "allow"}, "personnel.contract", "native")] * 8
     catalog = RegulationCatalog(manifest, {"owned.rules": handlers})
     for slot, value in enumerate(records):
         catalog.install(slot, value)

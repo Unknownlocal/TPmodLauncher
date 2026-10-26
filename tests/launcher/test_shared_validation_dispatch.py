@@ -47,8 +47,8 @@ def make_shared_dispatch(runner_bundle):
             providers = {owner: {"report": lambda text, owner=owner: calls.append((owner, text))} for owner in sources}
             group = stack.enter_context(SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
                                                            cleanup=lambda: cleaned.append(True)))
-            for member in group.members.values():
-                group.activate(member.manifest.id)
+            for owner in group.manifests:
+                group.activate(owner)
             sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],
                                "option_data": {"native": {"open": {"owner": owner}}}} for owner in sources}
             private = "a.rules.private"
@@ -75,7 +75,8 @@ def publish(session):
 
 
 def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_actions_and_career_reset(make_shared_dispatch, monkeypatch):
-    session, group, calls, _, model, handler = make_shared_dispatch(count=20)
+    # Five declarations exercise a second prepared batch without repeating a capacity test.
+    session, group, calls, _, model, handler = make_shared_dispatch(count=5)
     traffic = []
     original = group.sandbox.call
     def record(name, *args, **kwargs):
@@ -97,13 +98,13 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_acti
     assert max(i for i, (name, _) in enumerate(traffic) if name == "seal-regulation-policy") < min(
         i for i, (name, _) in enumerate(traffic) if name == "commit-regulation-policy")
     traffic.clear()
-    requests = {owner: [[f"v{i:02}", 0, 0] for i in range(20 if owner != "b.rules" else 1)] for owner in session.states}
+    requests = {owner: [[f"v{i:02}", 0, 0] for i in range(5 if owner != "b.rules" else 1)] for owner in session.states}
     requests["a.rules"].insert(0, ["private", 0, 1])
     private_selection = {**selection(), "rule": "a.rules.private"}
     result = session.evaluate([proposal(deny="c.rules")], [selection(), private_selection], requests)
-    assert len(result["a.rules"]) == 21 and result["b.rules"] == [{"decision": "allow"}]
-    assert result["c.rules"] == [{"decision": "deny", "message": "c.rules"}] * 20
-    assert calls == [("a.rules", "a.rules.private")] + [("a.rules", "native")] * 20 + [("b.rules", "native")] + [("c.rules", "native")] * 20
+    assert len(result["a.rules"]) == 6 and result["b.rules"] == [{"decision": "allow"}]
+    assert result["c.rules"] == [{"decision": "deny", "message": "c.rules"}] * 5
+    assert calls == [("a.rules", "a.rules.private")] + [("a.rules", "native")] * 5 + [("b.rules", "native")] + [("c.rules", "native")] * 5
     assert sum(name == "begin-regulation-contexts" for name, _ in traffic) == 1
     assert all(json.loads(args[-1])["contexts"] == [0] for name, args in traffic if name == "begin-regulation-action")
     action = session.action

@@ -39,12 +39,6 @@ class RegulationGuards(CallableAdapters):
         """Most recent owned validation on this thread, not native execution success."""
         return getattr(self._local, "outcome", None)
 
-    @property
-    def last_refusal(self):
-        """Keep the existing text accessor for presentation and native return shapes."""
-        outcome = self.last_outcome
-        return outcome.message if outcome else None
-
     def _deny(self, refuse, outcome):
         self._local.outcome = outcome
         return refuse(outcome.message)

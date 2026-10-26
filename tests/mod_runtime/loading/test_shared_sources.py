@@ -11,7 +11,7 @@ from launcher.sandbox import Sandbox, SandboxError
 from mod_runtime.bundle import EXPORTS
 from mod_runtime.source_transfer import RUNNER_LIMITS, SOURCE_FUEL
 from mod_runtime import shared_sources
-from mod_runtime.shared_sources import SharedSources
+from mod_runtime.shared_sources import transfer_sources
 from mod_runtime.source import SourceManifest, SourceSnapshot
 
 
@@ -63,7 +63,7 @@ def test_shared_imports_preserve_owner_state_and_allow_cross_mod_objects(runner_
     second = snapshot("owned.beta", "beta", entry="entry.main")
     cleaned = []
     with sandbox(runner_bundle, cleaned) as guest:
-        SharedSources(guest, (first, second))
+        transfer_sources(guest, (first, second))
         for owner in ("owned.alpha", "owned.beta"):
             guest.call("activate-source", owner)
         # Identical local import names resolve within the requesting mod. The
@@ -73,16 +73,6 @@ def test_shared_imports_preserve_owner_state_and_allow_cross_mod_objects(runner_
         guest.call("on-source-event", "owned.alpha", "peer", '"owned.beta"')
         assert json.loads(guest.call("on-source-event", "owned.beta", "read", "{}"))[-1] == ["alpha"]
         assert not guest.closed
-    assert cleaned == [True]
-
-
-def test_later_entry_failure_closes_the_whole_shared_runner(runner_bundle):
-    cleaned = []
-    with sandbox(runner_bundle, cleaned) as guest:
-        with pytest.raises(SandboxError, match="second entry failed"):
-            SharedSources(guest, (snapshot("owned.alpha", "alpha"),
-                                  snapshot("owned.beta", "beta", code="raise ValueError('second entry failed')")))
-        assert guest.closed and cleaned == [True]
     assert cleaned == [True]
 
 
@@ -105,10 +95,10 @@ def test_group_source_budget_is_checked_before_guest_exports(monkeypatch):
     first, second = snapshot("owned.alpha", "a"), snapshot("owned.beta", "b")
     monkeypatch.setattr(shared_sources, "MAX_GROUP_SOURCE_BYTES", first.total_bytes + second.total_bytes - 1)
     calls = []
-    guest = SimpleNamespace(close=lambda: calls.append("closed"), call=lambda *args: calls.append(args))
+    guest = SimpleNamespace(call=lambda *args: calls.append(args))
     with pytest.raises(SandboxError, match="group exceeds its budget"):
-        SharedSources(guest, (first, second))
-    assert calls == ["closed"]
+        transfer_sources(guest, (first, second))
+    assert calls == []
 
 
 def test_guest_bounds_owner_count_independently_of_each_mod(runner_bundle):

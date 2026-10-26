@@ -17,9 +17,7 @@ import uuid
 PYTHON_SOURCES = (
     "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
-    # Transport stays in the flat core. Complete adapters load separately into
-    # their own module namespaces through the trusted adapters operation.
-    "game_adapters/regulations/framing", "game_adapters/regulations/protocol", "game_adapters/regulations/channel",
+    # Complete adapters and their transport load once as private modules.
     "pack_discovery", "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 

@@ -59,8 +59,10 @@ selection_index]` rows. Indexes refer to the distinct membership order published
 above. The caller owns native season/selection semantics; this layer checks
 authority, order, freshness and full logical limits. Every owner packet is
 prepared before author execution, with no stable payload encoding or traversal.
-Contexts are encoded and measured once, then sent as one shared table. Each mod's
-packet refers to numbered entries. Full limits are checked before replacing
+The single proposal is encoded and measured once, then transferred in one call.
+Its complete context-plus-rule argument fits 4 KiB, so the proposal alone needs
+no paging. Policy records and per-owner call packets still use bounded pages.
+Each mod's packet refers to numbered entries. Full limits are checked before replacing
 contexts with references. Handlers receive independent argument copies and run
 in owner-ID order. The shared action must finish before any results are returned.
 

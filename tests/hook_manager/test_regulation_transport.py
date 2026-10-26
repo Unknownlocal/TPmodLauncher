@@ -227,23 +227,31 @@ def test_shutdown_releases_a_pending_request_without_entering_an_evaluator():
 def test_shutdown_closes_a_socket_accepted_before_connection_publication(monkeypatch):
     accepted, release, read = threading.Event(), threading.Event(), threading.Event()
     accept = socket.socket.accept
+    target_listener = None
+    connections = []
 
     def paused_accept(listener):
         connection = accept(listener)
-        accepted.set()
-        release.wait(timeout=2)
+        # Windows also accepts a connection while constructing socketpair().
+        # Gate only the server listener, after accept but before publication.
+        if listener is target_listener:
+            connections.append(connection[0])  # Keep GC from concealing a missing close.
+            accepted.set()
+            release.wait(timeout=2)
         return connection
 
-    def unexpected_read(*args):
+    def unexpected_read(*args, **kwargs):
         read.set()
         raise RuntimeError("Authentication started after shutdown")
 
     monkeypatch.setattr(socket.socket, "accept", paused_accept)
     monkeypatch.setattr(server_module, "regulation_read", unexpected_read)
     with closing(RegulationServer(METADATA)) as server:
-        with socket.create_connection(("127.0.0.1", server.endpoint["port"]), timeout=1):
+        target_listener = server._listener
+        with socket.create_connection(("127.0.0.1", server.endpoint["port"]), timeout=1) as peer:
             try:
                 assert accepted.wait(timeout=1)
+                assert server._connection is None and not read.is_set()
                 join = server._thread.join
 
                 def release_on_join(timeout=None):
@@ -254,5 +262,8 @@ def test_shutdown_closes_a_socket_accepted_before_connection_publication(monkeyp
                 monkeypatch.setattr(server._thread, "join", release_on_join)
                 server.close()
                 assert not read.is_set() and not server._thread.is_alive()
+                assert peer.recv(1) == b""
             finally:
                 release.set()
+                for connection in connections:
+                    connection.close()

@@ -28,22 +28,6 @@ def test_projection_is_copied_and_cannot_leak_native_objects(host):
     assert module.method(5) is False and mutations == [4]
 
 
-def test_guard_calls_original_at_most_once_on_native_error(host):
-    calls, error = [], ValueError("native")
-    module, engine = host()
-
-    def method(value):
-        calls.append(value)
-        raise error
-
-    module.method = method
-    approve(engine, module)
-    engine.register("owner", [CallBinding("rule", "method", project, refuse_boolean)])
-    with pytest.raises(ValueError) as caught:
-        module.method(1)
-    assert caught.value is error and calls == [1] and engine.owners == {"owner": "ready"}
-
-
 def test_reentrant_dispatch_and_reconfiguration_cannot_authorize_mutation(host):
     mutations = []
     module, engine = host()

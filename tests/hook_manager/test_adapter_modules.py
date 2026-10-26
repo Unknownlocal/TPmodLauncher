@@ -86,6 +86,7 @@ def installation(host, monkeypatch):
     personnel.install_prepared = lambda: personnel
     academy.install_prepared = lambda: academy
     adapters = host.adapter_code.game_adapters.regulations
+    adapters.channel = SimpleNamespace(RegulationChannel=lambda endpoint: channel)
     adapters.native_policy = SimpleNamespace(NativeRegulationPolicy=NativeRegulationPolicy)
     adapters.native_rules = SimpleNamespace(install_native_rules=lambda *a, **kw: (native,))
     adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=lambda *a, **kw: personnel)
@@ -176,7 +177,6 @@ def test_setup_exception_restores_prior_components_and_closes_channel(installati
 def test_incompatible_rule_selection_reports_skip_and_closes_candidate_channel(installation):
     modules, _, channel, _, hooks = installation
     channel._rules, channel._custom = {"missing.native.rule"}, set()
-    modules.host.RegulationChannel = lambda endpoint: channel
     capture(installation)
     reports = []
     result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=reports.append)
@@ -192,7 +192,6 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     channel._rules, channel._custom = set(), set()
     published = []
     channel.publish = lambda **data: published.append(data)
-    modules.host.RegulationChannel = lambda endpoint: channel
     request = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
     with pytest.raises(HookError, match="preparation fields"):
         modules.prepare_regulations(dict(request, target="arbitrary"), report=pytest.fail)
@@ -240,7 +239,6 @@ def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation,
     modules, _, channel, _, hooks = installation
     channel._rules, channel._custom, channel._token = set(), set(), "0" * 64
     channel.publish = lambda **data: None
-    modules.host.RegulationChannel = lambda endpoint: channel
     request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
     capture(installation)
     modules.prepare_regulations(request, report=pytest.fail)
@@ -265,7 +263,6 @@ def test_cancelled_prepared_career_can_retire_without_closing_pack_connection(in
     channel.publish = lambda **data: None
     resets = []
     channel.reset = resets.append
-    modules.host.RegulationChannel = lambda endpoint: channel
     request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
     preload = capture(installation)
     modules.prepare_regulations(request, report=pytest.fail)
@@ -282,7 +279,6 @@ def test_cancelled_prepared_career_can_retire_without_closing_pack_connection(in
 def test_preparation_failure_closes_candidate_and_reports_native_fallback(installation, failure):
     modules, _, channel, _, hooks = installation
     channel._rules, channel._custom = set(), set()
-    modules.host.RegulationChannel = lambda endpoint: channel
     released = []
     preload = capture(installation)
     preload.stop = lambda: released.append(True)

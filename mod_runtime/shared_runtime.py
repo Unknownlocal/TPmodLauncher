@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Own one shared Python Store and its admitted source-member handles."""
+"""Own one shared Python Store and its admitted source manifests."""
 
 from contextlib import ExitStack
 from types import MappingProxyType
@@ -9,9 +9,8 @@ from launcher.sandbox import Sandbox, SandboxError
 from launcher.shared_runner_host import bind_shared_operations
 from .bundle import EXPORTS, RunnerBundle
 from .source_transfer import RUNNER_LIMITS
-from .shared_sources import SharedSources
+from .shared_sources import transfer_sources
 from .source import SourceSnapshot
-from .source_handle import SourceHandle
 from ._source_policy import MAX_SOURCE_OWNERS
 
 
@@ -51,8 +50,9 @@ class SharedPythonRunner:
             self._sandbox = Sandbox(data, operations, limits=self._limits,
                                     cleanup=ownership.close, required_exports=dict(EXPORTS),
                                     prepared=prepared, timings=timings)
-            SharedSources(self._sandbox, snapshots)
-            self.members = MappingProxyType({owner: SourceHandle(self, manifest) for owner, manifest in manifests.items()})
+            transfer_sources(self._sandbox, snapshots)
+            # Identity stays immutable; availability belongs to this one runner.
+            self.manifests = MappingProxyType(manifests)
         except BaseException:
             try:
                 self.close()
@@ -70,7 +70,7 @@ class SharedPythonRunner:
         return self._sandbox is None or self._sandbox.closed
 
     def _call(self, name, owner, *arguments, deadline=None):
-        if owner not in self.members:
+        if owner not in self.manifests:
             raise SandboxError("Unknown shared source owner")
         if deadline is None:
             return self._sandbox.call(name, owner, *arguments)
