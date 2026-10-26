@@ -4,8 +4,9 @@ This private package reads enabled mods' regulation definitions and prepares the
 Python validation functions to run inside Wasm. The launcher manages loading,
 rule data and execution. Trusted game adapters supply the places where checks
 run. Mod code cannot select a game function or call the private callable engine.
-Public source admission accepts API 0.2.0/0.3.0; regulation permission remains
-private to the 0.4.0 interface.
+Source API `0.4.0` admits the `regulations` permission. Earlier source APIs keep
+their existing operations; the runner interface and native callable engine remain
+private.
 
 ## Definition preparation
 

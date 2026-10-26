@@ -21,8 +21,8 @@ def bind_owner_operations(capabilities, providers):
     if type(capabilities) not in (set, frozenset) or any(type(name) is not str for name in capabilities):
         raise SandboxError("Expected an explicit capability set")
     capabilities = frozenset(capabilities)
-    # The private regulation adapter uses runner exports, never extra host calls.
-    # Public manifest versions cannot request this private capability.
+    # Regulation permission enables declared validators through private runner
+    # exports; it grants no additional host operations or callable targets.
     if capabilities - {spec.capability for spec in HOST_OPERATIONS.values()} - {"regulations"}:
         raise SandboxError("Unsupported runner capabilities")
     providers = dict(providers)

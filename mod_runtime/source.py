@@ -15,7 +15,7 @@ from .contract import SOURCE_CAPABILITIES
 
 MAX_TREE_ENTRIES = 512
 MAX_DEPTH = 16
-SOURCE_API_VERSION = "0.3.0"
+SOURCE_API_VERSION = "0.4.0"
 _FIELDS = {"schema", "id", "version", "api", "runtime", "entry", "capabilities"}
 _NUMBER = r"(?:0|[1-9][0-9]*)"
 _PRE = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"

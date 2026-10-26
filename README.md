@@ -136,10 +136,10 @@ All seven fields are required; extra fields are rejected.
 | `schema` | Integer `2`. |
 | `id` | Unique ID, up to 128 characters. Start with a lowercase letter; use lowercase letters, digits, `.`, `_`, `:` or `-` after it. |
 | `version` | SemVer version, at most 64 characters. |
-| `api` | Exact source API version `0.2.0` or `0.3.0`. |
+| `api` | Exact source API version `0.2.0`, `0.3.0` or `0.4.0`. |
 | `runtime` | `python`. |
 | `entry` | Dotted module name under `src/`, up to 128 characters; `mod` loads `src/mod.py`. |
-| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, and (API `0.3.0` only) `ui-settings`. An empty list is valid. |
+| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, `ui-settings` (API `0.3.0`/`0.4.0`) and `regulations` (API `0.4.0`). An empty list is valid. |
 
 Implement the `wit_world` API provided by the runner:
 
@@ -221,6 +221,66 @@ The group accepts at most 8 MiB of source across 4,096 files; the pack admits
 at most 32 code mods. A failed source member closes all Python source mods in
 that pack. Mods with prebuilt Wasm components keep separate runtime instances.
 
+#### Regulation validators (API `0.4.0`)
+
+API `0.4.0` keeps the earlier source operations and adds the `regulations`
+permission. Start with the [rookie-contract example](examples/rookie_contract_mod).
+Authors supply its `mod.toml`, Python under `src/` and regulation declarations;
+the launcher supplies the runner, game adapters and validation connection.
+
+Install the example's code folder beside other mods in the selected Formula
+pack. Merge its [`regulations.json`](examples/rookie_contract_mod/regulations.json)
+`mod_extensions` entries into the pack's existing **root** `regulations.json`.
+Keep the native fields and other mods' entries; do not replace the whole file.
+The copy inside the code folder is an example fragment, not a second loaded file.
+Each entry is keyed by the exact manifest ID and requires `schema: 1`.
+Sections whose code mod is absent or lacks the permission are ignored beyond
+JSON syntax and the whole-file size limit. Removing the code folder disables
+its section on the next game start.
+
+A `validators` entry names a rule, a supported scope and a Python function:
+
+```json
+{"id":"rookie_length","rule":"example.rookie_contracts.length","scope":"personnel.contract","handler":"mod.validate_contract"}
+```
+
+Rules can use native categories or categories declared by that mod. Custom
+category keys must begin with the mod ID and `.`. Current scopes are `personnel.contract`
+(driver, staff, academy and staffing proposals) and `development.project`
+(aero and chassis proposals). The launcher chooses the game methods; declarations
+cannot name arbitrary functions or call the private callable adapter.
+
+Write a synchronous `validate_contract(context, regulation)` function in the
+named source module. It receives fresh dictionaries and lists, and returns a
+dictionary such as `{"decision": "allow"}` or
+`{"decision": "deny", "message": "Contract is too long"}`. A refusal needs
+1-160 printable characters without surrounding whitespace. This is separate
+from `WitWorld` lifecycle methods and `on_event()` JSON-string responses.
+
+`context` describes the proposed action, its initiator, career clock and effective
+season. `regulation` supplies `current`, optional `upcoming` and `selected`.
+Use `regulation[regulation["selected"]]` for the option applying to that proposal;
+its `parameters` contain the rule values and `option_data` contains the mod's
+extra data for that option. The example reads `max_years` from those parameters
+and uses `proposal.native_checks.rookie_contract_length_applies`, preserving the
+game's own definition of a rookie.
+
+The optional `native_rules` booleans `rookie_contract_length_check` and
+`staff_prestige_check` keep their native checks when omitted or true; false
+requests a bypass so ordinary mod validators can replace the condition. Only one
+enabled mod may declare each switch; conflicts reject preparation. The example
+bypasses only the rookie length check and supplies its own length validator.
+Other native refusals still apply. Saved accepted contracts take effect normally
+without another mod check.
+
+The pack file is limited to 1 MiB. Each complete context-plus-rule argument is
+limited to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels; checks share
+one 100 ms action deadline. Native rule choices stay in memory between checks.
+See the [declaration and execution limits](launcher/regulations/README.md) for
+category, validator and script bounds. Invalid declarations or unavailable
+required validators keep the pack's mod checks unready; loading failures are
+reported in the CLI and launcher log.
+
 ### Mods with prebuilt Wasm components
 
 Authors build and distribute the component; the launcher loads the binary
@@ -257,8 +317,9 @@ component = "mod.wasm"
 capabilities = ["diagnostics", "main-menu"]
 ```
 
-All seven fields are required; extra fields are rejected. IDs, versions and
-capabilities follow the Python source mod rules. `component` replaces `entry`
+All seven fields are required; extra fields are rejected. IDs and versions follow
+the Python source mod rules; capabilities must match the chosen component
+contract. Prebuilt components cannot request `regulations`. `component` replaces `entry`
 with a relative `.wasm` path inside the mod folder. Use `runtime = "wasm"` for
 any implementation language. The launcher rejects unsupported imports and missing
 or mismatched lifecycle exports.
@@ -356,6 +417,13 @@ and guest linear-memory limits. Loading progress and native registration
 acknowledgements control startup readiness. Closing a session cancels unfinished
 preparation, closes owned runtimes, removes their native UI registrations and
 restores owned hooks. Logical mod closure is reported in reverse activation order.
+
+For regulation mods, the launcher reads enabled declarations from the pack's
+`regulations.json` and keeps checked rule data in the shared runner. Fixed game
+adapters prepare proposed contracts or development projects and request mod
+validation. Python handlers receive copied proposals and the selected rule data;
+their decisions gate the action while the game's other checks remain in force.
+The native callable adapter stays private.
 
 Release tools build the fixed runner with the pinned developer componentizer,
 prepare bundled Python and dependencies, and keep trusted sources and upstream

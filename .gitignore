@@ -1,5 +1,6 @@
 # Keep copied data-pack files and media out of this patch-only repository.
 *.json
+!examples/rookie_contract_mod/regulations.json
 *.png
 *.jpg
 *.jpeg

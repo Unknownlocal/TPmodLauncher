@@ -180,8 +180,8 @@ class PackMods:
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.
 
-        Public API versions cannot request regulations. Private regulation
-        owners must bind and become ready before their pack publishes resources.
+        Source API 0.4.0 owners request the regulations permission. Their rules
+        must bind and become ready before the pack publishes mod resources.
         """
         from launcher.regulations import RegulationDefinitions
 

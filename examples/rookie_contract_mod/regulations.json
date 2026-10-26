@@ -1,0 +1,27 @@
+{
+  "mod_extensions": {
+    "example.rookie_contracts": {
+      "schema": 1,
+      "categories": [
+        {
+          "key": "example.rookie_contracts.length",
+          "label": "Rookie contract length",
+          "default": "three_years",
+          "options": [
+            {"id": 1, "key": "three_years", "name": "Three years", "parameters": {"max_years": 3}},
+            {"id": 2, "key": "five_years", "name": "Five years", "parameters": {"max_years": 5}}
+          ]
+        }
+      ],
+      "validators": [
+        {
+          "id": "rookie_length",
+          "rule": "example.rookie_contracts.length",
+          "scope": "personnel.contract",
+          "handler": "mod.validate_contract"
+        }
+      ],
+      "native_rules": {"rookie_contract_length_check": false}
+    }
+  }
+}

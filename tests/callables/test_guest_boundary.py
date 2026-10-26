@@ -7,10 +7,10 @@ from mod_runtime.source import SourceManifest, SourceSnapshot
 MANIFEST = SourceManifest.parse(b'''schema = 2
 id = "owned.callables"
 version = "0.1.0"
-api = "0.2.0"
+api = "0.4.0"
 runtime = "python"
 entry = "mod"
-capabilities = ["diagnostics"]
+capabilities = ["diagnostics", "regulations"]
 ''')
 
 

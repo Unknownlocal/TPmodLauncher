@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// Private runner ABI. This does not publish source mod API 0.4.0.
+// Private runner ABI. Source manifests separately select their mod API permissions.
 package modlauncher:python-runner@0.4.0;
 
 world code-runner {

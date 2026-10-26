@@ -122,8 +122,9 @@ holds from runtime status. Loading protection must be armed before career
 selection opens, and activation acknowledged before mod UI appears. Returning to
 the menu or cancelling a load retires career hooks and data while retaining the
 pack's interpreter, handlers and connection. The next career needs fresh data and
-hook approval. The child package documents failure handling and required owners;
-regulation permission remains outside the public mod API.
+hook approval. The child package documents failure handling and required owners.
+Source API `0.4.0` grants the `regulations` permission; native setup and the callable
+adapter remain private.
 
 [`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
 field selection and explicit duplicate policies. Document-specific adapters own

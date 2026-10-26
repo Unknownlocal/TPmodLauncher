@@ -109,8 +109,9 @@ status and readiness are trusted infrastructure rather than mod API capabilities
 ## Current mod API overview
 
 The implemented public operations are diagnostic reporting, declarative native
-menu buttons, native UI settings with mod-local storage and restart-only palettes.
-Python source mods use API `0.2.0` or `0.3.0` and the prebuilt runner's
+menu buttons, native UI settings with mod-local storage, restart-only palettes
+and regulation validators. Python source mods use API `0.2.0`, `0.3.0` or `0.4.0`
+and the prebuilt runner's
 `wit_world` facade. The runner supplies its base class and functions;
 authors supply their manifest and Python source without generated bindings.
 Mods with prebuilt Wasm components implement the versioned `code-mod` contracts.
@@ -119,6 +120,7 @@ Mods with prebuilt Wasm components implement the versioned `code-mod` contracts.
 | --- | --- | --- |
 | Python source mod | `0.2.0` | `diagnostics`, `main-menu` |
 | Python source mod | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
+| Python source mod | `0.4.0` | `diagnostics`, `main-menu`, `ui-settings`, `regulations` |
 | Mod with prebuilt Wasm component | `0.1.0` | `diagnostics` |
 | Mod with prebuilt Wasm component | `0.2.0` | `diagnostics`, `main-menu` |
 | Mod with prebuilt Wasm component | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
@@ -129,6 +131,27 @@ runners bind every host operation before instantiation: granted operations need
 trusted providers, and ungranted operations fail before reaching a provider.
 Wasm components may import only operations granted by their manifest. The
 [versioned WIT definitions](api/README.md) describe the component contracts.
+
+### Regulation validators
+
+API `0.4.0` source mods can request `regulations`. The pack's root
+`regulations.json` holds their `mod_extensions` sections, keyed by manifest ID.
+Each section declares categories or native option data and names ordinary
+synchronous Python handlers through `validators`. The supported scopes are
+`personnel.contract` and `development.project`; trusted adapters select the game
+methods and prepare copied proposals.
+
+The runner calls each handler with fresh `context` and `regulation` dictionaries.
+Handlers return allow/deny dictionaries; conditions stay in mod Python. The
+selected option supplies parameters for the proposal's effective season. Optional
+rookie-length and staff-prestige switches bypass only their named native checks;
+other game refusals remain. Declarations belonging to disabled mods are ignored.
+
+The [regulation package](../launcher/regulations/README.md) owns declaration
+checks and bounds. Game adapters own native selection and guarded actions; the
+launcher owns retained data and execution. This permission supplies no direct
+native-call API, endpoint access or new `WitWorld` method. Prebuilt Wasm components
+retain their existing API versions and cannot request `regulations`.
 
 ### Lifecycle and events
 
@@ -154,10 +177,10 @@ message and do not invoke `on_event()`.
 | Python facade | WIT import | Required permission |
 | --- | --- | --- |
 | `wit_world.report(message)` | `report: func(message: string)` | `diagnostics` |
-| `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0` or `0.3.0` |
-| `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0` |
-| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-settings`, API `0.3.0` |
-| `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0` |
+| `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0`/`0.3.0`/`0.4.0` |
+| `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0`/`0.4.0` |
+| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-settings`, API `0.3.0`/`0.4.0` |
+| `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0`/`0.4.0` |
 
 `report` logs the supplied message with the host-owned mod ID. Non-printable
 characters are replaced with spaces before logging.
@@ -177,7 +200,7 @@ closure removes that mod's registrations.
 
 ### UI settings and palettes
 
-API `0.3.0` grants all three settings/palette operations through `ui-settings`.
+API `0.3.0` and `0.4.0` grant all three settings/palette operations through `ui-settings`.
 Each definition, values document and result is a JSON string limited to 4,096
 UTF-8 bytes. `register_settings` declares one Options tab per mod and returns
 saved values, or defaults when `settings.json` is absent:

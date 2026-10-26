@@ -10,6 +10,7 @@ from pathlib import Path
 import threading
 import time
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +96,29 @@ class WitWorld:
         instances = list(scope.mods.values())
     assert all(mod.sandbox.closed for mod in instances)
     assert [item["id"] for item in records(messages, "CLOSED")] == ["owned.c", "owned.b", "owned.a"]
+
+
+def test_regulation_permission_cannot_expand_other_api_profiles(pack, source_mod, code_mod, runner_bundle, monkeypatch):
+    game, folder, record = pack
+    for api in ("0.2.0", "0.3.0"):
+        source_mod(folder, "old-" + api, api=api, capabilities=("regulations",))
+    source_mod(folder, "host-target", api="0.4.0", capabilities=("call-native",))
+    binary = code_mod(folder, "prebuilt")
+    manifest = binary / "mod.toml"
+    manifest.write_text(manifest.read_text().replace('runtime = "python"', 'runtime = "wasm"')
+                        .replace('["diagnostics"]', '["regulations"]'), encoding="utf-8")
+    # A rejected declaration never gains access to pack data or guest execution.
+    (folder / "regulations.json").write_text("invalid JSON deliberately ignored", encoding="utf-8")
+    def forbidden(*args):
+        pytest.fail("Rejected permissions must not load source or native hooks")
+    monkeypatch.setattr(SourceSnapshot, "read", forbidden)
+    messages = []
+    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
+                          bridge=SimpleNamespace(request=forbidden))) as scope:
+        scope.load(record)
+        finish(scope)
+        assert not scope.mods and scope.failed == 4
+        assert len(records(messages, "REJECTED")) == 4
 
 
 def test_duplicate_ids_reject_all_copies_before_any_source_runs(pack, source_mod, code_mod, runner_bundle, monkeypatch):

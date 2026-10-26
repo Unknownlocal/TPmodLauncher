@@ -33,4 +33,6 @@ RUNNER_HOST_OPERATIONS = MappingProxyType({
 SOURCE_CAPABILITIES = MappingProxyType({
     "0.2.0": frozenset({"diagnostics", "main-menu"}),
     "0.3.0": frozenset(spec.capability for spec in HOST_OPERATIONS.values()),
+    # Regulations use declared Python validators, not another host-call import.
+    "0.4.0": frozenset(spec.capability for spec in HOST_OPERATIONS.values()) | {"regulations"},
 })

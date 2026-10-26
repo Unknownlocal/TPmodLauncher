@@ -24,8 +24,8 @@ def validator(identity="check", handler="rules.validate"):
 @pytest.fixture
 def make_mods(make_source_group):
     def create(rules, *, extra=(), report=None):
-        # Public admission still rejects API 0.4.0; checked snapshots exercise
-        # the private contract in the same shared runner used by production.
+        # Direct snapshots keep dispatch cases focused; pack tests exercise the
+        # public manifest reader and source loading with these same permissions.
         caps = {"regulations"} | ({"diagnostics"} if report else set())
         snapshots = []
         for owner, code in rules.items():

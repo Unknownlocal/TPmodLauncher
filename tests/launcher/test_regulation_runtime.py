@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing
 import json
 import inspect
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -22,7 +23,6 @@ from hook_manager.game_adapters.regulations.native_policy import NativeRegulatio
 from launcher.pack_mods import PackMods
 from launcher.game_bridge import Bridge
 from launcher.sandbox import SandboxError
-from mod_runtime import source
 from regulation_support import context, make_mod, selection, validator
 
 
@@ -70,26 +70,32 @@ def control_bridge(monkeypatch, control):
     return client
 
 
-def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(make_mod, tmp_path, monkeypatch):
-    """Real binding/publication/activation; only native hook coverage is simulated."""
-    mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
-    owner = mod.manifest.id
-    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [], "mod_extensions": {
-            owner: {"schema": 1, "categories": [{"key": owner + ".policy", "label": "Policy", "default": "open",
-                "options": [{"id": 1, "key": "open", "name": "Open"}]}], "scripted_changes": [
-                {"key": owner + ".policy", "new_regulation": {"key": "open"}, "effective_season": 2}],
-                "validators": [validator()], "native_rules": {
-                "rookie_contract_length_check": False, "staff_prestige_check": True}}}}), encoding="utf-8")
-    progress, menus, operations, channels = [], [], [], []
+def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(source_mod, runner_bundle, tmp_path, monkeypatch):
+    """Load the example normally; simulate the game-side bridge replies."""
+    example = Path(__file__).resolve().parents[2] / "examples/rookie_contract_mod"
+    folder = tmp_path / "data/owned"
+    shutil.copytree(example, folder / example.name)
+    document = json.loads((example / "regulations.json").read_text(encoding="utf-8"))
+    owner = "example.rookie_contracts"
+    category = owner + ".length"
+    document.update(categories=[{"key": "native", "options": [{"key": "open"}]}], native_extra={"keep": True})
+    # Exercise the same fixed loading request for categories and scheduled choices.
+    document["mod_extensions"][owner]["scripted_changes"] = [{
+        "key": category, "new_regulation": {"key": "five_years"}, "effective_season": 2028}]
+    path = folder / "regulations.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    original = path.read_bytes()
+    # Existing API mods share the runner and wait for the new rule's readiness.
+    source_mod(folder, "ui", mod_id="owned.ui", capabilities=("main-menu",), code=(
+        "import wit_world\nclass WitWorld:\n def activate(self): wit_world.add_menu_button('owned','Owned','Message')\n"
+        " def on_event(self,n,p): return p\n"))
+    progress, menus, operations, channels, reports = [], [], [], [], []
+    wake = threading.Event()
     client = control_bridge(monkeypatch, lambda operation: {})
     with ExitStack() as resources:
         worker = resources.enter_context(ThreadPoolExecutor(max_workers=1))
-        scope = resources.enter_context(closing(PackMods(tmp_path, lambda _: None, bridge=client,
-            set_loading=progress.append, set_menu=menus.append)))
-        scope.mods, scope.finished, scope._pack_root, scope.total = {owner: mod}, True, tmp_path, 1
-        scope._regulation_owners = {owner}
-        scope.menu.add(owner, "owned", "Owned", "Message")
-        scope._progress("complete")  # Pack loading has finished; rules still hold the menu.
+        scope = resources.enter_context(closing(PackMods(tmp_path, reports.append, bridge=client, runner_bundle=runner_bundle,
+            wake=wake.set, set_loading=progress.append, set_menu=menus.append)))
         def post(record, timeout):
             operation = record["operation"]
             operations.append(operation)
@@ -97,12 +103,12 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                 client._message({"type": "send", "payload": {
                     "event": "reply", "id": record["id"], "status": status}}, lambda *args: None)
             if operation == "regulation-defaults":
-                reply({"regulation_defaults": {"pack": str(tmp_path),
+                reply({"regulation_defaults": {"pack": str(folder.resolve()),
                     "categories": [{"key": "native", "options": [{"key": "open"}]}]}})
             elif operation == "await-regulations":
                 # Career selection must still be blocked while protection arms.
                 assert progress[-1]["state"] == "loading" and not menus
-                assert record["regulations"] == {"pack": str(tmp_path),
+                assert record["regulations"] == {"pack": str(folder.resolve()),
                     "categories": scope.regulations.definitions.custom_categories,
                     "scripted_changes": scope.regulations.definitions.custom_scripts}
                 reply({"adapters": {"career_preload": {"state": "armed"}}})
@@ -115,7 +121,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                         channel.reset(channel.epoch + 1)
                         reply({"regulation_control": True})
                     else:
-                        channel.publish(native={"native": [{"key": "open"}]})
+                        channel.publish(custom={category: ["three_years", "five_years"]})
                         reply({"adapters": {"regulations": {"state": "prepared"}}})
                 worker.submit(publish)
             elif operation == "restore-native-rules":
@@ -125,7 +131,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                 assert not scope.regulations.ready
                 if operation == "install-regulations":
                     assert record["regulations"]["native_rules"] == {
-                        "rookie_contract_length_check": False, "staff_prestige_check": True}
+                        "rookie_contract_length_check": False}
                 else:
                     assert "native_rules" not in record["regulations"]
                 reply({"regulation_control": True, "adapters": {"regulations": {
@@ -133,7 +139,16 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
                     "career_generation": record["regulations"]["generation"], "components": dict(PERSONNEL_COMPONENTS,
                         rookie_contract_length_check="disabled", staff_prestige_check="native")}}})
         monkeypatch.setattr(client, "_post", post)
-        scope.poll()
+        scope.load(dict(state="ready", series="formula", id=folder.name, root=str(folder.resolve())))
+        deadline = time.monotonic() + 120
+        while scope.loading is not None:
+            assert time.monotonic() < deadline, reports
+            scope.poll()
+            time.sleep(.002)
+        scope.poll()  # The next controller tick binds and arms the loaded rules.
+        mod = scope.mods[owner]
+        assert mod.manifest.api == "0.4.0" and set(scope.mods) == {owner, "owned.ui"}
+        assert path.read_bytes() == original
         assert scope._regulation_armed and not scope.regulations.ready and not menus
         assert progress[-1]["state"] == "complete"
         scope.poll()  # Binding and arming happen once, without a status request loop.
@@ -142,6 +157,20 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(ma
         for generation in (7, 6):
             scope.career_preload({"state": "waiting", "generation": generation})
         assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
+        ctx = context()
+        ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
+                           "proposed": {"length_weeks": 208}}
+        choice = dict(selection(), rule=category, upcoming=[1, 2028])
+        def check():
+            return pump(scope, wake, worker.submit(channels[0], [ctx], [choice],
+                        {owner: [[0, 0, 0]]}, time.monotonic() + .1))[owner][0]
+        assert check() == {"decision": "deny", "message": "Rookie contracts may last at most 3 years."}
+        ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = False
+        assert check() == {"decision": "allow"}
+        ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = True
+        ctx["effective"]["season"] = choice["evaluation_season"] = 2028
+        choice["selected"] = "upcoming"
+        assert check() == {"decision": "allow"}  # The upcoming five-year option applies.
         handler = scope.regulations._handler
         runner = mod.runner
         scope.career_preload({"state": "left", "generation": 7})
@@ -471,11 +500,8 @@ def test_failed_native_activation_closes_transport_and_requests_cleanup(make_mod
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])
-def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, source_mod, runner_bundle, monkeypatch, activation_fails):
-    # Enable private fixture admission only for this test; the public parser still
-    # rejects 0.4.0 outside this scope. File reads, pack loading and Wasm are real.
-    monkeypatch.setattr(source, "SOURCE_CAPABILITIES", {**source.SOURCE_CAPABILITIES,
-                                                       "0.4.0": frozenset({"main-menu", "regulations", "diagnostics"})})
+def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, source_mod, runner_bundle, activation_fails):
+    # Exercise the public manifest path, including definition-only rule owners.
     folder = tmp_path / "data/owned"
     code = "class WitWorld:\n def activate(self): pass\n def on_event(self,n,p): return p\n"
     source_mod(folder, "a.ui", api="0.4.0", capabilities=("main-menu",), code=(

@@ -32,7 +32,7 @@ the ID before crossing into the launcher.
 
 ## Source admission
 
-`source.py` reads API 0.2.0/0.3.0 Python source mod manifests and takes an immutable
+`source.py` reads API 0.2.0/0.3.0/0.4.0 Python source mod manifests and takes an immutable
 copy of UTF-8 files under `src/`. Limits bound file count, size, path depth and
 entry names. `_source_files.py` checks ordinary directories and rejects links,
 reparse points, hard links and special files. Reads keep checked directories
@@ -141,9 +141,10 @@ uses its own private operations. The runner interface remains private.
 
 ## Resident regulation validation
 
-The private 0.4.0 interface binds and evaluates regulation handlers inside Wasm.
-Public source admission accepts API 0.2.0/0.3.0. The resident exports provide no
-new mod-facing methods or host imports and do not route through lifecycle events.
+The private runner interface binds and evaluates regulation handlers inside Wasm.
+Source API `0.4.0` admits their `regulations` permission alongside the earlier host
+operations. JSON declarations select ordinary Python functions; the resident
+exports remain private, add no host calls and bypass lifecycle event dispatch.
 A matching built bundle is required whenever its trusted guest sources change.
 
 Handler bindings become fixed when resident setup begins. Each owner keeps checked
