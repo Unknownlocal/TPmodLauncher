@@ -131,6 +131,19 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert pulse("await-regulations", regulations={"pack": str(tmp_path), "categories": categories,
             "scripted_changes": scripts})["adapters"]["career_preload"] == {"state": "armed"}
         loader = host.adapters.categories
+        # Screen compatibility can fail much later than pack setup. It must
+        # report on the next ordinary response without blocking career loading.
+        catalogue = ModuleType("ui.screens.regulations_screen")
+        catalogue.RegulationsScreen = type("RegulationsScreen", (), {
+            "_draw_sections": lambda self, surface, left_rect, changed: 40,
+            "_draw_regulation_card": lambda self, surface, entry, rect: None})
+        original_sections = catalogue.RegulationsScreen._draw_sections
+        monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
+        late = pulse("status")
+        assert len(late["regulation_notices"]) == 1 and "UI COMPATIBILITY FAILED" in late["regulation_notices"][0]
+        assert late["adapters"]["career_preload"] == {"state": "armed"}
+        assert catalogue.RegulationsScreen._draw_sections is original_sections
+        assert pulse("status")["regulation_notices"] == []
         career.regulation_manager = native.RegulationManager()
         career.regulation_manager.state = career
         career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
@@ -207,6 +220,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert host.adapters.preload is replacement and not replacement.closed
         assert pulse("stop-regulations", regulations=dict(control, generation=replacement.generation))["regulation_control"] is True
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
+        assert host.adapters.regulation_screen is None
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
         assert loader.closed and host.adapters.categories is None

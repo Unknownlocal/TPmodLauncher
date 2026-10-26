@@ -4,6 +4,7 @@
 import importlib
 import importlib.util
 import sys
+from collections import deque
 from contextlib import ExitStack
 from types import ModuleType
 
@@ -38,6 +39,10 @@ class AdapterModules:
         self.regulation_generation = None
         self.preload = None
         self.categories = None
+        self.regulation_screen = None
+        # Deferred UI imports/draws can fail after their setup request returned.
+        # Keep a bounded pack-owned outbox for the next ordinary bridge response.
+        self.regulation_notices = deque(maxlen=16)
 
     def status(self):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
@@ -46,6 +51,8 @@ class AdapterModules:
         Failed installation can still own hooks; failed preparation owns none.
         """
         result = {"state": self.state, "modules": len(self.sources) if self.state == "loaded" else 0}
+        if self.regulation_screen is not None:
+            self.regulation_screen.poll()
         if self.error is not None:
             result["detail"] = self.error
         if self.preload is not None:
@@ -83,6 +90,8 @@ class AdapterModules:
                     raise HookError(self.error or "Adapter modules are not loaded")
                 loader = self.host.adapter_code.game_adapters.regulations.native_categories
                 self.categories = loader.NativeCategories(definitions)
+                screen = self.host.adapter_code.game_adapters.regulations.screen
+                self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append)
             self.preload = CareerPreload(self._career_left)
         except BaseException:
             self.stop_regulations()
@@ -344,7 +353,8 @@ class AdapterModules:
         with ExitStack() as locks:
             # Category loading belongs to the pack, so career retirement keeps
             # it installed. Full cleanup must also wait for its loading workers.
-            hooks = [*self.regulations, *([self.categories] if self.categories is not None and not retain else [])]
+            hooks = [*self.regulations, *([self.categories] if self.categories is not None and not retain else []),
+                     *([self.regulation_screen] if self.regulation_screen is not None and not retain else [])]
             for hook in hooks:
                 lock = getattr(hook, "_lock", None)
                 if lock is not None:
@@ -357,6 +367,7 @@ class AdapterModules:
                 hook.stop()
             if not retain:
                 self.categories = None
+                self.regulation_screen = None
             if self.channel is not None and not retain:
                 self.channel.close()
             self.regulations.clear()

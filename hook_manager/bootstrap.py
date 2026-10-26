@@ -148,6 +148,10 @@ def pulse(sources, digest, instance, game_root, request_json):
         if module.adapters.preload is not None:
             module.adapters.preload.poll()
         response["adapters"] = module.adapters.status()
+        # The screen may import or fail drawing between control requests. Drain
+        # its pack-owned notices through the existing CLI/log transport once.
+        response.setdefault("regulation_notices", []).extend(module.adapters.regulation_notices)
+        module.adapters.regulation_notices.clear()
         response["pack"] = module.discovery.poll()
         response["menu"] = module.menu.poll()
         loading = response["menu"].get("loading", {})

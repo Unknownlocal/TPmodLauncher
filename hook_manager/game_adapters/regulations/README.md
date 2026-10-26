@@ -44,6 +44,9 @@ wrappers; development-project integration has its own compatibility checks.
   the game's fixed definition module, including the compound default for the
   selected pack. It waits for ongoing imports before loading that module, then
   returns copied data without constructing a career or installing hooks.
+- [screen.py](screen.py): `RegulationScreenAdapter` appends loaded categories
+  missing from the native screen's groups under Additional regulations. It uses
+  native cards, selection, option inspection and scrollbars.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -113,6 +116,15 @@ Each native load receives independent custom category data. Setup checks that
 the career received it and the loader is still owned before publishing policy.
 The loader stays with the pack between careers; full cleanup waits for an active
 load before restoring it. Other packs and Oval careers keep native definitions.
+
+The regulation screen adapter stays installed with the category loader while
+the pack is loaded. It waits for the screen's normal import without holding up
+career loading. Cards use the loaded category labels and option descriptions;
+drawing does not reread
+JSON or run validators. Inspecting an alternative does not change the adopted
+rule. A UI compatibility failure leaves validation active and reports through
+the next ordinary command-line/log update. Full cleanup restores the owned
+drawing method; leaving a career keeps it installed.
 
 When custom scripts are present, the category loader also owns their two loading
 hooks. They add missing scripts to the loaded policy, using the game's own policy
