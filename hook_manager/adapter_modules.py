@@ -332,7 +332,13 @@ class AdapterModules:
             # A requested bypass is "disabled" only if its wrapper installed.
             # "skipped" means compatibility checks left that native rule intact.
             for key, group in NATIVE_RULE_GROUPS.items():
-                self.coverage[key] = "native" if native_rules.get(key, True) else "disabled" if group in groups else "skipped"
+                value = native_rules.get(key, True)
+                if value is True:
+                    self.coverage[key] = "native"
+                elif group not in groups:
+                    self.coverage[key] = "skipped"
+                else:
+                    self.coverage[key] = "regulated" if type(value) is dict else "disabled"
             return dict(self.coverage)
         except BaseException as error:
             # A guard may already have admitted a worker. Retain ownership and

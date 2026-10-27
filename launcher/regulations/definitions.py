@@ -64,7 +64,7 @@ class RegulationDefinitions:
     @property
     def native_rules(self):
         """Copy the native check switches for each admitted owner."""
-        return {owner: dict(data.native_rules) for owner, data in self._owners.items() if data.native_rules}
+        return {owner: deepcopy(data.native_rules) for owner, data in self._owners.items() if data.native_rules}
 
     @property
     def revisions(self):

@@ -81,7 +81,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
     document.update(categories=[{"key": "native", "options": [{"key": "open"}]}], native_extra={"keep": True})
     # Exercise the same fixed loading request for categories and scheduled choices.
     document["mod_extensions"][owner]["scripted_changes"] = [{
-        "key": category, "new_regulation": {"key": "five_years"}, "effective_season": 2028}]
+        "key": category, "new_regulation": {"key": "four_years"}, "effective_season": 2028}]
     path = folder / "regulations.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     original = path.read_bytes()
@@ -121,7 +121,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
                         channel.reset(channel.epoch + 1)
                         reply({"regulation_control": True})
                     else:
-                        channel.publish(custom={category: ["three_years", "five_years"]})
+                        channel.publish(custom={category: ["unrestricted", "vanilla", "four_years"]})
                         reply({"adapters": {"regulations": {"state": "prepared"}}})
                 worker.submit(publish)
             elif operation == "restore-native-rules":
@@ -131,13 +131,13 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
                 assert not scope.regulations.ready
                 if operation == "install-regulations":
                     assert record["regulations"]["native_rules"] == {
-                        "rookie_contract_length_check": False}
+                        "rookie_contract_length_check": {"rule": category, "parameter": "native_check"}}
                 else:
                     assert "native_rules" not in record["regulations"]
                 reply({"regulation_control": True, "adapters": {"regulations": {
                     "state": "installed" if operation == "install-regulations" else "active",
                     "career_generation": record["regulations"]["generation"], "components": dict(PERSONNEL_COMPONENTS,
-                        rookie_contract_length_check="disabled", staff_prestige_check="native")}}})
+                        rookie_contract_length_check="regulated", staff_prestige_check="native")}}})
         monkeypatch.setattr(client, "_post", post)
         scope.load(dict(state="ready", series="formula", id=folder.name, root=str(folder.resolve())))
         deadline = time.monotonic() + 120
@@ -159,18 +159,23 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
         assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
         ctx = context()
         ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
-                           "proposed": {"duration_weeks": 208}}
-        choice = dict(selection(), rule=category, upcoming=[1, 2028])
+                           "proposed": {"duration_weeks": 260}}
+        choice = dict(selection(index=1), rule=category, upcoming=[2, 2028])
         def check():
             return pump(scope, wake, worker.submit(channels[0], [ctx], [choice],
                         {owner: [[0, 0, 0]]}, time.monotonic() + .1))[owner][0]
-        assert check() == {"decision": "deny", "message": "Rookie contracts may last at most 3 years."}
+        assert check() == {"decision": "allow"}  # Vanilla adds no mod restriction.
+        choice["current"][0] = 0
+        assert check() == {"decision": "allow"}  # Unrestricted adds none either.
+        choice["current"][0] = 2
+        assert check() == {"decision": "deny", "message": "Rookie contracts may last at most 4 years."}
         ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = False
         assert check() == {"decision": "allow"}
         ctx["proposal"]["native_checks"]["rookie_contract_length_applies"] = True
         ctx["effective"]["season"] = choice["evaluation_season"] = 2028
         choice["selected"] = "upcoming"
-        assert check() == {"decision": "allow"}  # The upcoming five-year option applies.
+        ctx["proposal"]["proposed"]["duration_weeks"] = 208
+        assert check() == {"decision": "allow"}  # The upcoming four-year option applies.
         handler = scope.regulations._handler
         runner = mod.runner
         scope.career_preload({"state": "left", "generation": 7})

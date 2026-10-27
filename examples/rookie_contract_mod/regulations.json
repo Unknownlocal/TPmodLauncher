@@ -6,11 +6,23 @@
         {
           "key": "example.rookie_contracts.length",
           "label": "Rookie contract length",
-          "default": "three_years",
+          "default": "vanilla",
           "options": [
-            {"id": 1, "key": "three_years", "name": "Three years", "parameters": {"max_years": 3}},
-            {"id": 2, "key": "five_years", "name": "Five years", "parameters": {"max_years": 5}}
-          ]
+            {"id": 1, "key": "unrestricted", "name": "No rookie length limit",
+             "summary": "Disable the native rookie check without adding a custom length limit.",
+             "parameters": {"native_check": false, "max_years": null}},
+            {"id": 2, "key": "vanilla", "name": "Native rookie limits",
+             "summary": "Use the game's original rookie contract length check.",
+             "parameters": {"native_check": true, "max_years": null}},
+            {"id": 3, "key": "four_years", "name": "Four-year rookie limit",
+             "summary": "Disable the native cap and enforce four years through the mod validator.",
+             "parameters": {"native_check": false, "max_years": 4}}
+          ],
+          "neighbours": {
+            "unrestricted": ["vanilla", "four_years"],
+            "vanilla": ["unrestricted", "four_years"],
+            "four_years": ["unrestricted", "vanilla"]
+          }
         }
       ],
       "validators": [
@@ -21,7 +33,9 @@
           "handler": "mod.validate_contract"
         }
       ],
-      "native_rules": {"rookie_contract_length_check": false}
+      "native_rules": {
+        "rookie_contract_length_check": {"rule": "example.rookie_contracts.length", "parameter": "native_check"}
+      }
     }
   }
 }

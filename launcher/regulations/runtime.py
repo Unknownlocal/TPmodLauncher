@@ -265,7 +265,7 @@ class RegulationRuntime:
             # A skipped incompatible switch leaves the original rule in place.
             # Never activate a requested bypass merely because signing installed.
             for name, enabled in self.native_rules().items():
-                if components.get(name) != ("native" if enabled else "disabled"):
+                if components.get(name) != ("regulated" if type(enabled) is dict else "native" if enabled else "disabled"):
                     raise ValueError("Incomplete native regulation switch coverage: " + name)
         if pending and not self._dispatch.ready:
             raise RuntimeError("Native activation needs committed regulation data")
@@ -399,7 +399,7 @@ class RegulationRuntime:
             # A setup request services this poll too. Restore native helpers only
             # after that outer request replies, avoiding a second busy bridge call.
             if (not previous and self._bridge is not None and self.generation is not None and self.failed
-                    and any(not enabled for values in self.definitions.native_rules.values() for enabled in values.values())):
+                    and any(enabled is not True for values in self.definitions.native_rules.values() for enabled in values.values())):
                 self._restore(self._bridge, {"generation": self.generation, "endpoint": self.endpoint}, rules_only=True)
         finally:
             self.busy = previous

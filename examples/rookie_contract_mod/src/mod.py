@@ -15,8 +15,10 @@ class WitWorld(wit_world.WitWorld):
 def validate_contract(context, regulation):
     """Use the selected option, including one scheduled for a future contract."""
     proposal = context["proposal"]
-    if proposal.get("native_checks", {}).get("rookie_contract_length_applies", False):
-        maximum = regulation[regulation["selected"]]["parameters"]["max_years"]
+    maximum = regulation[regulation["selected"]]["parameters"]["max_years"]
+    # The native-check bridge handles the vanilla choice. Only the four-year
+    # choice needs an additional refusal from this mod.
+    if maximum is not None and proposal.get("native_checks", {}).get("rookie_contract_length_applies", False):
         if proposal["proposed"]["duration_weeks"] > maximum * 52:
             return {"decision": "deny", "message": f"Rookie contracts may last at most {maximum} years."}
     return {"decision": "allow"}

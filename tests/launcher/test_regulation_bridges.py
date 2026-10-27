@@ -106,3 +106,29 @@ def test_late_publication_fences_switch_only_owners_without_guest_handlers(monke
         dispatch.publish()
     with pytest.raises(RuntimeError, match="cannot revive"):
         dispatch.reset(8)
+
+
+def test_native_switch_reference_is_owned_boolean_data_and_keeps_nested_views_private():
+    category = OWNER + ".length"
+    binding = {"rule": category, "parameter": "native_check"}
+    data = document({ROOKIE: binding})
+    section = data["mod_extensions"][OWNER]
+    section["categories"] = [{"key": category, "label": "Rookie length", "default": "native", "options": [
+        {"id": 1, "key": "native", "name": "Native", "parameters": {"native_check": True}},
+        {"id": 2, "key": "off", "name": "Off", "parameters": {"native_check": False}}]}]
+    model = prepare(data)
+    outward = model.native_rules
+    outward[OWNER][ROOKIE]["parameter"] = "changed"
+    assert model.native_rules[OWNER][ROOKIE] == binding
+    dispatch = ValidationDispatch(model)
+    dispatch.publish()
+    values = dispatch.native_rules(epoch=1, generation=1)
+    values[ROOKIE]["rule"] = "changed"
+    assert dispatch.native_rules(epoch=1, generation=1)[ROOKIE] == binding
+    binding["rule"] = "other.mod.length"
+    with pytest.raises(ValueError, match="owned category"):
+        prepare(data)
+    binding["rule"] = category
+    section["categories"][0]["options"][1]["parameters"]["native_check"] = 0
+    with pytest.raises(ValueError, match="boolean parameter"):
+        prepare(data)

@@ -88,6 +88,7 @@ def main(argv=None):
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_scripts")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_defaults")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.screen")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_rule_selection")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
             # assigning the private subpackage to its separate coverage report.

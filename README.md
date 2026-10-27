@@ -270,11 +270,19 @@ extra data for that option. The example reads `max_years` from those parameters
 and uses `proposal.native_checks.rookie_contract_length_applies`, preserving the
 game's own definition of a rookie.
 
-The optional `native_rules` booleans `rookie_contract_length_check` and
+The optional `native_rules` switches `rookie_contract_length_check` and
 `staff_prestige_check` keep their native checks when omitted or true; false
-requests a bypass so ordinary mod validators can replace the condition. Only one
-enabled mod may declare each switch; conflicts reject preparation. The example
-bypasses only the rookie length check and supplies its own length validator.
+requests a bypass. A switch can instead refer to a boolean parameter in an owned
+category, for example:
+
+```json
+{"rookie_contract_length_check":{"rule":"example.rookie_contracts.length","parameter":"native_check"}}
+```
+
+Every option must supply that boolean. The adopted option for the proposed
+contract's season chooses whether the native check runs. Only one enabled mod
+may declare each switch; conflicts reject preparation. The example offers no
+rookie length restriction, native limits, or a mod-enforced four-year limit.
 Other native refusals still apply. Saved accepted contracts take effect normally
 without another mod check.
 

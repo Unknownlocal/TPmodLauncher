@@ -6,6 +6,8 @@ rules and extra option data separate. Each career installs all subscribed rules
 once. The shared runner retains the installed copies.
 """
 
+from copy import deepcopy
+
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.values import bounded, integer, measure, text
 from ..definitions import RegulationDefinitions
@@ -40,10 +42,10 @@ class CombinedCatalog:
         return not self._failed and self._published
 
     def native_rules(self):
-        """Copy fixed switches only after a complete policy publication."""
+        """Copy admitted switch declarations after a complete policy publication."""
         if not self.native_values_ready:
             raise RuntimeError("Native rule policy is unavailable")
-        return dict(self._native_rules)
+        return deepcopy(self._native_rules)
 
     def fail_native_values(self):
         # Native-only rules have no guest state to fence. Retire their values

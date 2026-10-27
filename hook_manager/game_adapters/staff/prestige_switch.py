@@ -4,6 +4,7 @@
 from functools import update_wrapper
 
 from ...manager import HookError, Manager
+from ..regulations.native_rule_selection import NativeRuleSelection
 from .targets import staff_prestige_target
 
 
@@ -18,21 +19,22 @@ class StaffPrestigeSwitch(Manager):
     @classmethod
     def create(cls, state, *, enabled=True, report):
         """Keep native behaviour by default; report and skip incompatible helpers."""
-        if type(enabled) is not bool:
-            raise HookError("Staff prestige check must be a boolean")
-        if enabled:
+        if type(enabled) is not bool and type(enabled) is not NativeRuleSelection:
+            raise HookError("Staff prestige check must be a boolean or admitted selection")
+        if enabled is True:
             return None  # Native is the default; no wrapper or inspection needed.
         try:
-            return cls(state)
+            return cls(state, enabled)
         except Exception as error:
             report("REGULATIONS COMPATIBILITY FAILED staff.prestige-check: "
                    + " ".join(str(error).split())[:512]
                    + "; prestige switch skipped; continuing native game")
             return None
 
-    def __init__(self, state):
+    def __init__(self, state, enabled=False):
         super().__init__(lambda record: None)
         self.state, self.manager = state, state.staff_manager
+        self.enabled = enabled
         try:
             target = staff_prestige_target()
             resolved = target.resolve({})
@@ -45,7 +47,7 @@ class StaffPrestigeSwitch(Manager):
             raise
 
     def _wrapper(self, name, binding, target, original, signature):
-        state, manager, group = self.state, self.manager, self.groups[name]
+        state, manager, group, enabled = self.state, self.manager, self.groups[name], self.enabled
 
         def wrapped(self, staff):
             # Class wrappers also see other careers. Escaped wrappers after
@@ -53,7 +55,8 @@ class StaffPrestigeSwitch(Manager):
             # manager remains open for other groups.
             if (group["state"] == "active" and self is manager and state.staff_manager is manager
                     and manager.state is state):
-                return 0
+                if enabled is False or type(enabled) is NativeRuleSelection and not enabled.enabled():
+                    return 0
             return original(self, staff)
 
         update_wrapper(wrapped, original)

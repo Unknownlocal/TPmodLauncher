@@ -10,6 +10,8 @@ import threading
 import time
 import uuid
 
+from .regulations.bridge_converter import convert_bridges
+
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
 # The callable files skip relative imports on that path; the package __init__
@@ -33,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",
-    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_policy native_categories native_scripts native_defaults screen",
+    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_rule_selection native_policy native_categories native_scripts native_defaults screen",
 }
 
 
@@ -138,14 +140,15 @@ class Bridge:
             if (type(regulations) is not dict or set(regulations) != fields
                     or type(regulations["generation"]) is not int or regulations["generation"] < 1
                     or type(regulations["endpoint"]) is not dict or set(regulations["endpoint"]) != {"port", "token"}
-                    or len(json.dumps(regulations).encode("utf-8")) > 512
+                    or len(json.dumps(regulations).encode("utf-8")) > 2048
                     or (not callable(_service) if operation in ("prepare-regulations", "retire-regulations") else _service is not None)):
                 raise BridgeError("Expected bounded regulation setup and controller service")
             if "native_rules" in fields:
                 values = regulations["native_rules"]
-                if (type(values) is not dict or values.keys() - {"rookie_contract_length_check", "staff_prestige_check"}
-                        or any(type(value) is not bool for value in values.values())):
-                    raise BridgeError("Expected native regulation check booleans")
+                try:
+                    convert_bridges(values)
+                except ValueError as error:
+                    raise BridgeError("Expected native regulation check booleans or rule references") from error
         elif regulations is not None or _service is not None:
             raise BridgeError("This operation accepts no regulation setup or service")
         if not math.isfinite(timeout) or timeout <= 0:

@@ -18,7 +18,7 @@ class OwnerDefinition:
     option_data: dict[str, dict]
     validators: list[dict[str, str]]
     scripted_changes: list[dict]
-    native_rules: dict[str, bool] = field(default_factory=dict)
+    native_rules: dict[str, bool | dict[str, str]] = field(default_factory=dict)
 
     def rule_keys(self):
         """List categories needed for payload checks and revision tracking."""
@@ -33,7 +33,7 @@ class OwnerDefinition:
                   "option_data": self.option_data, "validators": self.validators,
                   "scripted_changes": self.scripted_changes}
         # Keep old declarations/revision bytes unchanged when neither bridge is
-        # present. The two switches have no rule-data dependencies of their own.
+        # present. A reference's owned category is already part of this model.
         if self.native_rules:
             result["native_rules"] = self.native_rules
         return result

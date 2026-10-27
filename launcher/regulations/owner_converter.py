@@ -85,7 +85,7 @@ def convert_owner(owner, section, source, base, scopes, index):
         metadata = _metadata(data.get("option_data", {}), accessible, index)
         validators = _validators(data.get("validators", []), source, accessible, scopes, index)
         scripts = _scripts(owner, data.get("scripted_changes", []), categories, index)
-        bridges = convert_bridges(data.get("native_rules", {}))
+        bridges = convert_bridges(data.get("native_rules", {}), categories)
         model = OwnerDefinition(list(categories.values()), metadata, validators, scripts, bridges)
         _payloads(model, accessible, index)
         return model

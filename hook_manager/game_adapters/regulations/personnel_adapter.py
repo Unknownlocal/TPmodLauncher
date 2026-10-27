@@ -2,6 +2,7 @@
 """Guard Formula driver/staff signing with one shared negotiation owner."""
 
 from functools import update_wrapper
+from contextlib import nullcontext
 import inspect
 import threading
 
@@ -22,6 +23,7 @@ from ..drivers.targets import driver_target
 from ..staff.staffing import StaffingPlanner
 from ..staff.targets import staff_target, staffing_targets
 from .staffing_coordinator import StaffingCoordinator
+from .native_rule_selection import NativeRuleSelection
 
 
 class PersonnelAdapter(RegulationGuards):
@@ -77,8 +79,14 @@ class PersonnelAdapter(RegulationGuards):
         # Both signing targets share one projection and dispatch path. Native
         # manager identity selects the planner, never a mod-supplied target name.
         planner = next(planner for planner in self.planners.values() if planner.manager is arguments["self"])
-        return regulation_context("personnel.contract", planner.prepare(arguments),
-                                  initiator=caller["initiator"] if caller else "unknown")
+        context = regulation_context("personnel.contract", planner.prepare(arguments),
+                                     initiator=caller["initiator"] if caller else "unknown")
+        self._local.native_check_season = context["effective"]["season"]
+        return context
+
+    def native_check_scope(self, start_week):
+        """Share an offer's explicit date with the native check switches."""
+        return NativeRuleSelection.scope(next(iter(self.planners.values())).state, start_week=start_week)
 
     def _refusal(self, context, selections, calls, deadline):
         """Keep duplicate-denial handling inside this caller's operation lifetime."""
@@ -126,9 +134,11 @@ class PersonnelAdapter(RegulationGuards):
         # Busy is host unavailability, so no healthy validator is latched failed.
         if not self._personnel_operation.acquire(blocking=False):
             return self._deny(entries[0][1].refuse, ValidationOutcome("unavailable", "Personnel operation is busy"))
+        previous = getattr(self._local, "native_check_season", None)
         try:
             return super()._validate(original, signature, entries, bound.args, bound.kwargs)
         finally:
+            self._local.native_check_season = previous
             self._personnel_operation.release()
 
     def _deny(self, refuse, outcome):
@@ -172,7 +182,14 @@ class PersonnelAdapter(RegulationGuards):
         previous = getattr(self._local, "committing_personnel", False)
         self._local.committing_personnel = True
         try:
-            return original(*args, **kwargs)
+            # Keep actual signing on the same season used by mod validation,
+            # even when a future rule differs from today's choice. Prepared
+            # native work without a new projection retains its enclosing scope.
+            season = getattr(self._local, "native_check_season", None)
+            scope = (NativeRuleSelection.scope(next(iter(self.planners.values())).state, season)
+                     if season is not None else nullcontext())
+            with scope:
+                return original(*args, **kwargs)
         finally:
             self._local.committing_personnel = previous
             if caller:

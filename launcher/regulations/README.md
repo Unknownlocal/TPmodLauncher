@@ -82,17 +82,21 @@ enabled sections are rejected; native fields use the last value, as in the game.
   optional `id`. `new_regulation` contains the option's `key`. Scripts target
   owned categories. IDs are owner-qualified; omitted IDs use declaration order.
   Native scripts are preserved; duplicate IDs or category/season pairs fail.
-- `native_rules` accepts two boolean switches: `rookie_contract_length_check`
+- `native_rules` accepts two switches: `rookie_contract_length_check`
   and `staff_prestige_check`. Missing or true keeps the corresponding native
   check; false requests that it be disabled. Custom restrictions and seasonal
-  maxima use ordinary validators and their regulation data. Each named
+  maxima use ordinary validators and their regulation data. A switch can instead
+  supply `{"rule": "owner.category", "parameter": "native_check"}`. That owned
+  category must give every option a boolean with the named parameter. Native
+  selection uses the contract's season, without calling mod Python. Each named
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
 
 Checked native switches form part of rule revisions. After career publication,
-the runtime supplies checked booleans to the fixed installation request. Each switch must
-report `native` for true or `disabled` for false before activation; incompatible
-switches prevent readiness. Failed setup restores installed hooks. Switch-only
+the runtime supplies checked booleans or option references to installation.
+Each switch must report `native` for true, `disabled` for false or `regulated`
+for a reference before activation; incompatible switches prevent readiness.
+Failed setup restores installed hooks. Switch-only
 mods publish empty rule data and need no handlers. Required-owner failure closes
 transport and restores bypassed native checks while ordinary action guards
 continue refusing unchecked actions. The native integration owns these hooks.

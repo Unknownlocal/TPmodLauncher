@@ -217,7 +217,10 @@ class PersonnelCallers:
             frame["staff_candidate"] = live, copy(live)
             bound.arguments["candidate"] = frame["staff_candidate"][1]
         try:
-            with frame["market"].mail_for(row):
+            # Native offer scoring can apply the rookie cap before signing.
+            # An explicit start must select the same rule as the final contract.
+            start = (row.get("context") or {}).get("contract_start_week", row.get("target_contract_start_week"))
+            with self.guards.native_check_scope(start), frame["market"].mail_for(row):
                 result = original(*bound.args, **bound.kwargs)
         finally:
             # Match the caller's original record, never the private offer draft.

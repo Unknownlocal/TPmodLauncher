@@ -24,8 +24,9 @@ wrappers; development-project integration has its own compatibility checks.
 - [guards.py](guards.py): `RegulationGuards` manages checks around the game
   functions selected by these adapters.
 - [native_rules.py](native_rules.py): installs the fixed rookie-length and staff
-  prestige switches from admitted booleans. Missing settings keep the
-  game's checks. Trusted setup owns the returned hooks and their removal.
+  prestige switches from booleans or references to the mod's own options.
+  Missing settings keep the game's checks. Trusted setup owns the returned
+  hooks and their removal.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
   complete career installs over an authenticated connection to the launcher on the same
   computer. The game waits for its reply.
@@ -47,6 +48,11 @@ wrappers; development-project integration has its own compatibility checks.
 - [screen.py](screen.py): `RegulationScreenAdapter` appends loaded categories
   missing from the native screen's groups under Additional regulations. It uses
   native cards, selection, option inspection and scrollbars.
+- [native_rule_selection.py](native_rule_selection.py): `NativeRuleSelection`
+  reads an option's boolean using the game's season selector. Offer preparation
+  and signing share the proposed season; nested calls restore their previous
+  season afterwards. Queries without a date use the native offer-start inference
+  for rookies, or the current season for staff prestige.
 
 The sibling [driver](../drivers/README.md), [staff](../staff/README.md),
 [personnel](../personnel/README.md), [academy](../academy/README.md) and
@@ -173,8 +179,9 @@ season. Driver proposals include the original game's rookie-check applicability,
 even when its native cap is disabled. Setup does not declare a policy ready for
 use. The launcher activates the captured loading attempt only after confirming
 complete coverage for its required checks. The fixed installation request
-carries checked native-switch booleans. A requested bypass must report an
-installed wrapper before activation; an incompatible skipped switch keeps the
+carries checked native-switch booleans or owned option references. A reference
+reports `regulated` only after its wrapper is installed. A requested bypass
+must report an installed wrapper before activation; an incompatible switch keeps the
 pack unready and setup restores the hooks it installed.
 After an owner fails, `restore-native-rules` removes only bypass helpers and
 closes the validation gate. Ordinary signing/project guards remain installed

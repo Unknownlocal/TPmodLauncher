@@ -58,9 +58,8 @@ class ValidationDispatch:
     def native_rules(self, *, epoch, generation):
         """Prepare fixed switches for native setup, using this dispatcher's identity.
 
-        The game retains these booleans under its policy acknowledgement; queries
-        must not make a transport call here. Custom conditions and seasonal data
-        selection belong to ordinary validators, not to these native switches.
+        The game retains booleans or owned option references under its policy
+        acknowledgement. Native queries must not make a transport call here.
         """
         self._enter()
         try:
