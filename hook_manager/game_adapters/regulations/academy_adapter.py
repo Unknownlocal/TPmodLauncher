@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Guard academy signing/renewal and their immediate native callers."""
 
-from functools import update_wrapper
-
 from ...callables import CallBinding, refuse_with_reason
-from ...manager import HookError, Manager
+from ...manager import HookError
 from ..academy.caller_targets import academy_caller_targets
 from ..academy.callers import AcademyCallers
 from ..academy.planner import AcademyContractPlanner
@@ -38,21 +36,11 @@ class AcademyAdapter(RegulationGuards):
 
     def install_prepared(self):
         """Assign academy wrappers after all personnel support is compatible."""
-        try:
-            self._main()
-            for target in self.native_callers:
-                Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
-            projections = {target.name: self._projection(target.name) for target in self.signing}
-            for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], refuse_with_reason)
-                                      for target in self.signing])
-            self.poll()
-            if any(group["state"] != "active" for group in self.groups.values()):
-                raise HookError("Academy integration did not install completely")
-            return self
-        except Exception:
-            self.stop()
-            raise
+        with self._installation():
+            self._install_groups(self.native_callers, [
+                CallBinding(target.name, target.name, self._projection(target.name), refuse_with_reason)
+                for target in self.signing])
+        return self
 
     def _projection(self, target):
         def project(arguments, result):
@@ -63,10 +51,7 @@ class AcademyAdapter(RegulationGuards):
 
     def _wrapper(self, name, binding, target, original, signature):
         if target.name.startswith("academy.caller."):
-            wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
-            update_wrapper(wrapped, original)
-            wrapped._tpm_hook_group = name
-            return wrapped
+            return self._caller_wrapper(name, self.callers, target, original, signature)
         return super()._wrapper(name, binding, target, original, signature)
 
     def _validate(self, original, signature, entries, args, kwargs):

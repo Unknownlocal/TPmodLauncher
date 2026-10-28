@@ -5,10 +5,8 @@ The caller supplies an authenticated channel and native adopted-rule selection.
 No mod can select a target, projection, result codec or callable registration.
 """
 
-from functools import update_wrapper
-
 from ...callables import CallBinding, refuse_boolean
-from ...manager import HookError, Manager
+from ...manager import HookError
 from .guards import RegulationGuards
 from .contexts import regulation_context
 from ..projects.caller_targets import project_caller_targets
@@ -36,29 +34,18 @@ class ProjectAdapter(RegulationGuards):
         self.planner = planner
         self.callers = ProjectCallers(self, planner.state)
         starts, callers = project_targets(), project_caller_targets()
-        try:
+        with self._installation():
             # Preparing only some callers is unsafe: a worker could consume an
             # unwrapped AI caller and write its package before our start guard.
             # The career initializer must wait for normal imports, then create
             # this integration on the main thread. Never force a game import.
-            self._main()
             if any(target.resolve(self.completed) is None for target in (*starts, *callers)):
                 raise HookError("Project integration requires its native caller modules to finish loading")
             for target in (*starts, *callers):
                 self.approve(target)
-            # All callers and starts were checked before the first assignment.
-            # Reuse the manager's owned journal to roll back an install failure.
-            for target in callers:
-                Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
-            projections = {target.name: self._projection(target.name) for target in starts}
-            for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projections[target.name], refuse_boolean) for target in starts])
-            self.poll()
-            if any(group["state"] != "active" for group in self.groups.values()):
-                raise HookError("Project integration did not install completely")
-        except Exception:
-            self.stop()
-            raise
+            self._install_groups(callers, [
+                CallBinding(target.name, target.name, self._projection(target.name), refuse_boolean)
+                for target in starts])
 
     def _projection(self, target):
         def project(arguments, result):
@@ -84,10 +71,7 @@ class ProjectAdapter(RegulationGuards):
 
     def _wrapper(self, name, binding, target, original, signature):
         if target.name.startswith("projects.caller."):
-            wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
-            update_wrapper(wrapped, original)
-            wrapped._tpm_hook_group = name
-            return wrapped
+            return self._caller_wrapper(name, self.callers, target, original, signature)
         return super()._wrapper(name, binding, target, original, signature)
 
     def _execute(self, original, args, kwargs):

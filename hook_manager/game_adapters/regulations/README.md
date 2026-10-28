@@ -30,7 +30,8 @@ wrappers; development-project integration has its own compatibility checks.
 - [staffing_coordinator.py](staffing_coordinator.py): `StaffingCoordinator` checks
   complete team-staffing plans before applying their prepared changes.
 - [guards.py](guards.py): `RegulationGuards` manages checks around the game
-  functions selected by these adapters.
+  functions selected by these adapters. Personnel, academy and project adapters
+  share its installation steps; a failure restores their owned wrappers.
 - [native_rules.py](native_rules.py): installs the fixed rookie-length and staff
   prestige switches from booleans or references to the mod's own options.
   Missing settings keep the game's checks. Trusted setup owns the returned

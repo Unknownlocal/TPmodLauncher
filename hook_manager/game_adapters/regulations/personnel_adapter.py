@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
 """Guard Formula driver/staff signing with one shared negotiation owner."""
 
-from functools import update_wrapper
 from contextlib import nullcontext
 import inspect
 import threading
 
 from ...callables import CallBinding, refuse_boolean
-from ...manager import HookError, Manager
+from ...manager import HookError
 from .guards import RegulationGuards
 from .contexts import regulation_context
 from .outcome import ValidationOutcome
@@ -60,21 +59,12 @@ class PersonnelAdapter(RegulationGuards):
 
     def install_prepared(self):
         """Install only after the whole personnel group passes compatibility checks."""
-        try:
-            self._main()
-            for target in self.native_callers:
-                Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
+        with self._installation():
             projection = self._projection
-            for owner in self.subscriptions:
-                self.register(owner, [CallBinding(target.name, target.name, projection, refuse_boolean) for target in self.signing])
-            self.poll()
-            if any(group["state"] != "active" for group in self.groups.values()):
-                raise HookError("Personnel integration did not install completely")
+            self._install_groups(self.native_callers, [
+                CallBinding(target.name, target.name, projection, refuse_boolean) for target in self.signing])
             self.feedback = PersonnelFeedback(self, self.planners["driver"].state, self.report)
-            return self
-        except Exception:
-            self.stop()
-            raise
+        return self
 
     def _projection(self, arguments, result):
         caller = getattr(self._local, "personnel_caller", None)
@@ -130,15 +120,9 @@ class PersonnelAdapter(RegulationGuards):
 
     def _wrapper(self, name, binding, target, original, signature):
         if target.name.startswith("staffing."):
-            wrapped = self.staffing.wrap(target.name.rsplit(".", 1)[1], original, signature)
-            update_wrapper(wrapped, original)
-            wrapped._tpm_hook_group = name
-            return wrapped
+            return self._caller_wrapper(name, self.staffing, target, original, signature)
         if target.name.startswith("personnel.caller."):
-            wrapped = self.callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
-            update_wrapper(wrapped, original)
-            wrapped._tpm_hook_group = name
-            return wrapped
+            return self._caller_wrapper(name, self.callers, target, original, signature)
         return super()._wrapper(name, binding, target, original, signature)
 
     def _validate(self, original, signature, entries, args, kwargs):

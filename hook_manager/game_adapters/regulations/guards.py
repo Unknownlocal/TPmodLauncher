@@ -6,11 +6,13 @@ adapter supplies one context and one channel action shared by all participants.
 Neither the projections nor the rule-selection callback come from mod code.
 """
 
+from contextlib import contextmanager
+from functools import update_wrapper
 import threading
 import time
 
 from ...callables import CallableAdapters
-from ...manager import HookError, data_copy
+from ...manager import HookError, Manager, data_copy
 from .outcome import ValidationOutcome
 
 
@@ -23,6 +25,33 @@ class RegulationGuards(CallableAdapters):
         # used without a live policy have no changing selection inputs.
         self.policy_identity = getattr(getattr(select, "__self__", None), "identity", lambda: None)
         self.subscriptions = channel.bindings(scope)
+
+    @contextmanager
+    def _installation(self):
+        """Restore owned wrappers if any installation step fails."""
+        try:
+            self._main()
+            yield
+        except Exception:
+            self.stop()
+            raise
+
+    def _install_groups(self, callers, bindings):
+        """Install checked callers and owner bindings within _installation()."""
+        for target in callers:
+            Manager.install(self, target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
+        for owner in self.subscriptions:
+            self.register(owner, bindings)
+        self.poll()
+        if any(group["state"] != "active" for group in self.groups.values()):
+            raise HookError(type(self).__name__ + " did not install completely")
+
+    def _caller_wrapper(self, name, callers, target, original, signature):
+        """Give a caller-specific wrapper the metadata used for hook ownership."""
+        wrapped = callers.wrap(target.name.rsplit(".", 1)[1], original, signature)
+        update_wrapper(wrapped, original)
+        wrapped._tpm_hook_group = name
+        return wrapped
 
     def _register(self, owner, bindings):
         # All owners must agree on the proposal. Otherwise the first binding's
