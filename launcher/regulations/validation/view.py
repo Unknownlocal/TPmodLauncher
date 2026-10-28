@@ -12,10 +12,10 @@ from mod_runtime._regulations.values import integer
 class OwnerView:
     def __init__(self, owner, revision, validators, choices):
         self.owner, self.revision = owner, revision
-        self.rules = tuple(sorted({row["rule"] for row in validators}))
+        self.rules = tuple(sorted({row["rule"] for _, row in validators.values()}))
         self.rule_slots = {rule: index for index, rule in enumerate(self.rules)}
-        self.validators = {row["id"]: (index, {key: row[key] for key in ("rule", "scope", "handler")})
-                           for index, row in enumerate(validators)}
+        # Slot order is fixed at binding; career views reuse the checked table.
+        self.validators = validators
         self.choices, self.references, records = [], {}, {}
         for rule in self.rules:
             for index, (key, base, overlay) in enumerate(choices[rule]):

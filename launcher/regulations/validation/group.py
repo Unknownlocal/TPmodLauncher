@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Own one shared catalogue install, explicit mod calls and career reset."""
 
+from contextlib import contextmanager
 import time
 
 from launcher.sandbox import SandboxError
@@ -15,6 +16,15 @@ class ValidationGroup:
         self.handler = handler
         self.active = self.staged = self.action = None
         self.epoch = self.generation = 0
+
+    @contextmanager
+    def _operation(self):
+        """Close the whole shared runner on failure, then propagate the error."""
+        try:
+            yield
+        except BaseException:
+            self.handler.runner.close()
+            raise
 
     def _phase(self, fuel, seconds, deadline):
         remaining = min(seconds, deadline - time.monotonic())
@@ -39,7 +49,7 @@ class ValidationGroup:
 
     def stage(self, views, epoch, generation, deadline):
         """Transfer one complete manifest and one copy of each physical record."""
-        try:
+        with self._operation():
             started = time.monotonic()
             if self.active is not None or self.staged is not None or views.keys() != self.handler.validators.keys():
                 raise ValueError("Reset before installing a complete shared policy")
@@ -55,24 +65,18 @@ class ValidationGroup:
             plan.operations.clear()
             self._control_left = 5 * plan.owners - (time.monotonic() - started)
             self.staged, self.epoch, self.generation = plan, epoch, generation
-        except BaseException:
-            self.handler.runner.close()
-            raise
 
     def commit(self, epoch, generation, deadline):
         """A matching acknowledgement activates every owner atomically."""
-        try:
+        with self._operation():
             if self.staged is None or (epoch, generation) != (self.epoch, self.generation):
                 raise ValueError("No matching staged resident publication")
             with self._phase(self.staged.commit_fuel, self._control_left, deadline):
                 self._ack("commit-regulation-policy", (epoch, generation), "active", epoch, generation)
             self.active, self.staged = self.staged, None
-        except BaseException:
-            self.handler.runner.close()
-            raise
 
     def begin_action(self, packet, action, deadline):
-        try:
+        with self._operation():
             if self.action is not None or self.staged is not None:
                 raise ValueError("Shared regulation group is busy")
             text, metric, count = packet
@@ -81,9 +85,6 @@ class ValidationGroup:
                 reply = self.handler.runner.sandbox.call("begin-regulation-contexts", action, text)
                 self._contexts(reply, action, count)
             self.action = action, metric
-        except BaseException:
-            self.handler.runner.close()
-            raise
 
     def _contexts(self, reply, action, count):
         value = decode(reply)
@@ -92,7 +93,7 @@ class ValidationGroup:
             raise SandboxError("Foreign shared context acknowledgement")
 
     def finish_action(self, action, deadline):
-        try:
+        with self._operation():
             if self.action is None or self.action[0] != action:
                 raise ValueError("Unknown shared regulation action")
             # Clearing the canonical context table is framework work too; it
@@ -103,12 +104,9 @@ class ValidationGroup:
             self.action = None
             if time.monotonic() >= deadline:
                 raise SandboxError("Late shared regulation action")
-        except BaseException:
-            self.handler.runner.close()
-            raise
 
     def evaluate(self, owner, packet, action, deadline):
-        try:
+        with self._operation():
             if self.active is None or self.staged is not None:
                 raise ValueError("Resident owner has no current published view")
             text, metric, remaining = packet
@@ -138,9 +136,6 @@ class ValidationGroup:
             if time.monotonic() >= deadline:
                 raise SandboxError("Late resident regulation action")
             return results
-        except BaseException:
-            self.handler.runner.close()
-            raise
 
     def _prepared(self, reply, action, count):
         value = decode(reply)
@@ -151,7 +146,7 @@ class ValidationGroup:
             raise SandboxError("Foreign resident preparation acknowledgement")
 
     def reset(self, epoch, deadline):
-        try:
+        with self._operation():
             plan = self.active or self.staged
             nodes = plan.metric[1] + sum(record.metric[1] for record in plan.records) if plan is not None else 0
             count = len(plan.records) if plan is not None else 0
@@ -159,6 +154,3 @@ class ValidationGroup:
                 self._ack("reset-regulation-group", (epoch,), "reset", epoch, 0)
             self.active = self.staged = self.action = None
             self.epoch, self.generation = epoch, 0
-        except BaseException:
-            self.handler.runner.close()
-            raise

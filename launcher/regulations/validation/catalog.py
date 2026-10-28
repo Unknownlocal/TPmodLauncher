@@ -11,6 +11,7 @@ from copy import deepcopy
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.values import bounded, integer, measure, text
 from ..definitions import RegulationDefinitions
+from ..shared_handler_runner import ordered_bindings
 from .record import CatalogRecord
 from .view import OwnerView
 
@@ -26,11 +27,11 @@ class CombinedCatalog:
         # Admission has already rejected competing owners for each fixed bridge.
         # Keep the small declarations, not another owner/revision lifecycle.
         self._native_rules = {name: value for model in owners.values() for name, value in model.native_rules.items()}
-        self.owners = {owner: (revisions[owner], tuple(sorted(model.validators, key=lambda row: row["id"])), model)
+        self.owners = {owner: (revisions[owner], ordered_bindings(model.validators), model)
                        for owner, model in owners.items() if model.validators}
         self.custom = {row["key"]: (owner, {option["key"]: option for option in row["options"]})
                        for owner, model in owners.items() for row in model.categories}
-        self.rules = {row["rule"] for _, validators, _ in self.owners.values() for row in validators}
+        self.rules = {row["rule"] for _, validators, _ in self.owners.values() for _, row in validators.values()}
         self.views = {}
         self._next = 0
         self._staged = None
@@ -124,7 +125,7 @@ class CombinedCatalog:
         for owner in self.owners:
             revision, validators, model = self.owners[owner]
             owned = {}
-            for rule in sorted({row["rule"] for row in validators}):
+            for rule in sorted({row["rule"] for _, row in validators.values()}):
                 owned[rule] = []
                 for key, base in choices[rule]:
                     # Only this owner's admitted overlay can accompany a base.

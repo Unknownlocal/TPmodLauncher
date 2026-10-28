@@ -19,4 +19,4 @@ class CallableTarget(Target):
         # hook ownership is distinct from game-version compatibility.
         if hasattr(original, "_tpm_hook_group"):
             raise HookError("Native callable already belongs to a hook group: " + self.name)
-        check_signature(original, self.signature)
+        return check_signature(original, self.signature)

@@ -95,20 +95,21 @@ class Target:
         raw = inspect.getattr_static(owner, self.attribute)
         descriptor = type(raw) if isinstance(raw, (staticmethod, classmethod)) else None
         original = raw.__func__ if descriptor else raw
-        self._check(original)
-        signature = inspect.signature(original)
-        if str(signature) != self.signature:
-            raise HookError(f"Target {self.name} signature changed: {signature}")
+        signature = self._check(original)
         return owner, raw, original, descriptor, signature
 
     def _check(self, original):
-        # Private adapters can strengthen identity checks without changing legacy hooks.
+        """Check callable compatibility and return its accepted signature."""
         if (
             not callable(original)
             or hasattr(original, "__wrapped__")
             or hasattr(original, "_tpm_hook_group")
         ):
             raise HookError(f"Target {self.name} is not an unwrapped callable")
+        signature = inspect.signature(original)
+        if str(signature) != self.signature:
+            raise HookError(f"Target {self.name} signature changed: {signature}")
+        return signature
 
 
 class _Loader:

@@ -16,8 +16,10 @@ def check_signature(function, expected):
         raise HookError("Native callable must be a synchronous Python function")
     # Defaults and annotations are part of this exposed signature. Instructions,
     # constants and private local names are deliberately not inspected.
-    if str(inspect.signature(function)) != expected:
+    signature = inspect.signature(function)
+    if str(signature) != expected:
         raise HookError("Native callable signature changed: " + function.__qualname__)
+    return signature
 
 
 def method_group(owner, signatures):
