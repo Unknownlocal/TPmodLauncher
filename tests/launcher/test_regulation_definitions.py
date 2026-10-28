@@ -174,7 +174,7 @@ def test_statically_oversized_policy_data_is_rejected(limit):
     if limit == "depth":
         payload = {"a": {"b": {"c": {"d": {"e": {}}}}}}
     data["mod_extensions"]["example.rules"]["categories"][0]["options"][0]["parameters"] = payload
-    with pytest.raises(ValueError, match="bytes|node limit|container depth"):
+    with pytest.raises(ValueError, match="byte/node/depth limits"):
         prepare(data)
 
 
@@ -195,7 +195,7 @@ def test_owner_metadata_is_budgeted_with_the_cached_minimum_envelope(limit):
     section["option_data"]["native"]["open"] = allowed
     assert prepare(data).owner_ids
     section["option_data"]["native"]["open"] = excess
-    with pytest.raises(ValueError, match="bytes|node limit|container depth"):
+    with pytest.raises(ValueError, match="byte/node/depth limits"):
         prepare(data)
 
 
@@ -223,7 +223,7 @@ def test_shared_native_and_source_inputs_keep_owner_data_and_revision_bytes_inde
                                             separators=(",", ":")).encode()).hexdigest()
         assert result.revisions[owner] == expected
     data["mod_extensions"]["second.rules"]["option_data"]["native"]["open"] = {"text": "x" * 4096}
-    with pytest.raises(ValueError, match="second.rules.*bytes"):
+    with pytest.raises(ValueError, match="second.rules.*byte/node/depth limits"):
         prepare(data, sources)
 
 

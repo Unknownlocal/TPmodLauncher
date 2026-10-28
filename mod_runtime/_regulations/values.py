@@ -12,6 +12,8 @@ import math
 from .policy import _constant, _object, encode
 from .frozen import FrozenValue
 
+_MAX_BYTES, _MAX_NODES, _MAX_DEPTH = 4096, 1024, 8
+
 
 def integer(value, bits=32, *, positive=False):
     # bool subclasses int; exact type prevents True from becoming a slot or ID.
@@ -42,7 +44,12 @@ def scalar(value):
     return len(encode(value).encode("utf-8")), 1, 0, work
 
 
-def measure(value, *, encoded=None):
+def measure(value, *, encoded=None, limited=False):
+    """Measure JSON, optionally stopping at the per-invocation size limits.
+
+    Admission uses limited=True to reject excess nodes or nesting before encoding.
+    Larger transfer tables use the same measurements without invocation limits.
+    """
     # Metric order: UTF-8 bytes, value nodes, container depth, integer work.
     # Object keys contribute bytes, while only values/containers contribute nodes.
     nodes, deepest, work = 0, 0, 0
@@ -51,6 +58,9 @@ def measure(value, *, encoded=None):
         nonlocal nodes, deepest, work
         nodes += 1
         kind = type(item)
+        # depth counts enclosing containers; another container adds one level.
+        if limited and (nodes > _MAX_NODES or depth >= _MAX_DEPTH and kind in (dict, list)):
+            raise ValueError("Resident invocation exceeds byte/node/depth limits")
         if kind is dict:
             depth += 1
             deepest = max(deepest, depth)
@@ -81,7 +91,8 @@ def measure(value, *, encoded=None):
         visit = None
     # Trusted host preparation can retain the encoding it just made. Guest
     # verification always omits this argument and measures received values itself.
-    return len((encode(value) if encoded is None else encoded).encode("utf-8")), nodes, deepest, work
+    metric = len((encode(value) if encoded is None else encoded).encode("utf-8")), nodes, deepest, work
+    return bounded(metric) if limited else metric
 
 
 def array_measure(metrics):
@@ -105,7 +116,7 @@ def object_measure(pairs):
 def bounded(metric):
     # These are per-record/expanded-invocation limits, not a regulations.json or
     # complete multi-call packet size limit.
-    if metric[0] > 4096 or metric[1] > 1024 or metric[2] > 8:
+    if metric[0] > _MAX_BYTES or metric[1] > _MAX_NODES or metric[2] > _MAX_DEPTH:
         raise ValueError("Resident invocation exceeds byte/node/depth limits")
     return metric
 

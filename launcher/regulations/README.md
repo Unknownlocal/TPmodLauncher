@@ -51,9 +51,9 @@ within 2 MiB, including owner-prefixed IDs. The file limit remains 1 MiB.
 
 `PreparationIndex` reuses option lookups, source paths and data size checks
 within one preparation. Owner data refers to native definitions without copying
-the whole native catalogue. `payload.py` checks each owner's actual metadata
-against its per-check limits; a shared base measurement cannot approve another
-owner's extra data. Revision calculation streams checked declarations, exact
+the whole native catalogue. `payload.py` shares JSON measurements with runtime
+validation. It checks each owner's metadata together with the cached base
+against per-check limits. Revision calculation streams checked declarations, exact
 source text and referenced native data into SHA-256. Those digests identify rule
 revisions; they do not check game-method compatibility. Preparation caches are
 discarded on completion or failure.

@@ -17,6 +17,7 @@ def test_component_metrics_match_expanded_encoding_with_unicode_depth_and_big_in
         assert values.array_measure((values.measure(first), values.measure(second))) == values.measure([first, second])
         assert values.measure(first, encoded=values.encode(first)) == values.measure(first)
         for payload in (first, second):
+            assert values.measure(payload, limited=True) == values.bounded(values.measure(payload))
             assert values.encode(values.clone(FrozenValue(payload))) == values.encode(payload)
     with pytest.raises(ValueError, match="keys must be strings"):
         values.measure({"valid": [{}], 1: "invalid"})
@@ -36,3 +37,12 @@ def test_measure_releases_temporary_helpers_without_waiting_for_gc():
     finally:
         if enabled:
             gc.enable()
+
+
+def test_limited_measure_rejects_excess_nodes_and_depth_before_reading_later_values():
+    nested = {"next": object()}
+    for _ in range(8):
+        nested = {"next": nested}
+    for payload in ([None] * 1024 + [object()], nested):
+        with pytest.raises(ValueError, match="byte/node/depth limits"):
+            values.measure(payload, limited=True)
