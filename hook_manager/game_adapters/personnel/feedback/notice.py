@@ -7,13 +7,51 @@ from ...ui import ScrollableDialog, ScrollText
 class PersonnelNotice:
     def __init__(self, ui, kind):
         self.ui, self.kind, self.reason = ui, kind, None
+        self.approach_refusal = False
         self.inline, self.dialog = ScrollText(ui), ScrollableDialog(ui)
 
-    def refuse(self, reason):
+    def refuse(self, reason, *, approach=False):
         self.reason = reason
+        self.approach_refusal = approach
         self.inline.reset()
         self.dialog.body.reset()
         self.dialog.open = True
+
+    def confirm_approach(self, screen, original):
+        """Show staff approach failures while keeping native text and sound.
+
+        The native method returns None for success and failure. Observe its
+        existing action feedback only during this call, then restore the screen's
+        inherited or instance helper even if native code raises.
+        """
+        if getattr(screen, "view_only", False):
+            return original()
+        outcome = None
+        feedback = screen.action_feedback
+        missing = object()
+        previous = vars(screen).get("action_feedback", missing)
+
+        def report(successful):
+            nonlocal outcome
+            outcome = successful
+            return feedback(successful)
+
+        try:
+            screen.action_feedback = report
+            result = original()
+        finally:
+            if previous is missing:
+                vars(screen).pop("action_feedback", None)
+            else:
+                screen.action_feedback = previous
+        if outcome is False and screen.message:
+            # An unavailable manager can return before closing confirmation.
+            # Close it so the refusal dialog is the visible modal.
+            screen._approach_confirm_open = False
+            self.refuse(screen.message, approach=True)
+        elif outcome is True:
+            self.reason, self.dialog.open, self.inline.rect = None, False, None
+        return result
 
     def handle_event(self, screen, event):
         if getattr(screen, "view_only", False):
@@ -67,7 +105,8 @@ class PersonnelNotice:
                 except Exception as error:
                     errors.append(error)
             return callback(surface, *args, **kwargs)
-        if self.reason and screen.message == self.reason:
+        # Approach messages stay in their native place above Latest Response.
+        if self.reason and not self.approach_refusal and screen.message == self.reason:
             # Keep the full reason in our viewport without letting native inline
             # text enlarge its layout. Restore the original field after drawing.
             overrides["message"] = ""
@@ -91,7 +130,7 @@ class PersonnelNotice:
 
             overrides["_section_header"] = section
             overrides["_button"] = lambda surface, *args, **kwargs: controls(button, surface, *args, **kwargs)
-        elif self.reason or screen.last_interest_breakdown:
+        elif self.reason and not self.approach_refusal or screen.last_interest_breakdown:
             clipped, buttons = screen._draw_clipped, screen._draw_action_buttons
 
             def text(surface, font, label, *args, **kwargs):
@@ -132,14 +171,18 @@ class PersonnelNotice:
         else:
             rect = getattr(screen, "_response_rect", None)
         factors = screen.last_interest_breakdown
-        if rect is not None and (self.reason or factors):
+        if rect is not None and (self.reason and not self.approach_refusal or factors):
             self._response(screen, surface, rect, factors)
         if self.dialog.open:
             # The shared dialog only draws supplied text; personnel owns the
             # meaning of the pending decision and which candidate it concerns.
-            pending = (screen._pipeline_record() or {}).get("status") == "awaiting_player_confirmation"
-            footer = "The agreed contract is still awaiting your decision." if pending else "No contract was signed."
-            self.dialog.draw(screen, surface, title="Contract cannot be signed", body=self.reason,
+            if self.approach_refusal:
+                title, footer = "Approach cannot begin", "No approach was started or personnel slot used."
+            else:
+                pending = (screen._pipeline_record() or {}).get("status") == "awaiting_player_confirmation"
+                title = "Contract cannot be signed"
+                footer = "The agreed contract is still awaiting your decision." if pending else "No contract was signed."
+            self.dialog.draw(screen, surface, title=title, body=self.reason,
                              subtitle=str(getattr(screen, self.kind).name), footer=footer, font=screen.small)
         return result
 
@@ -162,7 +205,7 @@ class PersonnelNotice:
             screen.draw_text_block(surface, "Latest Response", screen.small, heading, (240, 240, 240))
             rect = pg.Rect(rect.x + 1, heading.bottom + screen.ui_gap(4, minimum=2), rect.width - 2,
                            max(1, rect.bottom - heading.bottom - screen.ui_gap(4, minimum=2) - 1))
-        blocks = [(self.reason, theme.NOTICE_TEXT), ("", theme.TEXT_MUTED)] if self.reason else []
+        blocks = [(self.reason, theme.NOTICE_TEXT), ("", theme.TEXT_MUTED)] if self.reason and not self.approach_refusal else []
         threshold = max(1.0, screen._interest_threshold()) if self.kind == "driver" else 100.0
         blocks.extend((f"{value / threshold * 100:+.0f}%  {label}", theme.SUCCESS if value >= 0 else theme.DANGER)
                       for label, value in factors)

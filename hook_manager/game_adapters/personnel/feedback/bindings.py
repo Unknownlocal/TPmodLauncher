@@ -21,6 +21,7 @@ def feedback_bindings(screen, kind):
         })
     else:
         signatures.update({
+            "action_feedback": "(self, successful)",
             "_draw_clipped": "(self, surface, font, text, color, x, y, max_width)",
             "_draw_action_buttons": "(self, surface, submit_label, can_submit)",
         })

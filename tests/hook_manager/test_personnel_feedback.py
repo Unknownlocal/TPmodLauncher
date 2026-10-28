@@ -9,6 +9,7 @@ import pytest
 from hook_manager.game_adapters.personnel.feedback import adapter as feedback
 from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
 from tests.hook_manager.test_personnel_adapter import owned
+from tests.hook_manager.test_personnel_approach import setup as approach_setup
 
 
 def screens(monkeypatch):
@@ -27,6 +28,8 @@ def screens(monkeypatch):
         module = ModuleType("ui.screens." + kind + "_negotiation_screen")
 
         def handle_event(self, event):
+            if event == "approach":
+                self._confirm_begin_approach()
             if event == "sign" or getattr(event, "action", None) == "sign":
                 ok, self.message = self.state.personnel_negotiation_manager.resolve_player_contract_decision("decision", True)
                 if not ok and self.kind == "driver":
@@ -36,7 +39,19 @@ def screens(monkeypatch):
             self.draws += 1
             raise ValueError("Owned native draw error")
 
-        cls = type(kind.title() + "NegotiationScreen", (), {"handle_event": handle_event, "draw": draw})
+        def confirm(self):
+            ok, self.message = self.approach_result
+            self.action_feedback(ok)
+            if getattr(self, "approach_error", False):
+                raise ValueError("Owned native approach error")
+            self._approach_confirm_open = False
+
+        def action_feedback(self, successful):
+            self.sounds.append(successful)
+
+        cls = type(kind.title() + "NegotiationScreen", (), {
+            "handle_event": handle_event, "draw": draw,
+            "_confirm_begin_approach": confirm, "action_feedback": action_feedback})
         setattr(module, cls.__name__, cls)
         monkeypatch.setitem(sys.modules, module.__name__, module)
         classes[kind] = cls
@@ -47,6 +62,7 @@ def screen_for(cls, state, kind):
     screen = cls()
     screen.state, screen.kind, screen.message, screen.draws = state, kind, "", 0
     screen._approach_failure_open = False
+    screen.sounds = []
     screen.last_interest_breakdown = []
     screen._section_header = lambda *args, **kwargs: None
     screen._draw_clipped = screen._draw_action_buttons = lambda *args, **kwargs: None
@@ -54,6 +70,36 @@ def screen_for(cls, state, kind):
     screen.get_mouse_canvas_pos = lambda: None
     screen.window_to_canvas = lambda pos: pos
     return screen
+
+
+def test_staff_approach_dialog_preserves_native_reason_sound_and_helper_ownership(monkeypatch, approach_setup):
+    classes = screens(monkeypatch)
+    _, _, adapter, _, _, _ = approach_setup
+    state = adapter.approach.state
+    adapter.poll()  # Complete the approach-only owner's deferred staff UI import.
+    screen = screen_for(classes["staff"], state, "staff")
+    reason = "Nationality must match Audi (german)."
+    screen.approach_result = False, reason
+    try:
+        screen.handle_event("approach")
+        notice = adapter.feedback.notices[screen]
+        assert notice.dialog.open and notice.approach_refusal and notice.reason == screen.message == reason
+        assert screen.sounds == [False] and "action_feedback" not in vars(screen)
+        screen.handle_event(SimpleNamespace(type=1, key=2))
+        assert not notice.dialog.open and screen.message == reason
+        # Native instance overrides must also survive temporary observation.
+        override = lambda successful: screen.sounds.append(successful)
+        screen.action_feedback = override
+        screen.approach_result = True, "Approach started."
+        screen.handle_event("approach")
+        assert notice.reason is None and not notice.dialog.open and screen.sounds == [False, True]
+        assert screen.action_feedback is override
+        screen.approach_error = True
+        with pytest.raises(ValueError, match="Owned native approach error"):
+            screen.handle_event("approach")
+        assert screen.action_feedback is override and screen.sounds == [False, True, True]
+    finally:
+        adapter.stop()
 
 
 def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatch):

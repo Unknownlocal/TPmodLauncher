@@ -12,13 +12,13 @@ from .notice import PersonnelNotice
 
 
 class PersonnelFeedback(Manager):
-    def __init__(self, guards, state, report):
+    def __init__(self, guards, state, report, *, kinds=None):
         super().__init__(lambda *args: None)
         self.guards, self.state, self.report = guards, state, report
         self.notices, self.ui = WeakKeyDictionary(), {}
         # UI groups have their own lifecycle: a changed screen can disable its
         # feedback while contract guards stay active. Observe ordinary imports.
-        for kind in guards.planners:
+        for kind in guards.planners if kinds is None else kinds:
             module = "ui.screens." + kind + "_negotiation_screen"
             self.observe(module, lambda module, kind=kind: self._ready(kind, module))
 
@@ -30,9 +30,11 @@ class PersonnelFeedback(Manager):
     def _ready(self, kind, module):
         screen = getattr(module, kind.title() + "NegotiationScreen")
         self.ui[kind] = feedback_bindings(screen, kind)
+        methods = [("event", "handle_event", "(self, event)"), ("draw", "draw", "(self, surface)")]
+        if kind == "staff":
+            methods.append(("approach", "_confirm_begin_approach", "(self)"))
         targets = [CallableTarget("personnel.ui." + kind + "." + role, module.__name__, (screen.__name__,), method, signature)
-                   for role, method, signature in (("event", "handle_event", "(self, event)"),
-                                                    ("draw", "draw", "(self, surface)"))]
+                   for role, method, signature in methods]
         for target in targets:
             self.approve(target)
         self.install("personnel.ui." + kind, [{"target": target.name, "callback": "internal", "phase": "before"}
@@ -63,10 +65,10 @@ class PersonnelFeedback(Manager):
                 except Exception as error:
                     self._disable(name, error)
                     return original(*args, **kwargs)
-            if role == "draw":
-                # Distinguish native exceptions from our drawing failures. Before
-                # native starts we can fall back; after it returns we keep that
-                # frame. A native error propagates, and native is never retried.
+            if role in ("draw", "approach"):
+                # Distinguish native exceptions from presentation failures. Before
+                # native starts we can fall back; after it returns we keep its
+                # result. A native error propagates and native is never retried.
                 started, completed, result = False, False, None
 
                 def native():
@@ -77,7 +79,8 @@ class PersonnelFeedback(Manager):
                     return result
 
                 try:
-                    return notice.draw(screen, bound.arguments["surface"], native)
+                    return (notice.draw(screen, bound.arguments["surface"], native) if role == "draw"
+                            else notice.confirm_approach(screen, native))
                 except Exception as error:
                     if started and not completed:
                         raise

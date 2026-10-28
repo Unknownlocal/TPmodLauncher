@@ -50,6 +50,12 @@ ordinary rejected offer. Completed signings are not undone.
 refusal dialogs and retain the reason in the scrollable Latest Response panel.
 Its screen wrappers are separate from signing checks.
 
+Staff approach failures reuse that dialog with approach-specific wording while
+keeping native inline text and error sound. The adapter observes the native
+confirmation's outcome only during that call; it restores the sound helper
+afterwards. Approach-only mods own the same optional staff feedback through
+their approach adapter. Driver approaches keep the native failure dialog.
+
 Driver and staff proposal calculations stay in their respective packages.
 Accepted future contracts are not checked again when loaded or activated.
 Importing this package installs nothing; it exposes no game-function API to mods.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Connect team approaches to declared validators; native UI owns refusals."""
+"""Connect team approaches to validators and optional staff refusal feedback."""
 
 import threading
 from contextlib import nullcontext
@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from ...callables import CallBinding
 from ...manager import HookError
 from ..personnel.approach import PersonnelApproach
+from ..personnel.feedback import PersonnelFeedback
 from .contexts import regulation_context
 from .guards import RegulationGuards
 
@@ -27,6 +28,7 @@ class ApproachAdapter(RegulationGuards):
         super().__init__(channel, select, "personnel.approach", report=report)
         self.approach = approach
         self.personnel = None
+        self.feedback = None
         if approach.target.resolve(self.completed) is None:
             raise HookError("Approach integration requires completed native imports")
         self.approve(approach.target)
@@ -39,10 +41,25 @@ class ApproachAdapter(RegulationGuards):
                                                  projection, self.approach.refuse)])
             if any(value != "ready" for value in self.owners.values()):
                 raise HookError("Approach integration did not install completely")
+            if self.personnel is None:
+                # Approach-only mods have no signing adapter to own staff UI.
+                self.feedback = PersonnelFeedback(self, self.approach.state, self._error_report, kinds=("staff",))
             return self
         except BaseException:
             self.stop()
             raise
+
+    def stop(self):
+        result = super().stop()
+        if self.feedback is not None:
+            self.feedback.stop()
+        return result
+
+    def poll(self):
+        result = super().poll()
+        if self.feedback is not None:
+            self.feedback.poll()
+        return result
 
     def _projection(self, arguments, result):
         # Shared negotiation callers can use their owned working manager.
