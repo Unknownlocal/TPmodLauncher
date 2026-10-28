@@ -187,7 +187,12 @@ class RegulationChannel:
             self._lock.release()
 
     def __call__(self, contexts, selections, calls, deadline):
-        """Calls: owner -> [binding slot, shared context, shared selection]."""
+        """Return checked decisions for every requested handler, or raise.
+
+        Calls map each owner to [binding slot, shared context, shared selection]
+        rows. All owner identities, decision counts and contents are checked
+        within the deadline before any result is returned.
+        """
         # Reject an already failed owner before touching the stream, allowing
         # other owners to keep using this same authenticated connection.
         if type(calls) is dict and calls.keys() & self._unavailable:

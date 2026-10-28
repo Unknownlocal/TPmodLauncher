@@ -37,7 +37,8 @@ wrappers; development-project integration has its own compatibility checks.
   hooks and their removal.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
   complete career installs over an authenticated connection to the launcher on the same
-  computer. The game waits for its reply.
+  computer. It checks every decision in a reply before the guards select a refusal
+  or allow the game action. The game waits for its reply.
 - [native_policy.py](native_policy.py): `NativeRegulationPolicy` prepares the
   reachable options for subscribed rules from the career's loaded regulations.
   It sends this data once, then uses the game's own method to choose an option

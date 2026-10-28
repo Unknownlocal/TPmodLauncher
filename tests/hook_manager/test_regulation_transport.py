@@ -30,10 +30,10 @@ def hello(token):
     return {"version": 2, "op": "hello", "token": token, "id": 0}
 
 
-def action(channel, deadline):
+def action(channel, deadline, *, count=1):
     # Transport-only tests bypass publication; real pack tests own that fence.
     channel._generations = {"owned.rules": 1}
-    return channel([{}], [{}], {"owned.rules": [[0, 0, 0]]}, deadline)
+    return channel([{}], [{}], {"owned.rules": [[slot, 0, 0] for slot in range(count)]}, deadline)
 
 
 def test_maximum_admitted_action_and_refusals_roundtrip_in_single_frames():
@@ -110,11 +110,13 @@ def test_length_framing_accepts_fragmented_messages_and_rejects_oversized_prefix
             regulation_read(receiver, time.monotonic() + 1)
 
 
-@pytest.mark.parametrize("fault", ["stale", "deadline", "validation_deadline"])
-def test_uncorrelated_or_expired_replies_close_the_channel_without_retry(monkeypatch, fault):
-    if fault == "validation_deadline":
+@pytest.mark.parametrize("fault", ["stale", "deadline", "validation_deadline", "owners", "count", "decision"])
+def test_invalid_or_expired_replies_close_the_channel_without_retry(monkeypatch, fault):
+    if fault in ("validation_deadline", "owners", "count", "decision"):
+        # Keep malformed-reply checks independent of thread scheduling delays.
         clock = [time.monotonic()]
         monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    if fault == "validation_deadline":
         from hook_manager.game_adapters.regulations import channel as channel_module
         decisions = channel_module.regulation_decisions
 
@@ -138,9 +140,18 @@ def test_uncorrelated_or_expired_replies_close_the_channel_without_retry(monkeyp
                 request = regulation_read(connection, time.monotonic() + 1)
                 if fault == "deadline":
                     release.wait(timeout=2)
+                result = {"owned.rules": [{"decision": "allow"}]}
+                if fault == "owners":
+                    result = {}
+                elif fault == "count":
+                    result["owned.rules"] = []
+                elif fault == "decision":
+                    # A valid refusal cannot conceal a malformed later decision.
+                    result["owned.rules"] = [{"decision": "deny", "message": "Policy refusal"},
+                                             {"decision": "allow", "message": "Unexpected"}]
                 try:
                     regulation_write(connection, {**regulation_header(request, check_deadline=False),
-                        "id": 0 if fault == "stale" else request["id"], "result": {"owned.rules": [{"decision": "allow"}]}}, time.monotonic() + 1)
+                        "id": 0 if fault == "stale" else request["id"], "result": result}, time.monotonic() + 1)
                 except OSError:
                     pass  # An expired client has already closed its stream.
 
@@ -148,8 +159,12 @@ def test_uncorrelated_or_expired_replies_close_the_channel_without_retry(monkeyp
         channel = None
         try:
             channel = RegulationChannel({"port": listener.getsockname()[1], "token": token})
-            with pytest.raises((HookError, OSError)):
-                action(channel, time.monotonic() + .02)
+            errors = {"owners": (HookError, "Incomplete regulation owners"),
+                      "count": (ValueError, "Incomplete regulation reply"),
+                      "decision": (ValueError, "Invalid regulation decision")}
+            expected, message = errors.get(fault, ((HookError, OSError), None))
+            with pytest.raises(expected, match=message):
+                action(channel, time.monotonic() + .02, count=2 if fault == "decision" else 1)
             assert channel.closed
             with pytest.raises(HookError, match="unavailable"):
                 action(channel, time.monotonic() + .1)

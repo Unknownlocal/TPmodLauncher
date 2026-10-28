@@ -11,7 +11,6 @@ import time
 
 from ...callables import CallableAdapters
 from ...manager import HookError, data_copy
-from .framing import regulation_decisions
 from .outcome import ValidationOutcome
 
 
@@ -133,17 +132,12 @@ class RegulationGuards(CallableAdapters):
     def _refusal(self, context, selections, calls, deadline):
         """Return a fully checked policy refusal, or None when every handler allows."""
         decisions = self.channel([context], selections, calls, deadline)
-        if type(decisions) is not dict or decisions.keys() != calls.keys():
-            raise HookError("Incomplete regulation decisions")
-        refusal = None
-        # Validate every reply before accepting the first ordered refusal;
-        # a malformed later decision is an unavailable validator, not a deny.
-        for owner, rows in calls.items():
-            regulation_decisions(decisions[owner], len(rows))
+        # The channel checks the complete reply before any refusal is selected.
+        for owner in calls:
             for decision in decisions[owner]:
                 if decision["decision"] == "deny":
-                    refusal = refusal or decision["message"]
-        return refusal
+                    return decision["message"]
+        return None
 
     def _execute(self, original, args, kwargs):
         return original(*args, **kwargs)

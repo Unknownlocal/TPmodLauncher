@@ -67,6 +67,11 @@ def coordinator(monkeypatch, mode="allow", *, callers=False):
             def sign_driver(self, driver):
                 return True
 
+        class Negotiations:
+            def get_record(self, candidate_type: 'str', candidate: 'Any', team_name: 'Optional[str]', *, signer_kind: 'str' = 'team') -> 'Optional[Dict[str, Any]]':
+                return None
+
+        state.personnel_negotiation_manager = Negotiations()
         module.DriverManager = DriverManager
         driver = DriverManager()
         driver.state = state
