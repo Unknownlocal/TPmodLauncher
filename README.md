@@ -261,8 +261,8 @@ and `action: "approach"` in `context.proposal`. The common clock and effective
 season/start fields remain available; the end week is `null`. There are no
 salary or duration fields at this stage. Register a validator separately for
 each scope it supports. A refusal prevents the approach and uses the game's
-own failure feedback. Drivers use their native refusal dialog. Staff retain the
-native inline message and error sound, with a matching refusal dialog supplied
+own failure feedback. Driver refusal dialogs also report the native error cue.
+Staff retain the native inline message and error sound, with a matching refusal dialog supplied
 by the UI adapter.
 
 Contract validators also check submitted offers with `operation: "preview"`.

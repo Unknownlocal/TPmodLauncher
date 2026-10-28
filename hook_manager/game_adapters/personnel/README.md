@@ -53,8 +53,9 @@ Its screen wrappers are separate from signing checks.
 Staff approach failures reuse that dialog with approach-specific wording while
 keeping native inline text and error sound. The adapter observes the native
 confirmation's outcome only during that call; it restores the sound helper
-afterwards. Approach-only mods own the same optional staff feedback through
-their approach adapter. Driver approaches keep the native failure dialog.
+afterwards. Approach-only mods own the same optional feedback through
+their approach adapter. Driver approaches keep the native failure dialog, paired
+with the native action-error cue when it opens.
 
 Driver and staff proposal calculations stay in their respective packages.
 Accepted future contracts are not checked again when loaded or activated.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Connect team approaches to validators and optional staff refusal feedback."""
+"""Connect team approaches to validators and optional refusal feedback."""
 
 import threading
 from contextlib import nullcontext
@@ -42,8 +42,9 @@ class ApproachAdapter(RegulationGuards):
             if any(value != "ready" for value in self.owners.values()):
                 raise HookError("Approach integration did not install completely")
             if self.personnel is None:
-                # Approach-only mods have no signing adapter to own staff UI.
-                self.feedback = PersonnelFeedback(self, self.approach.state, self._error_report, kinds=("staff",))
+                # Without a signing adapter, this adapter owns feedback setup
+                # and cleanup.
+                self.feedback = PersonnelFeedback(self, self.approach.state, self._error_report, kinds=("driver", "staff"))
             return self
         except BaseException:
             self.stop()

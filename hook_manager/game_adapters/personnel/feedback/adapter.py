@@ -33,6 +33,9 @@ class PersonnelFeedback(Manager):
         methods = [("event", "handle_event", "(self, event)"), ("draw", "draw", "(self, surface)")]
         if kind == "staff":
             methods.append(("approach", "_confirm_begin_approach", "(self)"))
+        else:
+            methods.append(("approach_failure", "_show_approach_failure",
+                            "(self, reason: str, *, title='Approach cannot begin', note='No approach was started or personnel slot used.') -> None"))
         targets = [CallableTarget("personnel.ui." + kind + "." + role, module.__name__, (screen.__name__,), method, signature)
                    for role, method, signature in methods]
         for target in targets:
@@ -58,6 +61,14 @@ class PersonnelFeedback(Manager):
                     or threading.current_thread() is not threading.main_thread()
                     or getattr(screen, "state", None) is not self.state):
                 return original(*args, **kwargs)
+            if role == "approach_failure":
+                # Keep the native result even if optional feedback fails.
+                result = original(*args, **kwargs)
+                try:
+                    screen.action_feedback(False)
+                except Exception as error:
+                    self._disable(name, error)
+                return result
             notice = self.notices.get(screen)
             if notice is None:
                 try:

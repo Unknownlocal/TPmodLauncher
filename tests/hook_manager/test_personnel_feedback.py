@@ -49,9 +49,15 @@ def screens(monkeypatch):
         def action_feedback(self, successful):
             self.sounds.append(successful)
 
+        def failure(self, reason: str, *, title='Approach cannot begin', note='No approach was started or personnel slot used.') -> None:
+            self.message, self._approach_failure_reason = reason, reason
+            self._approach_failure_title, self._approach_failure_note = title, note
+            self._approach_failure_open = True
+
         cls = type(kind.title() + "NegotiationScreen", (), {
             "handle_event": handle_event, "draw": draw,
-            "_confirm_begin_approach": confirm, "action_feedback": action_feedback})
+            "_confirm_begin_approach": confirm, "action_feedback": action_feedback,
+            "_show_approach_failure": failure})
         setattr(module, cls.__name__, cls)
         monkeypatch.setitem(sys.modules, module.__name__, module)
         classes[kind] = cls
@@ -100,6 +106,24 @@ def test_staff_approach_dialog_preserves_native_reason_sound_and_helper_ownershi
         assert screen.action_feedback is override and screen.sounds == [False, True, True]
     finally:
         adapter.stop()
+
+
+def test_driver_native_approach_popup_reports_one_error_and_restores_on_cleanup(monkeypatch, approach_setup):
+    classes = screens(monkeypatch)
+    _, _, adapter, _, _, _ = approach_setup
+    adapter.poll()
+    screen = screen_for(classes["driver"], adapter.approach.state, "driver")
+    reason = "Nationality must match Audi (german)."
+    escaped = screen._show_approach_failure
+    try:
+        assert escaped(reason, title="Approach rejected", note="No slot used.") is None
+        assert screen._approach_failure_open and screen.message == screen._approach_failure_reason == reason
+        assert (screen._approach_failure_title, screen._approach_failure_note) == ("Approach rejected", "No slot used.")
+        assert screen.sounds == [False]
+    finally:
+        adapter.stop()
+    escaped(reason)
+    assert screen.sounds == [False]  # Cached wrappers stop supplying feedback after cleanup.
 
 
 def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatch):

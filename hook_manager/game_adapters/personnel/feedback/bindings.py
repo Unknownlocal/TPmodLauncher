@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Check the native drawing helpers after a negotiation screen imports normally."""
+"""Check the native helpers used by negotiation feedback."""
 
 from ....callables import method_group
 from ...ui import ui_bindings
@@ -12,6 +12,7 @@ def feedback_bindings(screen, kind):
     signatures = {
         "handle_event": "(self, event)", "draw": "(self, surface)",
         "_pipeline_record": "(self)",
+        "action_feedback": "(self, successful)",
     }
     if kind == "driver":
         signatures.update({
@@ -21,7 +22,6 @@ def feedback_bindings(screen, kind):
         })
     else:
         signatures.update({
-            "action_feedback": "(self, successful)",
             "_draw_clipped": "(self, surface, font, text, color, x, y, max_width)",
             "_draw_action_buttons": "(self, surface, submit_label, can_submit)",
         })
