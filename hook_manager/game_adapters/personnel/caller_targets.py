@@ -18,6 +18,8 @@ def personnel_mail_target():
 # Refusal boundaries and private-state assumptions are covered by conformance
 # checks, not by runtime body hashes.
 _PERSONNEL_CALLERS = (
+    ('submit', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'submit_offer',
+     "(self, candidate_type: 'str', candidate: 'Any', team_name: 'str', offer: 'Dict[str, Any]', score: 'float', *, signer_kind: 'str' = 'team', attempts_used: 'Optional[int]' = None, annoyed: 'Optional[bool]' = None, finalize: 'bool' = False) -> 'Tuple[bool, str, Optional[Dict[str, Any]]]'"),
     ('proposal', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'accept_player_driver_proposal',
      "(self, event_id: 'str') -> 'Tuple[bool, str]'"),
     ('uncontested', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'sign_uncontested',

@@ -14,6 +14,7 @@ from .outcome import ValidationOutcome
 from .refused_proposals import RefusedProposals
 from ..personnel.caller_targets import personnel_caller_targets, personnel_mail_target
 from ..personnel.callers import PersonnelCallers
+from ..personnel.offer import PersonnelOffer
 from ..personnel.feedback import PersonnelFeedback
 from ..drivers.planner import DriverContractPlanner
 from ..drivers.query_inputs import discard_query_inputs
@@ -42,6 +43,9 @@ class PersonnelAdapter(RegulationGuards):
         self.callers = PersonnelCallers(self, state)
         self.signing = (driver_target(), staff_target())
         self.native_callers = (*personnel_caller_targets(), *staffing_targets())
+        # Staffing-only integrations do not use negotiation submission inputs.
+        self.offers = (PersonnelOffer(state, self.planners)
+                       if any(target.name == "personnel.caller.submit" for target in self.native_callers) else None)
         # Headless careers may omit mail. A real mailbox must be covered.
         if getattr(state, "email_manager", None) is not None:
             self.native_callers += (personnel_mail_target(),)
@@ -87,6 +91,28 @@ class PersonnelAdapter(RegulationGuards):
     def native_check_scope(self, start_week):
         """Share an offer's explicit date with the native check switches."""
         return NativeRuleSelection.scope(next(iter(self.planners.values())).state, start_week=start_week)
+
+    def validate_submission(self, prepare, execute, *, initiator):
+        """Check offered terms without granting permission for a later signing."""
+        if not self._personnel_operation.acquire(blocking=False):
+            return ValidationOutcome("unavailable", "Personnel operation is busy"), None
+        try:
+            context = None
+
+            def project():
+                nonlocal context
+                context = regulation_context(self.scope, prepare(), initiator=initiator, operation="preview")
+                return context
+
+            outcome = self._decision(project, set(self.subscriptions))
+            self._local.outcome = outcome
+            if outcome.status != "allow":
+                return outcome, None
+            # Native submission prechecks must see the same season as the mods.
+            with self.native_check_scope(context["effective"]["start_week"]):
+                return outcome, execute()
+        finally:
+            self._personnel_operation.release()
 
     def _refusal(self, context, selections, calls, deadline):
         """Keep duplicate-denial handling inside this caller's operation lifetime."""

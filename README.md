@@ -263,6 +263,12 @@ salary or duration fields at this stage. Register a validator separately for
 each scope it supports. A refusal prevents the approach and uses the game's
 own failure feedback: a dialog for drivers, inline text and error sound for staff.
 
+Contract validators also check submitted offers with `operation: "preview"`.
+They receive the proposed contract terms before the game stores the offer or
+schedules its decision. Refusals use the game's normal submission errors. Final
+signing checks run again with `operation: "commit"`; an earlier allowance is not
+reused as permission to sign.
+
 Write a synchronous `validate_contract(context, regulation)` function in the
 named source module. It receives fresh dictionaries and lists, and returns a
 dictionary such as `{"decision": "allow"}` or

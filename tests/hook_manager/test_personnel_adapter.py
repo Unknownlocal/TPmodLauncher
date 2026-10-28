@@ -3,6 +3,7 @@
 
 import inspect
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType, SimpleNamespace
 
@@ -63,6 +64,15 @@ def owned(monkeypatch):
             return True
 
     class Negotiations:
+        def get_record(self, candidate_type: 'str', candidate: 'Any', team_name: 'Optional[str]', *, signer_kind: 'str' = 'team') -> 'Optional[Dict[str, Any]]':
+            return self.row
+
+        def submit_offer(self, candidate_type, candidate, team_name, offer, score, *, signer_kind="team", attempts_used=None, annoyed=None, finalize=False):
+            self.row.update(offer=offer, offer_score=score, status="final_offer" if finalize else "offer_accepted")
+            self.candidate_deadlines["candidate"] = 125
+            self.state.writes.append("submitted")
+            return True, "Offer submitted", self.row
+
         def _execute_offer(self, row, candidate):
             if row.get("native_precheck_failure"):
                 return False
@@ -139,7 +149,7 @@ def owned(monkeypatch):
     state.staff_manager = StaffManager()
     state.staff_manager.state = state
     driver = SimpleNamespace(contract=None)
-    negotiations.row = {"candidate_type": "driver", "initiated_by": "player", "offer": {"years": 3}}
+    negotiations.row = {"candidate_type": "driver", "team_id": "target", "initiated_by": "player", "offer": {"years": 3}}
     negotiations.driver, negotiations.pending = driver, {"decision": {"status": "pending"}}
     negotiations.records = {"row": negotiations.row}
     negotiations.pending_player_decisions = negotiations.pending
@@ -152,7 +162,8 @@ def owned(monkeypatch):
                               str(inspect.signature(fn)))
 
     signing = target("drivers.sign", DriverManager, "sign_driver")
-    callers = (target("personnel.caller.offer", Negotiations, "_execute_offer"),
+    callers = (target("personnel.caller.submit", Negotiations, "submit_offer"),
+               target("personnel.caller.offer", Negotiations, "_execute_offer"),
                target("personnel.caller.decision", Negotiations, "resolve_player_contract_decision"),
                target("personnel.caller.due", Negotiations, "resolve_due_decisions"),
                target("personnel.caller.uncontested", Negotiations, "sign_uncontested"),
@@ -175,13 +186,15 @@ def owned(monkeypatch):
 
         def __init__(self):
             self._unavailable = set()
+            self.contexts = []
 
         def bindings(self, scope):
             return {"owned.rules": ((0, "rule"),)}
 
         def __call__(self, contexts, selections, calls, deadline):
             assert contexts[0]["schema"] == 1 and contexts[0]["scope"] == "personnel.contract"
-            assert contexts[0]["operation"] == "commit"
+            assert contexts[0]["operation"] in ("commit", "preview")
+            self.contexts.extend(contexts)
             if self.mode == "failed":
                 self._unavailable.add("owned.rules")
                 raise RuntimeError("Owned handler failed")
@@ -200,6 +213,79 @@ def owned(monkeypatch):
         target("staffing.onboard", StaffManager, "onboard_joining_team_staff"),
         target("staffing.recover", StaffManager, "ensure_active_teams_have_staff")))
     return state, driver, negotiations, planner, Channel(), signing, callers
+
+
+def submitted(monkeypatch):
+    """Give the small negotiation fixture the real offer-to-signing argument shape."""
+    state, person, negotiations, planner, channel, _, _ = owned(monkeypatch)
+    state.season_no, state.next_season_start = 3, lambda: 157
+    state.current_season_start_week = lambda: 105
+    negotiations.row.update(status="talks_open", context={"contract_start_week": 157})
+    def signing(self, team_name, driver, salary_m, years, *, bonuses=None, role="main", priority="equal", contract_start_week=None):
+        pass  # Signature only; no signer is executed during submission.
+    planner.prepare = lambda arguments: {
+        "clock": {"season": 3, "absolute_week": 114},
+        "effective": {"season": 4, "start_week": 157, "end_week": 157 + 52 * arguments["years"]},
+        "proposal": {"proposed": {"salary_m": arguments["salary_m"], "duration_weeks": 52 * arguments["years"]}},
+    }
+    adapter = implementation.PersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
+    adapter.offers.signatures["driver"] = inspect.signature(signing)
+    return state, person, negotiations, channel, adapter
+
+
+def test_submission_refusal_preserves_talks_and_final_offer_then_rechecks_signing(monkeypatch):
+    state, person, negotiations, channel, adapter = submitted(monkeypatch)
+    offer = {"salary_m": 2.5, "years": 4}
+    before = dict(negotiations.row)
+    try:
+        monkeypatch.setattr(adapter.feedback, "refuse", lambda *a: pytest.fail("Submission opened signing dialog"))
+        assert negotiations.submit_offer(" Driver ", person, "target", offer, 100, finalize=True) == (
+            False, "Owned refusal", negotiations.row)
+        assert negotiations.row == before and not negotiations.candidate_deadlines and not state.writes
+        assert channel.contexts[-1]["operation"] == "preview"
+        assert channel.contexts[-1]["proposal"]["proposed"] == {"salary_m": 2.5, "duration_weeks": 208}
+        assert negotiations.submit_offer("driver", person, "target", {"salary_m": "invalid"}, 100) == (
+            False, "Invalid contract offer terms.", negotiations.row)
+        assert adapter.owners == {"owned.rules": "ready"} and negotiations.row == before
+        # A prior approach/allowance is not reused: a changed rule denies even
+        # an already submitted final offer without replacing its stored terms.
+        channel.mode = "allow"
+        assert negotiations.submit_offer("driver", person, "target", offer, 100, finalize=True)[0]
+        stored = negotiations.row["offer"]
+        channel.mode = "deny"
+        assert not negotiations.submit_offer("driver", person, "target", {"years": 1}, 100)[0]
+        assert negotiations.row["offer"] is stored and stored == offer
+        assert not negotiations._execute_offer(negotiations.row, person)
+        assert person.contract is None  # Submission allowance never authorises signing.
+    finally:
+        adapter.stop()
+
+
+def test_worker_submission_unavailability_preserves_pending_offer(monkeypatch):
+    state, person, negotiations, channel, adapter = submitted(monkeypatch)
+    preparing, release = threading.Event(), threading.Event()
+    arguments = adapter.offers.arguments
+    def held_arguments(*args):
+        preparing.set()
+        assert release.wait(3)
+        return arguments(*args)
+    monkeypatch.setattr(adapter.offers, "arguments", held_arguments)
+    try:
+        channel.mode = "failed"
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            pending = worker.submit(negotiations.submit_offer, "driver", person, "target", {"years": 2}, 100)
+            try:
+                assert preparing.wait(3)
+                with pytest.raises(HookError, match="during an operation"):
+                    adapter.stop()
+            finally:
+                release.set()
+            result = pending.result()
+        assert result == (False, "Validation unavailable", negotiations.row)
+        assert negotiations.row["status"] == "talks_open" and "offer_score" not in negotiations.row
+        assert not negotiations.candidate_deadlines and not state.writes and person.contract is None
+    finally:
+        adapter.stop()
 
 
 def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing(monkeypatch):

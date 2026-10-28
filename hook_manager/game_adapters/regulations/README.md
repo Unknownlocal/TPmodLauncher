@@ -20,7 +20,9 @@ wrappers; development-project integration has its own compatibility checks.
 
 - [personnel_adapter.py](personnel_adapter.py): `PersonnelAdapter` connects driver
   and staff signing to shared negotiation handling. It also installs the common
-  Formula staffing entries.
+  Formula staffing entries. Submitted offers use the same contract validators
+  with `operation: "preview"` before native writes; actual signing uses
+  `operation: "commit"`. Both prepare terms through the same native planners.
 - [academy_adapter.py](academy_adapter.py): `AcademyAdapter` connects academy
   signing, renewal and their player or AI callers.
 - [project_adapter.py](project_adapter.py): `ProjectAdapter` connects aero and

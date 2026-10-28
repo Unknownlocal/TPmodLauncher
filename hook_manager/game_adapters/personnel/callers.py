@@ -2,7 +2,7 @@
 """Keep offer preparation private and distinguish policy refusal from unavailability."""
 
 from copy import copy, deepcopy
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import threading
 
 from .cancellation import PersonnelCancellation
@@ -57,6 +57,8 @@ class PersonnelCallers:
                        or market is not None and getattr(values["self"], "state", None) is market.state)
             if not belongs:
                 return original(*args, **kwargs)
+            if role == "submit":
+                return self._submit(original, bound, previous)
             if role == "ai_failure":
                 result = self._ai_failure(original, bound, previous)
                 if market is not None:
@@ -161,6 +163,47 @@ class PersonnelCallers:
                     with guards._lock:
                         guards._active -= 1
         return wrapped
+
+    def _submit(self, original, bound, previous):
+        """Refuse before native offer/deadline writes, using its normal UI result."""
+        guards = self.guards
+        with ExitStack() as lifetime:
+            # Recheck ownership and enter admission under the same lock used by
+            # cleanup. The entire lookup/preparation/native write stays pinned.
+            with guards._lock:
+                owned = not guards.closed and bool(guards.owners)
+                if owned and not getattr(guards._local, "operation", False):
+                    lifetime.enter_context(guards.operation())
+            if not owned:
+                return original(*bound.args, **bound.kwargs)
+            return self._submit_checked(original, bound, previous)
+
+    def _submit_checked(self, original, bound, previous):
+        self.guards._local.outcome = None
+        values = bound.arguments
+        row = self.guards.offers.row(values)
+        kind = self.guards.offers.kind(values)
+        if (kind not in self.guards.planners or not row
+                or str(row.get("status")) not in ("talks_open", "final_offer")):
+            return original(*bound.args, **bound.kwargs)
+        try:
+            arguments = self.guards.offers.arguments(values, row)
+        except (TypeError, ValueError, OverflowError):
+            # Bad offer values are an ordinary submission error, not evidence
+            # that a healthy mod failed. Full planning still runs under budget.
+            return False, "Invalid contract offer terms.", row
+        outcome, result = self.guards.validate_submission(
+            lambda: self.guards.planners[kind].prepare(arguments),
+            lambda: original(*bound.args, **bound.kwargs),
+            initiator=previous["initiator"] if previous else "player")
+        if outcome.status == "allow":
+            return result
+        if outcome.status == "unavailable" and previous:
+            previous["refusal"] = outcome
+            raise PersonnelCancellation(outcome)
+        # Deliberately do not call the signing refusal presenter: submit_offer's
+        # false/message/row result already drives the native inline error path.
+        return False, outcome.message, row
 
     def _active_wrapper(self, original):
         """Keep native argument rules without constructing BoundArguments per read."""

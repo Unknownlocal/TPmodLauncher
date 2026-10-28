@@ -8,6 +8,10 @@ rule selection and mod checks belong to the
 
 ## Main parts
 
+- [offer.py](offer.py): `PersonnelOffer` translates a submitted offer into the
+  existing planners' signing arguments. It preserves native salary/bonus field
+  choices without calling a signer or changing a negotiation.
+
 - [approach.py](approach.py): `PersonnelApproach` maps the shared native approach
   method and prepares person, team and intended-start data. It uses private
   driver contracts for native date queries and returns native refusal triples.
@@ -30,6 +34,12 @@ rule selection and mod checks belong to the
   back to the caller responsible for the action.
 
 ## Decisions and feedback
+
+Ordinary and final offer submissions are checked before the native method
+changes their record or decision deadline. Refusals return the native
+false/message/record result, so each screen uses its normal submission error
+display. Screen-local attempt handling remains native. The later signing
+check is separate and does not reuse a submission allowance.
 
 A mod refusal keeps a player confirmation pending. A refusal from the game's own
 signing method retains its normal handling of alternative offers. If a required
