@@ -250,10 +250,18 @@ A `validators` entry names a rule, a supported scope and a Python function:
 ```
 
 Rules can use native categories or categories declared by that mod. Custom
-category keys must begin with the mod ID and `.`. Current scopes are `personnel.contract`
-(driver, staff, academy and staffing proposals) and `development.project`
-(aero and chassis proposals). The launcher chooses the game methods; declarations
+category keys must begin with the mod ID and `.`. Current scopes are
+`personnel.approach` (driver and staff approaches to Formula teams),
+`personnel.contract` (driver, staff, academy and staffing proposals) and
+`development.project` (aero and chassis proposals). The launcher chooses the game methods; declarations
 cannot name arbitrary functions or call the private callable adapter.
+
+Approach validators receive person and employer identities, the intended `role`,
+and `action: "approach"` in `context.proposal`. The common clock and effective
+season/start fields remain available; the end week is `null`. There are no
+salary or duration fields at this stage. Register a validator separately for
+each scope it supports. A refusal prevents the approach and uses the game's
+own failure feedback: a dialog for drivers, inline text and error sound for staff.
 
 Write a synchronous `validate_contract(context, regulation)` function in the
 named source module. It receives fresh dictionaries and lists, and returns a

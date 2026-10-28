@@ -74,7 +74,7 @@ def installation(host, monkeypatch):
     game.GameState = type("GameState", (), {})
     monkeypatch.setitem(sys.modules, "game_state", game)
     career = game.GameState()
-    channel = SimpleNamespace(closed=False, bindings=lambda scope: {"owned.rules": ((0, "rule"),)})
+    channel = SimpleNamespace(closed=False, bindings=lambda scope: {} if scope == "personnel.approach" else {"owned.rules": ((0, "rule"),)})
     def close():
         # Connections and installed objects must stop before definitions vanish.
         assert modules.prefix in sys.modules
@@ -88,6 +88,8 @@ def installation(host, monkeypatch):
     adapters = host.adapter_code.game_adapters.regulations
     adapters.channel = SimpleNamespace(RegulationChannel=lambda endpoint: channel)
     adapters.native_policy = SimpleNamespace(NativeRegulationPolicy=NativeRegulationPolicy)
+    from hook_manager.game_adapters.regulations.approach_adapter import ApproachAdapter
+    adapters.approach_adapter = SimpleNamespace(ApproachAdapter=ApproachAdapter)
     adapters.native_rules = SimpleNamespace(install_native_rules=lambda *a, **kw: (native,))
     adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=lambda *a, **kw: personnel)
     adapters.academy_adapter = SimpleNamespace(AcademyAdapter=lambda *a: academy)
@@ -124,6 +126,7 @@ def test_installation_reports_complete_personnel_coverage(installation):
     assert modules.channel is None and not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": True, "academy_signing": True,
+        "personnel_approaches": False,
         "development_projects": True, "rookie_contract_length_check": "disabled",
         "staff_prestige_check": "skipped", "staffing": True}
     coverage["staffing"] = False

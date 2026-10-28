@@ -142,10 +142,16 @@ API `0.4.0` source mods can request `regulations`. The pack's root
 `regulations.json` holds their `mod_extensions` sections, keyed by manifest ID.
 Each section declares categories or native option data and names ordinary
 synchronous Python handlers through `validators`. The supported scopes are
-`personnel.contract` and `development.project`; trusted adapters select the game
+`personnel.approach`, `personnel.contract` and `development.project`; trusted adapters select the game
 methods and prepare copied proposals.
 
-For `personnel.contract`, `context["proposal"]["employer"]` contains `ref`, `name`
+`personnel.approach` checks driver/staff approaches to Formula teams before
+talks start. It supplies person/employer identities, role and intended start,
+without salary or duration. The same rule can declare handlers for approach
+and contract checks; the mod chooses which inputs each handler needs. Native
+screens display approach refusals through their existing feedback.
+
+For both personnel scopes, `context["proposal"]["employer"]` contains `ref`, `name`
 and `kind`, plus `prestige_base`, `heritage_prestige`, `form_prestige` and
 `nationality` from the loaded employer. Missing values are `null`; prestige values
 are finite numbers and nationality is a string. Other employer fields stay private.

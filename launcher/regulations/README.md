@@ -107,6 +107,12 @@ even when the native cap is disabled. Validators can combine it with adopted rul
 data. The [driver adapter](../../hook_manager/game_adapters/drivers/README.md)
 explains how preparation avoids changing live game data.
 
+`personnel.approach` admits driver/staff approaches to Formula teams. The native
+personnel adapter supplies person/employer identities, role and intended start;
+salary and duration are not yet present. Its separate `personnel_approaches`
+coverage must be installed before these validators become ready. Contract checks
+remain separate, so an earlier allowance does not approve a later signing.
+
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.
 Each validator's complete context and rule together must fit 4,096 UTF-8 bytes,
@@ -197,7 +203,8 @@ even while the native client remains connected; it needs no idle polling loop.
 failure never remove that requirement. Store failure includes definition-only
 owners, while wire failure replies name only advertised execution owners.
 Readiness requires committed policy and trusted coverage of each required scope:
-driver, staff, academy and staffing for `personnel.contract`, or projects for
+team approaches for `personnel.approach`; driver, staff, academy and staffing for
+`personnel.contract`; or projects for
 `development.project`. Missing coverage blocks readiness; unrelated coverage does
 not. Unknown scopes are rejected before binding. Mods cannot approve coverage.
 

@@ -8,6 +8,11 @@ rule selection and mod checks belong to the
 
 ## Main parts
 
+- [approach.py](approach.py): `PersonnelApproach` maps the shared native approach
+  method and prepares person, team and intended-start data. It uses private
+  driver contracts for native date queries and returns native refusal triples.
+  It contains no regulation conditions or mod dispatch.
+
 - [callers.py](callers.py): `PersonnelCallers` wraps the shared negotiation
   functions. [caller_targets.py](caller_targets.py) identifies those functions,
   and [preparation.py](preparation.py) holds temporary changes made by their

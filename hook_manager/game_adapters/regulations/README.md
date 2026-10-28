@@ -1,16 +1,22 @@
 # Regulation checks in the game
 
 This package connects game actions to mod-written regulation checks. It prepares
-a description of a proposed contract or development project, asks the launcher
+a description of an approach, proposed contract or development project, asks the launcher
 for the required decisions, and controls whether the game's original action runs.
 These are private launcher adapters, not a direct game-function API for mods.
 
-Personnel setup checks driver, staff, staffing and academy support together before
+Contract setup checks driver, staff, staffing and academy support together before
 assigning any of their wrappers. A compatibility failure reports one reason and
 leaves the whole personnel group native. An installation error restores owned
 wrappers; development-project integration has its own compatibility checks.
 
 ## Main parts
+
+- [approach_adapter.py](approach_adapter.py): `ApproachAdapter` connects declared
+  `personnel.approach` validators to the personnel mapping. It checks owned team
+  approaches before native writes, including workers and shared negotiation
+  drafts. The existing channel and in-memory policy handle all subscribing mods;
+  native screens display the returned reason.
 
 - [personnel_adapter.py](personnel_adapter.py): `PersonnelAdapter` connects driver
   and staff signing to shared negotiation handling. It also installs the common

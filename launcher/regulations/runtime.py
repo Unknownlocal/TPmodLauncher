@@ -15,6 +15,7 @@ from .validation.dispatch import ValidationDispatch
 # These are complete native scopes, not mod-selected function names. A new
 # adapter family needs an explicit mapping before its validators can bind.
 SCOPE_COMPONENTS = {
+    "personnel.approach": frozenset({"personnel_approaches"}),
     "personnel.contract": frozenset({"driver_signing", "staff_signing", "academy_signing", "staffing"}),
     "development.project": frozenset({"development_projects"}),
 }

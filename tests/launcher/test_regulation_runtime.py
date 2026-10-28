@@ -303,35 +303,38 @@ def test_startup_does_not_release_menu_without_confirmed_native_loading_protecti
         assert not scope._regulation_armed and not menus and progress[-1]["state"] == "loading"
 
 
-def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path):
+@pytest.mark.parametrize("semantic_scope,components,required", [
+    ("personnel.contract", PERSONNEL_COMPONENTS, "staffing"),
+    ("personnel.approach", {"personnel_approaches": True}, "personnel_approaches"),
+])
+def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path, semantic_scope, components, required):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
-    scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod})
+    scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod}, semantic_scope=semantic_scope)
     with closing(scope):
         with pytest.raises(RuntimeError, match="Incomplete regulation binding"):
             runtime.confirm_native(PERSONNEL_COMPONENTS)
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
             with pytest.raises(ValueError, match="component report"):
                 runtime.confirm_native(None)
-            # Signing support is insufficient; truthy integers also cannot
-            # substitute for a successful native component installation.
-            for staffing in (False, 1):
-                with pytest.raises(ValueError, match="coverage: staffing"):
-                    runtime.confirm_native(dict(PERSONNEL_COMPONENTS, staffing=staffing))
+            # Truthy integers cannot substitute for installed native coverage.
+            for value in (False, 1):
+                with pytest.raises(ValueError, match="coverage: " + required):
+                    runtime.confirm_native(dict(components, **{required: value}))
             assert not runtime.ready and not menus and progress[-1]["state"] == "loading"
             assert not mod.sandbox.closed
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime._dispatch.ready and not runtime.ready and not menus
-            runtime.confirm_native(PERSONNEL_COMPONENTS, pending=True)
+            runtime.confirm_native(components, pending=True)
             # Native guards can become enabled just before their activation reply
             # arrives. Coverage already permits checks; UI must still stay held.
-            action = worker.submit(channel, [context()], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
+            action = worker.submit(channel, [dict(context(), scope=semantic_scope)], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
             assert pump(scope, wake, action) == {mod.manifest.id: [{"decision": "allow"}]}
             assert not runtime.ready and not menus
             runtime.finish_native_activation()
             scope.poll()
             assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
-            with pytest.raises(ValueError, match="coverage: academy_signing"):
-                runtime.confirm_native({"driver_signing": True, "staff_signing": True, "staffing": True})
+            with pytest.raises(ValueError, match="coverage: " + required):
+                runtime.confirm_native({key: value for key, value in components.items() if key != required})
             scope.poll()
             assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
 

@@ -298,6 +298,8 @@ class AdapterModules:
         adapters = self.host.adapter_code.game_adapters.regulations
         self.channel = channel
         try:
+            approach = adapters.approach_adapter.ApproachAdapter.prepare(
+                state, channel, select, self.regulation_notices.append)
             personnel = []
             # Unsubscribed packs do not trigger personnel inspection or hooks.
             if channel.bindings("personnel.contract"):
@@ -319,9 +321,15 @@ class AdapterModules:
             # All required personnel support is checked before the first native
             # assignment, including these independently requested rule switches.
             self.regulations.extend(personnel)
+            if approach is not None:
+                self.regulations.append(approach)
             self.regulations.extend(adapters.native_rules.install_native_rules(state, native_rules, report=report))
             for hook in personnel:
                 hook.install_prepared()
+            if approach is not None:
+                approach.personnel = personnel[0] if personnel else None
+                approach.install_prepared()
+            self.coverage["personnel_approaches"] = approach is not None
             for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"):
                 self.coverage[key] = bool(personnel)
             project = adapters.project_adapter.ProjectAdapter.create(state, channel, select, report)
