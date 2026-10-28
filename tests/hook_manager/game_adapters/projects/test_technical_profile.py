@@ -26,8 +26,8 @@ def native(monkeypatch):
     calls = []
 
     def read(scratch):
-        # This stand-in intentionally normalises and returns nested aliases,
-        # like the mapped helpers. Actual native calculations run in the probe.
+        # Return nested aliases and normalise scratch fields to check that neither
+        # behaviour changes the live regulation data.
         assert not hasattr(scratch, "state")
         assert set(scratch.regulation_defs) == set(scratch.regulations) == {module._RULE}
         copied = scratch.regulations[module._RULE]

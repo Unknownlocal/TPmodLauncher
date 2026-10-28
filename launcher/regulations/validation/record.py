@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 """Cache one rule's JSON text and size measurements in the launcher.
 
-OwnerView objects can refer to the same record, so mods subscribing to the same
-native option do not make the launcher encode and measure it separately for each
-mod. Each sandbox still receives its own installed data.
+OwnerView objects share records for common rule data. The launcher encodes and
+measures each record once, and the shared runner installs one physical copy.
+Each mod's view selects which records accompany its validator calls.
 """
 
 from dataclasses import dataclass

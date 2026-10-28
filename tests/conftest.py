@@ -231,7 +231,7 @@ def bundled_project(project_factory):
     )
     published = root / release.package_directory(dependencies.file_inventory(directory))
     directory.rename(published)
-    # This pytest-owned fixture is now a release, without developer build inputs.
+    # Remove build inputs so the fixture represents an installed release.
     shutil.rmtree(root / ".cache")
     (root / "pylock.toml").unlink()
     (root / "pyproject.toml").unlink()

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Checked callers and helpers whose preparation must precede project admission.
 
-Compatibility uses method paths and signatures. The inspected
-AI chassis caller selects its package before start; the start itself stores it
+Compatibility uses method paths and signatures. The AI chassis caller selects
+its package before start; the start itself stores it
 on success, so the earlier write can be suppressed within that checked caller.
 """
 

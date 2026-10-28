@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Prepare final native project terms for trusted game integrations.
 
-Use the inspected game's staff and budget helpers on private scratch inputs.
+Use native staff and budget helpers on private scratch inputs.
 Running the actual start or eligibility methods here could initialize projects
 or charge money before a trusted caller has accepted the proposal.
 """

@@ -41,8 +41,8 @@ def owned(monkeypatch):
             driver.career_stage = "youngster"
             return {"key": driver.career_stage}
 
-    # Native getters write these fields too. The local native probe exercises
-    # their real bodies; these small stand-ins keep the same isolation boundary.
+    # These stand-ins fill lazy prestige/personality fields so the test can
+    # check that those writes stay private until publication.
     class PrestigeManager:
         def displayed_prestige(self, team):
             team["prestige"] = 50

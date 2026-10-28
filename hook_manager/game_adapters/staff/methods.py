@@ -9,8 +9,8 @@ from ...manager import HookError
 from .targets import staff_target
 
 
-# Signing chooses dates and employer kind through these helpers. Check their
-# exposed signatures once; their inspected read-only behavior is tested locally.
+# These helpers read employer eligibility and season dates without changing
+# live records. Check their exposed signatures before preparing terms.
 _STAFF_GROUPS = {
     'staff': {
         'normalize_role': "(role: 'Optional[str]') -> 'str'",

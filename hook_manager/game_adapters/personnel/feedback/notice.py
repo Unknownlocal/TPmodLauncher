@@ -119,7 +119,7 @@ class PersonnelNotice:
                 result = header(surface, text, x, y, width, **kwargs)
                 if text == "Latest Response":
                     # Take the position/width from the native heading. The 22px
-                    # scaled gap below is the inspected native action-button inset.
+                    # scaled gap below matches the native action-button inset.
                     captured[:] = [x, result, width]
                     try:
                         rect = self.ui.pygame.Rect(x, result, width, max(1, screen.submit_rect.y - result - screen.sy(22)))

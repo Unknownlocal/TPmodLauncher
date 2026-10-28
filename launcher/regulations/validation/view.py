@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 """Select the cached rules and private data that one mod is allowed to receive.
 
-Refer to shared CatalogRecords instead of duplicating their values. Build the
-sandbox's setup table once, using record numbers to avoid embedding the same
-payload repeatedly. Private option data remains specific to its owning mod.
+Each mod's choice table refers to shared CatalogRecords by number, so common
+payloads appear once in the shared installation. Extra option data remains
+specific to its declaring mod.
 """
 
 from mod_runtime._regulations.values import integer

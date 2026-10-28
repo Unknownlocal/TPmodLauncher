@@ -35,7 +35,7 @@ def publish_preparation(frame):
     # checked helpers can fill, then forget the drafts before native signing.
     candidate = frame.pop("staff_candidate", None)
     if candidate:
-        # Only this inspected root attribute is writable on the shallow copy.
+        # Publish only the target entry ID from the shallow candidate copy.
         # Its contract, skills and other borrowed records are never copied back.
         live, private = candidate
         if hasattr(private, "_oval_target_entry_id"):

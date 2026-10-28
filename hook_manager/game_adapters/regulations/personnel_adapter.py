@@ -43,7 +43,7 @@ class PersonnelAdapter(RegulationGuards):
         self.callers = PersonnelCallers(self, state)
         self.signing = (driver_target(), staff_target())
         self.native_callers = (*personnel_caller_targets(), *staffing_targets())
-        # Staffing-only integrations do not use negotiation submission inputs.
+        # Prepare submission inputs when the mapped callers include offer submission.
         self.offers = (PersonnelOffer(state, self.planners)
                        if any(target.name == "personnel.caller.submit" for target in self.native_callers) else None)
         # Headless careers may omit mail. A real mailbox must be covered.

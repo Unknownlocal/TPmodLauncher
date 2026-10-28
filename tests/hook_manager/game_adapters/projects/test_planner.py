@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Planning isolation; native parity uses the owned game probe."""
+"""Project preparation keeps live state intact and reports setup failures."""
 
 from copy import deepcopy
 
@@ -24,8 +24,7 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     monkeypatch.setattr(planner_module, "TechnicalProfile", lambda state: None)
     channel = NativeObject()
     channel.bindings = lambda scope: {"owned.rules": ((0, "rule"),)}
-    # This case isolates initialization reporting. Native install/rollback is
-    # exercised separately by the owned native guard probe.
+    # Skip construction to isolate the compatibility failure reported by create().
     monkeypatch.setattr(ProjectAdapter, "__init__", lambda *a: None)
     path = tmp_path / "launch.log"
     with reporter(path) as logger:
@@ -78,8 +77,8 @@ def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_m
                     "_sanitize_current_package_key": (lambda self, raw: raw, False),
                     "_current_package_budget_multiplier": (lambda *args: 1.5, False)},
     }
-    # The portable fixture supplies checked-helper stand-ins. The developer probe
-    # separately runs the strict identity checks and actual native helper bodies.
+    # Stand-in helpers isolate copying and term preparation from native
+    # calculations and compatibility checks.
     monkeypatch.setattr(planner_module, "project_methods", lambda *args: methods)
     technical = {"key": "native-era", "severity": "minor"}
     monkeypatch.setattr(planner_module, "TechnicalProfile", lambda state: type("Profile", (), {

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Native staff proposal ownership; actual signing parity uses the local probe."""
+"""Staff term preparation preserves live records and resolves employer rules."""
 
 from copy import deepcopy
 import sys
@@ -27,8 +27,8 @@ def test_staff_terms_resolve_employer_and_cover_without_live_effects(monkeypatch
         assert self is not manager and self.staff is manager.staff and week == 114
         return False
 
-    # Stand-ins keep CI independent of installed game files. The local native
-    # probe compares these branches against the actual signing implementation.
+    # Stand-in date and eligibility helpers exercise employer and cover
+    # selection without requiring installed game files.
     methods = {
         "state": {"current_season_start_week": (lambda self: 105, False), "next_season_start": (lambda self: 157, False)},
         "staff": {"normalize_role": (lambda role: "head_of_engine", True), "team_has_active_staff": (active, False),

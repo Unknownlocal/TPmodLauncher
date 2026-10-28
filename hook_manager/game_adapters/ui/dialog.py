@@ -20,8 +20,8 @@ class ScrollableDialog:
         Refreshes the scroll area and button hit rectangles for ``handle_event``.
         """
         pg, theme = self.ui.pygame, self.ui.theme
-        # Keep the inspected driver refusal colors for errors. Other consumers
-        # can use the ordinary game chrome without adopting contract wording.
+        # Error dialogs use the native refusal palette; other styles use the
+        # ordinary game chrome.
         if style == "error":
             background, border, fill, button = (32, 19, 25), theme.DANGER, (75, 29, 38), (115, 41, 51)
             heading_color, text_color = (255, 215, 218), (255, 173, 179)

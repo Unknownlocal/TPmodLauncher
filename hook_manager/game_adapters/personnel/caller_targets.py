@@ -14,9 +14,8 @@ def personnel_mail_target():
                           "send_email", PERSONNEL_MAIL_SIGNATURE)
 
 
-# These paths/signatures identify shared callers and optional driver queries.
-# Refusal boundaries and private-state assumptions are covered by conformance
-# checks, not by runtime body hashes.
+# Fixed paths and signatures identify shared negotiation callers and driver
+# queries; mods cannot choose the native methods wrapped by this adapter.
 _PERSONNEL_CALLERS = (
     ('submit', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'submit_offer',
      "(self, candidate_type: 'str', candidate: 'Any', team_name: 'str', offer: 'Dict[str, Any]', score: 'float', *, signer_kind: 'str' = 'team', attempts_used: 'Optional[int]' = None, annoyed: 'Optional[bool]' = None, finalize: 'bool' = False) -> 'Tuple[bool, str, Optional[Dict[str, Any]]]'"),

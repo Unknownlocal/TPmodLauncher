@@ -91,11 +91,8 @@ class RegulationCatalog:
         if self.sealed or len(self.records) != len(self.descriptors):
             raise ValueError("Repeated or incomplete resident policy seal")
         self.sealed = True
-        # Let Python remove the new flat tuples from cyclic-GC tracking now,
-        # under the installation allowance rather than a later validator's.
-        # Generation 0 collects recently created objects; older cache tuples
-        # have already had their first collection. A full collection would also
-        # scan mod objects and clear Python's pools of reusable object storage,
-        # which exhausted the install allowance after some earlier workloads.
-        # Automatic garbage collection for mod objects continues as normal.
+        # Collect recently created objects under the installation allowance so
+        # Python can stop tracking flat cached tuples before validators run.
+        # A full collection would also scan older mod objects and clear pools
+        # of reusable storage. Automatic collection for mod objects stays enabled.
         gc.collect(0)

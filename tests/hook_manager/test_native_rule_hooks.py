@@ -31,8 +31,8 @@ def native(monkeypatch):
 ''', staff.__dict__)
     for module in (driver, staff):
         monkeypatch.setitem(sys.modules, module.__name__, module)
-    # Portable annotations differ across Python versions. The local archive
-    # probe checks the exact native signature with the game's Python version.
+    # Bind the fixture's signature because annotation formatting can differ
+    # between the test interpreter and the game interpreter.
     target = rookie_check.rookie_check_target()
     target.signature = str(inspect.signature(driver.DriverManager.formula_rookie_contract_year_limit))
     monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: target)

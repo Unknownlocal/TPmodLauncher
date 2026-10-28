@@ -9,7 +9,7 @@ from ...manager import HookError
 from .targets import academy_targets
 
 
-# These inspected helpers read source data or copy a single contract record.
+# These helpers read source data or copy a single contract record.
 # Do not use ensure_team_state: it normalizes live academy lists and dictionaries.
 _ACADEMY_METHODS = {
     'academy': {

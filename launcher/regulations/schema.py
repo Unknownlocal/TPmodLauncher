@@ -126,8 +126,7 @@ def script(owner, value, options_by_category, index):
     key = value["key"]
     if type(key) is not str or key not in options_by_category:
         raise ValueError("Scripted change must target an owned custom category")
-    # Native policy validation consumes an option object, not the prototype's
-    # shorthand string. Keep that format so later governance sees the same data.
+    # Native governance expects an option object containing its key.
     fields(value["new_regulation"], ("key",))
     option = value["new_regulation"]["key"]
     if type(option) is not str or option not in options_by_category[key]:

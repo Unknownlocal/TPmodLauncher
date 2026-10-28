@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Keep cached rule data from slowing later validation calls.
+"""Store cached rule data as flat tuples to reduce garbage-collection work.
 
-Large nested dicts/lists made Python's garbage collector scan unchanged rule
-values during later calls, sometimes exhausting their execution allowance. Store
-those values as a flat tuple instead; Python can stop tracking its scalar contents
-for cyclic garbage collection. The catalog arranges this during installation.
-Each validator still gets fresh ordinary dicts/lists, rebuilt without JSON parsing.
+Python can stop checking tuples of scalar values for reference cycles. The
+catalogue arranges this during installation, so later calls avoid rescanning
+unchanged rule containers. Each validator gets fresh dictionaries and lists
+rebuilt from these tuples without parsing JSON.
 """
 
 

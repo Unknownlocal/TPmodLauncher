@@ -18,8 +18,7 @@ from hook_manager.manager import HookError, Manager
 def native(monkeypatch, tmp_path):
     module = ModuleType("managers.formula_regulation_governance")
     def normalize_policy(raw, definitions):
-        # Model the one native validation boundary. Real native policy validation
-        # and application run separately against archived bodies in the probe.
+        # Reject duplicate category/season pairs and return independent policy data.
         rows = raw["scripted_changes"]
         if len({(row["key"], row["effective_season"]) for row in rows}) != len(rows):
             raise ValueError("native category/season conflict")

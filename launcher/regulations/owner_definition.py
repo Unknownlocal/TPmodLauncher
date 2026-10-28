@@ -32,8 +32,8 @@ class OwnerDefinition:
         result = {"schema": 1, "categories": self.categories,
                   "option_data": self.option_data, "validators": self.validators,
                   "scripted_changes": self.scripted_changes}
-        # Keep old declarations/revision bytes unchanged when neither bridge is
-        # present. A reference's owned category is already part of this model.
+        # Omit absent switches from revision input. Any category referenced by a
+        # switch is included in this model's declarations.
         if self.native_rules:
             result["native_rules"] = self.native_rules
         return result

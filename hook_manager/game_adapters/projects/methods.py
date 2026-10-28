@@ -7,8 +7,8 @@ from ...callables import method_group
 from .targets import project_targets
 
 
-# Generated from inspected native declarations. Keep readable signatures rather
-# than hashes so implementation-only updates do not disable project support.
+# Check native arguments, defaults and annotations while allowing changes
+# to method implementations.
 _GROUPS = {
     'aero': {
         '_absolute_week': "(self) -> 'int'",

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Finalize unchanged revision digests while reusing canonical JSON inputs."""
+"""Hash regulation declarations and source files using shared JSON encodings."""
 
 from collections import Counter
 import hashlib
@@ -11,11 +11,11 @@ def _encode(value):
 
 
 def finalize(owners, sources, native):
-    """Hash the existing [owner, declarations, catalogue, version, files] format.
+    """Hash [owner, declarations, catalogue, version, files] in a fixed order.
 
-    SHA-256 depends on byte order, so replacing source/catalogue bytes with their
-    own sub-digests would change revisions. Cache their canonical encodings and
-    stream those same bytes instead. All caches die with this finalization pass.
+    Cache shared JSON encodings for this pass and feed their bytes directly into
+    each owner's hash. Sorted object keys keep the encoding deterministic. The
+    hash covers the full data, including source content.
     """
     native_bytes, source_bytes, revisions = {}, {}, {}
     uses = Counter(id(sources[owner].files) for owner in owners)

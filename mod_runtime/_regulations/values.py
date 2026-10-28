@@ -76,8 +76,8 @@ def measure(value, *, encoded=None):
         visit(value)
     finally:
         # The recursive helper holds a reference to itself. Release it on both
-        # success and rejection so repeated checks do not accumulate garbage
-        # and trigger collection at the same action in every sandbox.
+        # success and rejection so repeated measurements do not retain garbage
+        # and leave its collection to later validator calls.
         visit = None
     # Trusted host preparation can retain the encoding it just made. Guest
     # verification always omits this argument and measures received values itself.

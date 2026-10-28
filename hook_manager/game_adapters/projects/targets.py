@@ -2,8 +2,8 @@
 """Identify the game methods that admit new aero and chassis projects.
 
 These descriptors check compatibility, not regulation conditions. Constructing
-them neither installs a wrapper nor makes a mod ready. Context preparation and
-caller cancellation must be implemented before these targets enter the bridge.
+them neither installs a wrapper nor makes a mod ready. The project adapter owns
+context preparation, caller cancellation and wrapper installation.
 """
 
 from ...callables import CallableTarget

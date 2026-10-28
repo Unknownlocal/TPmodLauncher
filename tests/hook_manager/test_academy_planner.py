@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Academy proposal ownership; actual native parity runs in the local probe."""
+"""Academy term preparation preserves live records and resolves contract dates."""
 
 from copy import deepcopy
 import sys

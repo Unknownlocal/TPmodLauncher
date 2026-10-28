@@ -69,11 +69,11 @@ class DriverContractPlanner:
         start = requested if requested is not None else (
             current_start if active is None and manager.active_driver_count(employer, role, week) < current_limit else next_start)
         bonuses = arguments["bonuses"] if isinstance(arguments["bonuses"], dict) else {}
-        # Preserve the existing plain-data bounds before float conversion, so
+        # Check plain-data bounds before float conversion, so
         # custom objects cannot run conversion methods during proposal planning.
         bonus_values = data_copy({key: bonuses[key] for key in BONUS_KEYS if key in bonuses})
-        # Mirror the inspected native conversion without reaching into a nested
-        # function or requiring a particular signing implementation layout.
+        # Match native bonus conversion: clamp valid values to zero or above
+        # and treat invalid values as zero.
         values = {}
         for key in BONUS_KEYS:
             try:

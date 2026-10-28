@@ -169,8 +169,8 @@ def test_cached_comparison_excludes_concurrent_policy_changes(monkeypatch):
         original = RefusedProposals._value
 
         def compare(value):
-            # Pause at comparison to deterministically attempt publication in the
-            # old gap between the policy-readiness check and cached return.
+            # Attempt publication during comparison to check that the lock protects
+            # the entire cached-refusal decision.
             if type(value) is dict and value.get("scope") == "personnel.contract" and not comparing.is_set():
                 comparing.set()
                 assert attempted.wait(2) and not changed

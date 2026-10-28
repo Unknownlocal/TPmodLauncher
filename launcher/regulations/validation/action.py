@@ -95,7 +95,6 @@ class PreparedAction:
         return "[" + text + "]", array_measure((metric,)), 1
 
     def seal(self):
-        # Every selection must reach a handler. Each validated call already uses
-        # the single shared proposal, so no context-reference bookkeeping remains.
+        # Every supplied rule selection must be used by a validator call.
         if len(self.used_selections) != len(self.selections):
             raise ValueError("Unreferenced resident action data")

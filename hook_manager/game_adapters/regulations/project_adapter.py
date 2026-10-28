@@ -3,7 +3,6 @@
 
 The caller supplies an authenticated channel and native adopted-rule selection.
 No mod can select a target, projection, result codec or callable registration.
-Other scopes and public capability admission retain their separate release gates.
 """
 
 from functools import update_wrapper

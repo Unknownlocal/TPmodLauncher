@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Driver proposal ownership and compatibility; native outcomes use the local probe."""
+"""Driver term preparation preserves live records and checks compatibility."""
 
 from copy import deepcopy
 import sys
@@ -58,8 +58,8 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
                    "active_contract": (lambda self, person, week: person.contract, False),
                    "reconcile_player_main_statuses": (reconcile, False)},
     }
-    # These stand-ins make ownership/effect checks portable. Actual native
-    # calendar, capacity, reserve and hierarchy bodies run in the local probe.
+    # Stand-in date, capacity and status helpers expose writes to scratch
+    # inputs, allowing the test to check that live records stay intact.
     monkeypatch.setattr(implementation, "driver_methods", lambda state: methods)
     monkeypatch.setattr(implementation, "native_rookie_limit", lambda manager: native_rookie_limit)
     planner = implementation.DriverContractPlanner(state)
