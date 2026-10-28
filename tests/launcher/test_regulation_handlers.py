@@ -10,21 +10,15 @@ import pytest
 from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.values import measure
-from launcher.regulations import RegulationDefinitions
-from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.validation.group import ValidationGroup
-import json
-from regulation_support import context, make_mod, selection, validator
+from regulation_support import context, dispatch, make_mod, selection, validator
 
 
 def session(mod, rows=None):
-    data = {"categories": [{"key": "native", "options": [{"key": "open"}]}],
-            "mod_extensions": {mod.manifest.id: {"schema": 1, "validators": rows or [validator()]}}}
-    model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), {mod.manifest.id: mod.snapshot}, scopes={"personnel.contract"})
-    handler = SharedHandlerRunner.bind(mod.runner, model.validators)
-    dispatch = ValidationDispatch(model, handler)
-    dispatch.publish(native={"native": [{"key": "open"}]})
-    return dispatch
+    session = dispatch({mod.manifest.id: mod}, sections={
+        mod.manifest.id: {"schema": 1, "validators": rows or [validator()]}})
+    session.publish(native={"native": [{"key": "open"}]})
+    return session
 
 
 def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(make_mod, monkeypatch):

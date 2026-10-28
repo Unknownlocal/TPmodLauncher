@@ -1,19 +1,15 @@
 # SPDX-License-Identifier: MPL-2.0
 """Production dispatch through one shared runner with distinct mod identities."""
 
-from contextlib import ExitStack
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from launcher.regulations import RegulationDefinitions
 from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.regulations.validation import group as group_module
 from launcher.regulations.validation.dispatch import ValidationDispatch
-from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
-from regulation_support import context, selection, validator
+from regulation_support import context, definitions, make_mods, selection, validator
 
 
 CODE = '''import wit_world
@@ -32,36 +28,28 @@ def validate(c,r):
  if c['proposal'].get('deny') == OWNER: return {{'decision':'deny','message':OWNER}}
  return {{'decision':'allow'}}
 '''
-ENTRY = "class WitWorld:\n def activate(self): pass\n def on_event(self,n,p): raise AssertionError('private dispatch only')\n"
 
 
 @pytest.fixture
-def make_shared_dispatch(runner_bundle):
-    with ExitStack() as stack:
-        def create(*, count=1):
-            calls, cleaned, sources = [], [], {}
-            for owner in ("a.rules", "b.rules", "c.rules"):
-                manifest = SourceManifest(owner, "1", "0.4.0", "mod", frozenset({"regulations", "diagnostics"}))
-                files = (("mod.py", ENTRY), ("rules.py", CODE.format(owner=owner)))
-                sources[owner] = SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files))
-            providers = {owner: {"report": lambda text, owner=owner: calls.append((owner, text))} for owner in sources}
-            group = stack.enter_context(SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
-                                                           cleanup=lambda: cleaned.append(True)))
-            for owner in group.manifests:
-                group.activate(owner)
-            sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],
-                               "option_data": {"native": {"open": {"owner": owner}}}} for owner in sources}
-            private = "a.rules.private"
-            sections["a.rules"]["categories"] = [{"key": private, "label": "Private", "default": "open",
-                "options": [{"id": 1, "key": "open", "name": "Open", "parameters": {"custom": [7]}}]}]
-            sections["a.rules"]["validators"].append({**validator("private"), "rule": private})
-            sections["a.rules"]["option_data"][private] = {"open": {"owner": "a.rules"}}
-            data = {"categories": [{"key": "native", "options": [{"key": "open"}]}], "mod_extensions": sections}
-            model = RegulationDefinitions.from_bytes(json.dumps(data).encode(), sources, scopes={"personnel.contract"})
-            binding = SharedHandlerRunner.bind(group, model.validators)
-            session = ValidationDispatch(model, binding)
-            return session, group, calls, cleaned, model, binding
-        yield create
+def make_shared_dispatch(make_mods):
+    def create(*, count=1):
+        calls, cleaned = [], []
+        mods = make_mods({owner: CODE.format(owner=owner) for owner in ("a.rules", "b.rules", "c.rules")},
+                         report=lambda owner, text: calls.append((owner, text)), cleanup=lambda: cleaned.append(True))
+        sources = {owner: mod.snapshot for owner, mod in mods.items()}
+        group = next(iter(mods.values())).runner
+        sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],
+                           "option_data": {"native": {"open": {"owner": owner}}}} for owner in sources}
+        private = "a.rules.private"
+        sections["a.rules"]["categories"] = [{"key": private, "label": "Private", "default": "open",
+            "options": [{"id": 1, "key": "open", "name": "Open", "parameters": {"custom": [7]}}]}]
+        sections["a.rules"]["validators"].append({**validator("private"), "rule": private})
+        sections["a.rules"]["option_data"][private] = {"open": {"owner": "a.rules"}}
+        model = definitions(sources, sections=sections)
+        binding = SharedHandlerRunner.bind(group, model.validators)
+        session = ValidationDispatch(model, binding)
+        return session, group, calls, cleaned, model, binding
+    return create
 
 
 def proposal(**extra):
@@ -142,13 +130,11 @@ def test_failed_shared_execution_closes_all_members_without_returning_partial_ap
     session, group, calls, cleaned, _, _ = make_shared_dispatch()
     publish(session)
     original = group.sandbox.call
+    changed_export = {"context-reply": "begin-regulation-contexts",
+                      "handler-reply": "validate-resident-regulation"}.get(failure)
     def fail(name, *args, **kwargs):
         raw = original(name, *args, **kwargs)
-        if failure == "context-reply" and name == "begin-regulation-contexts":
-            value = json.loads(raw)
-            value["action"] += 1
-            return json.dumps(value)
-        if failure == "handler-reply" and name == "validate-resident-regulation":
+        if name == changed_export:
             value = json.loads(raw)
             value["action"] += 1
             return json.dumps(value)

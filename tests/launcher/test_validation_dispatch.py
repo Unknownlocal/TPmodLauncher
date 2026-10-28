@@ -6,41 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from launcher.regulations import RegulationDefinitions
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.regulations.publication import PolicyPublication
 from hook_manager.game_adapters.regulations.protocol import regulation_policy_value
 from launcher.regulations.validation import catalog as catalog_module
 from launcher.regulations.validation import action as action_module
 from launcher.regulations.validation import dispatch as dispatch_module
 from launcher.regulations.validation.catalog import CombinedCatalog
-from launcher.regulations.validation.dispatch import ValidationDispatch
 from mod_runtime._regulations import values
 from mod_runtime.source import SourceManifest, SourceSnapshot
-from regulation_support import context, make_mod, validator
-
-
-def definitions(sources, *, sections=None, fallback=()):
-    data = {"categories": [{"key": "native", "options": [{"key": "open", "parameters": {}}]}],
-            "mod_extensions": sections or {owner: {"schema": 1, "validators": [validator()],
-                                                   "option_data": {"native": {"open": {"owner": owner}}}}
-                                            for owner in sources}}
-    return RegulationDefinitions.from_bytes(json.dumps(data).encode(), sources, scopes={"personnel.contract"},
-                                            native_categories=fallback)
-
-
-def dispatch(mods, *, count=1):
-    sections = {owner: {"schema": 1,
-                       "validators": [validator("check" if i == 0 else f"check{i:02}") for i in range(count)],
-                       "option_data": {"native": {"open": {"owner": owner}}}} for owner in mods}
-    model = definitions({owner: mod.snapshot for owner, mod in mods.items()}, sections=sections)
-    handler = SharedHandlerRunner.bind(next(iter(mods.values())).runner, model.validators)
-    return ValidationDispatch(model, handler)
-
-
-def selection(index=0):
-    return {"rule": "native", "evaluation_season": 2026, "selected": "current",
-            "current": [index, 2026], "upcoming": None}
+from regulation_support import context, definitions, dispatch, make_mod, selection, validator
 
 
 def test_policy_pages_require_the_closed_membership_plan_before_publication():
