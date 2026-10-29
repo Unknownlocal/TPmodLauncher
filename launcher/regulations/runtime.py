@@ -28,12 +28,9 @@ class RegulationRuntime:
         # identities, including owners that declare data without a validator.
         self._mods = {owner: mods.get(owner) for owner in definitions.owner_ids}
         self._thread = threading.get_ident()
-        # Keep every admitted owner here even after failure: closing a Store
-        # must make required validation unavailable, not silently disable a rule.
-        self._states = dict.fromkeys(definitions.owner_ids, "pending")
         self._handler, self._runner, self._server, self._dispatch = None, None, None, None
         self._publication, self._action = None, 0
-        self.closed = self._attempted = self._bound = self.busy = False
+        self.closed = self._attempted = self._bound = self._failed = self.busy = False
         self._native = None  # None -> installed coverage -> confirmed activation.
         self._bridge, self.generation, self._retired = None, None, True
         self._required_components = set()
@@ -44,7 +41,7 @@ class RegulationRuntime:
 
     @property
     def failed(self):
-        return (self.closed or "unavailable" in self._states.values()
+        return (self.closed or self._failed
                 or self._runner is not None and self._runner.closed
                 or self._server is not None and self._server.failed.is_set())
 
@@ -189,7 +186,6 @@ class RegulationRuntime:
             if tables:
                 self._handler = SharedHandlerRunner.bind(self._runner, tables)
             self._dispatch = ValidationDispatch(self.definitions, self._handler)
-            self._states = dict.fromkeys(self._states, "bound")
         except Exception:
             # Admission can reject malformed input containing separate runners.
             # Close those inputs too; no multi-runner runtime is retained.
@@ -198,7 +194,7 @@ class RegulationRuntime:
                     mod.close()
             self._unavailable()
             raise
-        if self._states:
+        if self._mods:
             catalog = self._dispatch.catalog
             # Preserve the catalog's ascending validator-ID order as wire slots.
             # Native adapters receive subscriptions, never handler Python code.
@@ -219,25 +215,36 @@ class RegulationRuntime:
     def ready(self):
         if not self._bound or self.failed:
             return False
-        if not self._states:
+        if not self._mods:
             return True
         # Bound definition-only owners need no execution policy. For validator
         # owners, dispatch.ready separately requires an active committed view.
         # Neither native guard acknowledgement nor a socket handshake proves it.
         return (self._native == "active" and self._publication is None and self._dispatch.ready
-                and self._server.connected.is_set()
-                and all(state in ("bound", "active") for state in self._states.values()))
+                and self._server.connected.is_set())
 
     @property
     def status(self):
-        return {"ready": self.ready, "failed": self.failed, "owners": dict(self._states), "career_generation": self.generation}
+        """Derive each required mod's status from binding, publication and failure."""
+        if self._failed:
+            owners = dict.fromkeys(self._mods, "unavailable")
+        else:
+            # Handler binding precedes listener startup. Definition-only owners
+            # stay bound; only validator owners acquire an execution policy.
+            owners = dict.fromkeys(self._mods, "pending" if self._dispatch is None else "bound")
+            if self._dispatch is not None:
+                for owner, state in self._dispatch.states.items():
+                    if self._publication is not None:
+                        state = "dirty"  # Pages are still being received, before guest installation.
+                    elif state == "pending":
+                        state = "bound"
+                    owners[owner] = state
+        return {"ready": self.ready, "failed": self.failed, "owners": owners, "career_generation": self.generation}
 
     def native_rules(self):
         """Copy admitted switches for installation after career data is acknowledged."""
         self._owning_thread()
-        if (self.closed or not self._bound or self._publication is not None or not self._dispatch.ready
-                or any(state == "unavailable" for state in self._states.values())
-                or (self._runner is not None and self._runner.closed)):
+        if self.failed or not self._bound or self._publication is not None or not self._dispatch.ready:
             raise RuntimeError("Native rule policy is unavailable")
         return self._dispatch.native_rules(epoch=self._dispatch.epoch, generation=self._dispatch.generation)
 
@@ -254,8 +261,7 @@ class RegulationRuntime:
         self._owning_thread()
         # A rejected replacement report must not retain a previous approval.
         self._native = None
-        if (self.closed or not self._bound or any(state == "unavailable" for state in self._states.values())
-                or (self._states and (not self._server.connected.is_set() or self._server.failed.is_set()))):
+        if self.failed or not self._bound or (self._mods and not self._server.connected.is_set()):
             raise RuntimeError("Incomplete regulation binding cannot become ready")
         if type(components) is not dict:
             raise ValueError("Native regulation acknowledgement needs a component report")
@@ -285,7 +291,8 @@ class RegulationRuntime:
     def _unavailable(self):
         # Non-regulation peers use the same interpreter. Its loss fences every
         # required owner, including owners that only contribute definitions.
-        self._states = dict.fromkeys(self._states, "unavailable")
+        # Transport can fail while the dispatcher's last policy remains active.
+        self._failed = True
         if self._runner is not None:
             self._runner.close()
 
@@ -294,8 +301,8 @@ class RegulationRuntime:
         self._owning_thread()
         try:
             operation = message["op"]
-            if self.closed:
-                raise RuntimeError("Regulation runtime is closed")
+            if self.failed:
+                raise RuntimeError("Regulation runtime is unavailable")
             # Setup publishes rule data before installing any live game hooks.
             # Data publication precedes coverage acknowledgement. A committed
             # publication may also be retired if loading is cancelled before
@@ -310,20 +317,13 @@ class RegulationRuntime:
             if operation == "policy-begin":
                 if self._publication is not None:
                     raise ValueError("Regulation publication already pending")
-                candidate = PolicyPublication(self._dispatch, message)
-                affected = self._dispatch.states
-                if self._runner.closed or any(self._states[owner] == "unavailable" for owner in affected):
-                    raise RuntimeError("Required regulation owner is unavailable")
-                self._publication = candidate
-                # Fence the old policy before receiving its replacement pages,
-                # not merely when guest installation eventually starts at seal.
-                for owner in affected:
-                    self._states[owner] = "dirty"
+                # Block actions during page receipt, before guest installation
+                # starts at seal.
+                self._publication = PolicyPublication(self._dispatch, message)
                 return "staging"
             if operation in ("policy-page", "policy-seal"):
                 if self._publication is None:
                     raise ValueError("No regulation publication is pending")
-                affected = self._dispatch.states
                 if operation == "policy-page":
                     self._publication.append(message)
                     return "staging"
@@ -331,8 +331,6 @@ class RegulationRuntime:
                 # committed in the shared runner. Page receipt alone never
                 # changes owner readiness to active.
                 self._publication.seal(self._dispatch, message)
-                for owner in affected:
-                    self._states[owner] = "active"
                 self._publication = None
                 return "active"
             if self._publication is not None:
@@ -347,8 +345,6 @@ class RegulationRuntime:
                 if message["generations"] != expected:
                     raise ValueError("Foreign career reset generations")
                 self._dispatch.reset(message["epoch"], deadline=message["deadline"])
-                for owner in self._dispatch.states:
-                    self._states[owner] = "bound"
                 self._native = None
                 return "reset"
             if operation != "action":
@@ -362,7 +358,7 @@ class RegulationRuntime:
             calls = {}
             for owner, row in owners.items():
                 view = self._dispatch.catalog.views[owner]
-                if (self._states[owner] != "active" or type(row) is not dict or set(row) != {"revision", "calls"}
+                if (self._dispatch.states[owner] != "active" or type(row) is not dict or set(row) != {"revision", "calls"}
                         or row["revision"] != view.revision or message["generations"][owner] != self._dispatch.generation
                         or type(row["calls"]) is not list or not 1 <= len(row["calls"]) <= 32):
                     raise ValueError("Stale or foreign regulation owner view")
@@ -390,8 +386,7 @@ class RegulationRuntime:
                 self._unavailable()
             # The native channel knows execution owners only. Definition-only owners
             # remain in pack status, but cannot appear as foreign binding identities.
-            self._server.poll(self.handle, lambda: sorted(owner for owner in self._dispatch.states
-                                                          if self._states[owner] == "unavailable"))
+            self._server.poll(self.handle, lambda: sorted(self._dispatch.states) if self._failed else [])
             if self._server.failed.is_set():
                 self._publication = None  # Release partially received policy on terminal I/O failure.
             if self._server.failed.is_set() or self._runner.closed:

@@ -337,6 +337,8 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
                 runtime.confirm_native({key: value for key, value in components.items() if key != required})
             scope.poll()
             assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
+            runtime.close()
+            assert runtime.status["failed"] and runtime.status["owners"] == {mod.manifest.id: "active"}
 
 
 @pytest.mark.parametrize("rejected", ["unacknowledged", "stale-generation"])
@@ -407,6 +409,7 @@ def test_binding_rejects_separate_runners_including_definition_only_owners(make_
             scope.bind_regulations(scopes={"personnel.contract"})
         assert all(mod.sandbox.closed for mod in mods.values())
         assert scope._regulation_failed
+        assert scope.regulations.status["owners"] == dict.fromkeys(mods, "unavailable")
 
 
 def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods, tmp_path, monkeypatch):
@@ -508,7 +511,7 @@ def test_failed_native_activation_closes_transport_and_requests_cleanup(make_mod
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])
-def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, source_mod, runner_bundle, activation_fails):
+def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, source_mod, runner_bundle, monkeypatch, activation_fails):
     # Exercise the public manifest path, including definition-only rule owners.
     folder = tmp_path / "data/owned"
     code = "class WitWorld:\n def activate(self): pass\n def on_event(self,n,p): return p\n"
@@ -546,13 +549,22 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
         mods = dict(scope.mods)
         assert len({id(mod.sandbox) for mod in mods.values()}) == 1
         runtime = scope.bind_regulations(scopes={"personnel.contract"})
+        assert runtime.status["owners"] == dict.fromkeys(("b.rules", "c.rules", "d.data"), "bound")
         assert set(runtime._handler.validators) == {"b.rules", "c.rules"}
         assert all(mod.snapshot is None for mod in mods.values())
+        handle = runtime.handle
+        def receive(message):
+            result = handle(message)
+            if result == "staging":
+                assert not runtime.ready
+                assert runtime.status["owners"] == {"b.rules": "dirty", "c.rules": "dirty", "d.data": "bound"}
+            return result
+        monkeypatch.setattr(runtime, "handle", receive)
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
             runtime.confirm_native(PERSONNEL_COMPONENTS)
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
             assert runtime.ready and progress[-1]["state"] == "complete" and len(publications) == 1
-            assert runtime.status["owners"]["d.data"] == "bound"
+            assert runtime.status["owners"] == {"b.rules": "active", "c.rules": "active", "d.data": "bound"}
             future = worker.submit(channel, [context()], [selection()], {owner: [[0, 0, 0]] for owner in ("b.rules", "c.rules")},
                                    time.monotonic() + .1)
             assert pump(scope, wake, future) == {owner: [{"decision": "allow"}] for owner in ("b.rules", "c.rules")}
@@ -621,6 +633,7 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
         catalog = runtime._dispatch.catalog
         pump(scope, wake, worker.submit(channel.reset, 2))
         assert not runtime.ready and not catalog.views
+        assert runtime.status["owners"] == dict.fromkeys(mods, "bound")
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
         assert not runtime.ready  # A new career cannot inherit native coverage approval.
         runtime.confirm_native(PERSONNEL_COMPONENTS)
