@@ -8,8 +8,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.game_adapters.regulations.native_rules import install_native_rules
-from hook_manager.game_adapters.regulations.native_rule_selection import NativeRuleSelection
+from hook_manager.game_adapters.regulations.regulation_native_switches import install_regulation_switches
+from hook_manager.game_adapters.regulations.regulation_selection import RegulationSelection
 from tests.hook_manager.test_native_rule_hooks import native
 
 
@@ -38,7 +38,7 @@ def test_adoption_future_contracts_and_nested_scope_keep_native_checks_owned(nat
 
     drivers._negotiation_start_week = start
     binding = {"rule": category["key"], "parameter": "native_check"}
-    hooks = install_native_rules(state, {"rookie_contract_length_check": binding, "staff_prestige_check": binding}, report=pytest.fail)
+    hooks = install_regulation_switches(state, {"rookie_contract_length_check": binding, "staff_prestige_check": binding}, report=pytest.fail)
     rookie, candidate = SimpleNamespace(rookie=True, start_week=1), SimpleNamespace(requirement=17)
     escaped = state.driver_manager.formula_rookie_contract_year_limit
     try:
@@ -50,10 +50,10 @@ def test_adoption_future_contracts_and_nested_scope_keep_native_checks_owned(nat
         state.regulation_manager.upcoming = "vanilla"
         rookie.start_week = 53
         assert escaped("Team", rookie) == 2  # Native query infers next-season terms.
-        with NativeRuleSelection.scope(state, start_week=1):
+        with RegulationSelection.scope(state, start_week=1):
             assert escaped("Team", rookie) is None
             with pytest.raises(ValueError, match="native failure"):
-                with NativeRuleSelection.scope(state, 2):
+                with RegulationSelection.scope(state, 2):
                     assert escaped("Team", rookie) == 2
                     assert state.staff_manager.required_prestige(candidate) == 17
                     raise ValueError("native failure")

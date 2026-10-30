@@ -8,7 +8,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.game_adapters.regulations.native_categories import NativeCategories
+from hook_manager.game_adapters.regulations.regulation_category import RegulationCategoryAdapter
 from hook_manager.adapter_modules import AdapterModules
 from hook_manager.manager import HookError, Manager
 
@@ -30,8 +30,8 @@ def native(monkeypatch, tmp_path):
     manager.calls, manager.failure, manager.base = 0, None, {"native": {"options": ["native fallback"]}}
     manager.work = lambda: None
     category = {"key": "owned.rule", "default": "open", "options": [{"id": 1, "key": "open", "name": "Open"}]}
-    governance = SimpleNamespace(_lock=threading.RLock(), _active=0, categories=None, check=lambda: None)
-    hook = NativeCategories({"pack": str(tmp_path), "categories": [category]}, governance)
+    regulation_changes = SimpleNamespace(_lock=threading.RLock(), _active=0, categories=None, check=lambda: None)
+    hook = RegulationCategoryAdapter({"pack": str(tmp_path), "categories": [category]}, regulation_changes)
     yield hook, manager, category
     hook.stop()
 
@@ -83,7 +83,7 @@ def test_incompatible_signature_leaves_native_function_intact(monkeypatch, tmp_p
     module.RegulationManager = type("RegulationManager", (), {"_load_regulation_defs": original})
     monkeypatch.setitem(sys.modules, module.__name__, module)
     with pytest.raises(HookError, match="signature"):
-        NativeCategories({"pack": str(tmp_path), "categories": [{"key": "owned.rule"}]},
+        RegulationCategoryAdapter({"pack": str(tmp_path), "categories": [{"key": "owned.rule"}]},
                          SimpleNamespace(_lock=threading.RLock(), categories=None, check=lambda: None))
     assert module.RegulationManager._load_regulation_defs is original
 

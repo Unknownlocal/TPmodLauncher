@@ -11,7 +11,7 @@ _SPECIAL_CATEGORIES = frozenset({"calendar", "calendar_schedule", "calendar_trac
 
 
 def automatic_changes(categories):
-    """Separate governance settings from the definitions native saves compare."""
+    """Keep change settings separate from the definitions native saves compare."""
     policies = {}
     for key, category in categories.items():
         if "change_control" not in category:

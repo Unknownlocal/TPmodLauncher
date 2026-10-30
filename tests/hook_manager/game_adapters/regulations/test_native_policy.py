@@ -6,7 +6,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
+from hook_manager.game_adapters.regulations.regulation_policy import RegulationPolicy
 from hook_manager.manager import HookError
 
 
@@ -42,7 +42,7 @@ def native(monkeypatch):
 
 def test_prepared_choices_use_native_selection_and_send_small_references(native):
     state, channel, publications = native
-    policy = NativeRegulationPolicy(state, channel)
+    policy = RegulationPolicy(state, channel)
     with pytest.raises(HookError, match="unavailable"):
         policy.select("entry", 2029)
     assert state.regulation_manager.calls == 0
@@ -70,7 +70,7 @@ def test_prepared_choices_use_native_selection_and_send_small_references(native)
 
 def test_live_adoption_and_rollover_reuse_acknowledged_choices(native):
     state, channel, publications = native
-    policy = NativeRegulationPolicy(state, channel)
+    policy = RegulationPolicy(state, channel)
     state.regulation_manager.regulations["entry"]["upcoming"] = None
     with pytest.raises(HookError, match="before publication"):
         policy.publish()
@@ -101,7 +101,7 @@ def test_failed_publication_does_not_enable_selection(native):
     def fail(**body):
         raise RuntimeError("Policy was not acknowledged")
     channel.publish = fail
-    policy = NativeRegulationPolicy(state, channel)
+    policy = RegulationPolicy(state, channel)
     with pytest.raises(RuntimeError, match="not acknowledged"):
         policy.publish()
     with pytest.raises(HookError, match="unavailable"):
@@ -121,9 +121,9 @@ def test_saved_replacement_with_an_existing_key_is_not_treated_as_base_data(nati
     row = state.regulation_manager.regulations["entry"]
     row["upcoming_option"] = {"key": "limited", "limit": 99}
     with pytest.raises(HookError, match="Saved regulation replacement"):
-        NativeRegulationPolicy(state, channel)
+        RegulationPolicy(state, channel)
     row.pop("upcoming_option")
-    policy = NativeRegulationPolicy(state, channel)
+    policy = RegulationPolicy(state, channel)
     policy.publish()
     row["upcoming_option"] = {"key": "limited", "limit": 99}
     with pytest.raises(HookError, match="Saved regulation replacement"):
@@ -137,7 +137,7 @@ def test_loaded_calendar_action_uses_its_own_prepared_reference(native, monkeypa
     row = state.regulation_manager.regulations["ordinary"]
     action = {"key": key, "name": "Saved action", "limit": limit}
     row.update(upcoming=key, upcoming_option=action)
-    policy = NativeRegulationPolicy(state, channel)
+    policy = RegulationPolicy(state, channel)
     policy.publish()
     options = publications[0]["native"]["ordinary"]
     assert options[index] == {"key": key, "parameters": {"limit": limit}}
@@ -162,21 +162,21 @@ def test_saved_calendar_action_rejects_mismatched_or_ambiguous_keys(native, monk
     row = state.regulation_manager.regulations["ordinary"]
     row["upcoming_option"] = {"key": "wrong", "limit": 99}
     with pytest.raises(HookError, match="does not match"):
-        NativeRegulationPolicy(state, channel)
+        RegulationPolicy(state, channel)
     row["upcoming_option"]["key"] = "limited"
     row["current"] = "limited"
     with pytest.raises(HookError, match="ambiguous"):
-        NativeRegulationPolicy(state, channel)
+        RegulationPolicy(state, channel)
 
 
 def test_boolean_only_setup_skips_native_inspection_and_incompatible_selector_is_rejected(native):
     _, channel, publications = native
     channel._rules = set()
-    NativeRegulationPolicy(object(), channel).publish()
+    RegulationPolicy(object(), channel).publish()
     assert publications == [{"native": {}, "custom": {}}]
     channel._rules = {"entry"}
     module = sys.modules["managers.regulation_manager"]
     module.RegulationManager._option_key_for_season = lambda self, changed: None
     state = SimpleNamespace(regulation_manager=module.RegulationManager())
     with pytest.raises(HookError, match="signature changed"):
-        NativeRegulationPolicy(state, channel)
+        RegulationPolicy(state, channel)

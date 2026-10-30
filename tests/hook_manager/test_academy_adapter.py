@@ -11,7 +11,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.callables import CallableTarget
-from hook_manager.game_adapters.regulations import academy_adapter as implementation
+from hook_manager.game_adapters.regulations import regulation_academy as implementation
 
 
 def owned(monkeypatch):
@@ -129,7 +129,7 @@ def owned(monkeypatch):
 def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
     originals = [target.resolve({})[2] for target in (*targets, *callers)]
-    adapter = implementation.AcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
+    adapter = implementation.RegulationAcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     messages = []
     monkeypatch.setattr("hook_manager.game_adapters.academy.callers.draw_refusal", lambda owner, surface, message: messages.append(message))
     before = deepcopy((state.teams, vars(state.drivers[0]), state.driver_manager._ai_signing_query_cache, state._rng.getstate()))
@@ -150,7 +150,7 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.AcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
+    adapter = implementation.RegulationAcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     try:
         state.academy_manager.ai_sign_drivers(3)
         contract = state.teams["target"]["academy"]["contracts"]["Junior"]
@@ -193,14 +193,14 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
 def test_academy_failed_installation_restores_all_owned_wrappers(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
     original = [target.resolve({})[2] for target in (*targets, *callers)]
-    register = implementation.AcademyAdapter.register
+    register = implementation.RegulationAcademyAdapter.register
 
     def partial(self, owner, bindings):
         if owner == "b.rules":
             raise RuntimeError("Owned installation failure")
         return register(self, owner, bindings)
 
-    monkeypatch.setattr(implementation.AcademyAdapter, "register", partial)
+    monkeypatch.setattr(implementation.RegulationAcademyAdapter, "register", partial)
     with pytest.raises(RuntimeError, match="Owned installation failure"):
-        implementation.AcademyAdapter(state, channel, None).install_prepared()
+        implementation.RegulationAcademyAdapter(state, channel, None).install_prepared()
     assert [target.resolve({})[2] for target in (*targets, *callers)] == original

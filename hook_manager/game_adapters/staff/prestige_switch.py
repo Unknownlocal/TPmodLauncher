@@ -4,7 +4,7 @@
 from functools import update_wrapper
 
 from ...manager import HookError, Manager
-from ..regulations.native_rule_selection import NativeRuleSelection
+from ..regulations.regulation_selection import RegulationSelection
 from .targets import staff_prestige_target
 
 
@@ -19,7 +19,7 @@ class StaffPrestigeSwitch(Manager):
     @classmethod
     def create(cls, state, *, enabled=True, report):
         """Keep native behaviour by default; report and skip incompatible helpers."""
-        if type(enabled) is not bool and type(enabled) is not NativeRuleSelection:
+        if type(enabled) is not bool and type(enabled) is not RegulationSelection:
             raise HookError("Staff prestige check must be a boolean or admitted selection")
         if enabled is True:
             return None  # Native is the default; no wrapper or inspection needed.
@@ -55,7 +55,7 @@ class StaffPrestigeSwitch(Manager):
             # manager remains open for other groups.
             if (group["state"] == "active" and self is manager and state.staff_manager is manager
                     and manager.state is state):
-                if enabled is False or type(enabled) is NativeRuleSelection and not enabled.enabled():
+                if enabled is False or type(enabled) is RegulationSelection and not enabled.enabled():
                     return 0
             return original(self, staff)
 

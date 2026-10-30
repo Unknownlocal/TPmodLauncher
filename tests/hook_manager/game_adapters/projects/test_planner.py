@@ -8,7 +8,7 @@ import pytest
 from hook_manager.manager import HookError
 from hook_manager.game_adapters.projects import planner as planner_module
 from hook_manager.game_adapters.regulations.contexts import regulation_context
-from hook_manager.game_adapters.regulations.project_adapter import ProjectAdapter
+from hook_manager.game_adapters.regulations.regulation_project import RegulationProjectAdapter
 
 
 class NativeObject:
@@ -25,17 +25,17 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     channel = NativeObject()
     channel.bindings = lambda scope: {"owned.rules": ((0, "rule"),)}
     # Skip construction to isolate the compatibility failure reported by create().
-    monkeypatch.setattr(ProjectAdapter, "__init__", lambda *a: None)
+    monkeypatch.setattr(RegulationProjectAdapter, "__init__", lambda *a: None)
     path = tmp_path / "launch.log"
     with reporter(path) as logger:
-        assert ProjectAdapter.create(state, channel, None, logger.warning) is not None
+        assert RegulationProjectAdapter.create(state, channel, None, logger.warning) is not None
         assert path.read_text(encoding="utf-8") == ""
 
         def incompatible(state):
             raise HookError("Native project planning helpers changed:\naero")
 
         monkeypatch.setattr(planner_module, "project_methods", incompatible)
-        assert ProjectAdapter.create(state, channel, None, logger.warning) is None
+        assert RegulationProjectAdapter.create(state, channel, None, logger.warning) is None
     output = capsys.readouterr().err
     assert "REGULATIONS COMPATIBILITY FAILED" in output
     assert "helpers changed: aero" in output and "continuing native game" in output

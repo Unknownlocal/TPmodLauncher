@@ -53,10 +53,10 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert pulse("adapters")["adapters"]["state"] == "loaded"
         prefix = host.adapters.prefix
         snapshot = sys.modules[prefix + ".game_adapters.drivers.snapshot"]
-        personnel = sys.modules[prefix + ".game_adapters.regulations.personnel_adapter"]
+        personnel = sys.modules[prefix + ".game_adapters.regulations.regulation_personnel"]
         channel = sys.modules[prefix + ".game_adapters.regulations.channel"]
         assert snapshot._contract.__globals__ is vars(snapshot)
-        assert issubclass(personnel.PersonnelAdapter, host.CallableAdapters)
+        assert issubclass(personnel.RegulationPersonnelAdapter, host.CallableAdapters)
         assert channel.HookError is host.HookError
         assert host.manager.groups == {}
         assert tuple(sys.meta_path) == finders and tuple(sys.path) == paths
@@ -96,7 +96,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert defaults["regulation_defaults"]["pack"] == str(tmp_path)
         assert defaults["regulation_defaults"]["categories"][0] == native.ENTRY_REGULATIONS[0]
         assert host.adapters.categories is None  # Reading definitions installs no loading hooks.
-        governance = ModuleType("managers.formula_regulation_governance")
+        regulation_changes = ModuleType("managers.formula_regulation_governance")
         def construct(self, state, saved_bootstrap=None):
             self.state = state
             self.definitions = dict(state.regulation_manager.regulation_defs)
@@ -105,12 +105,12 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             self.policy = data["policy"]
         def save(self):
             return {"policy": self.policy, "definition_snapshot": self.definitions}
-        governance.FormulaRegulationGovernanceManager = type("Governance", (), {
+        regulation_changes.FormulaRegulationGovernanceManager = type("RegulationChanges", (), {
             "__init__": construct, "load_state": restore, "save_state": save})
-        governance.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
-        monkeypatch.setitem(sys.modules, governance.__name__, governance)
+        regulation_changes.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
+        monkeypatch.setitem(sys.modules, regulation_changes.__name__, regulation_changes)
         pulse("status")
-        inactive = governance.FormulaRegulationGovernanceManager(SimpleNamespace(
+        inactive = regulation_changes.FormulaRegulationGovernanceManager(SimpleNamespace(
             regulation_manager=SimpleNamespace(regulation_defs={})))
         progress = {"schema": 1, "categories": {}}
         inactive.load_state({"policy": inactive.policy, "mod_automatic_changes": progress})
@@ -158,7 +158,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         career.regulation_manager.state = career
         career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
         assert career.regulation_manager.regulation_defs["owned.rule"] == categories[0]
-        career.formula_regulation_governance = governance.FormulaRegulationGovernanceManager(career)
+        career.formula_regulation_governance = regulation_changes.FormulaRegulationGovernanceManager(career)
         career.formula_regulation_governance.load_state({"policy": {"mode": "scripted", "scripted_changes": []}})
         assert career.formula_regulation_governance.policy["scripted_changes"] == scripts
         cached_preload = sys.modules["ui.screens.hub_screen"].advance_session_preload
@@ -234,7 +234,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
         assert loader.closed and host.adapters.categories is None
-        assert loader.governance.closed
+        assert loader.regulation_changes.closed
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:

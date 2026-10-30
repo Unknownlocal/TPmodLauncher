@@ -9,7 +9,7 @@ from ...manager import HookError
 from .protocol import regulation_policy_value
 
 
-class NativeRegulationPolicy:
+class RegulationPolicy:
     """Own one career's prepared rule data and its small choice references.
 
     The channel supplies admitted rule names, never author code. Read choices

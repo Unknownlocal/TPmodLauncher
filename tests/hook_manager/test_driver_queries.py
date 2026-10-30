@@ -8,7 +8,7 @@ import pytest
 
 from hook_manager.game_adapters.drivers.queries import DriverQueries
 from hook_manager.game_adapters.personnel.callers import PersonnelCallers
-from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
+from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
 
 
 def test_getter_fast_path_skips_binding_but_preparation_and_other_careers_keep_their_paths():
@@ -128,7 +128,7 @@ def test_signing_clears_shared_query_inputs_even_when_native_writes_then_raises(
         raise ValueError("Native signing failed")
 
     with pytest.raises(ValueError, match="Native signing failed"):
-        PersonnelAdapter._execute(guards, sign, (), {})
+        RegulationPersonnelAdapter._execute(guards, sign, (), {})
     assert not local.committing_personnel and not frame["query_inputs"].drivers
     read()
     assert observed[0] is not observed[1] and observed[1] is not observed[2]

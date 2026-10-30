@@ -19,7 +19,7 @@ executable hash gate.
 ## Preparing terms
 
 `ProjectPlanner(state)` uses the game's loaded helpers to prepare a proposed
-project. The [regulation adapter](../regulations/project_adapter.py) reports
+project. The [regulation adapter](../regulations/regulation_project.py) reports
 incompatibility and installs the checks.
 
 `prepare(target, arguments)` takes a private `projects.*` target name and the

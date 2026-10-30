@@ -1,8 +1,8 @@
 # Shared personnel negotiations
 
 Driver and staff negotiations use many of the same game functions. This package
-gives `PersonnelAdapter` one shared set of wrappers for offers, deadlines, AI
-choices and player confirmations. It handles the game's records and presentation;
+gives `RegulationPersonnelAdapter` one shared set of wrappers for offers,
+deadlines, AI choices and player confirmations. It handles the game's records and presentation;
 rule selection and mod checks belong to the
 [regulation adapter](../regulations/README.md).
 

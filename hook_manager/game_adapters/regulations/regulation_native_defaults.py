@@ -11,7 +11,7 @@ from ...callables import CallableTarget
 from ...manager import HookError
 
 
-def read_native_defaults(folder):
+def read_regulation_defaults(folder):
     """Copy the defaults used by native loading, without constructing game state.
 
     This fixed trusted operation supplies reference data for mod preparation.

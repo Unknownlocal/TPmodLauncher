@@ -11,7 +11,7 @@ from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.manager import HookError
 from hook_manager.game_adapters.projects import technical_profile as module
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
-from hook_manager.game_adapters.regulations.project_adapter import ProjectAdapter
+from hook_manager.game_adapters.regulations.regulation_project import RegulationProjectAdapter
 
 
 @pytest.fixture
@@ -91,7 +91,7 @@ def test_project_guard_keeps_foreign_calls_native_and_rejects_changed_owned_inpu
     # before/after identities, the shared proposal and the native write boundary.
     wire = Channel()
     wire.bindings, wire._unavailable = channel.bindings, channel._unavailable
-    engine = object.__new__(ProjectAdapter)
+    engine = object.__new__(RegulationProjectAdapter)
     RegulationGuards.__init__(engine, wire, lambda *args: {"selected": "current", "current": [0, 1], "upcoming": None},
                              "development.project")
     engine.planner = SimpleNamespace(managers=(SimpleNamespace(), state.regulation_manager), technical=profile)

@@ -39,7 +39,7 @@ class AdapterModules:
         self.regulation_generation = None
         self.preload = None
         self.categories = None
-        self.governance = None
+        self.regulation_changes = None
         self.regulation_screen = None
         # UI imports and game-worker validation can fail after setup returned.
         # Keep a bounded pack-owned outbox for the next ordinary bridge response.
@@ -89,12 +89,12 @@ class AdapterModules:
                 self.load()
                 if self.state != "loaded":
                     raise HookError(self.error or "Adapter modules are not loaded")
-                loader = self.host.adapter_code.game_adapters.regulations.native_categories
-                self.start_governance()
-                if self.governance is None:
-                    raise HookError("Native governance load/save integration is unavailable")
-                self.categories = loader.NativeCategories(definitions, self.governance)
-                screen = self.host.adapter_code.game_adapters.regulations.screen
+                loader = self.host.adapter_code.game_adapters.regulations.regulation_category
+                self.start_regulation_changes()
+                if self.regulation_changes is None:
+                    raise HookError("Native regulation change load/save integration is unavailable")
+                self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
+                screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
                 self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append)
             self.preload = CareerPreload(self._career_left)
         except BaseException:
@@ -102,17 +102,18 @@ class AdapterModules:
             raise
         return self.status()
 
-    def start_governance(self):
+    def start_regulation_changes(self):
         """Keep private save metadata through bridge lifetime, even without mods."""
         try:
             self.load()
             if self.state != "loaded":
                 raise HookError(self.error or "Adapter modules are not loaded")
-            if self.governance is None:
-                module = self.host.adapter_code.game_adapters.regulations.native_governance
-                self.governance = module.NativeGovernance(self.regulation_notices.append, self.host.manager.completed)
+            if self.regulation_changes is None:
+                module = self.host.adapter_code.game_adapters.regulations.regulation_change
+                self.regulation_changes = module.RegulationChangeAdapter(
+                    self.regulation_notices.append, self.host.manager.completed)
         except Exception as error:
-            self.regulation_notices.append("REGULATIONS COMPATIBILITY FAILED governance: "
+            self.regulation_notices.append("REGULATIONS COMPATIBILITY FAILED regulation changes: "
                 + " ".join(str(error).split())[:512] + "; load/save integration skipped; continuing native game")
         return True  # Finish the one-shot native import observation, including failure.
 
@@ -125,8 +126,8 @@ class AdapterModules:
         self.load()
         if self.state != "loaded":
             raise HookError(self.error or "Adapter modules are not loaded")
-        reader = self.host.adapter_code.game_adapters.regulations.native_defaults
-        categories = reader.read_native_defaults(pack["root"])
+        reader = self.host.adapter_code.game_adapters.regulations.regulation_native_defaults
+        categories = reader.read_regulation_defaults(pack["root"])
         return {"pack": pack["root"], "categories": categories} if categories is not None else None
 
     def _career_left(self):
@@ -177,8 +178,8 @@ class AdapterModules:
             elif request["endpoint"].get("token") != channel._token:
                 raise HookError("Regulation preparation does not own this connection")
             channel.validation_ready = False
-            native = self.host.adapter_code.game_adapters.regulations.native_policy
-            policy = native.NativeRegulationPolicy(state, channel)
+            native = self.host.adapter_code.game_adapters.regulations.regulation_policy
+            policy = native.RegulationPolicy(state, channel)
             policy.publish()
             # Publication releases the GIL while waiting. A delayed reply must
             # not associate the old snapshot with a newly loaded career.
@@ -316,7 +317,7 @@ class AdapterModules:
         adapters = self.host.adapter_code.game_adapters.regulations
         self.channel = channel
         try:
-            approach = adapters.approach_adapter.ApproachAdapter.prepare(
+            approach = adapters.regulation_approach.RegulationApproachAdapter.prepare(
                 state, channel, select, self.regulation_notices.append)
             personnel = []
             # Unsubscribed packs do not trigger personnel inspection or hooks.
@@ -324,9 +325,9 @@ class AdapterModules:
                 try:
                     # Constructors only prepare support. A late academy failure
                     # must not leave earlier driver/staff/staffing wrappers behind.
-                    personnel.append(adapters.personnel_adapter.PersonnelAdapter(
+                    personnel.append(adapters.regulation_personnel.RegulationPersonnelAdapter(
                         state, channel, select, report=self.regulation_notices.append))
-                    personnel.append(adapters.academy_adapter.AcademyAdapter(state, channel, select))
+                    personnel.append(adapters.regulation_academy.RegulationAcademyAdapter(state, channel, select))
                 except Exception as error:
                     for hook in reversed(personnel):
                         hook.stop()
@@ -341,7 +342,7 @@ class AdapterModules:
             self.regulations.extend(personnel)
             if approach is not None:
                 self.regulations.append(approach)
-            self.regulations.extend(adapters.native_rules.install_native_rules(state, native_rules, report=report))
+            self.regulations.extend(adapters.regulation_native_switches.install_regulation_switches(state, native_rules, report=report))
             for hook in personnel:
                 hook.install_prepared()
             if approach is not None:
@@ -350,7 +351,7 @@ class AdapterModules:
             self.coverage["personnel_approaches"] = approach is not None
             for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"):
                 self.coverage[key] = bool(personnel)
-            project = adapters.project_adapter.ProjectAdapter.create(state, channel, select, report)
+            project = adapters.regulation_project.RegulationProjectAdapter.create(state, channel, select, report)
             if project is not None:
                 self.regulations.append(project)
             self.coverage["development_projects"] = project is not None
@@ -489,17 +490,17 @@ class AdapterModules:
             return True
         self.host.manager._main()
         with ExitStack() as locks:
-            if self.governance is not None:
-                if not self.governance._lock.acquire(blocking=False):
+            if self.regulation_changes is not None:
+                if not self.regulation_changes._lock.acquire(blocking=False):
                     return False
-                locks.callback(self.governance._lock.release)
-                if self.governance._active:
+                locks.callback(self.regulation_changes._lock.release)
+                if self.regulation_changes._active:
                     return False
             if not self.stop_regulations():
                 return False
-            if self.governance is not None:
-                self.governance.stop()
-                self.governance = None
+            if self.regulation_changes is not None:
+                self.regulation_changes.stop()
+                self.regulation_changes = None
             self._remove()
             self.state = "closed"
         return True

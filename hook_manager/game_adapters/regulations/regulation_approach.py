@@ -12,7 +12,7 @@ from .contexts import regulation_context
 from .guards import RegulationGuards
 
 
-class ApproachAdapter(RegulationGuards):
+class RegulationApproachAdapter(RegulationGuards):
     @classmethod
     def prepare(cls, state, channel, select, report):
         if not channel.bindings("personnel.approach"):

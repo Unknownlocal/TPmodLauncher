@@ -6,7 +6,7 @@ import inspect
 
 from ...manager import HookError, Manager
 from ...callables import method_group
-from ..regulations.native_rule_selection import NativeRuleSelection
+from ..regulations.regulation_selection import RegulationSelection
 from .targets import rookie_check_target
 
 
@@ -30,7 +30,7 @@ class RookieContractLengthSwitch(Manager):
     @classmethod
     def create(cls, state, *, enabled=True, report):
         """Keep native by default; report and skip incompatible game helpers."""
-        if type(enabled) is not bool and type(enabled) is not NativeRuleSelection:
+        if type(enabled) is not bool and type(enabled) is not RegulationSelection:
             raise HookError("Rookie contract length check must be a boolean or admitted selection")
         if enabled is True:
             return None  # The default installs nothing and performs no inspection.
@@ -51,7 +51,7 @@ class RookieContractLengthSwitch(Manager):
             resolved = target.resolve({})
             if resolved is None or not isinstance(self.manager, resolved[0]):
                 raise HookError("Rookie switch needs the loaded native driver manager")
-            if type(enabled) is NativeRuleSelection:
+            if type(enabled) is RegulationSelection:
                 # UI/AI queries have no explicit contract date. Use the same
                 # native start-week inference as ordinary offer scoring.
                 self.start = method_group(self.manager, {"_negotiation_start_week":
@@ -74,7 +74,7 @@ class RookieContractLengthSwitch(Manager):
                     and state.driver_manager is manager and manager.state is state):
                 if enabled is False:
                     return None
-                if type(enabled) is NativeRuleSelection:
+                if type(enabled) is RegulationSelection:
                     season = None
                     if enabled.scoped_season() is None and enabled.varies_by_season():
                         week = start(self, team_name, driver, role)

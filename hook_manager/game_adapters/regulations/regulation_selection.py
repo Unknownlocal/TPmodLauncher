@@ -8,7 +8,7 @@ from ...callables import CallableTarget
 from ...manager import HookError
 
 
-class NativeRuleSelection:
+class RegulationSelection:
     """Read a small option-to-boolean map without calling mods or rereading JSON."""
 
     _local = threading.local()

@@ -23,10 +23,10 @@ from ..drivers.targets import driver_target
 from ..staff.staffing import StaffingPlanner
 from ..staff.targets import staff_target, staffing_targets
 from .staffing_coordinator import StaffingCoordinator
-from .native_rule_selection import NativeRuleSelection
+from .regulation_selection import RegulationSelection
 
 
-class PersonnelAdapter(RegulationGuards):
+class RegulationPersonnelAdapter(RegulationGuards):
     def __init__(self, state, channel, select, *, report=None):
         """Check all signing/staffing support without assigning native wrappers."""
         super().__init__(channel, select, "personnel.contract", report=report)
@@ -78,7 +78,7 @@ class PersonnelAdapter(RegulationGuards):
 
     def native_check_scope(self, start_week):
         """Share an offer's explicit date with the native check switches."""
-        return NativeRuleSelection.scope(next(iter(self.planners.values())).state, start_week=start_week)
+        return RegulationSelection.scope(next(iter(self.planners.values())).state, start_week=start_week)
 
     def validate_submission(self, prepare, execute, *, initiator):
         """Check offered terms without granting permission for a later signing."""
@@ -194,7 +194,7 @@ class PersonnelAdapter(RegulationGuards):
             # even when a future rule differs from today's choice. Prepared
             # native work without a new projection retains its enclosing scope.
             season = getattr(self._local, "native_check_season", None)
-            scope = (NativeRuleSelection.scope(next(iter(self.planners.values())).state, season)
+            scope = (RegulationSelection.scope(next(iter(self.planners.values())).state, season)
                      if season is not None else nullcontext())
             with scope:
                 return original(*args, **kwargs)

@@ -12,7 +12,7 @@ import pytest
 
 from hook_manager.callables import CallableTarget
 from hook_manager.game_adapters.personnel import approach as native
-from hook_manager.game_adapters.regulations.approach_adapter import ApproachAdapter
+from hook_manager.game_adapters.regulations.regulation_approach import RegulationApproachAdapter
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def setup(monkeypatch):
                 return {"nationality": [{"decision": "allow"}]}
             return {"nationality": [{"decision": "deny", "message": "Nationality must match Audi (german)."}]}
 
-    guard = ApproachAdapter(native.PersonnelApproach(state), Channel(), lambda rule, season: {"season": season}, lambda _: None)
+    guard = RegulationApproachAdapter(native.PersonnelApproach(state), Channel(), lambda rule, season: {"season": season}, lambda _: None)
     guard.install_prepared()
     yield manager, person, guard, channel, seen, cls
     guard.stop()

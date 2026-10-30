@@ -13,7 +13,7 @@ from .contexts import regulation_context
 from .guards import RegulationGuards
 
 
-class AcademyAdapter(RegulationGuards):
+class RegulationAcademyAdapter(RegulationGuards):
     def __init__(self, state, channel, select):
         """Prepare academy support without assigning native wrappers."""
         super().__init__(channel, select, "personnel.contract")

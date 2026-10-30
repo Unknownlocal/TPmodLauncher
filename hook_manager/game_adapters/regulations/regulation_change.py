@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Own shared governance construction, saved restoration and progress retention."""
+"""Wrap creation, restoration and saving of the game's regulation change state."""
 
 from functools import update_wrapper
 from pathlib import Path
@@ -10,12 +10,12 @@ from ...manager import HookError, Manager
 from .automatic_progress import AutomaticProgress, FIELD
 
 
-class NativeGovernance(Manager):
+class RegulationChangeAdapter(Manager):
     """Keep persistence with the bridge, independent of enabled mod execution.
 
     A category loader may attach while its pack is active. Its script merging
     shares these wrappers and the same active-operation count. Each native
-    governance instance owns its own progress, including inactive categories.
+    manager owns its own progress, including inactive categories.
     """
 
     def __init__(self, report, completed=()):
@@ -25,16 +25,17 @@ class NativeGovernance(Manager):
         self.completed.update(completed)
         self._lock, self._active = threading.RLock(), 0
         self.categories, self.report = None, report
+        # Native lookup uses the game's own module and class identifiers.
         module = "managers.formula_regulation_governance"
         try:
             bindings = []
             for method, signature in (("__init__", "(self, state, saved_bootstrap=None)"),
                                       ("load_state", "(self, data)"), ("save_state", "(self)")):
-                target = CallableTarget("regulations.governance." + method, module,
+                target = CallableTarget("regulations.changes." + method, module,
                                         ("FormulaRegulationGovernanceManager",), method, signature)
                 self.approve(target)
                 bindings.append({"target": target.name, "callback": "internal", "phase": "after"})
-            self.install("regulations.governance", bindings)
+            self.install("regulations.changes", bindings)
             self.check()
         except BaseException:
             self.stop()
@@ -42,10 +43,10 @@ class NativeGovernance(Manager):
 
     def check(self):
         """Require the complete native load/save group before attaching mod data."""
-        group = self.groups["regulations.governance"]
+        group = self.groups["regulations.changes"]
         if (self.closed or group["state"] != "active" or any(
                 vars(owner).get(attribute) is not wrapper for owner, attribute, _, wrapper, _ in group["changes"])):
-            raise HookError("Native governance load/save hooks are unavailable")
+            raise HookError("Native regulation change load/save hooks are unavailable")
 
     def _wrapper(self, name, binding, target, original, signature):
         # Keep the native result and exception; only completed calls reach the
@@ -75,7 +76,7 @@ class NativeGovernance(Manager):
                     manager._tpm_automatic_progress = progress
                     if progress.error:
                         self.report("REGULATIONS COMPATIBILITY FAILED automatic progress: " + progress.error
-                                    + "; automatic changes unavailable; native governance retained")
+                                    + "; automatic changes unavailable; native regulation changes retained")
                 categories = self.categories
                 if categories is not None:
                     try:

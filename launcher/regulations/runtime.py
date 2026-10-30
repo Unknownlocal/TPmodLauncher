@@ -165,7 +165,7 @@ class RegulationRuntime:
             raise RuntimeError("Regulations must bind once in their pack session")
         self._attempted = True
         try:
-            # A declared governance policy requires its complete native and
+            # A declared regulation change policy requires its complete native and
             # execution integration; it cannot become a definition-only owner.
             if self.definitions.automatic_changes or self.definitions.voting:
                 raise ValueError("Automatic regulation changes and custom voting are not available for activation")

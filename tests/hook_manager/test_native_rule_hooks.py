@@ -8,7 +8,7 @@ from typing import Optional
 
 import pytest
 
-from hook_manager.game_adapters.regulations import native_rules
+from hook_manager.game_adapters.regulations import regulation_native_switches
 from hook_manager.game_adapters.drivers import rookie_check
 from hook_manager.game_adapters.staff import prestige_switch
 from hook_manager.manager import HookError
@@ -48,14 +48,14 @@ def test_default_switches_need_no_hook_or_inspection(native, monkeypatch):
     monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: pytest.fail("Default inspected"))
     monkeypatch.setattr(prestige_switch, "staff_prestige_target", lambda: pytest.fail("Default inspected"))
     for values in ({}, {"rookie_contract_length_check": True, "staff_prestige_check": True}):
-        assert native_rules.install_native_rules(state, values, report=pytest.fail) == ()
+        assert regulation_native_switches.install_regulation_switches(state, values, report=pytest.fail) == ()
         assert (drivers.formula_rookie_contract_year_limit, staff.required_prestige) == originals
 
 
 def test_switch_keeps_original_applicability_available_and_restores_owned_helper(native):
     state, drivers, staff = native
     original = rookie_check.native_rookie_limit(state.driver_manager)
-    hooks = native_rules.install_native_rules(state, {
+    hooks = regulation_native_switches.install_regulation_switches(state, {
         "rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
     escaped = state.driver_manager.formula_rookie_contract_year_limit
     rookie, veteran = SimpleNamespace(rookie=True), SimpleNamespace(rookie=False)
@@ -92,7 +92,7 @@ def test_incompatible_rookie_helper_is_skipped_independently_of_staff(native):
         return 7
     drivers.formula_rookie_contract_year_limit = changed
     reports = []
-    hooks = native_rules.install_native_rules(state, {
+    hooks = regulation_native_switches.install_regulation_switches(state, {
         "rookie_contract_length_check": False, "staff_prestige_check": False}, report=reports.append)
     try:
         assert len(hooks) == 1 and len(reports) == 1
@@ -112,7 +112,7 @@ def test_invalid_switches_are_rejected_before_installing_either_hook(native):
                    {"rookie_contract_length_check": None},
                    {"rookie_contract_length_check": False, "staff_prestige_check": 0}):
         with pytest.raises(HookError):
-            native_rules.install_native_rules(state, values, report=pytest.fail)
+            regulation_native_switches.install_regulation_switches(state, values, report=pytest.fail)
         assert drivers.formula_rookie_contract_year_limit is original
 
 
@@ -121,9 +121,9 @@ def test_unexpected_setup_failure_restores_previously_installed_hook(native, mon
     original = drivers.formula_rookie_contract_year_limit
     def fail(*args, **kwargs):
         raise RuntimeError("Setup interrupted")
-    monkeypatch.setattr(native_rules.StaffPrestigeSwitch, "create", fail)
+    monkeypatch.setattr(regulation_native_switches.StaffPrestigeSwitch, "create", fail)
     with pytest.raises(RuntimeError, match="Setup interrupted"):
-        native_rules.install_native_rules(state, {"rookie_contract_length_check": False}, report=pytest.fail)
+        regulation_native_switches.install_regulation_switches(state, {"rookie_contract_length_check": False}, report=pytest.fail)
     assert drivers.formula_rookie_contract_year_limit is original
 
 

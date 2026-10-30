@@ -10,7 +10,7 @@ import pytest
 
 from hook_manager.adapter_modules import AdapterModules
 from hook_manager.callables import CallableAdapters
-from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
+from hook_manager.game_adapters.regulations.regulation_policy import RegulationPolicy
 from hook_manager.manager import HookError, Manager
 
 
@@ -87,13 +87,13 @@ def installation(host, monkeypatch):
     academy.install_prepared = lambda: academy
     adapters = host.adapter_code.game_adapters.regulations
     adapters.channel = SimpleNamespace(RegulationChannel=lambda endpoint: channel)
-    adapters.native_policy = SimpleNamespace(NativeRegulationPolicy=NativeRegulationPolicy)
-    from hook_manager.game_adapters.regulations.approach_adapter import ApproachAdapter
-    adapters.approach_adapter = SimpleNamespace(ApproachAdapter=ApproachAdapter)
-    adapters.native_rules = SimpleNamespace(install_native_rules=lambda *a, **kw: (native,))
-    adapters.personnel_adapter = SimpleNamespace(PersonnelAdapter=lambda *a, **kw: personnel)
-    adapters.academy_adapter = SimpleNamespace(AcademyAdapter=lambda *a: academy)
-    adapters.project_adapter = SimpleNamespace(ProjectAdapter=SimpleNamespace(create=lambda *a: projects))
+    adapters.regulation_policy = SimpleNamespace(RegulationPolicy=RegulationPolicy)
+    from hook_manager.game_adapters.regulations.regulation_approach import RegulationApproachAdapter
+    adapters.regulation_approach = SimpleNamespace(RegulationApproachAdapter=RegulationApproachAdapter)
+    adapters.regulation_native_switches = SimpleNamespace(install_regulation_switches=lambda *a, **kw: (native,))
+    adapters.regulation_personnel = SimpleNamespace(RegulationPersonnelAdapter=lambda *a, **kw: personnel)
+    adapters.regulation_academy = SimpleNamespace(RegulationAcademyAdapter=lambda *a: academy)
+    adapters.regulation_project = SimpleNamespace(RegulationProjectAdapter=SimpleNamespace(create=lambda *a: projects))
     yield modules, career, channel, adapters, (native, personnel, academy, projects)
     assert modules.close()
     # A factory skipped by a test still owns its unreturned stand-in.
@@ -139,14 +139,14 @@ def test_installation_reports_complete_personnel_coverage(installation):
 
 
 def test_late_academy_preflight_failure_leaves_all_personnel_methods_native(installation, monkeypatch):
-    from hook_manager.game_adapters.regulations import personnel_adapter, academy_adapter
+    from hook_manager.game_adapters.regulations import regulation_personnel, regulation_academy
     from tests.hook_manager.test_personnel_adapter import owned
 
     modules, _, channel, adapters, hooks = installation
     state, _, negotiations, _, _, signing, callers = owned(monkeypatch)
     monkeypatch.setattr(sys.modules["game_state"], "GameState", type(state))
-    adapters.personnel_adapter, adapters.academy_adapter = personnel_adapter, academy_adapter
-    targets = (signing, personnel_adapter.staff_target(), *callers, *personnel_adapter.staffing_targets())
+    adapters.regulation_personnel, adapters.regulation_academy = regulation_personnel, regulation_academy
+    targets = (signing, regulation_personnel.staff_target(), *callers, *regulation_personnel.staffing_targets())
     originals = [target.resolve({})[2] for target in targets]
     observed = []
 
@@ -154,7 +154,7 @@ def test_late_academy_preflight_failure_leaves_all_personnel_methods_native(inst
         observed.extend(target.resolve({})[2] for target in targets)
         raise HookError("Owned academy helper changed")
 
-    monkeypatch.setattr(academy_adapter, "AcademyContractPlanner", incompatible)
+    monkeypatch.setattr(regulation_academy, "AcademyContractPlanner", incompatible)
     reports = []
     coverage = modules.install_regulations(state, channel, lambda *args: None,
                                           native_rules={}, report=reports.append)
@@ -169,7 +169,7 @@ def test_setup_exception_restores_prior_components_and_closes_channel(installati
     modules, _, channel, adapters, hooks = installation
     def fail(*args):
         raise RuntimeError("Interrupted setup")
-    adapters.project_adapter.ProjectAdapter.create = fail
+    adapters.regulation_project.RegulationProjectAdapter.create = fail
     with pytest.raises(RuntimeError, match="Interrupted setup"):
         install(installation)
     assert all(hook.closed for hook in hooks[:-1]) and not hooks[-1].closed
@@ -214,11 +214,11 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
         modules.control_regulations("install-regulations", dict(request, generation=2), report=pytest.fail)
     assert modules.channel is channel and not channel.closed
     values = []
-    original = adapters.native_rules.install_native_rules
+    original = adapters.regulation_native_switches.install_regulation_switches
     def install_switches(state, switches, **kwargs):
         values.append(dict(switches))
         return original(state, switches, **kwargs)
-    adapters.native_rules.install_native_rules = install_switches
+    adapters.regulation_native_switches.install_regulation_switches = install_switches
     switches = {"rookie_contract_length_check": False, "staff_prestige_check": True}
     assert modules.control_regulations("install-regulations", dict(request, native_rules=switches), report=pytest.fail)
     assert values == [switches]
@@ -332,7 +332,7 @@ def test_failed_setup_reports_deferred_cleanup_until_earlier_worker_finishes(ins
     modules, _, channel, adapters, hooks = installation
     def fail(*args):
         raise RuntimeError("Interrupted setup\n" + "x" * 600)
-    adapters.project_adapter.ProjectAdapter.create = fail
+    adapters.regulation_project.RegulationProjectAdapter.create = fail
     with active_worker(hooks[1]):
         with pytest.raises(RuntimeError, match="Interrupted setup"):
             install(installation)

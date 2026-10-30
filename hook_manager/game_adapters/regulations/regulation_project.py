@@ -15,7 +15,7 @@ from ..projects.planner import ProjectPlanner
 from ..projects.targets import project_targets
 
 
-class ProjectAdapter(RegulationGuards):
+class RegulationProjectAdapter(RegulationGuards):
     @classmethod
     def create(cls, state, channel, select, report):
         try:

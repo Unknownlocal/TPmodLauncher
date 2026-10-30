@@ -81,16 +81,16 @@ def main(argv=None):
                   "mod_runtime_loading": "mod_runtime",
                   "career_preload": "hook_manager.career_preload",
                   "project_context": "hook_manager.game_adapters.projects",
-                  "native_regulation_policy": "hook_manager.game_adapters.regulations.native_policy"}.get(options.suite, options.suite)
+                  "native_regulation_policy": "hook_manager.game_adapters.regulations.regulation_policy"}.get(options.suite, options.suite)
         pytest_args.append(f"--cov={source}")
         if options.suite == "native_regulation_policy":
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_categories")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_scripts")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_governance")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_category")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_scripts")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_change")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_progress")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_defaults")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.screen")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_rule_selection")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_native_defaults")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_screen")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_selection")
         if options.suite == "hook_manager":
             # Measure the directory, including unimported top-level files, while
             # assigning the private subpackage to its separate coverage report.

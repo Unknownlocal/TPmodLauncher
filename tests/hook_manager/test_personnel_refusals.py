@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.game_adapters.regulations import personnel_adapter as implementation
+from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.refused_proposals import RefusedProposals
 from tests.hook_manager.test_personnel_adapter import owned
 
@@ -47,7 +47,7 @@ def repeating(monkeypatch, scenario):
         return dispatch(self, contexts, selections, calls, deadline)
 
     monkeypatch.setattr(type(channel), "__call__", send)
-    adapter = implementation.PersonnelAdapter(state, channel,
+    adapter = implementation.RegulationPersonnelAdapter(state, channel,
         lambda *args: {"selected": state.selection, "current": [0, 3], "upcoming": [1, 4]}).install_prepared()
     try:
         yield state, driver, manager, channel, adapter

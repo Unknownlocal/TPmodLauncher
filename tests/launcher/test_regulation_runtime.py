@@ -19,7 +19,7 @@ from hook_manager.manager import HookError
 from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
-from hook_manager.game_adapters.regulations.native_policy import NativeRegulationPolicy
+from hook_manager.game_adapters.regulations.regulation_policy import RegulationPolicy
 from launcher.pack_mods import PackMods
 from launcher.game_bridge import Bridge
 from launcher.sandbox import SandboxError
@@ -71,7 +71,7 @@ def control_bridge(monkeypatch, control):
 
 
 @pytest.mark.parametrize("feature", ["automatic", "voting"])
-def test_incomplete_governance_cannot_activate_a_pack(feature, make_mod, tmp_path):
+def test_incomplete_regulation_changes_cannot_activate_a_pack(feature, make_mod, tmp_path):
     mod = make_mod("def vote(context, regulation): return {'choice': 'proposed', 'reason': 'Test'}")
     category = {"key": "owned.rules.policy", "label": "Policy", "default": "open",
                 "options": [{"id": 1, "key": "open", "name": "Open"}]}
@@ -467,7 +467,7 @@ def test_shared_project_guard_runs_real_mods_once_before_native_writes(make_mods
     state.regulation_manager.regulations = {"native": {"current": "open", "upcoming": "closed",
         "upcoming_option": {"key": "closed", "limit": 99}}}
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
-        policy = NativeRegulationPolicy(state, channel)
+        policy = RegulationPolicy(state, channel)
         pump(scope, wake, worker.submit(policy.publish))
         channel.validation_ready = False
         assert not runtime.ready and module.start is native

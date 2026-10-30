@@ -11,8 +11,8 @@ import pytest
 
 from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
-from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
-from hook_manager.game_adapters.regulations import personnel_adapter as implementation
+from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
+from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
 from hook_manager.game_adapters.staff import staffing
 from hook_manager.game_adapters.staff.staffing import StaffingPlanner
@@ -48,7 +48,7 @@ def coordinator(monkeypatch, mode="allow", *, callers=False):
             self.after()
             return result
 
-    class Guards(PersonnelAdapter):
+    class Guards(RegulationPersonnelAdapter):
         def __init__(self, channel):
             RegulationGuards.__init__(self, channel, lambda *args: {"selected": "current"}, "personnel.contract")
             self.planners, self.feedback = {"staff": planner.contracts}, None
@@ -85,7 +85,7 @@ def coordinator(monkeypatch, mode="allow", *, callers=False):
         monkeypatch.setattr(implementation, "staffing_targets", lambda: targets)
         monkeypatch.setattr(implementation, "personnel_caller_targets", lambda: ())
         monkeypatch.setattr(implementation, "check_preparation", lambda *args: None)
-        guards = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
+        guards = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
         assert guards.staffing is not None
         return state, manager, person, channel, guards, guards.staffing
     guards = Guards(channel)

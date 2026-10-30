@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Keep enabled mods' scripted changes in the game's loaded governance policy."""
+"""Keep enabled mods' scripted choices in the game's regulation change policy."""
 
 from copy import deepcopy
 
@@ -7,11 +7,11 @@ from ...callables import CallableTarget
 from ...manager import HookError
 
 
-class NativeScripts:
-    """Merge prepared script rows using the shared native governance loader.
+class RegulationScripts:
+    """Merge prepared script rows through the shared regulation change adapter.
 
-    These are scheduled JSON choices, not Python files. NativeCategories owns
-    the declarations; NativeGovernance owns construction and restoration hooks.
+    These are scheduled JSON choices, not Python files. RegulationCategoryAdapter owns
+    the declarations; RegulationChangeAdapter owns the construction and restore hooks.
     The game keeps scheduling, notices, completion records and rule adoption.
     """
 
@@ -25,7 +25,7 @@ class NativeScripts:
                                    (), "normalize_policy", "(raw, definitions)")
         resolved = normalize.resolve({})
         if resolved is None:
-            raise HookError("Script loading needs the loaded native governance module")
+            raise HookError("Script loading needs the loaded native regulation changes module")
         self.normalize = resolved[2]
 
     def merge(self, manager):
@@ -56,7 +56,7 @@ class NativeScripts:
 
     def check(self, state):
         """Confirm saved loading retained the scripts before policy publication."""
-        self.categories.governance.check()
+        self.categories.regulation_changes.check()
         manager = state.formula_regulation_governance
         rows = {row["id"]: row for row in manager.policy["scripted_changes"]}
         if (manager.state is not state or any(rows.get(identity) != row for identity, row in self.scripts.items())

@@ -87,7 +87,7 @@ def test_native_and_disabled_sections_keep_existing_json_semantics(tmp_path):
     assert prepare(data).automatic_changes == prepare(data).voting == {}
 
 
-def test_governance_declarations_keep_native_definitions_and_owned_revisions_separate():
+def test_regulation_changes_declarations_keep_native_definitions_and_owned_revisions_separate():
     data = document()
     section = data["mod_extensions"]["example.rules"]
     policy = {"mode": "automatic", "base_chance": 0, "announcement_week": 0}

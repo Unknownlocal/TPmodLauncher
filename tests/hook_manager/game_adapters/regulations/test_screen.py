@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.adapter_modules import AdapterModules
-from hook_manager.game_adapters.regulations import screen as presentation
+from hook_manager.game_adapters.regulations import regulation_screen as presentation
 from hook_manager.manager import Manager
 
 

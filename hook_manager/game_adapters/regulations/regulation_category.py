@@ -7,10 +7,10 @@ from pathlib import Path
 
 from ...callables import CallableTarget
 from ...manager import HookError, Manager
-from .native_scripts import NativeScripts
+from .regulation_scripts import RegulationScripts
 
 
-class NativeCategories(Manager):
+class RegulationCategoryAdapter(Manager):
     """Keep category loading with the pack, before any career chooses its rules.
 
     The launcher supplies already checked category data, never a callable or a
@@ -18,14 +18,14 @@ class NativeCategories(Manager):
     remain native. Each load receives its own copy of the added definitions.
     """
 
-    def __init__(self, request, governance):
+    def __init__(self, request, regulation_changes):
         super().__init__(lambda record: None)
-        # Bundle cleanup shares this reservation with governance loads and saves.
+        # Bundle cleanup shares this reservation with regulation change loads and saves.
         # Native work runs outside the lock, so workers can do normal file I/O.
-        governance.check()
-        if governance.categories is not None:
-            raise HookError("Native governance already owns a category loader")
-        self.governance, self._lock = governance, governance._lock
+        regulation_changes.check()
+        if regulation_changes.categories is not None:
+            raise HookError("Regulation change adapter already owns a category loader")
+        self.regulation_changes, self._lock = regulation_changes, regulation_changes._lock
         self.scripts = None
         if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes"}
                 or not {"pack", "categories"} <= request.keys()
@@ -50,8 +50,8 @@ class NativeCategories(Manager):
             if request.get("scripted_changes"):
                 # Scripts can target only owned categories, so their loading
                 # helper shares this pack's lifetime and cleanup reservation.
-                self.scripts = NativeScripts(self, request["scripted_changes"])
-            governance.categories = self
+                self.scripts = RegulationScripts(self, request["scripted_changes"])
+            regulation_changes.categories = self
         except BaseException:
             self.stop()
             raise
@@ -71,14 +71,14 @@ class NativeCategories(Manager):
 
     def stop(self):
         """Detach prepared declarations while retaining shared save/load handling."""
-        if self.governance.categories is self:
-            self.governance.categories = None
+        if self.regulation_changes.categories is self:
+            self.regulation_changes.categories = None
         return super().stop()
 
     @property
     def _active(self):
         """Share the load/save reservation used by bundle cleanup."""
-        return self.governance._active
+        return self.regulation_changes._active
 
     def _wrapper(self, name, binding, target, original, signature):
         """Keep native loading first, then add this pack's checked category copies."""
@@ -88,7 +88,7 @@ class NativeCategories(Manager):
             with self._lock:
                 if group["state"] != "active":
                     return original(manager)
-                self.governance._active += 1
+                self.regulation_changes._active += 1
             try:
                 definitions = original(manager)
                 try:
@@ -108,7 +108,7 @@ class NativeCategories(Manager):
                     return definitions
             finally:
                 with self._lock:
-                    self.governance._active -= 1
+                    self.regulation_changes._active -= 1
 
         update_wrapper(wrapped, original)
         wrapped._tpm_hook_group = name

@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.game_adapters.personnel.feedback import adapter as feedback
-from hook_manager.game_adapters.regulations.personnel_adapter import PersonnelAdapter
+from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
 from tests.hook_manager.test_personnel_adapter import owned
 from tests.hook_manager.test_personnel_approach import setup as approach_setup
 
@@ -134,7 +134,7 @@ def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatc
             negotiations.row["candidate_type"] = "staff"
         cls = classes[kind]
         originals = cls.handle_event, cls.draw
-        adapter = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
+        adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
         screen = screen_for(cls, state, kind)
         try:
             cls.handle_event(self=screen, event="sign")
@@ -173,7 +173,7 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
 
     monkeypatch.setattr(feedback, "feedback_bindings", compatible)
     reports = []
-    adapter = PersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, report=reports.append).install_prepared()
+    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, report=reports.append).install_prepared()
     screen = screen_for(classes["staff"], state, "staff")
     try:
         assert len(reports) == 1 and "UI COMPATIBILITY FAILED" in reports[0]

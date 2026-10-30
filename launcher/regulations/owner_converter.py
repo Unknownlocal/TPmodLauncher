@@ -6,7 +6,7 @@ from collections import ChainMap
 from launcher.json_ingest import materialize
 from . import payload, schema
 from .bridge_converter import convert_bridges
-from .governance_converter import automatic_changes, voting_handlers
+from .change_converter import automatic_changes, voting_handlers
 from .owner_definition import OwnerDefinition
 
 

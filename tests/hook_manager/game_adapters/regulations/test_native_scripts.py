@@ -11,8 +11,8 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.adapter_modules import AdapterModules
-from hook_manager.game_adapters.regulations.native_categories import NativeCategories
-from hook_manager.game_adapters.regulations.native_governance import NativeGovernance
+from hook_manager.game_adapters.regulations.regulation_category import RegulationCategoryAdapter
+from hook_manager.game_adapters.regulations.regulation_change import RegulationChangeAdapter
 from hook_manager.game_adapters.regulations.automatic_progress import FIELD
 from hook_manager.manager import HookError, Manager
 
@@ -27,7 +27,7 @@ def native(monkeypatch, tmp_path):
             raise ValueError("native category/season conflict")
         return deepcopy(raw)
     module.normalize_policy = normalize_policy
-    class Governance:
+    class RegulationChanges:
         def __init__(self, state, saved_bootstrap=None):
             self.state = state
             self.calls = []
@@ -47,7 +47,7 @@ def native(monkeypatch, tmp_path):
             self.work()
             return {"definition_snapshot": deepcopy(self.definitions), "policy": deepcopy(self.policy),
                     "applied_script_ids": sorted(self.applied_script_ids)}
-    module.FormulaRegulationGovernanceManager = Governance
+    module.FormulaRegulationGovernanceManager = RegulationChanges
     monkeypatch.setitem(sys.modules, module.__name__, module)
     regulation = ModuleType("managers.regulation_manager")
     regulation.RegulationManager = type("RegulationManager", (), {"_load_regulation_defs": lambda self: {}})
@@ -57,20 +57,20 @@ def native(monkeypatch, tmp_path):
     script = {"id": "owned:change", "key": "owned.rule", "new_regulation": {"key": "open"}, "effective_season": 2}
     request = {"pack": str(tmp_path), "categories": [category], "scripted_changes": [script]}
     notices = []
-    governance = NativeGovernance(notices.append)
-    hook = NativeCategories(request, governance)
+    regulation_changes = RegulationChangeAdapter(notices.append)
+    hook = RegulationCategoryAdapter(request, regulation_changes)
     state = SimpleNamespace(data_dir=tmp_path, regulation_manager=regulation.RegulationManager())
     state.notices = notices
     state.regulation_manager.state = state
     state.regulation_manager.regulation_defs = state.regulation_manager._load_regulation_defs()
-    yield hook, state, Governance, request
+    yield hook, state, RegulationChanges, request
     hook.stop()
-    governance.stop()
+    regulation_changes.stop()
 
 
 def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progress(native):
-    hook, state, Governance, request = native
-    manager = state.formula_regulation_governance = Governance(state)
+    hook, state, RegulationChanges, request = native
+    manager = state.formula_regulation_governance = RegulationChanges(state)
     row = request["scripted_changes"][0]
     assert manager.policy["scripted_changes"] == [row] and not hook.errors
     # A save made before this mod's rule existed lacks both the category and script.
@@ -85,7 +85,7 @@ def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progr
     hook.check(state)
     assert manager.policy["scripted_changes"] == [row] and not hook.errors
     # Constructor bootstrap also has to work before load_state restores the save.
-    other = Governance(state, again)
+    other = RegulationChanges(state, again)
     assert other.policy == manager.policy
     state.data_dir = state.data_dir / "other-pack"
     manager.load_state(saved)
@@ -93,8 +93,8 @@ def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progr
 
 
 def test_conflicting_saved_script_retains_native_load_and_prevents_activation(native):
-    hook, state, Governance, request = native
-    manager = state.formula_regulation_governance = Governance(state)
+    hook, state, RegulationChanges, request = native
+    manager = state.formula_regulation_governance = RegulationChanges(state)
     saved = {"definition_snapshot": manager.definitions, "policy": {"mode": "scripted", "scripted_changes": [
         {**request["scripted_changes"][0], "effective_season": 3}]}}
     assert manager.load_state(saved) == "native restored"
@@ -108,28 +108,28 @@ def test_conflicting_saved_script_retains_native_load_and_prevents_activation(na
 
 
 def test_script_signature_failure_restores_earlier_hooks(native, monkeypatch):
-    hook, _, Governance, request = native
+    hook, _, RegulationChanges, request = native
     hook.stop()
-    hook.governance.stop()
-    constructor = Governance.__init__
+    hook.regulation_changes.stop()
+    constructor = RegulationChanges.__init__
     incompatible = lambda self, changed: None
-    monkeypatch.setattr(Governance, "load_state", incompatible)
+    monkeypatch.setattr(RegulationChanges, "load_state", incompatible)
     with pytest.raises(HookError, match="signature"):
-        NativeGovernance(lambda message: None)
-    assert Governance.__init__ is constructor and Governance.load_state is incompatible
+        RegulationChangeAdapter(lambda message: None)
+    assert RegulationChanges.__init__ is constructor and RegulationChanges.load_state is incompatible
     assert not hasattr(sys.modules["managers.regulation_manager"].RegulationManager._load_regulation_defs, "_tpm_hook_group")
 
 
 @pytest.mark.parametrize("operation", ["load_state", "save_state"])
-def test_active_governance_defers_cleanup_and_cached_stopped_hooks_fall_through(native, operation):
-    hook, state, Governance, _ = native
-    manager = state.formula_regulation_governance = Governance(state)
+def test_active_regulation_changes_defers_cleanup_and_cached_stopped_hooks_fall_through(native, operation):
+    hook, state, RegulationChanges, _ = native
+    manager = state.formula_regulation_governance = RegulationChanges(state)
     saved = {"definition_snapshot": manager.definitions, "policy": manager.policy}
     host = ModuleType("_owned_script_loader")
     host.manager = Manager()
     modules = AdapterModules(host, {})
     modules.categories = hook
-    modules.governance = hook.governance
+    modules.regulation_changes = hook.regulation_changes
     if operation == "save_state":
         hook.stop()
         modules.categories = None
@@ -144,12 +144,12 @@ def test_active_governance_defers_cleanup_and_cached_stopped_hooks_fall_through(
         future = worker.submit(cached, *arguments)
         try:
             assert entered.wait(3)
-            assert modules.close() is False and not hook.governance.closed
+            assert modules.close() is False and not hook.regulation_changes.closed
         finally:
             release.set()
         result = future.result(timeout=3)
         assert result == ("native restored" if operation == "load_state" else manager.save_state())
-    assert modules.close() and hook.governance.closed
+    assert modules.close() and hook.regulation_changes.closed
     assert cached(*arguments) == result
 
 
@@ -160,13 +160,13 @@ def progress():
 
 
 def test_progress_survives_without_active_mods_and_stays_with_its_career(native):
-    hook, state, Governance, _ = native
+    hook, state, RegulationChanges, _ = native
     hook.stop()
-    manager = Governance(state)
+    manager = RegulationChanges(state)
     old = manager.save_state()
     assert FIELD not in old
     saved = dict(old, **{FIELD: progress()})
-    other = Governance(state, saved)
+    other = RegulationChanges(state, saved)
     assert other.save_state()[FIELD] == progress()
     manager.load_state(saved)
     saved[FIELD]["categories"].clear()
@@ -183,9 +183,9 @@ def test_progress_survives_without_active_mods_and_stays_with_its_career(native)
     {"schema": 2, "future": {"retain": [1, 2]}},
     {"schema": 1, "categories": {"disabled.rule": {"checked_season": True, "pending_announcements": []}}}])
 def test_unrecognised_progress_is_preserved_and_reported_instead_of_reset(native, raw):
-    hook, state, Governance, _ = native
+    hook, state, RegulationChanges, _ = native
     hook.stop()
-    manager = Governance(state)
+    manager = RegulationChanges(state)
     saved = dict(manager.save_state(), **{FIELD: raw})
     assert manager.load_state(saved) == "native restored"
     assert manager._tpm_automatic_progress.error
@@ -194,9 +194,9 @@ def test_unrecognised_progress_is_preserved_and_reported_instead_of_reset(native
 
 
 def test_unsafe_progress_cannot_be_silently_dropped_from_a_save(native):
-    hook, state, Governance, _ = native
+    hook, state, RegulationChanges, _ = native
     hook.stop()
-    manager = Governance(state)
+    manager = RegulationChanges(state)
     raw = {"schema": 1, "categories": {}, "excess": [None] * 32769}
     manager.load_state(dict(manager.save_state(), **{FIELD: raw}))
     with pytest.raises(HookError, match="Cannot safely preserve"):

@@ -12,60 +12,69 @@ wrappers; development-project integration has its own compatibility checks.
 
 ## Main parts
 
-- [approach_adapter.py](approach_adapter.py): `ApproachAdapter` connects declared
+- [regulation_approach.py](regulation_approach.py):
+  `RegulationApproachAdapter` connects declared
   `personnel.approach` validators to the personnel mapping. It checks owned team
   approaches before native writes, including workers and shared negotiation
   drafts. The existing channel and in-memory policy handle all subscribing mods;
   native screens display the returned reason.
 
-- [personnel_adapter.py](personnel_adapter.py): `PersonnelAdapter` connects driver
+- [regulation_personnel.py](regulation_personnel.py):
+  `RegulationPersonnelAdapter` connects driver
   and staff signing to shared negotiation handling. It also installs the common
   Formula staffing entries. Submitted offers use the same contract validators
   with `operation: "preview"` before native writes; actual signing uses
   `operation: "commit"`. Both prepare terms through the same native planners.
-- [academy_adapter.py](academy_adapter.py): `AcademyAdapter` connects academy
+- [regulation_academy.py](regulation_academy.py):
+  `RegulationAcademyAdapter` connects academy
   signing, renewal and their player or AI callers.
-- [project_adapter.py](project_adapter.py): `ProjectAdapter` connects aero and
+- [regulation_project.py](regulation_project.py):
+  `RegulationProjectAdapter` connects aero and
   chassis projects and their callers.
 - [staffing_coordinator.py](staffing_coordinator.py): `StaffingCoordinator` checks
   complete team-staffing plans before applying their prepared changes.
 - [guards.py](guards.py): `RegulationGuards` manages checks around the game
   functions selected by these adapters. Personnel, academy and project adapters
   share its installation steps; a failure restores their owned wrappers.
-- [native_rules.py](native_rules.py): installs the fixed rookie-length and staff
-  prestige switches from booleans or references to the mod's own options.
+- [regulation_native_switches.py](regulation_native_switches.py): installs the
+  fixed rookie-length and staff prestige switches from booleans or references
+  to the mod's own options.
   Missing settings keep the game's checks. Trusted setup owns the returned
   hooks and their removal.
 - [channel.py](channel.py): `RegulationChannel` carries requests, decisions and
   complete career installs over an authenticated connection to the launcher on the same
   computer. It checks every decision in a reply before the guards select a refusal
   or allow the game action. The game waits for its reply.
-- [native_policy.py](native_policy.py): `NativeRegulationPolicy` prepares the
+- [regulation_policy.py](regulation_policy.py): `RegulationPolicy` prepares the
   reachable options for subscribed rules from the career's loaded regulations.
   It sends this data once, then uses the game's own method to choose an option
   for each proposal's season. Later checks send small references to that data.
-- [native_categories.py](native_categories.py): `NativeCategories` adds enabled
+- [regulation_category.py](regulation_category.py):
+  `RegulationCategoryAdapter` adds enabled
   mods' prepared categories when the game loads definitions for the selected
   Formula pack. The game loads its own category definitions first, then uses the
   combined definitions to initialise rule choices.
-- [native_scripts.py](native_scripts.py): `NativeScripts` keeps enabled mods'
-  scheduled rule choices when governance is constructed and saved policy is
-  restored. It supplies merging and checks to the shared governance loader.
+- [regulation_scripts.py](regulation_scripts.py):
+  `RegulationScripts` keeps enabled mods'
+  scheduled rule choices when the game's change manager is created or restored.
+  It supplies merging and checks to the shared regulation change adapter.
   These are JSON declarations; the game schedules and applies them.
-- [native_governance.py](native_governance.py): `NativeGovernance` owns the shared
-  construction, restore and save hooks. It keeps private automatic progress with
-  each native governance instance, including when no automatic mods are enabled.
+- [regulation_change.py](regulation_change.py):
+  `RegulationChangeAdapter` owns the shared construction, restore and save hooks.
+  It keeps private automatic progress with each native manager, including when
+  no automatic mods are enabled.
 - [automatic_progress.py](automatic_progress.py): `AutomaticProgress` checks the
   saved season records and undelivered notices. Bounded data in an unknown or
   invalid format is retained for saving and reported as unavailable for decisions.
-- [native_defaults.py](native_defaults.py): reads built-in category defaults from
-  the game's fixed definition module, including the compound default for the
-  selected pack. It waits for ongoing imports before loading that module, then
+- [regulation_native_defaults.py](regulation_native_defaults.py): reads built-in
+  category defaults from the game's fixed definition module, including the
+  compound default for the selected pack. It waits for ongoing imports before loading that module, then
   returns copied data without constructing a career or installing hooks.
-- [screen.py](screen.py): `RegulationScreenAdapter` appends loaded categories
+- [regulation_screen.py](regulation_screen.py):
+  `RegulationScreenAdapter` appends loaded categories
   missing from the native screen's groups under Additional regulations. It uses
   native cards, selection, option inspection and scrollbars.
-- [native_rule_selection.py](native_rule_selection.py): `NativeRuleSelection`
+- [regulation_selection.py](regulation_selection.py): `RegulationSelection`
   reads an option's boolean using the game's season selector. Offer preparation
   and signing share the proposed season; nested calls restore their previous
   season afterwards. Queries without a date use the native offer-start inference
@@ -149,23 +158,24 @@ rule. A UI compatibility failure leaves validation active and reports through
 the next ordinary command-line/log update. Full cleanup restores the owned
 drawing method; leaving a career keeps it installed.
 
-When custom scripts are present, the shared governance loader merges missing
-scripts into the loaded policy, using the game's own policy validation.
+When custom scripts are present, the shared regulation change adapter merges
+missing scripts into the loaded policy, using the game's own policy validation.
 A matching saved script is kept once; a changed script or category
 reports incompatibility and prevents mod activation. Saved progress remains
 native, including completed and suppressed script IDs. The loaded voting or
-scripted mode is preserved. Script merging uses the shared governance hooks;
-category-only mods add no script work.
+scripted mode is preserved. Script merging uses the shared regulation change
+hooks; category-only mods add no script work.
 
-The bridge observes the normal governance import and installs its three shared
-load/save hooks together. They outlive mod validation and category loading, so
-disabling every mod or losing the shared runner does not discard saved progress.
+The bridge observes the game's change-manager import and installs its three
+shared load/save hooks together. They outlive mod validation and category loading,
+so disabling every mod or losing the shared runner does not discard saved progress.
 Cleanup waits for native loads and saves before restoring these hooks. Cached
 stopped wrappers pass directly to the original game methods.
 
 The optional `mod_automatic_changes` field sits inside the game's existing
-governance save object. It records the last checked season per category and only
-undelivered announcements, retaining their original season and option. Ordinary
+`formula_regulation_governance` save object. It records the last checked season
+per category and only undelivered announcements, retaining their original season
+and option. Ordinary
 native choices, reviews and ballots remain in their existing fields. Missing
 metadata starts empty, and each career has an independent copy. Saving copies
 cached plain data and never calls a mod. Automatic decisions are not enabled.
@@ -176,7 +186,7 @@ Invalid or newer formats are reported and retained when within those bounds.
 Data that cannot be copied safely causes a save error rather than being lost.
 A vanilla game re-save can omit the field because these hooks are then absent.
 
-Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
+Preparation uses `RegulationPolicy` to choose rules. The installed adapters
 keep the prepared option data until removal. Setup reports which connections
 succeeded; the mod checks still need activation. `staffing` coverage requires both
 the joining-team and missing-role wrappers; loading, season rollover and head-of-aero

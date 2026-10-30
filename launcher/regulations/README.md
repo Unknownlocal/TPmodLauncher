@@ -93,18 +93,19 @@ in the game.
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
 
-The converter also checks governance declarations. A custom category's optional
-`change_control` requires `mode: "automatic"`, numeric `base_chance` from 0 to 1,
+The converter also checks declarations for regulation changes. A custom
+category's optional `change_control` requires `mode: "automatic"`, numeric
+`base_chance` from 0 to 1,
 and integer `announcement_week` from 0 to 51, matching the game's week indexes.
 These settings stay separate from native category definitions and form part of
 the owner's revision. `voting` is an array of `rule`/`handler` objects, targeting
 an ordinary native category or one defined by the mod. Each category has one
 declared calculation across all enabled owners. Automatic categories cannot also
 declare voting calculations. Calendar, technical-era and native entry rules are
-excluded because they have separate governance or do not use ordinary voting.
-Voting modules must belong to the declaring mod's checked source.
+excluded because they use separate change procedures or do not use ordinary
+voting. Voting modules must belong to the declaring mod's checked source.
 
-These governance declarations can be prepared and inspected, but runtime binding
+These change declarations can be prepared and inspected, but runtime binding
 currently rejects them with an activation error. They cannot silently become
 active as definition-only mods. Existing declarations without these fields
 continue through normal binding.
@@ -198,8 +199,8 @@ recorded so a cancelled attempt cannot restart from a delayed notice. Retirement
 keeps the connection and handlers, but the next career must publish fresh data
 and confirm coverage again. Native captured-job and ownership checks remain in
 the game process. With no enabled declarations, category loading and validation
-hooks are absent. The bridge's shared governance save/load hooks still preserve
-private progress for disabled rules.
+hooks are absent. The bridge's shared regulation change save/load hooks still
+preserve private progress for disabled rules.
 Setup failures are reported through command-line output and the log. A failed
 validator's native bypasses are restored while its action guards stay unavailable.
 
