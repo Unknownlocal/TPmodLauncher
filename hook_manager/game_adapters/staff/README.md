@@ -27,7 +27,8 @@ mod checks and permission to apply changes.
   `required_prestige` helper without evaluating its formula. Other careers use
   their original helper, and cleanup restores only the wrapper this hook owns.
   This hook leaves other staff restrictions and `bypass_requirements` unchanged.
-  Automatic regulation installation remains disconnected.
+  Trusted setup can supply a boolean query instead. Rule selection belongs to
+  the regulation consumer; this switch only checks the returned boolean.
 
 ## Contract and staffing flow
 

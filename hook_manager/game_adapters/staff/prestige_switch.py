@@ -4,7 +4,6 @@
 from functools import update_wrapper
 
 from ...manager import HookError, Manager
-from ..regulations.regulation_selection import RegulationSelection
 from .targets import staff_prestige_target
 
 
@@ -14,13 +13,14 @@ class StaffPrestigeSwitch(Manager):
     The native helper already returns a nonnegative requirement. Zero removes
     that minimum for its UI, AI and signing consumers. No author code executes
     here; custom refusal conditions still use normal regulation validators.
+    Optional queries are trusted launcher callbacks returning a boolean.
     """
 
     @classmethod
     def create(cls, state, *, enabled=True, report):
         """Keep native behaviour by default; report and skip incompatible helpers."""
-        if type(enabled) is not bool and type(enabled) is not RegulationSelection:
-            raise HookError("Staff prestige check must be a boolean or admitted selection")
+        if type(enabled) is not bool and not callable(enabled):
+            raise HookError("Staff prestige check needs a boolean or trusted query")
         if enabled is True:
             return None  # Native is the default; no wrapper or inspection needed.
         try:
@@ -55,7 +55,10 @@ class StaffPrestigeSwitch(Manager):
             # manager remains open for other groups.
             if (group["state"] == "active" and self is manager and state.staff_manager is manager
                     and manager.state is state):
-                if enabled is False or type(enabled) is RegulationSelection and not enabled.enabled():
+                keep = enabled if type(enabled) is bool else enabled()
+                if type(keep) is not bool:
+                    raise HookError("Staff prestige query must return a boolean")
+                if not keep:
                     return 0
             return original(self, staff)
 

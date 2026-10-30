@@ -255,7 +255,10 @@ class RegulationChannel:
                                                 owner=owner, snapshot=snapshot, regulation=regulation, contexts=contexts))
             if not self.validation_ready or self.closed:
                 raise HookError("Voting career is no longer active")
-            return regulation_votes(result, [row["team"] for row in contexts])
+            result = regulation_votes(result, [row["team"] for row in contexts])
+            if time.monotonic() >= deadline:
+                raise HookError("Voting reply validation exceeded its deadline")
+            return result
         except Exception as error:
             self.close()
             raise HookError("Voting unavailable") from error

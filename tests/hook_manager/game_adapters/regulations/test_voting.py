@@ -153,3 +153,19 @@ def test_save_loading_defers_missing_ballots_until_activation(voting, tmp_path):
             replacement.stop()
     finally:
         changes.stop()
+
+
+def test_complete_reply_cannot_publish_after_its_deadline(voting, monkeypatch):
+    manager, channel, notices, _, _ = voting
+    from hook_manager.game_adapters.regulations import regulation_voting
+    clock = [10.0]
+    monkeypatch.setattr(regulation_voting.time, "monotonic", lambda: clock[0])
+    valid = channel.vote
+    def late(*args, **kwargs):
+        result = valid(*args, **kwargs)
+        clock[0] = kwargs["deadline"]
+        return result
+    channel.vote = late
+    manager._open_review(3, 30)
+    assert not manager.reviews and not manager.category_last_review
+    assert "deadline expired before ballot publication" in notices[0]

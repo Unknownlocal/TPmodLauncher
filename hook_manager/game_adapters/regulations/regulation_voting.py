@@ -168,12 +168,15 @@ class RegulationVotingAdapter(Manager):
                 if contexts:
                     if not self.channel.validation_ready or self.channel.closed:
                         raise HookError("Voting career is unavailable")
+                    deadline = time.monotonic() + 5
+                    if scope["deadline"] is not None:
+                        deadline = min(deadline, scope["deadline"])
                     # Reviews also retain calendar bookkeeping. Only the
                     # supported voting inputs cross into author code.
                     snapshot = {key: values["snapshot"][key] for key in
                                 ("voting_model_version", "season", "teams", "results", "field", "projected_races")}
                     results = self.channel.vote(snapshot, {"key": category, "current": current, "proposed": proposed},
-                                                contexts, deadline=scope["deadline"])
+                                                contexts, deadline=deadline)
                     regulation_votes(results, [row["team"] for row in contexts])
                     if (manager is not self.state.formula_regulation_governance
                             or not self.channel.validation_ready or self.channel.closed
@@ -181,6 +184,8 @@ class RegulationVotingAdapter(Manager):
                             or proposal is not None and (proposal["votes"] != recorded or proposal["status"] != "open"
                                                         or manager.reviews.get(review["id"]) is not review)):
                         raise HookError("Native voting inputs changed during calculation")
+                    if time.monotonic() >= deadline:
+                        raise HookError("Voting deadline expired before ballot publication")
                     groups.update(results)
                 scope["cache"][identity] = groups
             except Exception as error:

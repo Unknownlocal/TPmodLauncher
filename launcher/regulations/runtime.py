@@ -374,7 +374,7 @@ class RegulationRuntime:
                 return "reset"
             if operation == "vote":
                 owner = message["owner"]
-                if (self._voting is None or self._publication is not None or not self._dispatch.ready
+                if (self._voting is None or not self._dispatch.ready
                         or self._dispatch.states.get(owner) != "active"
                         or message["generations"] != {owner: self._dispatch.generation}):
                     raise ValueError("Unavailable or foreign voting owner")

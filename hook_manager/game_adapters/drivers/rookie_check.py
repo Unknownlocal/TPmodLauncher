@@ -5,8 +5,6 @@ from functools import update_wrapper
 import inspect
 
 from ...manager import HookError, Manager
-from ...callables import method_group
-from ..regulations.regulation_selection import RegulationSelection
 from .targets import rookie_check_target
 
 
@@ -25,13 +23,13 @@ def native_rookie_limit(manager):
 
 
 class RookieContractLengthSwitch(Manager):
-    """Own one career's no-cap wrapper using the existing hook journal."""
+    """Own a career's cap switch; trusted callers choose when it applies."""
 
     @classmethod
     def create(cls, state, *, enabled=True, report):
         """Keep native by default; report and skip incompatible game helpers."""
-        if type(enabled) is not bool and type(enabled) is not RegulationSelection:
-            raise HookError("Rookie contract length check must be a boolean or admitted selection")
+        if type(enabled) is not bool and not callable(enabled):
+            raise HookError("Rookie contract length check needs a boolean or trusted query")
         if enabled is True:
             return None  # The default installs nothing and performs no inspection.
         try:
@@ -51,11 +49,6 @@ class RookieContractLengthSwitch(Manager):
             resolved = target.resolve({})
             if resolved is None or not isinstance(self.manager, resolved[0]):
                 raise HookError("Rookie switch needs the loaded native driver manager")
-            if type(enabled) is RegulationSelection:
-                # UI/AI queries have no explicit contract date. Use the same
-                # native start-week inference as ordinary offer scoring.
-                self.start = method_group(self.manager, {"_negotiation_start_week":
-                    "(self, team_name: str, driver: managers.driver.Driver, role: str = 'main') -> int"})["_negotiation_start_week"][0]
             self.approve(target)
             self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
         except Exception:
@@ -64,7 +57,6 @@ class RookieContractLengthSwitch(Manager):
 
     def _wrapper(self, name, binding, target, original, signature):
         state, manager, group, enabled = self.state, self.manager, self.groups[name], self.enabled
-        start = getattr(self, "start", None)
 
         def wrapped(self, team_name, driver, role="main"):
             # None is the game's no-cap result. Skip only this rule; its other
@@ -72,15 +64,11 @@ class RookieContractLengthSwitch(Manager):
             # calls for another career resume the original helper.
             if (group["state"] == "active" and self is manager
                     and state.driver_manager is manager and manager.state is state):
-                if enabled is False:
+                keep = enabled if type(enabled) is bool else enabled(team_name, driver, role)
+                if type(keep) is not bool:
+                    raise HookError("Rookie check query must return a boolean")
+                if not keep:
                     return None
-                if type(enabled) is RegulationSelection:
-                    season = None
-                    if enabled.scoped_season() is None and enabled.varies_by_season():
-                        week = start(self, team_name, driver, role)
-                        season = state.season_no + int(week >= state.next_season_start())
-                    if not enabled.enabled(season):
-                        return None
             return original(self, team_name, driver, role)
 
         update_wrapper(wrapped, original)

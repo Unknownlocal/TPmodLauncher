@@ -24,6 +24,8 @@ the game's signing method still decides whether an allowed proposal succeeds.
 - [rookie_check.py](rookie_check.py): `RookieContractLengthSwitch` can disable the
   native rookie length cap for one career. Missing or true installs nothing;
   false supplies the game's no-cap result. Removal restores the original helper.
+  Trusted setup can supply a boolean query instead. The regulation consumer
+  chooses the applicable contract season; this switch only checks its result.
 
 The planner accounts for current and future seats, reserve cover, loan returns,
 bonus conversion and the status promised within a team. These calculations stay
@@ -47,8 +49,8 @@ team ranking, which only chooses the unused native cap and can initialise live
 engines. The planner does not copy the whole career.
 
 Custom validators can use that boolean with their adopted regulation data to
-enforce their own contract limits. The normal launcher does not activate this
-hook.
+enforce their own contract limits. The launcher connects declared contract
+validators and native switches when preparing the selected career.
 
 Compatibility checks use game method names and the arguments they accept.
 Importing this package installs no hooks or game modules. It contains private

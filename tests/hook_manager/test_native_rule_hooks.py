@@ -52,6 +52,20 @@ def test_default_switches_need_no_hook_or_inspection(native, monkeypatch):
         assert (drivers.formula_rookie_contract_year_limit, staff.required_prestige) == originals
 
 
+def test_native_switch_queries_require_boolean_results(native):
+    state, _, _ = native
+    hooks = [rookie_check.RookieContractLengthSwitch.create(state, enabled=lambda *args: "yes", report=pytest.fail),
+             prestige_switch.StaffPrestigeSwitch.create(state, enabled=lambda: 1, report=pytest.fail)]
+    try:
+        with pytest.raises(HookError, match="return a boolean"):
+            state.driver_manager.formula_rookie_contract_year_limit("Team", object())
+        with pytest.raises(HookError, match="return a boolean"):
+            state.staff_manager.required_prestige(object())
+    finally:
+        for hook in reversed(hooks):
+            hook.stop()
+
+
 def test_switch_keeps_original_applicability_available_and_restores_owned_helper(native):
     state, drivers, staff = native
     original = rookie_check.native_rookie_limit(state.driver_manager)

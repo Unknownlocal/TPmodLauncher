@@ -2,9 +2,23 @@
 """Install the two native check switches from booleans or rule-option references."""
 
 from ...manager import HookError
+from ...callables import method_group
 from ..drivers.rookie_check import RookieContractLengthSwitch
 from ..staff.prestige_switch import StaffPrestigeSwitch
 from .regulation_selection import RegulationSelection
+
+
+def _rookie_query(state, selection):
+    """Infer a query's contract season when no enclosing proposal supplies it."""
+    start = method_group(state.driver_manager, {"_negotiation_start_week":
+        "(self, team_name: str, driver: managers.driver.Driver, role: str = 'main') -> int"})["_negotiation_start_week"][0]
+    def enabled(team_name, driver, role):
+        season = None
+        if selection.scoped_season() is None and selection.varies_by_season():
+            week = start(state.driver_manager, team_name, driver, role)
+            season = state.season_no + int(week >= state.next_season_start())
+        return selection.enabled(season)
+    return enabled
 
 
 def install_regulation_switches(state, values, *, report):
@@ -25,7 +39,16 @@ def install_regulation_switches(state, values, *, report):
                               ("staff_prestige_check", StaffPrestigeSwitch)):
             enabled = values.get(name, True)
             if type(enabled) is dict:
-                enabled = RegulationSelection(state, enabled)
+                selection = RegulationSelection(state, enabled)
+                if name == "rookie_contract_length_check":
+                    try:
+                        enabled = _rookie_query(state, selection)
+                    except Exception as error:
+                        report("REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
+                               + " ".join(str(error).split())[:512] + "; rookie check switch skipped; continuing native game")
+                        continue
+                else:
+                    enabled = selection.enabled
             hook = factory.create(state, enabled=enabled, report=report)
             if hook is not None:
                 hooks.append(hook)
