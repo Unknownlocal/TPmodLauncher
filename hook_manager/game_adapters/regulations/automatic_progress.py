@@ -22,6 +22,8 @@ class AutomaticProgress:
         self.data = {"schema": 1, "categories": {}}
         self.error = None
         self._preservable = not self.present
+        # Count the empty root, schema value and category map once.
+        self._bytes, self._nodes = len('{"schema":1,"categories":{}}'), 3
         if not self.present:
             return
         try:
@@ -43,10 +45,12 @@ class AutomaticProgress:
                     pending.extend((item, depth + 1) for item in value)
                 elif type(value) not in (str, int, float, bool, type(None)):
                     raise HookError("Automatic progress must contain plain JSON values")
-            if len(json.dumps(raw, ensure_ascii=True, allow_nan=False, separators=(",", ":"))) > 1024 * 1024:
+            size = len(json.dumps(raw, ensure_ascii=True, allow_nan=False, separators=(",", ":")))
+            if size > 1024 * 1024:
                 raise HookError("Automatic progress exceeds its 1 MiB limit")
             self.data, self._preservable = deepcopy(raw), True
             self._validate()
+            self._bytes, self._nodes = size, nodes
         except (HookError, ValueError, TypeError, RecursionError) as error:
             self.error = str(error)
 
@@ -82,3 +86,36 @@ class AutomaticProgress:
         if not self._preservable:
             raise HookError("Cannot safely preserve automatic progress: " + self.error)
         return deepcopy(self.data)
+
+    def check_record(self, key, record):
+        """Check room before native staging, measuring only the affected record.
+
+        Loaded progress has already passed format checks. Internal writers keep
+        that shape and update these totals rather than encoding the entire save.
+        """
+        if self.error:
+            raise HookError("Automatic progress is unavailable: " + self.error)
+        records = self.data["categories"]
+        old = records.get(key)
+        if ((old is None and len(records) >= 128)
+                or len(record["pending_announcements"]) > 32):
+            raise HookError("Automatic progress has no room for another category or notice")
+        encode = lambda value: len(json.dumps(value, ensure_ascii=True, allow_nan=False, separators=(",", ":")))
+        size = self._bytes + encode(record)
+        # A record counts its dict, season and list; each notice adds its dict,
+        # season and option. Object keys are excluded, as in the load-time count.
+        nodes = self._nodes + 3 + 3 * len(record["pending_announcements"])
+        if old is None:
+            size += encode(key) + 1 + bool(records)
+        else:
+            size -= encode(old)
+            nodes -= 3 + 3 * len(old["pending_announcements"])
+        if size > 1024 * 1024 or nodes > 32768:
+            raise HookError("Automatic progress exceeds its byte or node limit")
+        return size, nodes
+
+    def store_record(self, key, record):
+        """Retain one checked season and its still-undelivered announcements."""
+        self._bytes, self._nodes = self.check_record(key, record)
+        self.data["categories"][key] = record
+        self.present = True

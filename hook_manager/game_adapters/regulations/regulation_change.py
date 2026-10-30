@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Wrap creation, restoration and saving of the game's regulation change state."""
+"""Keep native rule persistence and prepared weekly decisions together."""
 
 from functools import update_wrapper
 from pathlib import Path
@@ -8,14 +8,15 @@ import threading
 from ...callables import CallableTarget
 from ...manager import HookError, Manager
 from .automatic_progress import AutomaticProgress, FIELD
+from .automatic_changes import AutomaticChanges
 
 
 class RegulationChangeAdapter(Manager):
     """Keep persistence with the bridge, independent of enabled mod execution.
 
-    A category loader may attach while its pack is active. Its script merging
-    shares these wrappers and the same active-operation count. Each native
-    manager owns its own progress, including inactive categories.
+    A category loader may attach while its pack is active. Script merging and
+    category-owned weekly hooks share the same active-operation count. Each
+    native manager owns its own progress, including inactive categories.
     """
 
     def __init__(self, report, completed=()):
@@ -48,10 +49,38 @@ class RegulationChangeAdapter(Manager):
                 vars(owner).get(attribute) is not wrapper for owner, attribute, _, wrapper, _ in group["changes"])):
             raise HookError("Native regulation change load/save hooks are unavailable")
 
-    def _wrapper(self, name, binding, target, original, signature):
+    def install_automatic(self, policies):
+        """Install weekly work for this pack's prepared automatic policies.
+
+        Weekly wrappers belong to the category loader so removing its pack also
+        removes its decisions. Career progress keeps its separate save/load hooks.
+        """
+        self.check()
+        categories = self.categories
+        if categories is None or categories.automatic is not None:
+            raise HookError("Automatic changes need an available category loader")
+        helper = AutomaticChanges(categories, policies, self.report)
+        categories.completed.update(self.completed)
+        bindings = []
+        for method, signature in (("process_week", "(self)"), ("_trigger_candidates", "(self, snapshot)")):
+            target = CallableTarget("regulations.automatic." + method, "managers.formula_regulation_governance",
+                                    ("FormulaRegulationGovernanceManager",), method, signature)
+            if target.resolve(categories.completed) is None:
+                raise HookError("Automatic changes need the loaded weekly regulation methods")
+            categories.approve(target)
+            bindings.append({"target": target.name, "callback": "internal", "phase": "after"})
+        categories.automatic = helper
+        try:
+            categories.install("regulations.automatic", bindings)
+        except BaseException:
+            categories.automatic = None
+            raise
+
+    def _wrapper(self, name, binding, target, original, signature, *, group=None):
         # Keep the native result and exception; only completed calls reach the
         # metadata and script work. Cleanup waits for this whole operation.
-        group, method = self.groups[name], target.attribute
+        # Weekly groups belong to the category loader; persistence uses our group.
+        group, method = self.groups[name] if group is None else group, target.attribute
 
         def wrapped(*args, **kwargs):
             arguments = signature.bind(*args, **kwargs).arguments
@@ -61,6 +90,18 @@ class RegulationChangeAdapter(Manager):
                     return original(*args, **kwargs)
                 self._active += 1
             try:
+                categories = self.categories
+                if method in ("process_week", "_trigger_candidates"):
+                    helper = categories.automatic if categories is not None else None
+                    applicable = (helper is not None and getattr(manager.state, "game_mode", "formula") != "oval"
+                                  and Path(manager.state.data_dir).resolve() == categories.pack)
+                    if method == "_trigger_candidates" and applicable:
+                        return helper.candidates(original, manager, arguments["snapshot"])
+                    result = original(*args, **kwargs)
+                    if applicable:
+                        # Native scripts and approved reviews get their slot first.
+                        helper.process(manager)
+                    return result
                 result = original(*args, **kwargs)
                 # Oval careers do not use these automatic Formula policies.
                 if getattr(manager.state, "game_mode", "formula") == "oval":
@@ -77,12 +118,13 @@ class RegulationChangeAdapter(Manager):
                     if progress.error:
                         self.report("REGULATIONS COMPATIBILITY FAILED automatic progress: " + progress.error
                                     + "; automatic changes unavailable; native regulation changes retained")
-                categories = self.categories
                 if categories is not None:
                     try:
-                        if (Path(manager.state.data_dir).resolve() == categories.pack
-                                and categories.scripts is not None):
-                            categories.scripts.merge(manager)
+                        if Path(manager.state.data_dir).resolve() == categories.pack:
+                            if categories.scripts is not None:
+                                categories.scripts.merge(manager)
+                            else:
+                                manager.definitions = categories.merge_definitions(manager.definitions)
                     except Exception as error:
                         categories._report(error)
                 return result

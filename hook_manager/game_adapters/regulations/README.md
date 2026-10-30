@@ -66,6 +66,13 @@ wrappers; development-project integration has its own compatibility checks.
 - [automatic_progress.py](automatic_progress.py): `AutomaticProgress` checks the
   saved season records and undelivered notices. Bounded data in an unknown or
   invalid format is retained for saving and reported as unavailable for decisions.
+- [automatic_changes.py](automatic_changes.py): `AutomaticChanges` uses prepared
+  chance and week settings to choose changes once per category and season. Each
+  rule has its own repeatable draw, leaving the game's random sequence alone.
+  Automatic categories are excluded before native voting quotas are filled.
+  Native scripts and approved changes keep their slot. The game records chosen
+  options for next season; the helper records the checked season and the notice
+  awaiting delivery.
 - [regulation_native_defaults.py](regulation_native_defaults.py): reads built-in
   category defaults from the game's fixed definition module, including the
   compound default for the selected pack. It waits for ongoing imports before loading that module, then
@@ -158,6 +165,9 @@ rule. A UI compatibility failure leaves validation active and reports through
 the next ordinary command-line/log update. Full cleanup restores the owned
 drawing method; leaving a career keeps it installed.
 
+On creation or restoration, enabled categories are checked against saved
+definitions. Missing categories are added; differing saved definitions are
+reported rather than replaced. Existing rule choices are kept.
 When custom scripts are present, the shared regulation change adapter merges
 missing scripts into the loaded policy, using the game's own policy validation.
 A matching saved script is kept once; a changed script or category
@@ -175,10 +185,16 @@ stopped wrappers pass directly to the original game methods.
 The optional `mod_automatic_changes` field sits inside the game's existing
 `formula_regulation_governance` save object. It records the last checked season
 per category and only undelivered announcements, retaining their original season
-and option. Ordinary
-native choices, reviews and ballots remain in their existing fields. Missing
+and option. Ordinary native choices, reviews and ballots remain in their existing fields. Missing
 metadata starts empty, and each career has an independent copy. Saving copies
-cached plain data and never calls a mod. Automatic decisions are not enabled.
+cached plain data and never calls a mod. Prepared weekly hooks belong to the
+category loader and are removed with it; shared persistence stays installed.
+They check room before staging and recover a completed native decision by its
+saved identity, even if native staging finishes and then raises an error.
+Inconsistent saved records are reported without repeating staging.
+Updating progress measures the changed
+record rather than encoding all saved progress. Author-declared automatic
+changes remain unavailable for activation, and notices are not delivered.
 
 The private field is limited to 1 MiB, eight levels below its root and 32,768 values.
 The supported format permits 128 categories and 32 pending notices per category.

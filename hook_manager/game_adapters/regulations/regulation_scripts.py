@@ -30,15 +30,7 @@ class RegulationScripts:
 
     def merge(self, manager):
         """Build a complete checked policy before replacing either native field."""
-        definitions = dict(manager.definitions)
-        # A save freezes its category list. Fill gaps for newly enabled rules,
-        # but report changed saved definitions instead of silently replacing them.
-        for key, category in self.categories.categories.items():
-            if key in definitions:
-                if definitions[key] != category:
-                    raise HookError("Saved mod category differs from its prepared definition: " + key)
-            else:
-                definitions[key] = deepcopy(category)
+        definitions = self.categories.merge_definitions(manager.definitions)
         rows = list(manager.policy["scripted_changes"])
         existing = {row["id"]: row for row in rows}
         # Native completion/suppression records use these IDs. Keep matching

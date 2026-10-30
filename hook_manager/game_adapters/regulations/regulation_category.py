@@ -26,7 +26,7 @@ class RegulationCategoryAdapter(Manager):
         if regulation_changes.categories is not None:
             raise HookError("Regulation change adapter already owns a category loader")
         self.regulation_changes, self._lock = regulation_changes, regulation_changes._lock
-        self.scripts = None
+        self.scripts, self.automatic = None, None
         if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes"}
                 or not {"pack", "categories"} <= request.keys()
                 or type(request["pack"]) is not str or not Path(request["pack"]).is_absolute()
@@ -69,6 +69,16 @@ class RegulationCategoryAdapter(Manager):
         if self.scripts is not None:
             self.scripts.check(state)
 
+    def merge_definitions(self, saved):
+        """Add newly enabled categories without replacing differing saved rules."""
+        definitions = dict(saved)
+        for key, category in self.categories.items():
+            if key in definitions and definitions[key] != category:
+                raise HookError("Saved mod category differs from its prepared definition: " + key)
+            if key not in definitions:
+                definitions[key] = deepcopy(category)
+        return definitions
+
     def stop(self):
         """Detach prepared declarations while retaining shared save/load handling."""
         if self.regulation_changes.categories is self:
@@ -82,6 +92,9 @@ class RegulationCategoryAdapter(Manager):
 
     def _wrapper(self, name, binding, target, original, signature):
         """Keep native loading first, then add this pack's checked category copies."""
+        if name == "regulations.automatic":
+            return self.regulation_changes._wrapper(name, binding, target, original, signature,
+                                                    group=self.groups[name])
         group = self.groups[name]
 
         def wrapped(manager):
