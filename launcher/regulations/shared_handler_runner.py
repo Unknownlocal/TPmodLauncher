@@ -23,12 +23,13 @@ def ordered_bindings(validators):
 class SharedHandlerRunner:
     """Keep original owner/validator IDs while the group owns execution and closure."""
 
-    def __init__(self, runner, validators):
-        self.runner, self.validators = runner, validators
+    def __init__(self, runner, validators, voting):
+        self.runner, self.validators, self.voting = runner, validators, voting
         self._claimed = False
+        self._vote_action = 0
 
     @classmethod
-    def bind(cls, runner, validators):
+    def bind(cls, runner, validators, *, voting=None):
         """Admit all tables before policy setup freezes the group's bindings.
 
         Source activation is checked again inside the guest. No function paths
@@ -39,26 +40,43 @@ class SharedHandlerRunner:
                 raise SandboxError("Expected an admitted shared Python runner")
             if getattr(runner, "_regulation_handlers", None) is not None:
                 raise ValueError("Shared regulation handlers must bind once per runner")
-            if type(validators) is not dict or not validators or not validators.keys() <= runner.manifests.keys():
+            voting = {} if voting is None else voting
+            if (type(validators) is not dict or type(voting) is not dict or not (validators or voting)
+                    or not (validators.keys() | voting.keys()) <= runner.manifests.keys()):
                 raise ValueError("Expected admitted shared regulation owners")
-            tables = {}
-            for owner in sorted(validators):
+            tables, votes, claimed = {}, {}, set()
+            for owner in sorted(validators.keys() | voting.keys()):
                 manifest = runner.manifests[owner]
                 if manifest.api != "0.4.0" or "regulations" not in manifest.capabilities:
                     raise SandboxError("Expected an admitted regulation source owner")
-                tables[owner] = ordered_bindings(validators[owner])
-                if not tables[owner]:
-                    raise ValueError("Shared regulation owners need at least one validator")
+                if owner in validators:
+                    table = ordered_bindings(validators[owner])
+                    if table:
+                        tables[owner] = table
+                rows = voting.get(owner, [])
+                if type(rows) is not list or len(rows) > 32:
+                    raise ValueError("Invalid voting binding count")
+                table = {}
+                for row in sorted(rows, key=lambda row: row["rule"]):
+                    fields(row, ("rule", "handler"))
+                    if row["rule"] in claimed:
+                        raise ValueError("Conflicting voting category")
+                    claimed.add(row["rule"])
+                    table[row["rule"]] = len(table), {"kind": "voting", **row}
+                if table:
+                    votes[owner] = table
+                if owner not in tables and owner not in votes:
+                    raise ValueError("Shared regulation owners need at least one handler")
             # Each owner retains its source-import allowance. Binding a larger
             # pack must not quietly reduce every mod's admitted startup budget.
-            for owner, table in tables.items():
+            for owner in sorted(tables.keys() | votes.keys()):
                 with runner.sandbox.phase(fuel=SOURCE_FUEL, seconds=SOURCE_SECONDS):
-                    for index, declaration in table.values():
+                    for index, declaration in (*tables.get(owner, {}).values(), *votes.get(owner, {}).values()):
                         error = runner.sandbox.call("bind-source-regulation", index,
                                                     encode({"owner": owner, **declaration}))
                         if error:
                             raise SandboxError((f"Regulation binding failed for {owner}: " + error)[:512])
-            binding = cls(runner, tables)
+            binding = cls(runner, tables, votes)
             # One physical Store cannot host independent catalogs/action IDs
             # through separate binding wrappers, even for disjoint owner sets.
             runner._regulation_handlers = binding

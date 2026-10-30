@@ -42,4 +42,11 @@ world code-runner {
     export seal-regulation-action: func() -> string;
     export prepare-regulation-slots: func(action: u64) -> string;
     export validate-resident-regulation: func(action: u64, slot: u32) -> string;
+    // Voting shares the Store and transfer machinery, not validation decisions.
+    export begin-regulation-vote: func(action: u64, bytes: u32, first: string) -> string;
+    export put-regulation-vote: func(chunk: string);
+    export seal-regulation-vote: func() -> string;
+    export prepare-regulation-vote: func(action: u64, slot: u32) -> string;
+    export evaluate-regulation-vote: func(action: u64, slot: u32) -> string;
+    export finish-regulation-vote: func(action: u64);
 }

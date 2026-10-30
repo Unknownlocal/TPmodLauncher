@@ -16,11 +16,13 @@ class RegulationHandlers:
         self._sealed = False
         self.owner, self.namespace = owner, namespace
 
-    def bind(self, index, text):
+    def bind(self, index, text, *, voting=False):
         if self._sealed or type(index) is not int or index != len(self._handlers) or index >= 32:
             raise ValueError("Invalid or repeated regulation binding")
         data = decode(text)
-        fields(data, ("handler", "rule", "scope", "owner"))
+        fields(data, ("handler", "rule", "kind", "owner") if voting else ("handler", "rule", "scope", "owner"))
+        if voting and data["kind"] != "voting":
+            raise ValueError("Invalid voting binding kind")
         if any(type(value) is not str or not value for value in data.values()):
             raise ValueError("Invalid regulation binding names")
         if len(data["owner"]) > 128 or self.owner != data["owner"]:
@@ -46,7 +48,7 @@ class RegulationHandlers:
                 or function.__code__.co_argcount != 2 or function.__code__.co_kwonlyargcount
                 or function.__code__.co_flags & (4 | 8 | 32 | 128 | 512)):
             raise ValueError("Handler must be an owned synchronous two-argument function")
-        self._handlers.append((function, data["scope"], data["rule"]))
+        self._handlers.append((function, "voting" if voting else data["scope"], data["rule"]))
 
     def seal(self):
         """Freeze admitted bindings before the first resident policy is installed."""

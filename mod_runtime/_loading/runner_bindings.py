@@ -108,3 +108,21 @@ class RunnerBindings(_bindings.RunnerBindings):
 
     def reset_regulation_group(self, epoch):
         return _encode_regulation(_shared_call("reset", epoch))
+
+    def begin_regulation_vote(self, action, bytes, first):
+        return _encode_regulation(_shared_call("begin_vote", action, bytes, first))
+
+    def put_regulation_vote(self, chunk):
+        _shared_call("put", "vote", chunk)
+
+    def seal_regulation_vote(self):
+        return _encode_regulation(_shared_call("seal_vote"))
+
+    def prepare_regulation_vote(self, action, slot):
+        return _encode_regulation(_shared_call("prepare_vote", action, slot))
+
+    def evaluate_regulation_vote(self, action, slot):
+        return _encode_regulation(_shared_call("evaluate_vote", action, slot))
+
+    def finish_regulation_vote(self, action):
+        _shared_call("finish_vote", action)

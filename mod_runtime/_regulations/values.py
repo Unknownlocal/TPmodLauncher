@@ -44,11 +44,12 @@ def scalar(value):
     return len(encode(value).encode("utf-8")), 1, 0, work
 
 
-def measure(value, *, encoded=None, limited=False):
+def measure(value, *, encoded=None, limited=False, limits=(_MAX_BYTES, _MAX_NODES, _MAX_DEPTH)):
     """Measure JSON, optionally stopping at the per-invocation size limits.
 
     Admission uses limited=True to reject excess nodes or nesting before encoding.
     Larger transfer tables use the same measurements without invocation limits.
+    Signing uses the default bounds; voting supplies its larger bounds explicitly.
     """
     # Metric order: UTF-8 bytes, value nodes, container depth, integer work.
     # Object keys contribute bytes, while only values/containers contribute nodes.
@@ -59,7 +60,7 @@ def measure(value, *, encoded=None, limited=False):
         nodes += 1
         kind = type(item)
         # depth counts enclosing containers; another container adds one level.
-        if limited and (nodes > _MAX_NODES or depth >= _MAX_DEPTH and kind in (dict, list)):
+        if limited and (nodes > limits[1] or depth >= limits[2] and kind in (dict, list)):
             raise ValueError("Resident invocation exceeds byte/node/depth limits")
         if kind is dict:
             depth += 1
@@ -92,7 +93,7 @@ def measure(value, *, encoded=None, limited=False):
     # Trusted host preparation can retain the encoding it just made. Guest
     # verification always omits this argument and measures received values itself.
     metric = len((encode(value) if encoded is None else encoded).encode("utf-8")), nodes, deepest, work
-    return bounded(metric) if limited else metric
+    return bounded(metric, limits=limits) if limited else metric
 
 
 def array_measure(metrics):
@@ -113,10 +114,10 @@ def object_measure(pairs):
             sum(metric[3] for _, metric in pairs))
 
 
-def bounded(metric):
+def bounded(metric, *, limits=(_MAX_BYTES, _MAX_NODES, _MAX_DEPTH)):
     # These are per-record/expanded-invocation limits, not a regulations.json or
     # complete multi-call packet size limit.
-    if metric[0] > _MAX_BYTES or metric[1] > _MAX_NODES or metric[2] > _MAX_DEPTH:
+    if metric[0] > limits[0] or metric[1] > limits[1] or metric[2] > limits[2]:
         raise ValueError("Resident invocation exceeds byte/node/depth limits")
     return metric
 

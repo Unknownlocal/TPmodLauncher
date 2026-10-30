@@ -113,6 +113,20 @@ remain rejected during runtime binding and cannot become active as
 definition-only mods. Existing declarations without these fields
 continue through normal binding.
 
+The private execution layer can bind voting functions through
+`SharedHandlerRunner`, including owners with no validators. `VotingRunner`
+transfers one snapshot per proposal and returns all team results only after
+every call succeeds. Voting has separate tables and choice/reason checks, so
+it cannot return a validation allowance or alter signing limits. Each author
+call receives fresh dictionaries with team, review/proposal IDs, decision and
+effective seasons, seed, frozen snapshot and native evaluation. The second
+argument supplies the rule key and current/proposed option objects. Results
+contain exactly `choice` (`current` or `proposed`) and a nonblank reason limited
+to 2,048 UTF-8 bytes. Native scores/components remain input data.
+The snapshot allowance is 64 KiB/8,192 values; up to 64 controlling teams share
+one bounded batch. Any handler failure closes the shared runner without returning
+earlier results. This execution support does not enable native voting integration.
+
 Checked native switches form part of rule revisions. After career publication,
 the runtime supplies checked booleans or option references to installation.
 Each switch must report `native` for true, `disabled` for false or `regulated`

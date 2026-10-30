@@ -129,7 +129,8 @@ tables organise routing rather than isolate mods from their peers. Calls cannot
 select providers outside the admitted group or arbitrary launcher functions.
 
 Optional absolute request deadlines bound the existing execution allowance.
-Requests already expired before entry leave the group usable. A guest or host
+Activation and event requests already expired before entry leave the group usable.
+A guest or host
 operation that exceeds its allowance closes the group; a late host return cannot
 be accepted as success. The Store's existing fuel, memory and host-call limits
 remain in force.
@@ -147,7 +148,8 @@ operations. JSON declarations select ordinary Python functions; the resident
 exports remain private, add no host calls and bypass lifecycle event dispatch.
 A matching built bundle is required whenever its trusted guest sources change.
 
-Handler bindings become fixed when resident setup begins. Each owner keeps checked
+Handler bindings become fixed when resident setup or the first voting batch begins.
+Each owner keeps checked
 regulation data in memory across actions. Each career's complete install is staged
 and checked before commit makes it active. Generations and action IDs reject
 stale requests.
@@ -165,11 +167,13 @@ Invalid operations disable the affected resident state.
 | `group.py` | Own the complete install, mod calls, shared inputs and career reset |
 | `contexts.py` | Check the single shared proposal and its slot-zero reference |
 | `policy.py` and `values.py` | Check shared field rules and calculate resource bounds |
+| `voting.py` | Check separate voting inputs and choice/reason replies |
+| `votes.py` | Retain one voting snapshot and prepare independent team arguments |
 
 Each handler receives its own ordinary dictionaries and lists. Stable regulation
 records are not encoded or decoded again for every check. Preparing a group of
 up to four invocations has a separate allowance; each handler keeps its own
-5 million fuel / 64 host-call allowance. Every phase shares the original 100 ms
+5 million fuel / 64 host-call allowance. Every validation phase shares the original 100 ms
 action deadline. Framework storage and cleanup count towards their relevant budgets.
 Trusted launcher adapters own publication across mods and native readiness.
 
@@ -195,6 +199,17 @@ handler allowances. Completion checks that no calls remain and the proposal
 was used. Reset clears career data while retaining bindings and the last action
 ID. Failed operations make the whole group unavailable. These private operations
 are separate from lifecycle events and expose no generic callable API.
+
+Voting uses separate private operations and handler tables, including owners
+with no validators. A batch transfers one frozen snapshot and its proposed rule,
+then prepares fresh arguments for each controlling team. The snapshot is limited
+to 64 KiB and 8,192 values; a batch admits up to 64 team calculations within
+384 KiB. Signing keeps its existing 4 KiB limit. Each voting handler receives
+5 million fuel, one second and 64 host calls. Preparation has a separate allowance;
+the whole batch also has a cap of five seconds, shortened by its caller's deadline.
+Only `choice` (`current` or `proposed`) and a nonblank reason of at most 2,048
+UTF-8 bytes are accepted. A failed handler or unfinished batch closes the shared
+runner; the host returns no partial results. Native voting activation is blocked.
 
 `ValidationDispatch` connects shared bindings to publication and execution through
 `launcher/regulations/validation/group.py`. Mod calls run one at a time against

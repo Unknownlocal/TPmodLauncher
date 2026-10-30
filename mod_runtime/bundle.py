@@ -41,6 +41,12 @@ EXPORTS = MappingProxyType({
     "seal-regulation-action": ((), "string"),
     "prepare-regulation-slots": (("u64",), "string"),
     "validate-resident-regulation": (("u64", "u32"), "string"),
+    "begin-regulation-vote": (("u64", "u32", "string"), "string"),
+    "put-regulation-vote": (("string",), None),
+    "seal-regulation-vote": ((), "string"),
+    "prepare-regulation-vote": (("u64", "u32"), "string"),
+    "evaluate-regulation-vote": (("u64", "u32"), "string"),
+    "finish-regulation-vote": (("u64",), None),
 })
 SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
            "source/_loading/__init__.py", "source/_loading/author_world.py",
@@ -52,7 +58,7 @@ SOURCES = ("source/runner.wit", "source/guest.py", "source/_source_policy.py",
            "source/_regulations/group.py", "source/_regulations/contexts.py",
            "source/_regulations/transfer.py", "source/_regulations/catalog.py",
            "source/_regulations/action.py", "source/_regulations/view.py",
-           "source/_regulations/frozen.py")
+           "source/_regulations/frozen.py", "source/_regulations/voting.py", "source/_regulations/votes.py")
 NOTICE_FILES = (
     "notices/LICENCE.Project.txt",
     "notices/LICENSE.ComponentizePy.txt",

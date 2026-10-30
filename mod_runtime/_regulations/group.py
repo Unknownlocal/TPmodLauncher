@@ -8,6 +8,8 @@ from .handlers import RegulationHandlers
 from .policy import decode, decision
 from .transfer import RegulationTransfer
 from .values import integer, loads, text
+from .votes import RegulationVotes
+from .voting import PACKET_LIMITS, vote_result
 
 
 class RegulationGroup:
@@ -24,6 +26,8 @@ class RegulationGroup:
         self.epoch = self.generation = self.last_action = 0
         self.failed = self.sealed = self.staged_ready = False
         self._action_owners = set()
+        # Each operation kind keeps its sequence; votes do not consume signing IDs.
+        self.voting_handlers, self.votes, self.last_vote = {}, None, 0
 
     def check(self):
         if self.failed or self.sources.failed:
@@ -32,19 +36,23 @@ class RegulationGroup:
     def fail(self):
         self.failed = True
         self.active = self.staged = self.transfer = self.contexts = self.action = None
+        self.votes = None
         self._action_owners.clear()
 
     def bind(self, index, declaration):
         self.check()
         if self.sealed:
             raise ValueError("Shared regulation bindings are sealed")
-        owner = decode(declaration)["owner"]
+        data = decode(declaration)
+        owner = data["owner"]
         loader = self.sources._owner(owner)
         if not loader.activated:
             raise ValueError("Activate before binding shared regulation handlers")
-        if owner not in self.handlers:
-            self.handlers[owner] = RegulationHandlers(loader.sources, owner=owner, namespace=loader.namespace)
-        self.handlers[owner].bind(index, declaration)
+        voting = data.get("kind") == "voting"
+        table = self.voting_handlers if voting else self.handlers
+        if owner not in table:
+            table[owner] = RegulationHandlers(loader.sources, owner=owner, namespace=loader.namespace)
+        table[owner].bind(index, declaration, voting=voting)
 
     def ack(self, state):
         return {"epoch": self.epoch, "generation": self.generation, "state": state}
@@ -57,7 +65,8 @@ class RegulationGroup:
         # be anchored to at least one admitted source handler.
         if not self.handlers:
             raise ValueError("Bind regulation owners before policy transfer")
-        if self.active is not None or self.action is not None or self.transfer is not None or self.staged is not None:
+        if (self.active is not None or self.action is not None or self.transfer is not None
+                or self.staged is not None or self.votes is not None):
             raise ValueError("Reset before installing another resident policy")
         if self.epoch not in (0, epoch) or generation <= self.generation:
             raise ValueError("Stale resident policy")
@@ -148,7 +157,8 @@ class RegulationGroup:
     def begin_contexts(self, action, proposal):
         self.check()
         integer(action, 64, positive=True)
-        if not self.sealed or action <= self.last_action or self.transfer is not None or self.contexts is not None:
+        if (not self.sealed or action <= self.last_action or self.transfer is not None
+                or self.contexts is not None or self.votes is not None):
             raise ValueError("Stale or busy shared regulation action")
         if self.active is None or self.staged is not None or self.action is not None:
             raise ValueError("Shared regulation policy is not current")
@@ -220,7 +230,51 @@ class RegulationGroup:
         if not self.sealed or epoch <= self.epoch:
             raise ValueError("Stale or unbound regulation career reset")
         self.active = self.staged = self.transfer = self.contexts = self.action = None
+        self.votes = None
         self.epoch, self.generation, self.staged_ready = epoch, 0, False
         self._action_owners.clear()
         # Bindings/revisions and the last action ID survive to reject old work.
         return self.ack("reset")
+
+    def begin_vote(self, action, length, first):
+        """Receive one proposal without requiring a signing catalogue."""
+        self.check()
+        integer(action, 64, positive=True)
+        if (action <= self.last_vote or self.votes is not None or self.transfer is not None
+                or self.contexts is not None or self.action is not None or self.staged is not None):
+            raise ValueError("Stale or busy voting batch")
+        if not self.voting_handlers or integer(length, positive=True) > PACKET_LIMITS[0]:
+            raise ValueError("Missing voting bindings or oversized voting packet")
+        # Seal both kinds together: later policy installation cannot introduce
+        # new callbacks after a voting-only owner has already executed.
+        self.sealed = True
+        for handler in (*self.handlers.values(), *self.voting_handlers.values()):
+            handler.seal()
+        self.last_vote = action
+        self.transfer = RegulationTransfer("vote", length)
+        self.transfer.put(first)
+        return self.seal_vote() if self.transfer.remaining == 0 else {"action": action, "calls": 0}
+
+    def seal_vote(self):
+        self.votes = RegulationVotes(loads(self.finish("vote")), self.voting_handlers)
+        return {"action": self.last_vote, "calls": len(self.votes.contexts)}
+
+    def _vote(self, action):
+        """Require the current batch before preparing, executing or finishing it."""
+        self.check()
+        if integer(action, 64, positive=True) != self.last_vote or self.votes is None or self.transfer is not None:
+            raise ValueError("Unknown voting batch")
+        return self.votes
+
+    def prepare_vote(self, action, slot):
+        self._vote(action).prepare(slot)
+        return {"action": action, "slot": slot}
+
+    def evaluate_vote(self, action, slot):
+        batch = self._vote(action)
+        context, rule = batch.take(slot)
+        return {"action": action, "slot": slot, "result": vote_result(batch.function(context, rule))}
+
+    def finish_vote(self, action):
+        self._vote(action).finish()
+        self.votes = None
