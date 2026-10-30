@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from collections import deque
 from contextlib import ExitStack
+from pathlib import Path
 from types import ModuleType
 
 if __package__:
@@ -86,6 +87,12 @@ class AdapterModules:
             raise HookError("Career preloading needs an unused adapter installation")
         try:
             if definitions is not None:
+                if type(definitions) is not dict:
+                    raise HookError("Expected prepared regulation declarations")
+                definitions = dict(definitions)
+                voting = definitions.pop("voting", False)
+                if type(voting) is not bool:
+                    raise HookError("Invalid voting preparation flag")
                 self.load()
                 if self.state != "loaded":
                     raise HookError(self.error or "Adapter modules are not loaded")
@@ -93,9 +100,14 @@ class AdapterModules:
                 self.start_regulation_changes()
                 if self.regulation_changes is None:
                     raise HookError("Native regulation change load/save integration is unavailable")
-                self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
-                screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
-                self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append, self.categories)
+                if voting:
+                    self.regulation_changes.defer_voting(definitions.get("pack"))
+                if definitions.get("categories"):
+                    self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
+                    screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
+                    self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append, self.categories)
+                elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
+                    raise HookError("Expected prepared categories or voting protection")
             self.preload = CareerPreload(self._career_left)
         except BaseException:
             self.stop_regulations()
@@ -284,8 +296,13 @@ class AdapterModules:
                         if any(vars(owner).get(attribute) is not installed
                                for owner, attribute, _, installed, _ in row["changes"]):
                             raise HookError("Another owner replaced a regulation hook")
+                self._check_voting_preload(policy.state, channel)
                 self.preload.allow(policy.state)
                 channel.validation_ready = True
+                for hook in self.regulations:
+                    resume = getattr(hook, "resume", None)
+                    if resume is not None:
+                        resume()
             return True
         except Exception as error:
             # Block new wrapped attempts before trying to restore the group.
@@ -357,6 +374,11 @@ class AdapterModules:
             if project is not None:
                 self.regulations.append(project)
             self.coverage["development_projects"] = project is not None
+            self._check_voting_preload(state, channel)
+            voting = adapters.regulation_voting.RegulationVotingAdapter.create(state, channel, self.regulation_notices.append)
+            if voting is not None:
+                self.regulations.append(voting)
+                self.coverage["regulation_voting"] = True
             groups = {name for hook in self.regulations for name, row in hook.groups.items() if row["state"] == "active"}
             # A requested bypass is "disabled" only if its wrapper installed.
             # "skipped" means compatibility checks left that native rule intact.
@@ -381,6 +403,13 @@ class AdapterModules:
             self.stop_regulations()
             raise
 
+    def _check_voting_preload(self, state, channel):
+        """Do not approve voting after unprotected native save loading."""
+        if getattr(channel, "voting", {}):
+            if self.regulation_changes is None or self.regulation_changes.voting_pack != Path(state.data_dir).resolve():
+                raise HookError("Voting needs this pack's native loading protection")
+            self.regulation_changes.check()
+
     def stop_regulations(self, *, retain=False):
         """Restore owned hooks only when no admitted operation still needs them.
 
@@ -399,7 +428,9 @@ class AdapterModules:
             # Retiring keeps category hooks, but must still wait for their
             # weekly decisions and persistence work before changing careers.
             for hook in [*hooks, *([self.categories] if retain and self.categories is not None
-                                   and self.categories.automatic is not None else [])]:
+                                   and self.categories.automatic is not None else []),
+                         *([self.regulation_changes] if self.regulation_changes is not None
+                           and self.regulation_changes.voting_pack is not None else [])]:
                 lock = getattr(hook, "_lock", None)
                 if lock is not None:
                     if not lock.acquire(blocking=False):
@@ -412,6 +443,8 @@ class AdapterModules:
             if not retain:
                 self.categories = None
                 self.regulation_screen = None
+                if self.regulation_changes is not None:
+                    self.regulation_changes.defer_voting(None)
             if self.channel is not None and not retain:
                 self.channel.close()
             self.regulations.clear()

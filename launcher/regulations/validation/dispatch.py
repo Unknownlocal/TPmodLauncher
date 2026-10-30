@@ -18,8 +18,9 @@ class ValidationDispatch:
     def __init__(self, definitions, handler=None, *, epoch=1):
         self.epoch = integer(epoch, 64, positive=True)
         self.catalog = CombinedCatalog(definitions)
+        self.handler = handler
         self.group = None
-        if self.catalog.owners:
+        if self.catalog.owners or definitions.voting or handler is not None:
             if (type(handler) is not SharedHandlerRunner
                     or getattr(handler.runner, "_regulation_handlers", None) is not handler
                     or handler.validators.keys() != self.catalog.owners.keys()):
@@ -28,11 +29,12 @@ class ValidationDispatch:
             # dispatcher must not attach a competing catalogue to that state.
             if handler._claimed:
                 raise ValueError("Resident handler already belongs to a dispatcher")
-            self.group = ValidationGroup(handler)
+            if not self.catalog.owners and not handler.voting:
+                raise ValueError("Definition-only rules need no execution handler")
+            if self.catalog.owners:
+                self.group = ValidationGroup(handler)
             handler._claimed = True
-        elif handler is not None:
-            raise ValueError("Definition-only rules need no execution handler")
-        self.states = dict.fromkeys(self.catalog.owners, "pending")
+        self.states = dict.fromkeys((*self.catalog.owners, *definitions.voting), "pending")
         self.generation, self.action = 0, 0
         self._thread, self._busy = threading.get_ident(), False
 
@@ -46,14 +48,14 @@ class ValidationDispatch:
         # All mods share this interpreter, including peers omitted from a call.
         # A failed action or update cannot leave part of its state usable.
         self.states = dict.fromkeys(self.states, "unavailable")
-        if self.group is not None:
-            self.group.handler.runner.close()
+        if self.handler is not None:
+            self.handler.runner.close()
 
     @property
     def ready(self):
         return (self.catalog.native_values_ready
                 and all(state == "active" for state in self.states.values())
-                and (self.group is None or not self.group.handler.runner.closed))
+                and (self.handler is None or not self.handler.runner.closed))
 
     def native_rules(self, *, epoch, generation):
         """Prepare fixed switches for native setup, using this dispatcher's identity.
@@ -80,7 +82,7 @@ class ValidationDispatch:
             native, custom = {} if native is None else native, {} if custom is None else custom
             self.catalog.check_publication(native, custom)
             affected = self.states
-            if any(state == "unavailable" for state in self.states.values()) or (self.group is not None and self.group.handler.runner.closed):
+            if any(state == "unavailable" for state in self.states.values()) or (self.handler is not None and self.handler.runner.closed):
                 raise RuntimeError("A required resident owner is unavailable")
             self.generation = integer(self.generation + 1, 64, positive=True)
             limit = started + 1 + 5 * len(affected)
@@ -102,7 +104,7 @@ class ValidationDispatch:
                 raise RuntimeError("Late resident publication")
             for owner in affected:
                 self.states[owner] = "active"
-            return dict.fromkeys(views, self.generation)
+            return dict.fromkeys(self.states, self.generation)
         except BaseException:
             self.catalog.abort()
             self._fail()
@@ -151,7 +153,7 @@ class ValidationDispatch:
                 raise ValueError("Resident career epoch must increase")
             limit = time.monotonic() + 1 + 5 * len(self.states)
             deadline = limit if deadline is None else min(limit, deadline)
-            if any(state == "unavailable" for state in self.states.values()) or (self.group is not None and self.group.handler.runner.closed):
+            if any(state == "unavailable" for state in self.states.values()) or (self.handler is not None and self.handler.runner.closed):
                 raise RuntimeError("Reset cannot revive a failed resident owner")
             self.states = dict.fromkeys(self.states, "dirty")
             if self.group is not None:

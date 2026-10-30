@@ -256,9 +256,33 @@ An owned category can change automatically without team voting. Add:
 The chance ranges from 0 to 1 and is checked once per season. The week is the
 game's stored index, from 0 to 51 (displayed as weeks 1 to 52). A selected
 alternative takes effect next season and is announced through the game's inbox.
-Existing scripted or approved changes
-take priority. No Python voting function is needed; validators still enforce the
-selected option. Custom voting functions are not available for activation.
+Existing scripted or approved changes take priority. No Python voting function
+is needed; validators still enforce the selected option.
+
+To replace teams' voting calculations, add a `voting` entry to the mod's section:
+
+```json
+"voting": [{"rule": "example.rules.policy", "handler": "rules.vote"}]
+```
+
+The owned Python function receives `(context, regulation)` and returns
+`{"choice": "current", "reason": "Keep the existing rule."}` or the same shape
+with `"choice": "proposed"`. It can target its own categories or explicitly named
+ordinary native categories. Calendar, technical-era and entry-limit categories
+are excluded. Two mods cannot replace calculations for the same category.
+
+`context` includes the controlling `team`, frozen voting `snapshot`, original
+`native` evaluation, decision/effective seasons, a repeatable `seed`, and IDs for
+the review and proposal. Compare these IDs without relying on their format.
+`regulation` contains `key`, `current` and `proposed`
+options; each option's `option_data` comes from that mod's declarations. A reason
+must be nonblank and at most 2,048 UTF-8 bytes. Calculations have a five-second
+batch limit, with one second and five million fuel per team. Failure prevents
+partial results from being recorded and makes the shared runner unavailable.
+
+The game still chooses voters, records player ballots, counts votes and saves
+reviews. The function supplies player analysis without casting the player's vote.
+Saved ballots are reused; missing ballots use the review's saved electorate.
 
 A `validators` entry names a rule, a supported scope and a Python function:
 
@@ -319,9 +343,9 @@ rookie length restriction, native limits, or a mod-enforced four-year limit.
 Other native refusals still apply. Saved accepted contracts take effect normally
 without another mod check.
 
-The pack file is limited to 1 MiB. Each complete context-plus-rule argument is
-limited to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels; checks share
-one 100 ms action deadline. Native rule choices stay in memory between checks.
+The pack file is limited to 1 MiB. Signing, approach and project arguments are
+limited to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels; these checks
+share one 100 ms action deadline. Native rule choices stay in memory between checks.
 See the [declaration and execution limits](launcher/regulations/README.md) for
 category, validator and script bounds. Invalid declarations or unavailable
 required validators keep the pack's mod checks unready; loading failures are

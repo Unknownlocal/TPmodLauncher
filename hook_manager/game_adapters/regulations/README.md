@@ -150,8 +150,8 @@ integration is skipped. Failed installation restores changes already made.
 Importing these modules installs nothing; trusted launcher code owns installation
 and removal. Mods cannot choose native targets or call the private callable adapter.
 
-The private `AdapterModules.install_regulations` method owns the signing and
-project adapters and native switches for a career supplied by trusted setup.
+The private `AdapterModules.install_regulations` method owns the signing,
+project and voting adapters and native switches for a career supplied by trusted setup.
 Private preparation takes its career from the game's loading attempt captured
 by `CareerPreload`. It checks the attempt number, screen and loading job before
 and after publishing data. Installation and activation check that same owner;
@@ -274,3 +274,17 @@ Nested offers keep that permission; leaving the caller removes any permission
 it introduced. Direct signing from an unrelated worker remains refused. A
 personnel validation error keeps its cause in the adapter and sends it to the
 next CLI/log update. The game retains the short Validation unavailable message.
+
+`RegulationVotingAdapter` replaces only declared team calculations. Its fixed
+hooks cover the calculation, review opening, missing ballots and the electorate
+chosen at opening. One complete proposal batch crosses the existing connection;
+the launcher runs its owned Python handler. Native code then records the results.
+Saved votes and electorates stay authoritative. Player analysis does not cast a
+ballot, and the game retains its voting thresholds and vote counts. Failed batches
+leave that proposal's ballots untouched; failed opening restores review cooldowns.
+The adapter belongs to the prepared career and must be fully installed before
+activation. Cleanup waits for admitted review calls before restoring its hooks.
+The shared loading adapter temporarily defers ballot filling on the manager
+being restored. Activation finishes that work only after voting coverage is
+confirmed. Career retirement retains this pack's loading protection; full
+cleanup removes it. Other packs and Oval careers keep native load behaviour.

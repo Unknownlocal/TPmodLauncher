@@ -31,7 +31,7 @@ class PolicyPublication:
             self._expected.append([kind, rule, count, size, nodes])
         dispatch.catalog.check_publication(self.native, self.custom)
         generation = dispatch.generation + 1
-        if message["generations"] != dict.fromkeys(dispatch.catalog.owners, generation):
+        if message["generations"] != dict.fromkeys(dispatch.states, generation):
             raise ValueError("Foreign regulation publication generations")
         self.identity = {key: message[key] for key in ("id", "epoch", "deadline", "generations")}
         # Page numbering spans this publication, rather than restarting per rule.

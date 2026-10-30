@@ -7,7 +7,7 @@ import time
 
 from ...manager import HookError
 from .framing import regulation_decisions, regulation_read, regulation_write
-from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value
+from .protocol import regulation_header, regulation_integer, regulation_pages, regulation_policy_value, regulation_votes
 
 
 class RegulationChannel:
@@ -43,6 +43,15 @@ class RegulationChannel:
             # policy. _generations stays empty until publication is acknowledged.
             self._owners, self._custom = reply["owners"], frozenset(reply["custom"])
             self._rules = {rule for row in self._owners.values() for rule in row["rules"]}
+            self.voting = {}
+            for owner, row in self._owners.items():
+                rules = row.get("voting", [])
+                if type(rules) is not list or len(rules) > 32:
+                    raise HookError("Invalid voting subscriptions")
+                for rule in rules:
+                    if type(rule) is not str or not 1 <= len(rule) <= 256 or rule in self.voting:
+                        raise HookError("Conflicting or invalid voting subscription")
+                    self.voting[rule] = owner
         except Exception:
             self.close()
             raise
@@ -56,7 +65,7 @@ class RegulationChannel:
         result = {}
         for owner, row in sorted(self._owners.items()):
             bindings = row.get("bindings")
-            if type(bindings) is not list or not 1 <= len(bindings) <= 32:
+            if type(bindings) is not list or not 0 <= len(bindings) <= 32 or not (bindings or row.get("voting")):
                 raise HookError("Missing admitted regulation bindings")
             selected = []
             for slot, binding in enumerate(bindings):
@@ -233,3 +242,22 @@ class RegulationChannel:
                 pass
             self._connection.close()
             self._connection = None
+
+    def vote(self, snapshot, regulation, contexts, *, deadline=None):
+        """Use this career's admitted owner and original deadline for one proposal."""
+        owner = self.voting[regulation["key"]]
+        if not self.validation_ready or owner in self._unavailable or owner not in self._generations:
+            raise HookError("Required voting owner is unavailable")
+        self._enter()
+        try:
+            deadline = time.monotonic() + 5 if deadline is None else min(time.monotonic() + 5, deadline)
+            result = self._exchange(self._message("vote", self.epoch, {owner: self._generations[owner]}, deadline,
+                                                owner=owner, snapshot=snapshot, regulation=regulation, contexts=contexts))
+            if not self.validation_ready or self.closed:
+                raise HookError("Voting career is no longer active")
+            return regulation_votes(result, [row["team"] for row in contexts])
+        except Exception as error:
+            self.close()
+            raise HookError("Voting unavailable") from error
+        finally:
+            self._lock.release()

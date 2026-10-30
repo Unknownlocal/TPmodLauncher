@@ -70,24 +70,65 @@ def control_bridge(monkeypatch, control):
     return client
 
 
-def test_custom_voting_cannot_activate_a_pack(make_mod, tmp_path):
-    mod = make_mod("def vote(context, regulation): return {'choice': 'proposed', 'reason': 'Test'}")
-    category = {"key": "owned.rules.policy", "label": "Policy", "default": "open",
-                "options": [{"id": 1, "key": "open", "name": "Open"}]}
-    section = {"schema": 1, "categories": [category]}
+def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(make_mod, tmp_path, monkeypatch):
+    mod = make_mod("def vote(c,r):\n assert r['proposed']['option_data']['bonus'] == 7\n return {'choice': 'proposed', 'reason': c['team']}")
+    category = {"key": "native", "label": "Policy", "default": "open",
+                "options": [{"id": 1, "key": "open", "name": "Open"}, {"id": 2, "key": "closed", "name": "Closed"}]}
+    section = {"schema": 1, "option_data": {category["key"]: {"closed": {"bonus": 7}}}}
     section["voting"] = [{"rule": category["key"], "handler": "rules.vote"}]
-    (tmp_path / "regulations.json").write_text(json.dumps({"mod_extensions": {"owned.rules": section}}), encoding="utf-8")
-    reports, progress, menus = [], [], []
-    with closing(PackMods(tmp_path, reports.append, set_loading=progress.append, set_menu=menus.append)) as pack:
+    (tmp_path / "regulations.json").write_text(json.dumps({"categories": [category], "mod_extensions": {"owned.rules": section}}), encoding="utf-8")
+    reports, progress, menus, wake = [], [], [], threading.Event()
+    with closing(PackMods(tmp_path, reports.append, wake=wake.set, set_loading=progress.append, set_menu=menus.append)) as pack:
         pack.mods, pack.finished, pack._pack_root = {"owned.rules": mod}, True, tmp_path
         mod.sandbox._resources.callback(pack._remove_menu, "owned.rules")
         pack.menu.add("owned.rules", "button", "Button", "Message")
-        with pytest.raises(ValueError, match="not available for activation"):
-            pack.bind_regulations(scopes=set())
-        assert not pack.regulations.ready and pack.regulations.failed
-        assert mod.sandbox.closed and not pack.mods
-        assert progress[-1]["state"] == "error" and not any(menus)
-        assert any("REGULATIONS FAILED" in message for message in reports)
+        runtime = pack.bind_regulations(scopes=set())
+        with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+            assert channel.voting == {category["key"]: "owned.rules"} and not channel.bindings("personnel.contract")
+            pump(pack, wake, worker.submit(channel.publish))
+            with pytest.raises(ValueError, match="regulation_voting"):
+                runtime.confirm_native({})
+            assert not runtime.ready and not menus
+            from test_voting_runner import inputs
+            snapshot, regulation, contexts = inputs(category["key"])
+            client = control_bridge(monkeypatch, lambda operation: {})
+            replay = []
+            def post(record, timeout):
+                operation = record["operation"]
+                def reply(status):
+                    client._message({"type": "send", "payload": {"event": "reply", "id": record["id"], "status": status}}, lambda *a: None)
+                def installed(state):
+                    return {"regulation_control": True, "adapters": {"regulations": {
+                        "state": state, "career_generation": 7, "components": {"regulation_voting": True}}}}
+                if operation == "await-regulations":
+                    assert record["regulations"] == {"pack": str(tmp_path), "categories": [], "voting": True}
+                    reply({"adapters": {"career_preload": {"state": "armed"}}})
+                elif operation == "install-regulations":
+                    reply(installed("installed"))
+                else:
+                    assert operation == "activate-regulations"
+                    def resume():
+                        channel.validation_ready = True
+                        replay.append(channel.vote(snapshot, regulation, contexts))
+                        reply(installed("active"))
+                    worker.submit(resume)
+            monkeypatch.setattr(client, "_post", post)
+            runtime.arm(client, tmp_path)
+            runtime._activate(client, 7)
+            assert runtime.ready and replay == [{team: {"choice": "proposed", "reason": team} for team in ("A", "B")}]
+            channel.validation_ready = False
+            pump(pack, wake, worker.submit(channel.reset, 2))
+            assert not runtime.ready and not channel.validation_ready
+            pump(pack, wake, worker.submit(channel.publish))
+            runtime.confirm_native({"regulation_voting": True}, pending=True)
+            runtime.finish_native_activation()
+            channel.validation_ready = True
+            assert pump(pack, wake, worker.submit(channel.vote, snapshot, regulation, contexts))["A"]["choice"] == "proposed"
+            # A stale policy cannot run author code or leave the shared pack active.
+            channel._generations["owned.rules"] -= 1
+            with pytest.raises(HookError):
+                pump(pack, wake, worker.submit(channel.vote, snapshot, regulation, contexts))
+            assert runtime.failed and mod.sandbox.closed
 
 
 def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(source_mod, runner_bundle, tmp_path, monkeypatch):

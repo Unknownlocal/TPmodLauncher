@@ -35,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",
-    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals regulation_approach regulation_personnel regulation_academy regulation_project staffing_result staffing_coordinator regulation_native_switches regulation_selection regulation_policy regulation_category regulation_scripts regulation_native_defaults regulation_screen automatic_progress automatic_announcements automatic_changes regulation_change",
+    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals regulation_approach regulation_personnel regulation_academy regulation_project staffing_result staffing_coordinator regulation_native_switches regulation_selection regulation_policy regulation_category regulation_scripts regulation_native_defaults regulation_screen automatic_progress automatic_announcements automatic_changes regulation_change regulation_voting",
 }
 
 
@@ -122,11 +122,13 @@ class Bridge:
             raise BridgeError("This operation accepts no theme declarations")
         if operation == "await-regulations":
             if (regulations is not None and (type(regulations) is not dict
-                    or set(regulations) - {"pack", "categories", "scripted_changes", "automatic_changes"}
+                    or set(regulations) - {"pack", "categories", "scripted_changes", "automatic_changes", "voting"}
                     or not {"pack", "categories"} <= regulations.keys()
                     or type(regulations["pack"]) is not str or not Path(regulations["pack"]).is_absolute()
                     or type(regulations["categories"]) is not list
-                    or not 1 <= len(regulations["categories"]) <= 128
+                    or not 0 <= len(regulations["categories"]) <= 128
+                    or type(regulations.get("voting", False)) is not bool
+                    or not (regulations["categories"] or regulations.get("voting"))
                     or type(regulations.get("scripted_changes", [])) is not list
                     or len(regulations.get("scripted_changes", [])) > 4096
                     or type(regulations.get("automatic_changes", {})) is not dict
@@ -143,7 +145,7 @@ class Bridge:
                     or type(regulations["generation"]) is not int or regulations["generation"] < 1
                     or type(regulations["endpoint"]) is not dict or set(regulations["endpoint"]) != {"port", "token"}
                     or len(json.dumps(regulations).encode("utf-8")) > 2048
-                    or (not callable(_service) if operation in ("prepare-regulations", "retire-regulations") else _service is not None)):
+                    or (not callable(_service) if operation in ("prepare-regulations", "retire-regulations", "activate-regulations") else _service is not None)):
                 raise BridgeError("Expected bounded regulation setup and controller service")
             if "native_rules" in fields:
                 values = regulations["native_rules"]

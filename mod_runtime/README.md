@@ -209,7 +209,10 @@ to 64 KiB and 8,192 values; a batch admits up to 64 team calculations within
 the whole batch also has a cap of five seconds, shortened by its caller's deadline.
 Only `choice` (`current` or `proposed`) and a nonblank reason of at most 2,048
 UTF-8 bytes are accepted. A failed handler or unfinished batch closes the shared
-runner; the host returns no partial results. Native voting activation is blocked.
+runner; the host returns no partial results. The existing regulation connection
+dispatches these batches on the runner's owning thread. Voting-only owners join
+publication and career retirement without creating an empty signing catalogue.
+Native activation requires the calculation and both review callers to be installed.
 
 `ValidationDispatch` connects shared bindings to publication and execution through
 `launcher/regulations/validation/group.py`. Mod calls run one at a time against

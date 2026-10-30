@@ -23,7 +23,8 @@ def test_policy_pages_require_the_closed_membership_plan_before_publication():
                             (("rules.py", "# inert"),), 7)
     catalog = CombinedCatalog(definitions({owner: source}))
     published = []
-    dispatch = SimpleNamespace(catalog=catalog, generation=0, publish=lambda **data: published.append(data))
+    dispatch = SimpleNamespace(catalog=catalog, states=dict.fromkeys(catalog.owners, "pending"),
+                               generation=0, publish=lambda **data: published.append(data))
     options = [{"key": "open", "points": [25]}, {"key": "open", "points": [30]}]
     metrics = [regulation_policy_value("native", option)[1:] for option in options]
     message = {"id": 1, "epoch": 1, "deadline": 123.0, "generations": {owner: 1},

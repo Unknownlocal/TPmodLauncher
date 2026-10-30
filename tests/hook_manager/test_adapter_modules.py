@@ -94,6 +94,8 @@ def installation(host, monkeypatch):
     adapters.regulation_personnel = SimpleNamespace(RegulationPersonnelAdapter=lambda *a, **kw: personnel)
     adapters.regulation_academy = SimpleNamespace(RegulationAcademyAdapter=lambda *a: academy)
     adapters.regulation_project = SimpleNamespace(RegulationProjectAdapter=SimpleNamespace(create=lambda *a: projects))
+    from hook_manager.game_adapters.regulations.regulation_voting import RegulationVotingAdapter
+    adapters.regulation_voting = SimpleNamespace(RegulationVotingAdapter=RegulationVotingAdapter)
     yield modules, career, channel, adapters, (native, personnel, academy, projects)
     assert modules.close()
     # A factory skipped by a test still owns its unreturned stand-in.

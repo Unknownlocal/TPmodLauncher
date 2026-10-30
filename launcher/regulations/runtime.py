@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime._regulations.values import integer
 from .shared_handler_runner import SharedHandlerRunner
+from .voting_runner import VotingRunner
 from .publication import PolicyPublication
 from .server import RegulationServer
 from .validation.dispatch import ValidationDispatch
@@ -34,6 +35,7 @@ class RegulationRuntime:
         self._native = None  # None -> installed coverage -> confirmed activation.
         self._bridge, self.generation, self._retired = None, None, True
         self._required_components = set()
+        self._voting = None
 
     @property
     def armed(self):
@@ -49,7 +51,10 @@ class RegulationRuntime:
         """Protect career selection after binding, without selecting a save."""
         self._owning_thread()
         categories = self.definitions.custom_categories
-        data = {"regulations": {"pack": str(pack), "categories": categories}} if categories else {}
+        voting = bool(self.definitions.voting)
+        data = {"regulations": {"pack": str(pack), "categories": categories}} if categories or voting else {}
+        if voting:
+            data["regulations"]["voting"] = True
         scripts = self.definitions.custom_scripts
         if scripts:
             data["regulations"]["scripted_changes"] = scripts
@@ -110,7 +115,13 @@ class RegulationRuntime:
             for operation, expected, phase in (("install-regulations", "installed", "installation"),
                                                ("activate-regulations", "active", "activation")):
                 data = dict(control, native_rules=self.native_rules()) if expected == "installed" else control
-                status = bridge.request(operation, regulations=data)
+                if expected == "active":
+                    # Native activation can replay saved ballots. Keep servicing
+                    # that channel while waiting for its bridge acknowledgement.
+                    status = bridge.request(operation, regulations=data, _service=self.poll,
+                                            timeout=3 + 5 * len(self.definitions.owner_ids))
+                else:
+                    status = bridge.request(operation, regulations=data)
                 if status.get("regulation_control") == "stale":
                     self._retire(bridge, control)
                     return
@@ -168,9 +179,9 @@ class RegulationRuntime:
             raise RuntimeError("Regulations must bind once in their pack session")
         self._attempted = True
         try:
-            # Voting handlers need execution support, not just checked JSON data.
-            if self.definitions.voting:
-                raise ValueError("Custom voting is not available for activation")
+            voting = self.definitions.voting
+            if voting:
+                self._required_components.add("regulation_voting")
             if self.definitions.automatic_changes:
                 self._required_components.add("automatic_changes")
             validators_by_owner = self.definitions.validators
@@ -191,8 +202,10 @@ class RegulationRuntime:
                     raise ValueError("All regulation owners must share one Python runner")
             tables = {owner: rows for owner, rows in validators_by_owner.items() if rows}
             # Definition-only owners share availability, but need no guest table.
-            if tables:
-                self._handler = SharedHandlerRunner.bind(self._runner, tables)
+            if tables or voting:
+                self._handler = SharedHandlerRunner.bind(self._runner, tables, voting=voting)
+            if voting:
+                self._voting = VotingRunner(self._handler)
             self._dispatch = ValidationDispatch(self.definitions, self._handler)
         except Exception:
             # Admission can reject malformed input containing separate runners.
@@ -210,6 +223,10 @@ class RegulationRuntime:
                         "owners": {owner: {"revision": revision, "rules": sorted({row["rule"] for _, row in validators.values()}),
                                            "bindings": [{key: row[key] for key in ("rule", "scope")} for _, row in validators.values()]}
                                    for owner, (revision, validators, _) in catalog.owners.items()}}
+            revisions = self.definitions.revisions
+            for owner, rows in voting.items():
+                row = metadata["owners"].setdefault(owner, {"revision": revisions[owner], "rules": [], "bindings": []})
+                row["voting"] = [entry["rule"] for entry in rows]
             self._server = RegulationServer(metadata, self._wake)
         self._bound = True
 
@@ -348,13 +365,28 @@ class RegulationRuntime:
                 # action. Its generation map must describe all execution views.
                 # After reset, installed generations are zero even though the
                 # session publication counter keeps increasing.
-                generation = self._dispatch.group.generation if self._dispatch.group is not None else 0
+                generation = self._dispatch.generation if self._dispatch.ready else 0
                 expected = dict.fromkeys(self._dispatch.states, generation)
                 if message["generations"] != expected:
                     raise ValueError("Foreign career reset generations")
                 self._dispatch.reset(message["epoch"], deadline=message["deadline"])
                 self._native = None
                 return "reset"
+            if operation == "vote":
+                owner = message["owner"]
+                if (self._voting is None or self._publication is not None or not self._dispatch.ready
+                        or self._dispatch.states.get(owner) != "active"
+                        or message["generations"] != {owner: self._dispatch.generation}):
+                    raise ValueError("Unavailable or foreign voting owner")
+                rule = message["regulation"]["key"]
+                _, models, _ = self.definitions._catalog_inputs()
+                # Option overlays are admitted per owner, never taken from the game.
+                overlays = models[owner].option_data.get(rule, {})
+                regulation = dict(message["regulation"])
+                for name in ("current", "proposed"):
+                    option = regulation[name]
+                    regulation[name] = dict(option, option_data=overlays.get(option["key"], {}))
+                return self._voting.evaluate(owner, message["snapshot"], regulation, message["contexts"], deadline=message["deadline"])
             if operation != "action":
                 raise ValueError("Unknown regulation operation")
             if integer(message["action"], 64, positive=True) <= self._action:

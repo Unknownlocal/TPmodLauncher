@@ -87,6 +87,7 @@ def main(argv=None):
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_category")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_scripts")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_change")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_voting")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_progress")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_changes")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_announcements")

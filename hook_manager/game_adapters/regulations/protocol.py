@@ -63,6 +63,7 @@ def regulation_header(message, *, check_deadline=True, reply=False):
     additions = {
         "policy-begin": {"plan"}, "policy-page": {"page", "rows"}, "policy-seal": set(),
         "reset": set(), "action": {"action", "contexts", "selections", "owners"},
+        "vote": {"owner", "snapshot", "regulation", "contexts"},
     }
     if type(message) is not dict or type(message.get("op")) is not str or message["op"] not in additions:
         raise ValueError("Unknown regulation operation")
@@ -87,7 +88,7 @@ def regulation_header(message, *, check_deadline=True, reply=False):
         # Reset may precede policy installation. Only that operation can refer
         # to generation zero; actions always require acknowledged positive IDs.
         regulation_integer(generation, positive=message["op"] != "reset")
-    limit = .1 if message["op"] == "action" else 1 + 5 * len(generations)
+    limit = .1 if message["op"] == "action" else 5 if message["op"] == "vote" else 1 + 5 * len(generations)
     deadline = message["deadline"]
     # The controller may need to construct an error header for an expired queued
     # request. Disabling this check validates its shape only; poll() still refuses
@@ -110,10 +111,31 @@ def regulation_header(message, *, check_deadline=True, reply=False):
                        or not 1 <= len(row["calls"]) <= 32 for row in owners.values())
                 or sum(len(row["calls"]) for row in owners.values()) > 256):
             raise ValueError("Invalid single-proposal regulation action")
+    if message["op"] == "vote" and not reply:
+        if (type(message["owner"]) is not str or set(generations) != {message["owner"]}
+                or type(message["snapshot"]) is not dict or type(message["regulation"]) is not dict
+                or type(message["contexts"]) is not list or not 1 <= len(message["contexts"]) <= 64
+                or len(regulation_encode(message)) > 512 * 1024):
+            raise ValueError("Invalid voting batch")
     if message["op"] == "policy-page":
         regulation_integer(message["page"])
         header["page"] = message["page"]
     return header
+
+
+def regulation_votes(value, teams):
+    """Check every addressed vote before native code records any result."""
+    if type(value) is not dict or value.keys() != set(teams):
+        raise ValueError("Incomplete voting results")
+    for vote in value.values():
+        if type(vote) is not dict or set(vote) != {"choice", "reason"}:
+            raise ValueError("Invalid voting result fields")
+        reason = vote["reason"]
+        if (type(vote["choice"]) is not str or vote["choice"] not in ("current", "proposed")
+                or type(reason) is not str or not reason.strip() or len(reason.encode("utf-8")) > 2048
+                or any(not char.isprintable() and char not in "\n\t" for char in reason)):
+            raise ValueError("Invalid voting choice or reason")
+    return value
 
 
 def regulation_pages(rows):

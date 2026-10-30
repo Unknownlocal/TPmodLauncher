@@ -2,6 +2,8 @@
 """Keep native rule persistence and prepared weekly decisions together."""
 
 from functools import update_wrapper
+from contextlib import contextmanager
+import inspect
 from pathlib import Path
 import threading
 
@@ -26,6 +28,7 @@ class RegulationChangeAdapter(Manager):
         self.completed.update(completed)
         self._lock, self._active = threading.RLock(), 0
         self.categories, self.report = None, report
+        self.voting_pack = None
         # Native lookup uses the game's own module and class identifiers.
         module = "managers.formula_regulation_governance"
         try:
@@ -76,6 +79,47 @@ class RegulationChangeAdapter(Manager):
             categories.automatic = None
             raise
 
+    def defer_voting(self, pack):
+        """Hold load-time ballot filling until this pack's career is activated."""
+        if pack is None:
+            self.voting_pack = None
+            return
+        self.check()
+        if type(pack) is not str or not Path(pack).is_absolute():
+            raise HookError("Voting protection needs an absolute pack folder")
+        target = CallableTarget("regulations.voting.load-check", "managers.formula_regulation_governance",
+                                ("FormulaRegulationGovernanceManager",), "_resolve_uncontrolled_reviews", "(self)")
+        if target.resolve(self.completed) is None:
+            raise HookError("Native load-time voting method is unavailable")
+        self.voting_pack = Path(pack).resolve(strict=True)
+
+    @contextmanager
+    def _voting_load(self, manager, method):
+        applicable = (method == "load_state" and self.voting_pack is not None
+                      and getattr(manager.state, "game_mode", "formula") != "oval"
+                      and Path(manager.state.data_dir).resolve() == self.voting_pack)
+        if not applicable:
+            yield
+            return
+        # Only this loading manager is affected. The class method stays owned
+        # by its normal career adapter, including while another save is loaded.
+        if str(inspect.signature(manager._resolve_uncontrolled_reviews)) != "()":
+            raise HookError("Native load-time voting signature changed")
+        missing = object()
+        previous = vars(manager).get("_resolve_uncontrolled_reviews", missing)
+        def deferred():
+            manager._tpm_voting_pending = True
+        manager._resolve_uncontrolled_reviews = deferred
+        try:
+            yield
+        finally:
+            if vars(manager).get("_resolve_uncontrolled_reviews") is not deferred:
+                raise HookError("Native load-time voting interception was replaced")
+            if previous is missing:
+                del manager._resolve_uncontrolled_reviews
+            else:
+                manager._resolve_uncontrolled_reviews = previous
+
     def _wrapper(self, name, binding, target, original, signature, *, group=None):
         # Keep the native result and exception; only completed calls reach the
         # metadata and script work. Cleanup waits for this whole operation.
@@ -102,7 +146,8 @@ class RegulationChangeAdapter(Manager):
                         # Native scripts and approved reviews get their slot first.
                         helper.process(manager)
                     return result
-                result = original(*args, **kwargs)
+                with self._voting_load(manager, method):
+                    result = original(*args, **kwargs)
                 # Oval careers do not use these automatic Formula policies.
                 if getattr(manager.state, "game_mode", "formula") == "oval":
                     return result
