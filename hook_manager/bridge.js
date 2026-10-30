@@ -143,8 +143,12 @@ observer = Process.attachModuleObserver({
                             preloadFailureReported = true;
                             send({ event: 'compatibility', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
                         }
-                        for (const detail of response.status.regulation_notices || []) {
-                            send({ event: 'compatibility', detail });
+                        for (const notice of response.status.regulation_notices || []) {
+                            if (typeof notice === 'string') {
+                                send({ event: 'compatibility', detail: notice });
+                            } else {
+                                send({ event: 'compatibility', detail: notice.detail, level: notice.level });
+                            }
                         }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;

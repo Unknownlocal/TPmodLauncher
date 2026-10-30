@@ -9,6 +9,7 @@ from ..personnel.cancellation import PersonnelCancellation
 from .contexts import regulation_context
 from .outcome import ValidationOutcome
 from .staffing_result import StaffingResult
+from ..personnel.native_operation import stop_if_unavailable
 
 
 class StaffingCoordinator:
@@ -49,6 +50,8 @@ class StaffingCoordinator:
                           if role == "onboard" else self.recover(bound.arguments["roles"]))
             if result.published:
                 return result.native_result
+            if result.refusal:
+                stop_if_unavailable(result.refusal)
             # Native recovery ignores sign_staff False and itself returns None.
             # Never publish the successful prefix or leak its private name list.
             guards._report(result.refusal.message if result.refusal else "Native staffing left required roles unfilled")
@@ -91,10 +94,11 @@ class StaffingCoordinator:
                 raise HookError("Staffing coordinator is closed")
             current = threading.current_thread()
             # Direct worker calls need an outer scope from trusted native code.
-            # Main-thread runs keep their existing idle-operation requirement.
-            if current is threading.main_thread():
+            # Main-thread runs may join their trusted caller, but unrelated
+            # activity must still finish before standalone preparation starts.
+            if current is threading.main_thread() and not getattr(guards._local, "operation", False):
                 guards._main()
-            elif not getattr(guards._local, "operation", False):
+            elif current is not threading.main_thread() and not getattr(guards._local, "operation", False):
                 raise HookError("Staffing requires a scoped native worker operation")
             if (getattr(guards._local, "staffing_caller", None) is not None
                     or getattr(guards._local, "dispatching", False)):

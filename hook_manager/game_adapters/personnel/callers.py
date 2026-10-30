@@ -8,6 +8,7 @@ import threading
 from .cancellation import PersonnelCancellation
 from .market_preparation import MarketPreparation
 from .preparation import PRESTIGE_FIELDS, preparation_draft, publish_preparation
+from .rollover import rollover_wrapper
 from ..drivers.queries import DriverQueries
 from ..drivers.query_inputs import DriverQueryInputs, discard_query_inputs
 
@@ -23,6 +24,8 @@ class PersonnelCallers:
         self.queries = DriverQueries()
 
     def wrap(self, role, original, signature):
+        if role == "rollover":
+            return rollover_wrapper(self.guards, self.state, original, signature)
         if role == "active":
             # This frequently called method has a checked, fixed signature.
             # Select its direct wrapper once instead of binding every lookup.

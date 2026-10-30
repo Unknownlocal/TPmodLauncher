@@ -32,6 +32,10 @@ rule selection and mod checks belong to the
   produced them, so unfinished work does not send premature mail.
 - [cancellation.py](cancellation.py): `PersonnelCancellation` carries a refusal
   back to the caller responsible for the action.
+- [rollover.py](rollover.py): grants worker access for the active career while
+  the game's season-end function performs its normal work.
+- [native_operation.py](native_operation.py): keeps worker permission within
+  identified game calls and carries unavailable validation back to their owner.
 
 ## Decisions and feedback
 
@@ -45,6 +49,13 @@ A mod refusal keeps a player confirmation pending. A refusal from the game's own
 signing method retains its normal handling of alternative offers. If a required
 mod check cannot run, the caller stops rather than treating that failure as an
 ordinary rejected offer. Completed signings are not undone.
+
+Season-end signing and academy AI calls can run on the game's background worker.
+Their wrappers grant access only during those identified calls and release it
+afterwards. If required checks become unavailable, the operation stops with an
+error handled by the game's worker. Catching that error inside a native helper
+does not turn the unfinished operation into a success. Ordinary rule refusals
+retain native candidate selection.
 
 [feedback/](feedback/) uses the [shared UI components](../ui/README.md) to show
 refusal dialogs and retain the reason in the scrollable Latest Response panel.

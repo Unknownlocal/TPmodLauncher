@@ -24,6 +24,7 @@ from ..staff.staffing import StaffingPlanner
 from ..staff.targets import staff_target, staffing_targets
 from .staffing_coordinator import StaffingCoordinator
 from .regulation_selection import RegulationSelection
+from ..personnel.native_operation import native_initiator
 
 
 class RegulationPersonnelAdapter(RegulationGuards):
@@ -50,6 +51,10 @@ class RegulationPersonnelAdapter(RegulationGuards):
             resolved = target.resolve(self.completed)
             if resolved is None:
                 raise HookError("Personnel integration requires completed native caller imports")
+            if target.name == "personnel.caller.rollover" and (
+                    not isinstance(state, resolved[0])
+                    or inspect.getattr_static(state, target.attribute) is not resolved[2]):
+                raise HookError("Rollover integration needs the mapped native entry point")
             if target.name.startswith("staffing.") and (
                     inspect.getattr_static(state.staff_manager, target.attribute) is not resolved[2]):
                 # An instance/subclass override would evade the mapped class.
@@ -72,7 +77,7 @@ class RegulationPersonnelAdapter(RegulationGuards):
         # manager identity selects the planner, never a mod-supplied target name.
         planner = next(planner for planner in self.planners.values() if planner.manager is arguments["self"])
         context = regulation_context("personnel.contract", planner.prepare(arguments),
-                                     initiator=caller["initiator"] if caller else "unknown")
+                                     initiator=caller["initiator"] if caller else native_initiator())
         self._local.native_check_season = context["effective"]["season"]
         return context
 

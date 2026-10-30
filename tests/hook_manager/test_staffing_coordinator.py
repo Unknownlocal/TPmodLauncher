@@ -14,6 +14,7 @@ from hook_manager.game_adapters.regulations.guards import RegulationGuards
 from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
 from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
+from hook_manager.game_adapters.personnel.native_operation import native_operation
 from hook_manager.game_adapters.staff import staffing
 from hook_manager.game_adapters.staff.staffing import StaffingPlanner
 from hook_manager.manager import HookError
@@ -174,6 +175,17 @@ def test_native_staffing_worker_grant_lasts_only_for_the_call(monkeypatch):
     finally:
         release.set()
         thread.join(3)
+        guards.stop()
+
+
+def test_main_thread_staffing_joins_owned_rollover_scope(monkeypatch):
+    _, manager, person, _, guards, _ = coordinator(monkeypatch, callers=True)
+    try:
+        with native_operation(guards, "Season rollover"):
+            manager.onboard_joining_team_staff("first")
+            assert person.contract == {"team": "first"} and guards._active == 1
+        assert not guards._active and not guards._personnel_operation.locked()
+    finally:
         guards.stop()
 
 

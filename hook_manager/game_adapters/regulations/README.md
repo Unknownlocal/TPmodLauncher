@@ -134,6 +134,10 @@ Staffing plans apply only when required roles are filled, their game inputs are
 unchanged and the same policy still applies. Coordinated staffing and ordinary
 signing share a reservation so they cannot change the career at the same time.
 The coordinator supports the main thread and explicitly authorised game workers.
+Season rollover and academy AI calls grant that access through their identified
+native entry points. An unavailable check stops the enclosing operation through
+the game's worker error handling. It is reported at ERROR level with its scope
+and operation; ordinary rule refusals keep their normal return values.
 The mapped staffing wrappers grant a worker access only for that call and retain
 any grant it already had. They preserve the game's list/None returns. A refused
 batch discards all its private changes, including earlier allowed signings and

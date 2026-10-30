@@ -31,7 +31,7 @@ ADAPTER_SOURCES = {
     "ui": "__init__ bindings scroll_text dialog",
     "drivers": "__init__ targets methods snapshot terms query_inputs queries planner rookie_check",
     "staff": "__init__ targets methods planner prestige_switch staff_signing staffing_methods staffing_plan staffing_publication staffing",
-    "personnel": "__init__ caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation approach offer",
+    "personnel": "__init__ caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation approach offer rollover native_operation",
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",

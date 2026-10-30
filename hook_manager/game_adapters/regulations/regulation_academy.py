@@ -14,9 +14,9 @@ from .guards import RegulationGuards
 
 
 class RegulationAcademyAdapter(RegulationGuards):
-    def __init__(self, state, channel, select):
+    def __init__(self, state, channel, select, *, report=None):
         """Prepare academy support without assigning native wrappers."""
-        super().__init__(channel, select, "personnel.contract")
+        super().__init__(channel, select, "personnel.contract", report=report)
         targets, callers = academy_targets(), academy_caller_targets()
         self._main()
         self.planner = planner = AcademyContractPlanner(state)

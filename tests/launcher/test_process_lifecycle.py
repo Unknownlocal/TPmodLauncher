@@ -2,6 +2,7 @@
 """Test game-command validation, event ordering, restart gaps and controller cleanup."""
 
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -135,6 +136,39 @@ def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig)
         assert not controller.stopping
     finally:
         controller.close()
+
+
+def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, capsys):
+    from hook_manager.game_adapters.regulations.guards import RegulationGuards
+
+    device, controller, _, _ = rig
+    notices = []
+    channel = lambda *a: {}
+    channel.bindings = lambda scope: {}
+    channel.validation_ready = True
+    channel._unavailable = set()
+    guard = RegulationGuards(channel, lambda *a: {}, "personnel.contract", report=notices.append)
+    # An owned but unadmitted worker produces the actual native diagnostic.
+    thread = threading.Thread(target=lambda: guard._decision(lambda: {}, set()))
+    thread.start()
+    thread.join(2)
+    assert not thread.is_alive()
+    guard.stop()
+    payload = json.loads(json.dumps({"event": "compatibility", **notices[0]}))
+    path = tmp_path / "launcher.log"
+    with lifecycle.reporter(path) as logger:
+        controller.log = logger.log
+        controller.start()
+        try:
+            session = controller.sessions[10]
+            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            controller.poll()
+            assert controller.sessions[10] is session and not controller.stopping
+        finally:
+            controller.close()
+    for output in (path.read_text(), capsys.readouterr().err):
+        assert " ERROR HOOK BRIDGE pid=10: REGULATIONS VALIDATION FAILED" in output
+        assert "Unscoped worker or reentrant regulation validation" in output
 
 
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):

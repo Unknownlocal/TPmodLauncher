@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.callables import CallableTarget
+from hook_manager.manager import HookError
 from hook_manager.game_adapters.regulations import regulation_academy as implementation
 
 
@@ -141,7 +142,8 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
         state.academy_manager.ai_sign_drivers(3)
         assert channel.contexts[-1]["initiator"] == "ai"
         channel.mode = "failed"
-        state.academy_manager.ai_sign_drivers(3)
+        with pytest.raises(HookError, match="Academy AI ai_sign stopped"):
+            state.academy_manager.ai_sign_drivers(3)
         assert not state.calls
         assert before == (state.teams, vars(state.drivers[0]), state.driver_manager._ai_signing_query_cache, state._rng.getstate())
     finally:
@@ -175,16 +177,15 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
         outcomes = []
 
         def invoke():
-            with adapter.operation():
-                state.academy_manager.ai_renew_contracts(3)
-                outcomes.append(adapter.last_outcome.status)
             state.academy_manager.ai_renew_contracts(3)
+            outcomes.append(adapter.last_outcome.status)
+            state.academy_manager.renew_contract("target", "Junior", 1)
             outcomes.append(adapter.last_outcome)
 
         worker = threading.Thread(target=invoke)
         worker.start()
         worker.join(2)
-        assert not worker.is_alive() and outcomes == ["allow", None]
+        assert not worker.is_alive() and outcomes[0] == "allow" and outcomes[1].status == "unavailable"
         assert state.calls == ["sign", "renew", "sign", "renew"]
     finally:
         adapter.stop()

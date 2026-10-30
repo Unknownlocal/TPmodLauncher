@@ -14,6 +14,7 @@ import time
 from ...callables import CallableAdapters
 from ...manager import HookError, Manager, data_copy
 from .outcome import ValidationOutcome
+from ..personnel.native_operation import operation_failure, report_failure, stop_if_unavailable
 
 
 class RegulationGuards(CallableAdapters):
@@ -70,7 +71,15 @@ class RegulationGuards(CallableAdapters):
 
     def _deny(self, refuse, outcome):
         self._local.outcome = outcome
+        stop_if_unavailable(outcome)
         return refuse(outcome.message)
+
+    def _require_available(self):
+        """Check readiness before an enclosing native operation changes state."""
+        if (getattr(self.channel, "closed", False)
+                or not getattr(self.channel, "validation_ready", True)
+                or any(state != "ready" for state in self.owners.values())):
+            stop_if_unavailable(ValidationOutcome("unavailable", "Validation unavailable"))
 
     def _validate(self, original, signature, entries, args, kwargs):
         # Direct native calls do not always have a caller frame to clear this.
@@ -96,6 +105,9 @@ class RegulationGuards(CallableAdapters):
         identity = identity or self.policy_identity
         acquired = False
         try:
+            failed = operation_failure()
+            if failed is not None:
+                return failed
             if not getattr(self.channel, "validation_ready", True):
                 # Installation is incomplete, not a broken validator. Do not
                 # project inputs, dispatch or permanently disable its owners.
@@ -146,9 +158,7 @@ class RegulationGuards(CallableAdapters):
             self._report(error)
             # Only actual validation errors use this failure notice. Other
             # callers also retain ordinary policy refusals through _report.
-            if self._error_report is not None:
-                self._error_report("REGULATIONS VALIDATION FAILED scope=" + self.scope + ": "
-                                   + " ".join(str(error).split())[:512])
+            report_failure(self, error)
             return ValidationOutcome("unavailable", "Validation unavailable")
         finally:
             if acquired:

@@ -20,6 +20,7 @@ load("dependencies", "bundled_dependencies.py").load_source_packages(root)
 from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 output = Path(sys.argv[3])
 messages = []
+diagnostics = []
 # The bridge receives the installation folder beside this isolated launcher copy.
 pack = root.parent / "data/owned pack"
 pack.mkdir(parents=True)
@@ -27,6 +28,7 @@ controller = lifecycle.Controller(
     frida.get_local_device(),
     [sys.argv[1], "-B", sys.argv[2], str(output)],
     messages.append,
+    log=lambda level, message: diagnostics.append((level, message)),
     bridge_factory=bridge.factory(root, frida),
     restart_grace=0.2,
 )
@@ -158,6 +160,8 @@ try:
     }, status
     controller.poll()
     assert sum("PACK DISCOVERY" in message for message in messages) == 1, messages
+    assert [(level, message.split(": ", 1)[-1]) for level, message in diagnostics] == [
+        (40, "Owned bridge validation failure")], diagnostics
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")

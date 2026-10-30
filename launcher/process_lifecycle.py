@@ -105,6 +105,7 @@ class Controller:
         bridge_factory=None,
         mods_factory=None,
         shutdown=None,
+        log=None,
     ):
         # device is Frida's local device; command is validated argv; report receives one log line.
         # bridge_factory optionally supplies our trusted script for each verified session.
@@ -117,6 +118,9 @@ class Controller:
         self.command = list(command)
         self.game = canonical(command[0])
         self.report = report
+        # Status callbacks remain one-line consumers. Native diagnostics can
+        # carry severity through to the same standard logger and its handlers.
+        self.log = log or (lambda level, message: report(message))
         self.restart_grace = restart_grace
         self.clock = clock
         self.events = queue.Queue()
@@ -355,7 +359,18 @@ class Controller:
             elif event == "career-preload" and pid in self.pack_mods:
                 self.pack_mods[pid].career_preload(payload.get("status", {}))
             elif event in ("waiting", "transport", "compatibility"):
-                self.report(f"HOOK BRIDGE pid={pid}: {payload.get('detail', '')}")
+                detail = " ".join(str(payload.get("detail", "")).split())[:4096]
+                message = f"HOOK BRIDGE pid={pid}: {detail}"
+                if "level" not in payload:
+                    self.report(message)
+                else:
+                    levels = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING,
+                              "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
+                    level = payload["level"]
+                    if type(level) is not str or level not in levels:
+                        self.log(logging.WARNING, f"Invalid bridge diagnostic severity; {message}")
+                    else:
+                        self.log(levels[level], message)
         elif kind == "lost" and not self.stopping:
             raise LaunchError("The local Frida device was lost.")
 
@@ -480,6 +495,7 @@ def run_launcher(
                     frida.get_local_device(),
                     command,
                     logger.info,
+                    log=logger.log,
                     restart_grace=restart_grace,
                     bridge_factory=bridge_factory,
                     mods_factory=mods_factory,

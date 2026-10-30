@@ -346,7 +346,8 @@ class AdapterModules:
                     # must not leave earlier driver/staff/staffing wrappers behind.
                     personnel.append(adapters.regulation_personnel.RegulationPersonnelAdapter(
                         state, channel, select, report=self.regulation_notices.append))
-                    personnel.append(adapters.regulation_academy.RegulationAcademyAdapter(state, channel, select))
+                    personnel.append(adapters.regulation_academy.RegulationAcademyAdapter(
+                        state, channel, select, report=self.regulation_notices.append))
                 except Exception as error:
                     for hook in reversed(personnel):
                         hook.stop()

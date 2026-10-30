@@ -17,6 +17,7 @@ def personnel_mail_target():
 # Fixed paths and signatures identify shared negotiation callers and driver
 # queries; mods cannot choose the native methods wrapped by this adapter.
 _PERSONNEL_CALLERS = (
+    ('rollover', 'game_state', 'GameState', 'finalize_and_rollover_season', '(self)'),
     ('submit', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'submit_offer',
      "(self, candidate_type: 'str', candidate: 'Any', team_name: 'str', offer: 'Dict[str, Any]', score: 'float', *, signer_kind: 'str' = 'team', attempts_used: 'Optional[int]' = None, annoyed: 'Optional[bool]' = None, finalize: 'bool' = False) -> 'Tuple[bool, str, Optional[Dict[str, Any]]]'"),
     ('proposal', 'managers.personnel_negotiation_manager', 'PersonnelNegotiationManager', 'accept_player_driver_proposal',

@@ -139,16 +139,26 @@ def owned(monkeypatch):
             self.inbox.insert(0, {"subject": subject, "body": body})
             self.urgent_sound_serial += 1
 
+    class GameState(SimpleNamespace):
+        def finalize_and_rollover_season(self):
+            for person in self.rollover_candidates:
+                if self.driver_manager.sign_driver(person):
+                    self.rollover_signed = person
+                    break
+            self.rollover_complete = True
+
+    module.GameState = GameState
     module.DriverManager, module.Negotiations, module.PrestigeManager = DriverManager, Negotiations, PrestigeManager
     module.StaffManager = StaffManager
     module.EmailManager = EmailManager
-    state = SimpleNamespace(writes=[], teams={"target": {}}, prestige_manager=PrestigeManager(), native_refuse=False)
+    state = GameState(writes=[], teams={"target": {}}, prestige_manager=PrestigeManager(), native_refuse=False)
     manager, negotiations = DriverManager(), Negotiations()
     manager.state = negotiations.state = state
     state.driver_manager, state.personnel_negotiation_manager = manager, negotiations
     state.staff_manager = StaffManager()
     state.staff_manager.state = state
     driver = SimpleNamespace(contract=None)
+    state.rollover_candidates = [driver]
     negotiations.row = {"candidate_type": "driver", "team_id": "target", "initiated_by": "player", "offer": {"years": 3}}
     negotiations.driver, negotiations.pending = driver, {"decision": {"status": "pending"}}
     negotiations.records = {"row": negotiations.row}
@@ -162,7 +172,8 @@ def owned(monkeypatch):
                               str(inspect.signature(fn)))
 
     signing = target("drivers.sign", DriverManager, "sign_driver")
-    callers = (target("personnel.caller.submit", Negotiations, "submit_offer"),
+    callers = (target("personnel.caller.rollover", GameState, "finalize_and_rollover_season"),
+               target("personnel.caller.submit", Negotiations, "submit_offer"),
                target("personnel.caller.offer", Negotiations, "_execute_offer"),
                target("personnel.caller.decision", Negotiations, "resolve_player_contract_decision"),
                target("personnel.caller.due", Negotiations, "resolve_due_decisions"),
@@ -231,6 +242,66 @@ def submitted(monkeypatch):
     adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     adapter.offers.signatures["driver"] = inspect.signature(signing)
     return state, person, negotiations, channel, adapter
+
+
+def test_rollover_worker_retains_candidate_refusals_and_releases_admission(monkeypatch):
+    state, denied, _, _, channel, _, _ = owned(monkeypatch)
+    accepted = SimpleNamespace(contract=None)
+    state.rollover_candidates.append(accepted)
+    dispatch = type(channel).__call__
+    modes = iter(("deny", "allow"))
+
+    def decide(*args):
+        channel.mode = next(modes)
+        return dispatch(*args)
+
+    monkeypatch.setattr(type(channel), "__call__", decide)
+    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}).install_prepared()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            worker.submit(state.finalize_and_rollover_season).result(2)
+            assert state.rollover_complete and state.rollover_signed is accepted
+            assert denied.contract is None and accepted.contract == {"salary": 2}
+            assert [c["initiator"] for c in channel.contexts] == ["system", "system"]
+            # Reusing the thread outside the mapped entry point must not retain
+            # permission to sign another contract.
+            assert worker.submit(state.driver_manager.sign_driver, denied).result(2) is False
+        assert denied.contract is None and not adapter._active
+        assert state.writes == [2]
+    finally:
+        adapter.stop()
+
+
+@pytest.mark.parametrize("swallow", [False, True])
+def test_rollover_unavailable_stops_retries_and_survives_native_catch(monkeypatch, swallow):
+    state, person, _, _, channel, _, _ = owned(monkeypatch)
+    channel.mode = "failed"
+
+    def rollover(self):
+        try:
+            self.driver_manager.sign_driver(person)
+        except Exception:
+            if not swallow:
+                raise
+        finally:
+            self.native_cleanup = True
+        self.native_returned = True
+
+    monkeypatch.setattr(type(state), "finalize_and_rollover_season", rollover)
+    reports = []
+    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}, report=reports.append).install_prepared()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            with pytest.raises(HookError, match="Season rollover stopped"):
+                worker.submit(state.finalize_and_rollover_season).result(2)
+            assert worker.submit(implementation.native_initiator).result(2) == "unknown"
+        assert state.native_cleanup and getattr(state, "native_returned", False) is swallow
+        assert person.contract is None and not state.writes and len(channel.contexts) == 1
+        assert not adapter._active and not adapter._personnel_operation.locked()
+        assert len(reports) == 1 and reports[0]["level"] == "ERROR"
+        assert "Owned handler failed" in reports[0]["detail"]
+    finally:
+        adapter.stop()
 
 
 def test_submission_refusal_preserves_talks_and_final_offer_then_rechecks_signing(monkeypatch):
@@ -467,7 +538,8 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
             assert driver.contract is None and not adapter._active
             assert len(reports) == (1 if mode == "failed" else 0)
             if reports:
-                assert "VALIDATION FAILED scope=personnel.contract" in reports[0] and "Owned handler failed" in reports[0]
+                assert reports[0]["level"] == "ERROR"
+                assert "VALIDATION FAILED scope=personnel.contract" in reports[0]["detail"] and "Owned handler failed" in reports[0]["detail"]
             if mode != "failed":
                 assert negotiations.row["permanent_block"] is (mode == "allow")
                 assert negotiations.row["blocked_role"] is None

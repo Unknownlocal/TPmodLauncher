@@ -2,13 +2,13 @@
 """Owned Python target for hook activation, timeout coordination and restoration."""
 
 import importlib, json, os, sys, time
+from pathlib import Path
+from types import ModuleType
 
 # No threading module exists yet: the bridge must wait rather than choose the wrong main thread.
 time.sleep(0.1)
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
-from pathlib import Path
-from types import ModuleType
 
 output = Path(sys.argv[1])
 (output / "target.pid").write_text(str(os.getpid()), encoding="ascii")
@@ -17,6 +17,7 @@ while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadlin
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
+host.adapters.regulation_notices.append({"level": "ERROR", "detail": "Owned bridge validation failure"})
 
 # Reproduce the bridge lock ordering with real Python threads. Evaluating the
 # loading request releases the GIL; the worker must be able to pass its native

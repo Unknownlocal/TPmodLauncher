@@ -25,6 +25,11 @@ and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
+Standard Python logging writes to the console and `logs/launcher.log`. Validation
+failures carry their ERROR severity through the bridge, with the process and
+operation context. Logging an error does not itself stop the game; the operation
+that failed controls its outcome.
+
 On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
 Ctrl+Break. It sends normal window-close requests only to game processes owned
 by this controller, while the controller thread closes mods and removes hooks.

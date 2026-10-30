@@ -92,7 +92,7 @@ def installation(host, monkeypatch):
     adapters.regulation_approach = SimpleNamespace(RegulationApproachAdapter=RegulationApproachAdapter)
     adapters.regulation_native_switches = SimpleNamespace(install_regulation_switches=lambda *a, **kw: (native,))
     adapters.regulation_personnel = SimpleNamespace(RegulationPersonnelAdapter=lambda *a, **kw: personnel)
-    adapters.regulation_academy = SimpleNamespace(RegulationAcademyAdapter=lambda *a: academy)
+    adapters.regulation_academy = SimpleNamespace(RegulationAcademyAdapter=lambda *a, **kw: academy)
     adapters.regulation_project = SimpleNamespace(RegulationProjectAdapter=SimpleNamespace(create=lambda *a: projects))
     from hook_manager.game_adapters.regulations.regulation_voting import RegulationVotingAdapter
     adapters.regulation_voting = SimpleNamespace(RegulationVotingAdapter=RegulationVotingAdapter)
