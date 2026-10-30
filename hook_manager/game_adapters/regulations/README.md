@@ -66,6 +66,10 @@ wrappers; development-project integration has its own compatibility checks.
 - [automatic_progress.py](automatic_progress.py): `AutomaticProgress` checks the
   saved season records and undelivered notices. Bounded data in an unknown or
   invalid format is retained for saving and reported as unavailable for decisions.
+- [automatic_announcements.py](automatic_announcements.py): `AutomaticAnnouncements`
+  sends ordinary native regulation mail using category and option labels. Each
+  message identifies its category and decision season. Only confirmed insertion
+  removes a pending notice; delivery errors do not stop other notices or rules.
 - [automatic_changes.py](automatic_changes.py): `AutomaticChanges` uses prepared
   chance and week settings to choose changes once per category and season. Each
   rule has its own repeatable draw, leaving the game's random sequence alone.
@@ -80,7 +84,9 @@ wrappers; development-project integration has its own compatibility checks.
 - [regulation_screen.py](regulation_screen.py):
   `RegulationScreenAdapter` appends loaded categories
   missing from the native screen's groups under Additional regulations. It uses
-  native cards, selection, option inspection and scrollbars.
+  native cards, selection, option inspection and scrollbars. Automatic cards show
+  their configured chance; their details show chance and announcement week using
+  the native metric widgets and palette. Other categories keep their native text.
 - [regulation_selection.py](regulation_selection.py): `RegulationSelection`
   reads an option's boolean using the game's season selector. Offer preparation
   and signing share the proposed season; nested calls restore their previous
@@ -193,8 +199,21 @@ They check room before staging and recover a completed native decision by its
 saved identity, even if native staging finishes and then raises an error.
 Inconsistent saved records are reported without repeating staging.
 Updating progress measures the changed
-record rather than encoding all saved progress. Author-declared automatic
-changes remain unavailable for activation, and notices are not delivered.
+record rather than encoding all saved progress.
+
+Trusted setup installs automatic policies before career loading and checks the
+saved definitions, progress, weekly hooks and inbox before activation. The
+launcher requires explicit automatic-change coverage. The existing channel
+readiness gate prevents weekly decisions and delivery during setup, retirement
+or failed validation. Retirement keeps the pack's wrappers but waits for any
+weekly operation already running before allowing another career to bind.
+
+Pending notices retry before new decisions, including before the configured
+week in a later season. Old delivery failures do not replace newer notices.
+Mail uses absolute effective seasons, so a delayed notice remains accurate after
+adoption. The inbox is checked even when native sending raises after insertion.
+Once a notice is confirmed, deleting that email does not recreate it. Inactive
+categories keep saved progress without sending notices or making decisions.
 
 The private field is limited to 1 MiB, eight levels below its root and 32,768 values.
 The supported format permits 128 categories and 32 pending notices per category.

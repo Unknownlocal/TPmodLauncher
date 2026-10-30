@@ -27,11 +27,12 @@ class RegulationCategoryAdapter(Manager):
             raise HookError("Regulation change adapter already owns a category loader")
         self.regulation_changes, self._lock = regulation_changes, regulation_changes._lock
         self.scripts, self.automatic = None, None
-        if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes"}
+        if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes", "automatic_changes"}
                 or not {"pack", "categories"} <= request.keys()
                 or type(request["pack"]) is not str or not Path(request["pack"]).is_absolute()
                 or type(request["categories"]) is not list or not 1 <= len(request["categories"]) <= 128
-                or type(request.get("scripted_changes", [])) is not list):
+                or type(request.get("scripted_changes", [])) is not list
+                or type(request.get("automatic_changes", {})) is not dict):
             raise HookError("Expected prepared categories and their absolute pack folder")
         self.pack = Path(request["pack"]).resolve(strict=True)
         self.categories = {row["key"]: deepcopy(row) for row in request["categories"]}
@@ -52,6 +53,8 @@ class RegulationCategoryAdapter(Manager):
                 # helper shares this pack's lifetime and cleanup reservation.
                 self.scripts = RegulationScripts(self, request["scripted_changes"])
             regulation_changes.categories = self
+            if request.get("automatic_changes"):
+                regulation_changes.install_automatic(request["automatic_changes"])
         except BaseException:
             self.stop()
             raise
@@ -68,6 +71,8 @@ class RegulationCategoryAdapter(Manager):
             raise HookError("The career did not load the prepared mod regulation categories")
         if self.scripts is not None:
             self.scripts.check(state)
+        if self.automatic is not None:
+            self.automatic.check(state)
 
     def merge_definitions(self, saved):
         """Add newly enabled categories without replacing differing saved rules."""

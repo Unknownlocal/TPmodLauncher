@@ -8,6 +8,7 @@ from random import Random
 
 from ...callables import CallableTarget
 from ...manager import HookError
+from .automatic_announcements import AutomaticAnnouncements
 
 
 class AutomaticChanges:
@@ -36,6 +37,28 @@ class AutomaticChanges:
         if stage.resolve(categories.regulation_changes.completed) is None:
             raise HookError("Automatic changes need the loaded native staging method")
         self.categories, self.policies, self.report = categories, deepcopy(policies), report
+        self.announcements = AutomaticAnnouncements(categories, report)
+        self.state, self.channel = None, None
+
+    def check(self, state):
+        """Require the complete owned installation and usable saved progress."""
+        self.categories.regulation_changes.check()
+        group = self.categories.groups["regulations.automatic"]
+        if group["state"] != "active" or any(vars(owner).get(attribute) is not wrapper
+                for owner, attribute, _, wrapper, _ in group["changes"]):
+            raise HookError("Automatic regulation weekly hooks are unavailable")
+        manager = state.formula_regulation_governance
+        progress = manager._tpm_automatic_progress
+        if manager.state is not state or progress.error:
+            raise HookError("Automatic regulation progress is unavailable")
+        for key in self.policies:
+            record = progress.data["categories"].get(key, {"checked_season": 0, "pending_announcements": []})
+            options = {row["key"] for row in self.categories.categories[key]["options"]}
+            if (manager.definitions.get(key) != self.categories.categories[key]
+                    or record["checked_season"] > state.season_no
+                    or any(row["option"] not in options for row in record["pending_announcements"])):
+                raise HookError("Saved automatic regulation data differs from this career: " + key)
+        self.announcements.check(state)
 
     def candidates(self, original, manager, snapshot):
         """Exclude automatic categories before native voting quotas are filled."""
@@ -45,12 +68,26 @@ class AutomaticChanges:
 
     def process(self, manager):
         """Check due categories independently; a failed rule cannot stop the week."""
+        # The existing channel gate also closes on retirement or owner failure.
+        # A loaded career must not start changes merely because hooks are installed.
+        if (self.channel is None or self.channel.closed or not self.channel.validation_ready
+                or manager.state is not self.state):
+            return
+        progress = manager._tpm_automatic_progress
         for key, policy in self.policies.items():
+            self.announcements.deliver(manager, key)
+            before = None if progress.error else progress.data["categories"].get(key, {}).get("checked_season", 0)
             try:
                 self._decide(manager, key, policy)
             except Exception as error:
                 self.report("REGULATIONS COMPATIBILITY FAILED automatic change " + key + ": " + str(error)
                             + "; native regulation changes retained")
+            # Only attempt a newly queued notice here. Older failed notices have
+            # already had their attempt, even if a new season was also checked.
+            if before is not None:
+                record = progress.data["categories"].get(key)
+                if record is not None and record["checked_season"] > before:
+                    self.announcements.deliver(manager, key, season=record["checked_season"])
 
     def _staged_option(self, manager, key, season):
         """Recover only a complete native stage bearing this decision's identity."""

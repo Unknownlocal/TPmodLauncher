@@ -2,9 +2,11 @@
 """Automatic decisions retain native choices, quotas and durable progress."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import random
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -12,7 +14,8 @@ import pytest
 from hook_manager.game_adapters.regulations.automatic_progress import AutomaticProgress, FIELD
 from hook_manager.game_adapters.regulations.regulation_category import RegulationCategoryAdapter
 from hook_manager.game_adapters.regulations.regulation_change import RegulationChangeAdapter
-from hook_manager.manager import HookError
+from hook_manager.manager import HookError, Manager
+from hook_manager.adapter_modules import AdapterModules
 
 
 @pytest.fixture
@@ -25,6 +28,7 @@ def automatic(monkeypatch, tmp_path):
             self.seed = "fixed-career-seed"
             self.suppressed_script_ids = set()
             self.stages = 0
+            self.work = lambda: None
             self.load_state(saved_bootstrap or {"definition_snapshot": state.regulation_manager.regulation_defs,
                                                "staged_sources": {}, "policy": {"scripted_changes": []}})
         def load_state(self, data):
@@ -35,9 +39,12 @@ def automatic(monkeypatch, tmp_path):
             return deepcopy({"definition_snapshot": self.definitions, "staged_sources": self.staged_sources,
                              "policy": self.policy})
         def process_week(self):
+            self.work()
             return "native week completed"
         def _trigger_candidates(self, snapshot):
             return sorted(self.definitions)[:1]
+        def _send(self, subject, body, actions=None, *, structured_content=None):
+            self.state.email_manager.send_email(subject, body, category="regulation", structured_content=structured_content)
         def stage_changes(self, changes, *, source=None, decision_id=None, effective_season=None):
             self.stages += 1
             for key, option in changes.items():
@@ -67,6 +74,11 @@ def automatic(monkeypatch, tmp_path):
         regulation.regulations = {key: {"current": "open", "upcoming": None} for key in regulation.regulation_defs}
         regulation.pending_rules = {}
         state.formula_regulation_governance = Changes(state, saved)
+        inbox = []
+        state.email_manager = SimpleNamespace(inbox=inbox, send_email=lambda subject, body, **kwargs:
+                                              inbox.append({"subject": subject, "body": body, **kwargs}))
+        if categories.automatic is not None and pack == tmp_path and mode == "formula":
+            categories.automatic.state, categories.automatic.channel = state, SimpleNamespace(validation_ready=True, closed=False)
         return state
     policies = {key: {"mode": "automatic", "base_chance": 1, "announcement_week": 5} for key in categories.categories}
     yield SimpleNamespace(owner=owner, categories=categories, build=build, policies=policies, report=report,
@@ -143,12 +155,13 @@ def test_interrupted_native_stage_recovers_without_repeating_it(automatic, compl
     manager.stage_changes = original
     manager.process_week()
     record = manager.save_state()[FIELD]["categories"]["custom.a"]
-    assert manager.stages == 1 and record["pending_announcements"] == [
-        {"decision_season": 3, "option": state.regulation_manager.pending_rules["custom.a"]}]
+    assert manager.stages == 1 and record["pending_announcements"] == []
+    assert len(state.email_manager.inbox) == 1
     # A native stage loaded without its progress record recovers the same notice.
     manager.load_state({key: value for key, value in manager.save_state().items() if key != FIELD})
     manager.process_week()
     assert manager.stages == 1 and manager.save_state()[FIELD]["categories"]["custom.a"] == record
+    assert len(state.email_manager.inbox) == 1
 
 
 def test_notice_capacity_prevents_staging_without_losing_old_notices(automatic):
@@ -157,6 +170,7 @@ def test_notice_capacity_prevents_staging_without_losing_old_notices(automatic):
     state = a.build()
     state.season_no, state.week_index = 34, 5
     manager = state.formula_regulation_governance
+    state.email_manager.send_email = lambda *args, **kwargs: None
     record = {"checked_season": 33, "pending_announcements": [
         {"decision_season": season, "option": "limited"} for season in range(1, 33)]}
     manager._tpm_automatic_progress = AutomaticProgress({FIELD: {"schema": 1, "categories": {"custom.a": record}}})
@@ -216,3 +230,99 @@ def test_incremental_progress_budget_releases_space_without_losing_saved_records
     progress.store_record("new", record)
     restored = AutomaticProgress(json.loads(json.dumps({FIELD: progress.snapshot()})))
     assert restored.error is None and restored.snapshot() == progress.snapshot()
+
+
+@pytest.mark.parametrize("inserted", [False, True])
+def test_mail_failure_confirms_insertion_and_never_recreates_completed_mail(automatic, inserted):
+    a = automatic
+    a.owner.install_automatic({"custom.a": a.policies["custom.a"]})
+    state = a.build()
+    state.week_index = 5
+    manager, mail = state.formula_regulation_governance, state.email_manager
+    original = mail.send_email
+    def failed(*args, **kwargs):
+        if inserted:
+            original(*args, **kwargs)
+        raise RuntimeError("Mail backend failed")
+    mail.send_email = failed
+    manager.process_week()
+    pending = manager._tpm_automatic_progress.data["categories"]["custom.a"]["pending_announcements"]
+    assert bool(pending) is not inserted
+    assert len(mail.inbox) == int(inserted) and "Mail backend failed" in a.report[-1]
+    mail.send_email = original
+    manager.load_state(json.loads(json.dumps(manager.save_state())))
+    manager.process_week()
+    assert manager.stages == 1 and len(mail.inbox) == 1
+    assert not manager.save_state()[FIELD]["categories"]["custom.a"]["pending_announcements"]
+    mail.inbox.clear()
+    manager.process_week()
+    assert not mail.inbox
+
+
+def test_two_failed_notice_seasons_survive_rollover_and_retry_before_due_week(automatic):
+    a = automatic
+    a.owner.install_automatic({"custom.a": a.policies["custom.a"]})
+    state = a.build()
+    manager, mail = state.formula_regulation_governance, state.email_manager
+    original, attempts = mail.send_email, []
+    mail.send_email = lambda *args, **kwargs: attempts.append(kwargs["structured_content"]["decision_season"])
+    for season in (3, 4):
+        state.season_no, state.week_index = season, 5
+        manager.process_week()
+        regulation = state.regulation_manager.regulations["custom.a"]
+        regulation["current"], regulation["upcoming"] = regulation["upcoming"], None
+        state.regulation_manager.pending_rules.clear()
+        manager.staged_sources.clear()
+    assert attempts == [3, 3, 4]
+    saved = json.loads(json.dumps(manager.save_state()))
+    state.season_no, state.week_index = 5, 0
+    manager.load_state(saved)
+    mail.send_email = original
+    manager.process_week()
+    assert manager.stages == 2 and len(mail.inbox) == 2
+    assert {row["structured_content"]["decision_season"] for row in mail.inbox} == {3, 4}
+    assert all("Effective from Season " + str(row["structured_content"]["decision_season"] + 1) in row["body"]
+               for row in mail.inbox)
+    assert not manager.save_state()[FIELD]["categories"]["custom.a"]["pending_announcements"]
+
+
+def test_weekly_work_waits_for_the_current_careers_activation(automatic):
+    a = automatic
+    a.owner.install_automatic(a.policies)
+    state = a.build()
+    state.week_index = 5
+    helper = a.categories.automatic
+    helper.check(state)
+    helper.channel.validation_ready = False
+    assert state.formula_regulation_governance.process_week() == "native week completed"
+    assert not state.regulation_manager.pending_rules and not state.email_manager.inbox
+    helper.channel.validation_ready = True
+    state.formula_regulation_governance.process_week()
+    assert len(state.regulation_manager.pending_rules) == 2 and len(state.email_manager.inbox) == 2
+    # A loaded replacement career must wait for its own installation/activation.
+    replacement = a.build()
+    replacement.week_index = 5
+    helper.state = state
+    replacement.formula_regulation_governance.process_week()
+    assert not replacement.regulation_manager.pending_rules and not replacement.email_manager.inbox
+    # Retirement preserves the pack hooks, but waits for an admitted weekly call.
+    entered, release = threading.Event(), threading.Event()
+    def work():
+        entered.set()
+        assert release.wait(3)
+    manager = state.formula_regulation_governance
+    manager.work = work
+    host = ModuleType("_automatic_retirement_test")
+    host.manager = Manager()
+    modules = AdapterModules(host, {})
+    modules.categories, modules.channel = a.categories, helper.channel
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        future = worker.submit(manager.process_week)
+        try:
+            assert entered.wait(3)
+            helper.channel.validation_ready = False
+            assert modules.stop_regulations(retain=True) is False
+        finally:
+            release.set()
+        assert future.result(timeout=3) == "native week completed"
+    assert modules.stop_regulations(retain=True) is True and not a.categories.closed

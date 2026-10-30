@@ -243,6 +243,23 @@ Sections whose code mod is absent or lacks the permission are ignored beyond
 JSON syntax and the whole-file size limit. Removing the code folder disables
 its section on the next game start.
 
+An owned category can change automatically without team voting. Add:
+
+```json
+"change_control": {
+  "mode": "automatic",
+  "base_chance": 0.25,
+  "announcement_week": 40
+}
+```
+
+The chance ranges from 0 to 1 and is checked once per season. The week is the
+game's stored index, from 0 to 51 (displayed as weeks 1 to 52). A selected
+alternative takes effect next season and is announced through the game's inbox.
+Existing scripted or approved changes
+take priority. No Python voting function is needed; validators still enforce the
+selected option. Custom voting functions are not available for activation.
+
 A `validators` entry names a rule, a supported scope and a Python function:
 
 ```json

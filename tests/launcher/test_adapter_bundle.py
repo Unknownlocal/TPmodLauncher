@@ -101,12 +101,22 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             self.state = state
             self.definitions = dict(state.regulation_manager.regulation_defs)
             self.policy = {"mode": "scripted", "scripted_changes": []}
+            self.seed, self.staged_sources, self.suppressed_script_ids = "fixed", {}, set()
         def restore(self, data):
             self.policy = data["policy"]
         def save(self):
             return {"policy": self.policy, "definition_snapshot": self.definitions}
+        def stage(self, changes, *, source=None, decision_id=None, effective_season=None):
+            for key, option in changes.items():
+                self.state.regulation_manager.pending_rules[key] = option
+                self.state.regulation_manager.regulations[key]["upcoming"] = option
+                self.staged_sources[key] = {"source": source, "id": decision_id, "effective_season": effective_season}
+        def send(self, subject, body, actions=None, *, structured_content=None):
+            self.state.email_manager.inbox.append({"body": body, "structured_content": structured_content})
         regulation_changes.FormulaRegulationGovernanceManager = type("RegulationChanges", (), {
-            "__init__": construct, "load_state": restore, "save_state": save})
+            "__init__": construct, "load_state": restore, "save_state": save, "stage_changes": stage,
+            "process_week": lambda self: "native week", "_trigger_candidates": lambda self, snapshot: [], "_send": send})
+        regulation_changes.option_neighbours = lambda spec, current_key: [row["key"] for row in spec["options"]]
         regulation_changes.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
         monkeypatch.setitem(sys.modules, regulation_changes.__name__, regulation_changes)
         pulse("status")
@@ -136,10 +146,11 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         screen_manager.current = screen
         rejected = pulse("await-regulations", target="author-selected")
         assert rejected["regulation_notices"] and host.adapters.preload is None
-        categories = [{"key": "owned.rule", "default": "open", "options": [{"key": "open"}]}]
+        categories = [{"key": "owned.rule", "default": "open", "options": [{"key": "open"}, {"key": "limited"}]}]
         scripts = [{"id": "owned:change", "key": "owned.rule", "new_regulation": {"key": "open"}, "effective_season": 2}]
         assert pulse("await-regulations", regulations={"pack": str(tmp_path), "categories": categories,
-            "scripted_changes": scripts})["adapters"]["career_preload"] == {"state": "armed"}
+            "scripted_changes": scripts, "automatic_changes": {"owned.rule": {
+                "mode": "automatic", "base_chance": 1, "announcement_week": 5}}})["adapters"]["career_preload"] == {"state": "armed"}
         loader = host.adapters.categories
         # Screen compatibility can fail much later than pack setup. It must
         # report on the next ordinary response without blocking career loading.
@@ -158,6 +169,10 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         career.regulation_manager.state = career
         career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
         assert career.regulation_manager.regulation_defs["owned.rule"] == categories[0]
+        career.season_no, career.week_index = 3, 5
+        career.regulation_manager.regulations = {"owned.rule": {"current": "open", "upcoming": None}}
+        career.regulation_manager.pending_rules = {}
+        career.email_manager = SimpleNamespace(inbox=[], send_email=lambda *args, **kwargs: None)
         career.formula_regulation_governance = regulation_changes.FormulaRegulationGovernanceManager(career)
         career.formula_regulation_governance.load_state({"policy": {"mode": "scripted", "scripted_changes": []}})
         assert career.formula_regulation_governance.policy["scripted_changes"] == scripts
@@ -179,10 +194,16 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert rejected["regulation_control"] is False and rejected["regulation_notices"]
         assert host.adapters.channel is channel
         assert pulse("install-regulations", regulations=control)["regulation_control"] is True
+        assert host.adapters.coverage["automatic_changes"] is True
+        assert career.formula_regulation_governance.process_week() == "native week"
+        assert not career.regulation_manager.pending_rules
         active = pulse("activate-regulations", regulations=control)
         assert active["regulation_control"] is True and active["adapters"]["regulations"]["state"] == "active"
         assert screen_manager.update() == "native update"
         assert cached_preload(screen, career) is True
+        career.formula_regulation_governance.process_week()
+        assert career.regulation_manager.pending_rules == {"owned.rule": "limited"}
+        assert len(career.email_manager.inbox) == 1
         assert pulse("restore-native-rules", regulations=control)["regulation_control"] is True
         assert host.adapters.channel is channel and not channel.validation_ready
         guard = host.CallableAdapters()

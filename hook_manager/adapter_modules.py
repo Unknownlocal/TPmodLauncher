@@ -95,7 +95,7 @@ class AdapterModules:
                     raise HookError("Native regulation change load/save integration is unavailable")
                 self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
                 screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
-                self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append)
+                self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append, self.categories)
             self.preload = CareerPreload(self._career_left)
         except BaseException:
             self.stop_regulations()
@@ -264,6 +264,8 @@ class AdapterModules:
             policy, channel = self.policy, self.channel
             if state is not policy.state:
                 raise HookError("The prepared regulation career is no longer current")
+            if self.categories is not None:
+                self.categories.check(state)
             policy._current()
             if not policy._published or any(policy._adoption(rule) != row for rule, row in policy._adopted.items()):
                 raise HookError("Native regulation choices need a new preparation")
@@ -366,6 +368,11 @@ class AdapterModules:
                     self.coverage[key] = "skipped"
                 else:
                     self.coverage[key] = "regulated" if type(value) is dict else "disabled"
+            if self.categories is not None and self.categories.automatic is not None:
+                helper = self.categories.automatic
+                helper.check(state)
+                helper.state, helper.channel = state, channel
+                self.coverage["automatic_changes"] = True
             return dict(self.coverage)
         except BaseException as error:
             # A guard may already have admitted a worker. Retain ownership and
@@ -389,7 +396,10 @@ class AdapterModules:
             # it installed. Full cleanup must also wait for its loading workers.
             hooks = [*self.regulations, *([self.categories] if self.categories is not None and not retain else []),
                      *([self.regulation_screen] if self.regulation_screen is not None and not retain else [])]
-            for hook in hooks:
+            # Retiring keeps category hooks, but must still wait for their
+            # weekly decisions and persistence work before changing careers.
+            for hook in [*hooks, *([self.categories] if retain and self.categories is not None
+                                   and self.categories.automatic is not None else [])]:
                 lock = getattr(hook, "_lock", None)
                 if lock is not None:
                     if not lock.acquire(blocking=False):

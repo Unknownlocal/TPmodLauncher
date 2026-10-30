@@ -105,9 +105,12 @@ declare voting calculations. Calendar, technical-era and native entry rules are
 excluded because they use separate change procedures or do not use ordinary
 voting. Voting modules must belong to the declaring mod's checked source.
 
-These change declarations can be prepared and inspected, but runtime binding
-currently rejects them with an activation error. They cannot silently become
-active as definition-only mods. Existing declarations without these fields
+Automatic settings travel through the fixed category-loading request. Native
+setup checks persistence, weekly decisions and mail delivery before reporting
+automatic-change coverage; the launcher requires that coverage for activation.
+No guest callback runs for an automatic decision. Custom voting declarations
+remain rejected during runtime binding and cannot become active as
+definition-only mods. Existing declarations without these fields
 continue through normal binding.
 
 Checked native switches form part of rule revisions. After career publication,

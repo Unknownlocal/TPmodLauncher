@@ -2,6 +2,7 @@
 """Show loaded regulation categories omitted by the native screen's fixed groups."""
 
 from functools import update_wrapper
+import inspect
 import threading
 
 from ...callables import CallableTarget, method_group
@@ -12,10 +13,10 @@ from ..ui import ui_bindings
 class RegulationScreenAdapter(Manager):
     """Append native cards without replacing the screen's input or inspector."""
 
-    def __init__(self, report):
+    def __init__(self, report, categories=None):
         """Observe the screen and send later errors to the pack's notice queue."""
         super().__init__(lambda record: None)
-        self.report = report
+        self.report, self.categories = report, categories
         # Opening this screen is optional. Observe its normal import instead of
         # importing it during career loading or making readiness wait for it.
         self.observe("ui.screens.regulations_screen", self._ready)
@@ -26,19 +27,59 @@ class RegulationScreenAdapter(Manager):
                     + "; custom cards unavailable; continuing native game")
 
     def _ready(self, module):
-        """Check the loaded drawing helpers before changing the single entry point."""
+        """Check native drawing and label methods before installing owned hooks."""
         screen = module.RegulationsScreen
         method_group(screen, {"_draw_sections": "(self, surface, left_rect)",
                               "_draw_regulation_card": "(self, surface, entry, rect)"})
         self.ui, self.native = ui_bindings(screen), module
-        target = CallableTarget("regulations.ui.catalogue", module.__name__, (screen.__name__,),
-                                "_draw_sections", "(self, surface, left_rect)")
-        self.approve(target)
-        self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "after"}])
+        signatures = {"_draw_sections": "(self, surface, left_rect)"}
+        if self.categories is not None and self.categories.automatic is not None:
+            signatures["_decision_label"] = "(self, key, entry)"
+            # Colour defaults belong to the native palette. Check the argument
+            # layout while retaining that default instead of pinning an RGB value.
+            color = inspect.signature(screen._draw_metric).parameters["color"].default
+            signatures["_draw_metric"] = f"(self, surface, rect, label, value, color={color!r})"
+        bindings = []
+        for method, signature in signatures.items():
+            target = CallableTarget("regulations.ui.catalogue." + method, module.__name__, (screen.__name__,),
+                                    method, signature)
+            self.approve(target)
+            bindings.append({"target": target.name, "callback": "internal", "phase": "after"})
+        self.install("regulations.ui.catalogue", bindings)
         return True
+
+    def _policy_wrapper(self, name, target, original, signature):
+        """Change automatic decision text while native code draws the same widgets."""
+        group = self.groups[name]
+
+        def wrapped(*args, **kwargs):
+            if group["state"] != "active" or threading.current_thread() is not threading.main_thread():
+                return original(*args, **kwargs)
+            arguments = signature.bind(*args, **kwargs)
+            screen = arguments.arguments["self"]
+            helper = self.categories.automatic
+            key = arguments.arguments.get("key", getattr(screen, "selected_key", None))
+            policy = helper.policies.get(key) if helper is not None and helper.state is screen.state else None
+            if policy is not None:
+                chance = f"{policy['base_chance'] * 100:.0f}%"
+                if target.attribute == "_decision_label":
+                    return "Change chance " + chance
+                label = arguments.arguments["label"]
+                if label == "Rule decisions":
+                    arguments.arguments.update(label="Change chance", value=chance)
+                elif label == "Available options":
+                    # Stored weeks start at zero; the screen numbers them from one.
+                    arguments.arguments.update(label="Announcement week", value=str(policy["announcement_week"] + 1))
+            return original(*arguments.args, **arguments.kwargs)
+
+        update_wrapper(wrapped, original)
+        wrapped._tpm_hook_group = name
+        return wrapped
 
     def _wrapper(self, name, binding, target, original, signature):
         """Keep native results on UI failure and preserve native exceptions."""
+        if target.attribute != "_draw_sections":
+            return self._policy_wrapper(name, target, original, signature)
         adapter, group = self, self.groups[name]
 
         def wrapped(self, surface, left_rect):

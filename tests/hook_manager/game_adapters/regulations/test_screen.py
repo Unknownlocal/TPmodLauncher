@@ -48,6 +48,31 @@ def catalogue(monkeypatch):
     return screen, rect
 
 
+def test_automatic_cards_and_details_keep_native_drawing_and_palette(catalogue, monkeypatch):
+    screen, rect = catalogue
+    def decision(self, key, entry):
+        return "Team voting"
+    def metric(self, surface, rect, label, value, color="native palette"):
+        return label, value, color
+    monkeypatch.setattr(type(screen), "_decision_label", decision, raising=False)
+    monkeypatch.setattr(type(screen), "_draw_metric", metric, raising=False)
+    helper = SimpleNamespace(state=screen.state, policies={"owned.first": {"base_chance": .25, "announcement_week": 40}})
+    adapter = presentation.RegulationScreenAdapter(lambda message: None, SimpleNamespace(automatic=helper))
+    try:
+        screen.selected_key = "owned.first"
+        assert screen._decision_label("owned.first", {}) == "Change chance 25%"
+        assert screen._draw_metric(None, None, "Rule decisions", "Team vote") == ("Change chance", "25%", "native palette")
+        assert screen._draw_metric(None, None, "Available options", "2") == ("Announcement week", "41", "native palette")
+        assert screen._decision_label("native", {}) == "Team voting"
+        screen.selected_key = "native"
+        assert screen._draw_metric(None, None, "Rule decisions", "Team vote") == ("Rule decisions", "Team vote", "native palette")
+        cached = screen._decision_label
+        adapter.stop()
+        assert cached("owned.first", {}) == "Team voting"
+    finally:
+        adapter.stop()
+
+
 @pytest.mark.parametrize("native_cards,width", [(True, 240), (False, 1200)])
 def test_cards_fit_catalogue_and_pack_cleanup_restores_cached_draws(catalogue, native_cards, width):
     screen, rect = catalogue

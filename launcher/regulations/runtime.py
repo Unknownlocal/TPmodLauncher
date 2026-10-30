@@ -53,6 +53,9 @@ class RegulationRuntime:
         scripts = self.definitions.custom_scripts
         if scripts:
             data["regulations"]["scripted_changes"] = scripts
+        automatic = self.definitions.automatic_changes
+        if automatic:
+            data["regulations"]["automatic_changes"] = automatic
         status = bridge.request("await-regulations", **data)
         if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
             raise RuntimeError("Native regulation loading protection was not confirmed")
@@ -165,10 +168,11 @@ class RegulationRuntime:
             raise RuntimeError("Regulations must bind once in their pack session")
         self._attempted = True
         try:
-            # A declared regulation change policy requires its complete native and
-            # execution integration; it cannot become a definition-only owner.
-            if self.definitions.automatic_changes or self.definitions.voting:
-                raise ValueError("Automatic regulation changes and custom voting are not available for activation")
+            # Voting handlers need execution support, not just checked JSON data.
+            if self.definitions.voting:
+                raise ValueError("Custom voting is not available for activation")
+            if self.definitions.automatic_changes:
+                self._required_components.add("automatic_changes")
             validators_by_owner = self.definitions.validators
             for validators in validators_by_owner.values():
                 for validator in validators:

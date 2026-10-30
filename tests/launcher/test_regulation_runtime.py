@@ -70,16 +70,12 @@ def control_bridge(monkeypatch, control):
     return client
 
 
-@pytest.mark.parametrize("feature", ["automatic", "voting"])
-def test_incomplete_regulation_changes_cannot_activate_a_pack(feature, make_mod, tmp_path):
+def test_custom_voting_cannot_activate_a_pack(make_mod, tmp_path):
     mod = make_mod("def vote(context, regulation): return {'choice': 'proposed', 'reason': 'Test'}")
     category = {"key": "owned.rules.policy", "label": "Policy", "default": "open",
                 "options": [{"id": 1, "key": "open", "name": "Open"}]}
     section = {"schema": 1, "categories": [category]}
-    if feature == "automatic":
-        category["change_control"] = {"mode": "automatic", "base_chance": 1, "announcement_week": 40}
-    else:
-        section["voting"] = [{"rule": category["key"], "handler": "rules.vote"}]
+    section["voting"] = [{"rule": category["key"], "handler": "rules.vote"}]
     (tmp_path / "regulations.json").write_text(json.dumps({"mod_extensions": {"owned.rules": section}}), encoding="utf-8")
     reports, progress, menus = [], [], []
     with closing(PackMods(tmp_path, reports.append, set_loading=progress.append, set_menu=menus.append)) as pack:
@@ -106,6 +102,8 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
     # Exercise the same fixed loading request for categories and scheduled choices.
     document["mod_extensions"][owner]["scripted_changes"] = [{
         "key": category, "new_regulation": {"key": "four_years"}, "effective_season": 2028}]
+    document["mod_extensions"][owner]["categories"][0]["change_control"] = {
+        "mode": "automatic", "base_chance": .25, "announcement_week": 40}
     path = folder / "regulations.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     original = path.read_bytes()
@@ -134,7 +132,8 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
                 assert progress[-1]["state"] == "loading" and not menus
                 assert record["regulations"] == {"pack": str(folder.resolve()),
                     "categories": scope.regulations.definitions.custom_categories,
-                    "scripted_changes": scope.regulations.definitions.custom_scripts}
+                    "scripted_changes": scope.regulations.definitions.custom_scripts,
+                    "automatic_changes": scope.regulations.definitions.automatic_changes}
                 reply({"adapters": {"career_preload": {"state": "armed"}}})
             elif operation in ("prepare-regulations", "retire-regulations"):
                 def publish():
@@ -156,12 +155,15 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
                 if operation == "install-regulations":
                     assert record["regulations"]["native_rules"] == {
                         "rookie_contract_length_check": {"rule": category, "parameter": "native_check"}}
+                    with pytest.raises(ValueError, match="automatic_changes"):
+                        scope.regulations.confirm_native(dict(PERSONNEL_COMPONENTS,
+                            rookie_contract_length_check="regulated", staff_prestige_check="native"), pending=True)
                 else:
                     assert "native_rules" not in record["regulations"]
                 reply({"regulation_control": True, "adapters": {"regulations": {
                     "state": "installed" if operation == "install-regulations" else "active",
                     "career_generation": record["regulations"]["generation"], "components": dict(PERSONNEL_COMPONENTS,
-                        rookie_contract_length_check="regulated", staff_prestige_check="native")}}})
+                        rookie_contract_length_check="regulated", staff_prestige_check="native", automatic_changes=True)}}})
         monkeypatch.setattr(client, "_post", post)
         scope.load(dict(state="ready", series="formula", id=folder.name, root=str(folder.resolve())))
         deadline = time.monotonic() + 120
