@@ -25,10 +25,19 @@ and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
-Standard Python logging writes to the console and `logs/launcher.log`. Validation
-failures carry their ERROR severity through the bridge, with the process and
-operation context. Logging an error does not itself stop the game; the operation
-that failed controls its outcome.
+`diagnostics.py` configures standard Python logging for the console and
+`logs/launcher.log`. Records name the part that produced them and, when known,
+the process, check and action. Compatibility problems use WARNING; failed operations
+use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
+by default. Framework reports retain their severity through reporting functions
+and the bridge.
+Error text and stack locations have length limits and contain no captured local values.
+Handlers are removed when the launch ends. Logging an error does not itself
+stop the game; the operation that failed controls its outcome.
+
+`submit_log` callbacks attach context and route records or messages to
+`write_log()`, which uses the standard logger. Game adapters construct their
+transport records with `hook_manager.diagnostics.build_log_record()`.
 
 On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
 Ctrl+Break. It sends normal window-close requests only to game processes owned

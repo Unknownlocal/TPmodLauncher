@@ -162,7 +162,7 @@ class CareerPreload(Manager):
                 # Only our post-native mapping failed. Report/restore this
                 # integration and retain native completion; never replay assets
                 # or catch an exception from the original helper itself.
-                self._report(error)
+                self.store_error(error)
                 self.stop()
                 return ready
 

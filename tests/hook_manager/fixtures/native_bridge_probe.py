@@ -2,6 +2,8 @@
 """Run the real bridge against an owned target; copied beside entry.py before execution."""
 
 import importlib.util, json, runpy, sys, time
+import io
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,16 +21,20 @@ frida = load("test_binding", "native_test_binding.py").load(root)
 load("dependencies", "bundled_dependencies.py").load_source_packages(root)
 from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 output = Path(sys.argv[3])
-messages = []
-diagnostics = []
+messages = io.StringIO()
+logger = logging.getLogger("owned.bridge_probe")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+handler = logging.StreamHandler(messages)
+handler.setFormatter(logging.Formatter("%(levelno)s %(message)s"))
+logger.addHandler(handler)
 # The bridge receives the installation folder beside this isolated launcher copy.
 pack = root.parent / "data/owned pack"
 pack.mkdir(parents=True)
 controller = lifecycle.Controller(
     frida.get_local_device(),
     [sys.argv[1], "-B", sys.argv[2], str(output)],
-    messages.append,
-    log=lambda level, message: diagnostics.append((level, message)),
+    logger,
     bridge_factory=bridge.factory(root, frida),
     restart_grace=0.2,
 )
@@ -39,7 +45,7 @@ try:
         controller.poll(timeout=0.02)
     controller.poll(timeout=0.02)
     assert (output / "active.json").exists(), messages
-    assert any("HOOK MANAGER READY" in message for message in messages), messages
+    assert any("HOOK MANAGER READY" in message for message in messages.getvalue().splitlines()), messages
     current = next(iter(controller.bridges.values()))
     # The helper waits for a worker that crosses another SaveThread hook.
     # This must finish without locking that worker out of JavaScript with the GIL.
@@ -159,9 +165,9 @@ try:
         "root": str(pack.resolve()),
     }, status
     controller.poll()
-    assert sum("PACK DISCOVERY" in message for message in messages) == 1, messages
-    assert [(level, message.split(": ", 1)[-1]) for level, message in diagnostics] == [
-        (40, "Owned bridge validation failure")], diagnostics
+    assert sum("PACK DISCOVERY" in message for message in messages.getvalue().splitlines()) == 1, messages
+    errors = [line for line in messages.getvalue().splitlines() if line.startswith("40 ")]
+    assert len(errors) == 1 and errors[0].endswith("Owned bridge validation failure"), messages.getvalue()
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")
@@ -176,4 +182,6 @@ deadline = time.monotonic() + 5
 while not (output / "closed.json").exists() and time.monotonic() < deadline:
     time.sleep(0.02)
 assert (output / "closed.json").exists(), messages
-print(json.dumps(messages))
+logger.removeHandler(handler)
+handler.close()
+print(json.dumps(messages.getvalue().splitlines()))

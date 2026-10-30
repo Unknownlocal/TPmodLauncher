@@ -173,10 +173,10 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
 
     monkeypatch.setattr(feedback, "feedback_bindings", compatible)
     reports = []
-    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, report=reports.append).install_prepared()
+    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, submit_log=reports.append).install_prepared()
     screen = screen_for(classes["staff"], state, "staff")
     try:
-        assert len(reports) == 1 and "UI COMPATIBILITY FAILED" in reports[0]
+        assert len(reports) == 1 and "UI COMPATIBILITY FAILED" in reports[0]["detail"]
         assert adapter.feedback.groups["personnel.ui.staff"]["state"] == "active"
         screen.handle_event("unrelated")
         # Replace only this owned native fixture body before installing a fresh

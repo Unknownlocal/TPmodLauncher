@@ -161,7 +161,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         original_sections = catalogue.RegulationsScreen._draw_sections
         monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
         late = pulse("status")
-        assert len(late["regulation_notices"]) == 1 and "UI COMPATIBILITY FAILED" in late["regulation_notices"][0]
+        assert len(late["regulation_notices"]) == 1 and "UI COMPATIBILITY FAILED" in late["regulation_notices"][0]["detail"]
         assert late["adapters"]["career_preload"] == {"state": "armed"}
         assert catalogue.RegulationsScreen._draw_sections is original_sections
         assert pulse("status")["regulation_notices"] == []

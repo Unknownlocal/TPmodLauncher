@@ -412,7 +412,7 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
 def test_published_data_rejects_unacknowledged_or_stale_actions_before_author_code(make_mod, tmp_path, rejected):
     executed = []
     mod = make_mod("import wit_world\ndef validate(c,r):\n wit_world.report('unexpected')\n return {'decision':'allow'}\n",
-                   report=lambda *args: executed.append(args))
+                   submit_log=lambda *args: executed.append(args))
     scope, runtime, wake, _, _ = prepare_scope(tmp_path, {mod.manifest.id: mod})
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
@@ -686,7 +686,7 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
     threads = []
     mods = make_mods({"a.rules": "def validate(c,r): return {'decision':'allow','replacement':1}\n",
                       "b.rules": "import wit_world\ndef validate(c,r):\n wit_world.report('checked')\n return {'decision':'allow'}\n"},
-                     report=lambda *_: threads.append(threading.get_ident()))
+                     submit_log=lambda *_: threads.append(threading.get_ident()))
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, mods)
     with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
         assert not runtime.ready  # A transport handshake is not native readiness.

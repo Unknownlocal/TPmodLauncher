@@ -49,17 +49,17 @@ def dispatch(mods, *, count=1, sections=None):
 
 @pytest.fixture
 def make_mods(make_source_group):
-    def create(rules, *, extra=(), report=None, cleanup=None):
+    def create(rules, *, extra=(), submit_log=None, cleanup=None):
         # Direct snapshots keep dispatch cases focused; pack tests exercise the
         # public manifest reader and source loading with these same permissions.
-        caps = {"regulations"} | ({"diagnostics"} if report else set())
+        caps = {"regulations"} | ({"diagnostics"} if submit_log else set())
         snapshots = []
         for owner, code in rules.items():
             manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
             files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
                      ("rules.py", code), *extra)
             snapshots.append(SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files)))
-        mods = make_source_group(tuple(snapshots), report=report, cleanup=cleanup)
+        mods = make_source_group(tuple(snapshots), submit_log=submit_log, cleanup=cleanup)
         for mod in mods.values():
             mod.activate()
         return mods

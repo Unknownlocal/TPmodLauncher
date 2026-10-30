@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Attach optional feedback when native negotiation screens import normally."""
 
+from ....diagnostics import build_log_record
+
 from functools import update_wrapper
 import threading
 from weakref import WeakKeyDictionary
@@ -12,9 +14,9 @@ from .notice import PersonnelNotice
 
 
 class PersonnelFeedback(Manager):
-    def __init__(self, guards, state, report, *, kinds=None):
+    def __init__(self, guards, state, submit_log, *, kinds=None):
         super().__init__(lambda *args: None)
-        self.guards, self.state, self.report = guards, state, report
+        self.guards, self.state, self.submit_log = guards, state, submit_log
         self.notices, self.ui = WeakKeyDictionary(), {}
         # UI groups have their own lifecycle: a changed screen can disable its
         # feedback while contract guards stay active. Observe ordinary imports.
@@ -22,10 +24,11 @@ class PersonnelFeedback(Manager):
             module = "ui.screens." + kind + "_negotiation_screen"
             self.observe(module, lambda module, kind=kind: self._ready(kind, module))
 
-    def _report(self, error):
-        super()._report(error)
-        self.report("REGULATIONS UI COMPATIBILITY FAILED personnel: " + " ".join(str(error).split())[:512]
-                    + "; feedback integration skipped; signing guards remain active")
+    def store_error(self, error):
+        """Retain a feedback failure and submit its compatibility warning."""
+        super().store_error(error)
+        self.submit_log(build_log_record('WARNING', "REGULATIONS UI COMPATIBILITY FAILED personnel: " + str(error)
+                    + "; feedback integration skipped; signing guards remain active", error=error, component="regulations"))
 
     def _ready(self, kind, module):
         screen = getattr(module, kind.title() + "NegotiationScreen")

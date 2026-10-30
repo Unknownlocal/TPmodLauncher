@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Deliver saved automatic decisions through the game's ordinary regulation mail."""
 
+from ...diagnostics import build_log_record
+
 from ...callables import CallableTarget
 from ...manager import HookError
 
@@ -8,13 +10,13 @@ from ...manager import HookError
 class AutomaticAnnouncements:
     """Keep a notice pending until its identity is present in the native inbox."""
 
-    def __init__(self, categories, report):
+    def __init__(self, categories, submit_log):
         target = CallableTarget("regulations.automatic.mail", "managers.formula_regulation_governance",
                                 ("FormulaRegulationGovernanceManager",), "_send",
                                 "(self, subject, body, actions=None, *, structured_content=None)")
         if target.resolve(categories.regulation_changes.completed) is None:
             raise HookError("Automatic announcements need the loaded native mail method")
-        self.categories, self.report = categories, report
+        self.categories, self.submit_log = categories, submit_log
 
     def check(self, state):
         """Require a readable inbox and its native delivery entry before activation."""
@@ -36,8 +38,8 @@ class AutomaticAnnouncements:
             try:
                 self._deliver(manager, key, notice)
             except Exception as error:
-                self.report("REGULATIONS COMPATIBILITY FAILED automatic announcement " + key + ": "
-                            + str(error)[:512] + "; insertion checked; unconfirmed notices retained")
+                self.submit_log(build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED automatic announcement " + key + ": "
+                            + str(error)[:512] + "; insertion checked; unconfirmed notices retained", error=error, component="regulations"))
 
     def _deliver(self, manager, key, notice):
         """Confirm insertion even if native sending raises after storing the mail."""

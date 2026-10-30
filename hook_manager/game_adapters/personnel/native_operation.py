@@ -5,6 +5,7 @@ from contextlib import contextmanager, nullcontext
 import threading
 
 from ...manager import HookError
+from ...diagnostics import build_log_record
 from .cancellation import PersonnelCancellation
 
 
@@ -16,10 +17,10 @@ def report_failure(guards, error):
     operation = getattr(_local, "operation", None)
     if operation is not None and operation["reported"]:
         return
-    if guards._error_report is not None:
-        label = " operation=" + operation["label"] if operation else ""
-        detail = f"REGULATIONS VALIDATION FAILED scope={guards.scope}{label}: {error}"
-        guards._error_report({"level": "ERROR", "detail": " ".join(detail.split())[:512]})
+    if guards.submit_log is not None:
+        guards.submit_log(build_log_record("ERROR", f"REGULATIONS VALIDATION FAILED: {error}",
+                                        error=error, component="regulations", scope=guards.scope,
+                                        **({"operation": operation["label"]} if operation else {})))
         if operation is not None:
             operation["reported"] = True
 

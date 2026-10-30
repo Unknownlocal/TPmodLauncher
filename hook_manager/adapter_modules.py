@@ -10,6 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 if __package__:
+    from .diagnostics import build_log_record, single_line
     from .manager import HookError
     from .career_preload import CareerPreload
 
@@ -45,6 +46,7 @@ class AdapterModules:
         # UI imports and game-worker validation can fail after setup returned.
         # Keep a bounded pack-owned outbox for the next ordinary bridge response.
         self.regulation_notices = deque(maxlen=16)
+        self.enqueue_log_record = self.regulation_notices.append
 
     def status(self):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
@@ -105,7 +107,7 @@ class AdapterModules:
                 if definitions.get("categories"):
                     self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
                     screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
-                    self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append, self.categories)
+                    self.regulation_screen = screen.RegulationScreenAdapter(self.enqueue_log_record, self.categories)
                 elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
                     raise HookError("Expected prepared categories or voting protection")
             self.preload = CareerPreload(self._career_left)
@@ -123,10 +125,10 @@ class AdapterModules:
             if self.regulation_changes is None:
                 module = self.host.adapter_code.game_adapters.regulations.regulation_change
                 self.regulation_changes = module.RegulationChangeAdapter(
-                    self.regulation_notices.append, self.host.manager.completed)
+                    self.enqueue_log_record, self.host.manager.completed)
         except Exception as error:
-            self.regulation_notices.append("REGULATIONS COMPATIBILITY FAILED regulation changes: "
-                + " ".join(str(error).split())[:512] + "; load/save integration skipped; continuing native game")
+            self.enqueue_log_record(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED regulation changes: "
+                + str(error) + "; load/save integration skipped; continuing native game", error=error, component="regulations"))
         return True  # Finish the one-shot native import observation, including failure.
 
     def regulation_defaults(self):
@@ -147,7 +149,7 @@ class AdapterModules:
         if self.channel is not None:
             self.channel.validation_ready = False
 
-    def prepare_regulations(self, request, *, report):
+    def prepare_regulations(self, request, *, submit_log):
         """Publish a career snapshot through a fixed endpoint, without game hooks.
 
         Only trusted bridge setup calls this. Pack data cannot supply a module,
@@ -161,7 +163,7 @@ class AdapterModules:
         if self.preload is not None and request["generation"] != self.preload.generation:
             # Reject before acquiring resources: cleanup for an old request
             # must not dismantle the newly captured loading attempt.
-            report("REGULATIONS COMPATIBILITY FAILED preparation: stale loading attempt; request skipped")
+            submit_log(build_log_record('DEBUG', "REGULATIONS COMPATIBILITY FAILED preparation: stale loading attempt; request skipped", component="regulations"))
             return self.status()
         if self.channel is not None and self.policy is not None:
             raise HookError("Regulation preparation already owns a channel")
@@ -201,9 +203,9 @@ class AdapterModules:
             self.regulation_generation = generation
         except Exception as error:
             self.stop_regulations()  # Failed preparation must not hold native loading completion.
-            self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
-            report("REGULATIONS COMPATIBILITY FAILED preparation: " + self.regulation_error
-                   + "; regulation setup skipped; continuing native game")
+            self.regulation_error = single_line(error, 512) or type(error).__name__
+            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED preparation: " + self.regulation_error
+                   + "; regulation setup skipped; continuing native game", error=error, component="regulations"))
         finally:
             # Keep successful preparation until explicit activation or cleanup.
             # Any failed candidate closes before reporting its unavailable state.
@@ -211,7 +213,7 @@ class AdapterModules:
                 channel.close()
         return self.status()
 
-    def control_regulations(self, operation, request, *, report):
+    def control_regulations(self, operation, request, *, submit_log):
         """Install, enable or stop only this request's prepared career snapshot.
 
         The endpoint token ties delayed control requests to their own connection.
@@ -285,7 +287,7 @@ class AdapterModules:
                 if self.coverage:
                     raise HookError("Prepared regulation hooks are already installed")
                 self.install_regulations(policy.state, channel, policy.select,
-                                         native_rules=request.get("native_rules", {}), report=report)
+                                         native_rules=request.get("native_rules", {}), submit_log=submit_log)
             else:
                 if not self.coverage or channel.validation_ready:
                     raise HookError("Regulation activation needs a pending installation")
@@ -309,11 +311,11 @@ class AdapterModules:
             # Busy cleanup retains ownership until the stop request can retry.
             if self.channel is not None:
                 self.channel.validation_ready = False
-            self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
+            self.regulation_error = single_line(error, 512) or type(error).__name__
             self.stop_regulations()
             raise
 
-    def install_regulations(self, state, channel, select, *, native_rules, report):
+    def install_regulations(self, state, channel, select, *, native_rules, submit_log):
         """Own the fixed adapters for a career supplied by trusted native setup.
 
         This Python-only method is absent from the bridge request API. The
@@ -331,13 +333,13 @@ class AdapterModules:
         career = getattr(game, "GameState", None)
         if not isinstance(career, type) or not isinstance(state, career):
             raise HookError("Regulation installation needs a native GameState")
-        if channel is None or channel.closed or not callable(select) or not callable(report):
+        if channel is None or channel.closed or not callable(select) or not callable(submit_log):
             raise HookError("Regulation installation needs an open channel and trusted callbacks")
         adapters = self.host.adapter_code.game_adapters.regulations
         self.channel = channel
         try:
             approach = adapters.regulation_approach.RegulationApproachAdapter.prepare(
-                state, channel, select, self.regulation_notices.append)
+                state, channel, select, self.enqueue_log_record)
             personnel = []
             # Unsubscribed packs do not trigger personnel inspection or hooks.
             if channel.bindings("personnel.contract"):
@@ -345,24 +347,24 @@ class AdapterModules:
                     # Constructors only prepare support. A late academy failure
                     # must not leave earlier driver/staff/staffing wrappers behind.
                     personnel.append(adapters.regulation_personnel.RegulationPersonnelAdapter(
-                        state, channel, select, report=self.regulation_notices.append))
+                        state, channel, select, submit_log=self.enqueue_log_record))
                     personnel.append(adapters.regulation_academy.RegulationAcademyAdapter(
-                        state, channel, select, report=self.regulation_notices.append))
+                        state, channel, select, submit_log=self.enqueue_log_record))
                 except Exception as error:
                     for hook in reversed(personnel):
                         hook.stop()
                     personnel.clear()
                     # This scope requires all four components; partial coverage
                     # cannot activate a pack, so skip the group together.
-                    report("REGULATIONS COMPATIBILITY FAILED scope=personnel.contract: "
-                           + " ".join(str(error).split())[:512]
-                           + "; personnel integration skipped; continuing native game")
+                    submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED scope=personnel.contract: "
+                           + str(error)
+                           + "; personnel integration skipped; continuing native game", error=error, component="regulations"))
             # All required personnel support is checked before the first native
             # assignment, including these independently requested rule switches.
             self.regulations.extend(personnel)
             if approach is not None:
                 self.regulations.append(approach)
-            self.regulations.extend(adapters.regulation_native_switches.install_regulation_switches(state, native_rules, report=report))
+            self.regulations.extend(adapters.regulation_native_switches.install_regulation_switches(state, native_rules, submit_log=submit_log))
             for hook in personnel:
                 hook.install_prepared()
             if approach is not None:
@@ -371,12 +373,12 @@ class AdapterModules:
             self.coverage["personnel_approaches"] = approach is not None
             for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"):
                 self.coverage[key] = bool(personnel)
-            project = adapters.regulation_project.RegulationProjectAdapter.create(state, channel, select, report)
+            project = adapters.regulation_project.RegulationProjectAdapter.create(state, channel, select, submit_log)
             if project is not None:
                 self.regulations.append(project)
             self.coverage["development_projects"] = project is not None
             self._check_voting_preload(state, channel)
-            voting = adapters.regulation_voting.RegulationVotingAdapter.create(state, channel, self.regulation_notices.append)
+            voting = adapters.regulation_voting.RegulationVotingAdapter.create(state, channel, self.enqueue_log_record)
             if voting is not None:
                 self.regulations.append(voting)
                 self.coverage["regulation_voting"] = True
@@ -400,7 +402,7 @@ class AdapterModules:
         except BaseException as error:
             # A guard may already have admitted a worker. Retain ownership and
             # identify failed setup until an idle cleanup retry can restore it.
-            self.regulation_error = " ".join(str(error).split())[:512] or type(error).__name__
+            self.regulation_error = single_line(error, 512) or type(error).__name__
             self.stop_regulations()
             raise
 
@@ -478,7 +480,7 @@ class AdapterModules:
             self.host.adapter_code = root
             # Adapter relative imports reuse the running infrastructure. Do not
             # create a second Manager class or a second callable registry.
-            for name in ("manager", "callables"):
+            for name in ("manager", "callables", "diagnostics"):
                 alias = self.prefix + "." + name
                 self.modules[alias] = sys.modules[alias] = self.host
                 setattr(root, name, self.host)
@@ -489,7 +491,7 @@ class AdapterModules:
         except Exception as error:
             self._remove()
             self.state = "failed"
-            self.error = " ".join(str(error).split())[:512] or type(error).__name__
+            self.error = single_line(error, 512) or type(error).__name__
         except BaseException:
             self._remove()
             raise

@@ -122,7 +122,7 @@ class RegulationCategoryAdapter(Manager):
                 except Exception as error:
                     # Preserve a completed native load if our mapping fails.
                     # The subsequent setup check refuses to activate mod rules.
-                    self._report(error)
+                    self.store_error(error)
                     return definitions
             finally:
                 with self._lock:

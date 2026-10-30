@@ -18,10 +18,10 @@ from ..personnel.native_operation import operation_failure, report_failure, stop
 
 
 class RegulationGuards(CallableAdapters):
-    def __init__(self, channel, select, scope, *, report=None):
+    def __init__(self, channel, select, scope, *, submit_log=None):
         super().__init__()
         self.channel, self.select = channel, select
-        self.scope, self._error_report = scope, report
+        self.scope, self.submit_log = scope, submit_log
         # Native policy supplies a cheap freshness check. Fixed trusted selectors
         # used without a live policy have no changing selection inputs.
         self.policy_identity = getattr(getattr(select, "__self__", None), "identity", lambda: None)
@@ -155,9 +155,9 @@ class RegulationGuards(CallableAdapters):
             failed = participants & self.channel._unavailable
             for owner in failed or participants:
                 self.owners[owner] = "unavailable"
-            self._report(error)
+            self.store_error(error)
             # Only actual validation errors use this failure notice. Other
-            # callers also retain ordinary policy refusals through _report.
+            # callers also retain ordinary policy refusals through store_error.
             report_failure(self, error)
             return ValidationOutcome("unavailable", "Validation unavailable")
         finally:

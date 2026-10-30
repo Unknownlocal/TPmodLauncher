@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Discover and own sandboxed code mods for one process's selected Formula pack."""
 
+from launcher.diagnostics import bind_reporter
+
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -40,7 +42,7 @@ class PackMods:
     def __init__(
         self,
         game_root,
-        report,
+        submit_log,
         *,
         set_menu=None,
         set_settings=None,
@@ -52,9 +54,9 @@ class PackMods:
         wake=None,
         bridge=None,
     ):
-        # game_root and report come from the launcher, never from a mod manifest.
+        # game_root and submit_log come from the launcher, never from a mod manifest.
         self.game_root = Path(game_root).resolve(strict=True)
-        self.report = report
+        self.submit_log = bind_reporter(submit_log, component="mods")
         self.mods = {}
         self.started = False
         self.closed = False
@@ -165,11 +167,11 @@ class PackMods:
             # Preparation can fail before there is a runtime, and listener startup
             # can fail after handlers bind. Neither can revert to loading/ready.
             self._regulation_error = True
-            self._log("REGULATIONS FAILED", owners=sorted(self._regulation_owners), detail=str(error)[:512])
+            self._log("REGULATIONS FAILED", level="ERROR", owners=sorted(self._regulation_owners), detail=str(error)[:512], error=error)
             try:
                 self._reject_mods(self._regulation_owners, str(error)[:512])
             except Exception as cleanup_error:
-                self._log("CLEANUP ERROR", detail=str(cleanup_error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", detail=str(cleanup_error)[:512], error=cleanup_error)
             self._progress("error")
             raise
         if self.regulations.ready:
@@ -254,9 +256,10 @@ class PackMods:
         self._source_reported = True
         self.failed += len(self._sources)
         detail = str(detail)[:512]
-        self._log("SOURCE GROUP FAILED", owners=list(self._sources), detail=detail)
+        self._log("SOURCE GROUP FAILED", level="ERROR", owners=list(self._sources), detail=detail)
+        # The group error identifies its owners; individual details use DEBUG.
         for owner, candidate in self._sources.items():
-            self._log("REJECTED", id=owner, folder=candidate.root.name, detail=detail)
+            self._log("REJECTED", level="DEBUG", id=owner, folder=candidate.root.name, detail=detail)
 
     def _remove_sources(self):
         """Runner cleanup revokes peers atomically, even when only one entry failed."""
@@ -283,12 +286,12 @@ class PackMods:
                 self._reject_sources(detail)
             else:
                 self.failed += 1
-                self._log("REJECTED", id=owner, detail=detail)
+                self._log("REJECTED", level="WARNING", id=owner, detail=detail)
             try:
                 mod.close()
             except Exception as error:
                 failure = failure or error
-                self._log("CLEANUP ERROR", id=owner, detail=str(error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", id=owner, detail=str(error)[:512], error=error)
         if failure is not None:
             raise failure
 
@@ -373,7 +376,7 @@ class PackMods:
             values = json.loads(self.settings.call(owner, "save-settings", payload))
             success = True
         except (OSError, ValueError, KeyError) as error:
-            self._log("SETTINGS SAVE FAILED", id=owner, detail=str(error)[:512])
+            self._log("SETTINGS SAVE FAILED", level="ERROR", id=owner, detail=str(error)[:512], error=error)
         self.settings_result = {"id": request["id"], "owner": owner, "success": success}
         self._flush_settings()
         if success:
@@ -382,13 +385,16 @@ class PackMods:
                 self._flush_settings()
                 self._flush_themes()
             except Exception as error:
-                self._log("SETTINGS EVENT FAILED", id=owner, detail=str(error)[:512])
+                self._log("SETTINGS EVENT FAILED", level="ERROR", id=owner, detail=str(error)[:512], error=error)
                 if owner in self.mods:
                     self.mods.pop(owner).close()
 
-    def _log(self, event, **fields):
+    def _log(self, event, *, level="INFO", error=None, **fields):
         """Keep paths, errors and mod messages inside one quoted log record."""
-        self.report(f"CODE MOD {event}: {json.dumps(fields, ensure_ascii=True)}")
+        # A long owner list must not push the reason beyond the record limit.
+        if "detail" in fields:
+            fields = {"detail": fields["detail"], **fields}
+        self.submit_log(f"CODE MOD {event}: {json.dumps(fields, ensure_ascii=True)}", level=level, error=error)
 
     def _folder(self, pack):
         """Check the discovered record against our installation, not an arbitrary path."""
@@ -543,7 +549,7 @@ class PackMods:
                 self._pack_root = folder
         except (OSError, ValueError, RuntimeError) as error:
             self._log(
-                "DISCOVERY REJECTED",
+                "DISCOVERY REJECTED", level="WARNING",
                 detail=str(error)[:512],
                 phase_seconds=load_timings,
                 total_seconds=round(perf_counter() - started, 6),
@@ -567,7 +573,7 @@ class PackMods:
             except (OSError, ValueError, RuntimeError) as error:
                 self.failed += 1
                 self._log(
-                    "REJECTED",
+                    "REJECTED", level="WARNING",
                     folder=path.name,
                     detail=str(error)[:512],
                     phase_seconds=timings,
@@ -590,7 +596,7 @@ class PackMods:
                 self.failed += 1
                 self._progress()
                 self._log(
-                    "REJECTED",
+                    "REJECTED", level="WARNING",
                     id=manifest.id,
                     folder=candidate.root.name,
                     detail="Duplicate mod ID",
@@ -621,7 +627,7 @@ class PackMods:
                 if type(manifest) is not SourceManifest:
                     if "ui-settings" in manifest.capabilities:
                         self.settings.bind(manifest.id, candidate.root)
-                    mod = Mod(manifest, report=self._diagnostic,
+                    mod = Mod(manifest, submit_log=self._diagnostic,
                               menu=self.menu.add if self.set_menu is not None else None,
                               settings=self.settings.call, theme=self.themes.register,
                               cleanup=lambda owner=manifest.id: self._remove_menu(owner),
@@ -649,14 +655,15 @@ class PackMods:
                     if failed is not None:
                         failed.close()
                     self._remove_menu(manifest.id)
-                    self._log("REJECTED", id=manifest.id, folder=candidate.root.name, detail=str(error)[:512])
+                    self._log("REJECTED", level="WARNING" if isinstance(error, ManifestError) else "ERROR",
+                              id=manifest.id, folder=candidate.root.name, detail=str(error)[:512], error=error)
                 for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),
                                           ("ui-settings", self._flush_themes)):
                     if capability in manifest.capabilities:
                         try:
                             flush()
                         except Exception as cleanup_error:
-                            self._log("CLEANUP ERROR", id=manifest.id, detail=str(cleanup_error)[:512])
+                            self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, detail=str(cleanup_error)[:512], error=cleanup_error)
             else:
                 self._log("ACTIVE", id=manifest.id, version=manifest.version)
             finally:
@@ -691,7 +698,7 @@ class PackMods:
         # A reply queued before a later registry replacement cannot revoke the new registry.
         if status.get("generation") != self.menu_generation:
             return
-        self._log("MENU", **status)
+        self._log("MENU", level="ERROR" if status.get("state") == "failed" else "DEBUG", **status)
         if status.get("state") != "failed":
             return
         # The failed native registry must be cleared once, after all UI owners are revoked.
@@ -728,7 +735,7 @@ class PackMods:
                 self.regulations.close()
             except Exception as error:
                 failed = True
-                self._log("CLEANUP ERROR", detail=str(error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
         # Cleanup may remove shared peers from self.mods. Keep the activation
         # snapshot so every logical owner still gets its reverse-order close log.
         owned = list(self.mods.items())
@@ -738,7 +745,7 @@ class PackMods:
                 mod.close()
             except Exception as error:
                 failed = True
-                self._log("CLEANUP ERROR", id=mod_id, detail=str(error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", id=mod_id, detail=str(error)[:512], error=error)
             else:
                 self._log("CLOSED", id=mod_id)
         if self._source_runner is not None:
@@ -746,13 +753,13 @@ class PackMods:
                 self._source_runner.close()  # Also owns entries never reached by activation.
             except Exception as error:
                 failed = True
-                self._log("CLEANUP ERROR", detail=str(error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
         self._source_entries.clear()
         for flush in (self._flush_menu, self._flush_settings, self._flush_themes):
             try:
                 flush()
             except Exception as error:
                 failed = True
-                self._log("CLEANUP ERROR", detail=str(error)[:512])
+                self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
         if failed:
             raise RuntimeError("Code mod cleanup failed; see the launcher log")

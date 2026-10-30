@@ -130,7 +130,7 @@ def test_extra_card_failure_keeps_native_result_and_native_errors_are_not_retrie
         screen.native_error, screen.card_error = None, True
         assert cached(surface, left) == 100 and screen.draws == 2
         assert [key for _, key in screen.card_hitboxes] == ["native"]
-        assert len(reports) == 1 and "extra card failed" in reports[0]
+        assert len(reports) == 1 and "extra card failed" in reports[0]["detail"]
         assert cached(surface, left) == 100 and screen.draws == 3 and len(reports) == 1
     finally:
         adapter.stop()

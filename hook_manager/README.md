@@ -23,6 +23,13 @@ adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
+`diagnostics.py` provides `build_log_record()` for short log records containing
+severity and relevant check or action details. Adapters hand them to
+`submit_log`; the bridge's `enqueue_log_record` callback holds them for delivery
+to the launcher's standard logger. `Manager.store_error()` separately retains
+recent error text for status checks. Mod `report` messages continue through their
+existing host operation and use INFO severity.
+
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
 and callable classes. Regulation transport loads only in this private bundle;

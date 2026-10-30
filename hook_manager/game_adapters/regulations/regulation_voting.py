@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Replace declared team calculations while native code owns reviews and ballots."""
 
+from ...diagnostics import build_log_record
+
 from copy import deepcopy
 from functools import update_wrapper
 import importlib
@@ -16,14 +18,14 @@ class RegulationVotingAdapter(Manager):
     """Batch one proposal before the first native ballot write; keep saved votes."""
 
     @classmethod
-    def create(cls, state, channel, report):
+    def create(cls, state, channel, submit_log):
         if not getattr(channel, "voting", {}):
             return None
-        return cls(state, channel, report)
+        return cls(state, channel, submit_log)
 
-    def __init__(self, state, channel, report):
+    def __init__(self, state, channel, submit_log):
         super().__init__(lambda record: None)
-        self.state, self.channel, self.report = state, channel, report
+        self.state, self.channel, self.submit_log = state, channel, submit_log
         self._lock, self._local, self._active = threading.RLock(), threading.local(), 0
         try:
             # The fixed calculation module is safe to load during trusted setup;
@@ -77,7 +79,7 @@ class RegulationVotingAdapter(Manager):
                 return original(*args, **kwargs)
             with self._lock:
                 if self._active:
-                    self.report("REGULATIONS COMPATIBILITY FAILED voting: review calculation already active; review skipped")
+                    self.submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED voting: review calculation already active; review skipped", component="regulations"))
                     return None
                 self._active += 1
             scope = {"manager": manager, "opening": method == "_open_review", "cache": {},
@@ -92,8 +94,8 @@ class RegulationVotingAdapter(Manager):
                     manager.category_last_review = cooldowns
                 elif hasattr(manager, "_tpm_voting_pending"):
                     manager._tpm_voting_pending = True
-                self.report("REGULATIONS COMPATIBILITY FAILED voting: " + str(error)[:512]
-                            + "; custom review calculation skipped")
+                self.submit_log(build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED voting: " + str(error)[:512]
+                            + "; custom review calculation skipped", error=error, component="regulations"))
                 return None
             finally:
                 self._local.scope = None

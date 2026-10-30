@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Keep native rule persistence and prepared weekly decisions together."""
 
+from ...diagnostics import build_log_record
+
 from functools import update_wrapper
 from contextlib import contextmanager
 import inspect
@@ -21,13 +23,13 @@ class RegulationChangeAdapter(Manager):
     native manager owns its own progress, including inactive categories.
     """
 
-    def __init__(self, report, completed=()):
+    def __init__(self, submit_log, completed=()):
         super().__init__(lambda record: None)
         # The import observer runs before Python clears the module's loading
         # flag. Its completed-module record permits installation at that point.
         self.completed.update(completed)
         self._lock, self._active = threading.RLock(), 0
-        self.categories, self.report = None, report
+        self.categories, self.submit_log = None, submit_log
         self.voting_pack = None
         # Native lookup uses the game's own module and class identifiers.
         module = "managers.formula_regulation_governance"
@@ -62,7 +64,7 @@ class RegulationChangeAdapter(Manager):
         categories = self.categories
         if categories is None or categories.automatic is not None:
             raise HookError("Automatic changes need an available category loader")
-        helper = AutomaticChanges(categories, policies, self.report)
+        helper = AutomaticChanges(categories, policies, self.submit_log)
         categories.completed.update(self.completed)
         bindings = []
         for method, signature in (("process_week", "(self)"), ("_trigger_candidates", "(self, snapshot)")):
@@ -161,8 +163,8 @@ class RegulationChangeAdapter(Manager):
                     progress = AutomaticProgress(saved)
                     manager._tpm_automatic_progress = progress
                     if progress.error:
-                        self.report("REGULATIONS COMPATIBILITY FAILED automatic progress: " + progress.error
-                                    + "; automatic changes unavailable; native regulation changes retained")
+                        self.submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED automatic progress: " + progress.error
+                                    + "; automatic changes unavailable; native regulation changes retained", component="regulations"))
                 if categories is not None:
                     try:
                         if Path(manager.state.data_dir).resolve() == categories.pack:
@@ -171,7 +173,7 @@ class RegulationChangeAdapter(Manager):
                             else:
                                 manager.definitions = categories.merge_definitions(manager.definitions)
                     except Exception as error:
-                        categories._report(error)
+                        categories.store_error(error)
                 return result
             finally:
                 with self._lock:

@@ -35,7 +35,7 @@ class AcademyCallers:
                     try:
                         draw_refusal(owner, bound.arguments["surface"], notice[0])
                     except Exception as error:
-                        guards._report(error)
+                        guards.store_error(error)
                         self.notices.pop(owner, None)
                 elif notice:
                     self.notices.pop(owner, None)
@@ -46,7 +46,7 @@ class AcademyCallers:
             if threading.current_thread() is not threading.main_thread() and not getattr(guards._local, "operation", False):
                 # Reject before creating or publishing drafts. Trusted workers
                 # must enter the same trusted operation scope as direct guards.
-                guards._report(HookError("Academy caller needs a scoped worker operation"))
+                guards.store_error(HookError("Academy caller needs a scoped worker operation"))
                 return None
             previous = getattr(guards._local, "academy_caller", None)
             frame = {"initiator": "player" if role == "ui" else "ai", "refusal": None,

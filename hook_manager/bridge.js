@@ -47,7 +47,7 @@ function enqueue(operation, id, buttons, loading, settings, themes, regulations)
     return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, resolve, reject }; });
 }
 
-send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
+send({ event: 'waiting', level: 'DEBUG', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
 observer = Process.attachModuleObserver({
     onAdded(module) {
         if (!config.bootstrap) return; // The forked process still contains its parent's Python state.
@@ -141,14 +141,10 @@ observer = Process.attachModuleObserver({
                         }
                         if (!preloadFailureReported && preload && preload.state === 'unavailable') {
                             preloadFailureReported = true;
-                            send({ event: 'compatibility', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
+                            send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
                         }
                         for (const notice of response.status.regulation_notices || []) {
-                            if (typeof notice === 'string') {
-                                send({ event: 'compatibility', detail: notice });
-                            } else {
-                                send({ event: 'compatibility', detail: notice.detail, level: notice.level });
-                            }
+                            send({ ...notice, event: 'diagnostic' });
                         }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;
@@ -196,7 +192,7 @@ observer = Process.attachModuleObserver({
                     }
                 }
             });
-            send({ event: 'transport', detail: 'Waiting for Python main-thread readiness' });
+            send({ event: 'transport', level: 'DEBUG', detail: 'Waiting for Python main-thread readiness' });
         } catch (failure) { fail(failure); }
     }
 });

@@ -17,7 +17,7 @@ while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadlin
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
-host.adapters.regulation_notices.append({"level": "ERROR", "detail": "Owned bridge validation failure"})
+host.adapters.enqueue_log_record({"level": "ERROR", "detail": "Owned bridge validation failure"})
 
 # Reproduce the bridge lock ordering with real Python threads. Evaluating the
 # loading request releases the GIL; the worker must be able to pass its native

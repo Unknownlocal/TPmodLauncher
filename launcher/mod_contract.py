@@ -138,20 +138,20 @@ class Manifest:
             raise ManifestError(str(error)[:512]) from None
 
 
-def _host_operations(manifest, report, menu, settings=None, theme=None):
+def _host_operations(manifest, submit_log, menu, settings=None, theme=None):
     """Attach host-owned identity to the launcher's approved mod operations."""
     operations = {}
     if "diagnostics" in manifest.capabilities:
-        if not callable(report):
+        if not callable(submit_log):
             raise ManifestError("Diagnostics requires a trusted report handler")
 
-        def emit(message):
-            report(
+        def report(message):
+            submit_log(
                 manifest.id,
                 "".join(char if char.isprintable() else " " for char in message),
             )
 
-        operations["report"] = Operation(("string",), None, emit)
+        operations["report"] = Operation(("string",), None, report)
     if "main-menu" in manifest.capabilities:
         if not callable(menu):
             raise ManifestError("Main menu requires a trusted menu provider")
@@ -181,7 +181,7 @@ class Mod:
         self,
         manifest: Manifest,
         *,
-        report=None,
+        submit_log=None,
         menu=None,
         settings=None,
         theme=None,
@@ -191,7 +191,7 @@ class Mod:
     ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
-            operations = _host_operations(manifest, report, menu, settings, theme)
+            operations = _host_operations(manifest, submit_log, menu, settings, theme)
             # The loader owns this timing dictionary; it is never passed into guest code.
             if prepared is None:
                 with measure(timings, "component_read"):

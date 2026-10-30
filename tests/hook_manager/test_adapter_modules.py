@@ -106,7 +106,7 @@ def installation(host, monkeypatch):
 def install(installation):
     modules, career, channel, _, _ = installation
     return modules.install_regulations(career, channel, lambda *a: None,
-        native_rules={"rookie_contract_length_check": False, "staff_prestige_check": False}, report=pytest.fail)
+        native_rules={"rookie_contract_length_check": False, "staff_prestige_check": False}, submit_log=pytest.fail)
 
 
 def capture(installation):
@@ -124,7 +124,7 @@ def capture(installation):
 def test_installation_reports_complete_personnel_coverage(installation):
     modules, _, channel, _, hooks = installation
     with pytest.raises(HookError, match="native GameState"):
-        modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, report=pytest.fail)
+        modules.install_regulations(object(), channel, lambda *a: None, native_rules={}, submit_log=pytest.fail)
     assert modules.channel is None and not channel.closed and all(not hook.closed for hook in hooks)
     coverage = install(installation)
     assert coverage == {"driver_signing": True, "staff_signing": True, "academy_signing": True,
@@ -159,10 +159,10 @@ def test_late_academy_preflight_failure_leaves_all_personnel_methods_native(inst
     monkeypatch.setattr(regulation_academy, "AcademyContractPlanner", incompatible)
     reports = []
     coverage = modules.install_regulations(state, channel, lambda *args: None,
-                                          native_rules={}, report=reports.append)
+                                          native_rules={}, submit_log=reports.append)
     assert observed == originals == [target.resolve({})[2] for target in targets]
-    assert len(reports) == 1 and "Owned academy helper changed" in reports[0]
-    assert "continuing native game" in reports[0]
+    assert len(reports) == 1 and "Owned academy helper changed" in reports[0]["detail"]
+    assert "continuing native game" in reports[0]["detail"]
     assert not any(coverage[key] for key in ("driver_signing", "staff_signing", "staffing", "academy_signing"))
     assert coverage["development_projects"]  # Its independent scope remains usable.
 
@@ -184,9 +184,9 @@ def test_incompatible_rule_selection_reports_skip_and_closes_candidate_channel(i
     channel._rules, channel._custom = {"missing.native.rule"}, set()
     capture(installation)
     reports = []
-    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=reports.append)
+    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, submit_log=reports.append)
     assert result["regulations"]["state"] == "unavailable"
-    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0] and "continuing native game" in reports[0]
+    assert len(reports) == 1 and "COMPATIBILITY FAILED" in reports[0]["detail"] and "continuing native game" in reports[0]["detail"]
     assert modules.channel is None and modules.policy is None and modules.regulations == []
     assert all(not hook.closed for hook in hooks) and channel.closed
 
@@ -199,21 +199,21 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
     channel.publish = lambda **data: published.append(data)
     request = {"generation": 1, "endpoint": {"port": 1, "token": "0" * 64}}
     with pytest.raises(HookError, match="preparation fields"):
-        modules.prepare_regulations(dict(request, target="arbitrary"), report=pytest.fail)
+        modules.prepare_regulations(dict(request, target="arbitrary"), submit_log=pytest.fail)
     notices = []
-    modules.prepare_regulations(request, report=notices.append)
-    assert "captured native loading attempt" in notices[0] and modules.channel is None and not channel.closed
+    modules.prepare_regulations(request, submit_log=notices.append)
+    assert "captured native loading attempt" in notices[0]["detail"] and modules.channel is None and not channel.closed
     capture(installation)
-    result = modules.prepare_regulations(request, report=pytest.fail)
+    result = modules.prepare_regulations(request, submit_log=pytest.fail)
     assert result["regulations"] == {"state": "prepared", "components": {}, "career_generation": 1}
     assert published == [{"native": {}, "custom": {}}]
     assert modules.policy.state is career and modules.policy._published
     assert modules.channel is channel and modules.regulations == []
     assert all(not hook.closed for hook in hooks)
     with pytest.raises(HookError, match="already owns"):
-        modules.prepare_regulations(request, report=pytest.fail)
+        modules.prepare_regulations(request, submit_log=pytest.fail)
     with pytest.raises(HookError, match="does not own"):
-        modules.control_regulations("install-regulations", dict(request, generation=2), report=pytest.fail)
+        modules.control_regulations("install-regulations", dict(request, generation=2), submit_log=pytest.fail)
     assert modules.channel is channel and not channel.closed
     values = []
     original = adapters.regulation_native_switches.install_regulation_switches
@@ -222,15 +222,15 @@ def test_preparation_publishes_without_hooks_and_owns_cleanup(installation):
         return original(state, switches, **kwargs)
     adapters.regulation_native_switches.install_regulation_switches = install_switches
     switches = {"rookie_contract_length_check": False, "staff_prestige_check": True}
-    assert modules.control_regulations("install-regulations", dict(request, native_rules=switches), report=pytest.fail)
+    assert modules.control_regulations("install-regulations", dict(request, native_rules=switches), submit_log=pytest.fail)
     assert values == [switches]
     assert not channel.validation_ready and modules.status()["regulations"]["state"] == "installed"
     assert modules.policy.state is career and modules.policy._published
-    assert modules.control_regulations("activate-regulations", request, report=pytest.fail)
+    assert modules.control_regulations("activate-regulations", request, submit_log=pytest.fail)
     assert channel.validation_ready and modules.status()["regulations"]["state"] == "active"
     with pytest.raises(HookError, match="does not own"):
-        modules.control_regulations("restore-native-rules", dict(request, generation=2), report=pytest.fail)
-    assert modules.control_regulations("restore-native-rules", request, report=pytest.fail)
+        modules.control_regulations("restore-native-rules", dict(request, generation=2), submit_log=pytest.fail)
+    assert modules.control_regulations("restore-native-rules", request, submit_log=pytest.fail)
     assert not channel.validation_ready and not channel.closed
     assert hooks[0].closed and all(not hook.closed for hook in hooks[1:])
     assert modules.regulations == list(hooks[1:]) and modules.policy is not None
@@ -246,8 +246,8 @@ def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation,
     channel.publish = lambda **data: None
     request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
     capture(installation)
-    modules.prepare_regulations(request, report=pytest.fail)
-    modules.control_regulations("install-regulations", request, report=pytest.fail)
+    modules.prepare_regulations(request, submit_log=pytest.fail)
+    modules.control_regulations("install-regulations", request, submit_log=pytest.fail)
     owner, installed, foreign = SimpleNamespace(), object(), object()
     if failure == "career_change":
         modules.preload.current = lambda generation: object()
@@ -255,7 +255,7 @@ def test_activation_rejects_stale_career_or_replaced_owned_wrapper(installation,
         owner.method = foreign
         hooks[0].groups["drivers.rookie-check"]["changes"].append((owner, "method", object(), installed, True))
     with pytest.raises(HookError, match="no longer current|replaced a regulation hook"):
-        modules.control_regulations("activate-regulations", request, report=pytest.fail)
+        modules.control_regulations("activate-regulations", request, submit_log=pytest.fail)
     assert not channel.validation_ready and channel.closed and modules.channel is None
     assert all(hook.closed for hook in hooks)
     if failure == "replaced_hook":
@@ -270,13 +270,13 @@ def test_cancelled_prepared_career_can_retire_without_closing_pack_connection(in
     channel.reset = resets.append
     request = {"generation": 1, "endpoint": {"port": 1, "token": channel._token}}
     preload = capture(installation)
-    modules.prepare_regulations(request, report=pytest.fail)
+    modules.prepare_regulations(request, submit_log=pytest.fail)
     def cancelled(generation):
         raise HookError("cancelled loading attempt")
     preload.current = cancelled
-    assert modules.control_regulations("install-regulations", request, report=pytest.fail) == "stale"
+    assert modules.control_regulations("install-regulations", request, submit_log=pytest.fail) == "stale"
     assert modules.channel is channel and not channel.closed
-    assert modules.control_regulations("retire-regulations", request, report=pytest.fail)
+    assert modules.control_regulations("retire-regulations", request, submit_log=pytest.fail)
     assert modules.preload is preload and modules.policy is None and resets == [2]
 
 
@@ -293,9 +293,9 @@ def test_preparation_failure_closes_candidate_and_reports_native_fallback(instal
         preload.current = lambda generation: object()
     channel.publish = publish
     notices = []
-    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, report=notices.append)
+    result = modules.prepare_regulations({"generation": 1, "endpoint": {}}, submit_log=notices.append)
     assert result["regulations"]["state"] == "unavailable"
-    assert len(notices) == 1 and "continuing native game" in notices[0]
+    assert len(notices) == 1 and "continuing native game" in notices[0]["detail"]
     assert modules.channel is None and modules.policy is None and channel.closed
     assert modules.regulations == [] and all(not hook.closed for hook in hooks)
     assert released == [True] and modules.preload is None

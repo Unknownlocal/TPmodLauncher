@@ -17,7 +17,7 @@ from .regulations.bridge_converter import convert_bridges
 # The callable files skip relative imports on that path; the package __init__
 # serves normal host imports and is deliberately absent from this execution list.
 PYTHON_SOURCES = (
-    "manager", "callables/signatures", "callables/target",
+    "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
     "pack_discovery", "career_preload", "menu", "settings", "themes", "adapter_modules",

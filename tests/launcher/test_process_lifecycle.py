@@ -147,7 +147,7 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
     channel.bindings = lambda scope: {}
     channel.validation_ready = True
     channel._unavailable = set()
-    guard = RegulationGuards(channel, lambda *a: {}, "personnel.contract", report=notices.append)
+    guard = RegulationGuards(channel, lambda *a: {}, "personnel.contract", submit_log=notices.append)
     # An owned but unadmitted worker produces the actual native diagnostic.
     thread = threading.Thread(target=lambda: guard._decision(lambda: {}, set()))
     thread.start()
@@ -157,7 +157,7 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
     payload = json.loads(json.dumps({"event": "compatibility", **notices[0]}))
     path = tmp_path / "launcher.log"
     with lifecycle.reporter(path) as logger:
-        controller.log = logger.log
+        controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
         controller.start()
         try:
             session = controller.sessions[10]
@@ -167,8 +167,67 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
         finally:
             controller.close()
     for output in (path.read_text(), capsys.readouterr().err):
-        assert " ERROR HOOK BRIDGE pid=10: REGULATIONS VALIDATION FAILED" in output
+        assert " ERROR modLauncher.regulations " in output
+        assert "pid=10" in output and "REGULATIONS VALIDATION FAILED" in output
         assert "Unscoped worker or reentrant regulation validation" in output
+
+
+def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(rig, tmp_path, capsys):
+    import logging
+
+    device, controller, _, _ = rig
+    game = Path(controller.game).parent
+    pack = game / "data/owned pack"
+    bad = pack / "broken"
+    bad.mkdir(parents=True)
+    (bad / "mod.toml").write_text("invalid TOML")
+    logger = logging.getLogger("modLauncher")
+    before = list(logger.handlers), logger.level, logger.propagate
+    first = tmp_path / "first.log"
+    with lifecycle.reporter(first) as logger:
+        controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
+        controller.mods_factory = lambda report, bridge: PackMods(game, report)
+        controller.start()
+        session = controller.sessions[10]
+        def send(payload):
+            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            controller.poll()
+        try:
+            send({"event": "pack", "pack": dict(state="ready", series="formula", id=pack.name, root=str(pack.resolve()))})
+            assert controller.pack_mods[10].failed == 1
+            # Malformed severity and guest control characters stay ordinary
+            # bounded diagnostics; neither changes the session's lifetime.
+            send({"event": "diagnostic", "level": [], "detail": "unsafe\n\x1bmessage" + "x" * 5000})
+            send({"event": "waiting", "level": "DEBUG", "detail": "hidden readiness detail"})
+            assert controller.sessions[10] is session and not controller.stopping
+        finally:
+            controller.close()
+    first_text = first.read_text()
+    console = capsys.readouterr().err
+    for output in (first_text, console):
+        assert "WARNING modLauncher.mods pid=10 CODE MOD REJECTED" in output
+        invalid = next(line for line in output.splitlines() if "Invalid diagnostic severity" in line)
+        assert "WARNING" in invalid and "\x1b" not in invalid and len(invalid) < 4400
+        assert "hidden readiness detail" not in output
+    assert (list(logger.handlers), logger.level, logger.propagate) == before
+    second = tmp_path / "second.log"
+    with lifecycle.reporter(second) as logger:
+        lifecycle.write_log(logger, "second session")
+    assert second.read_text().count("second session") == 1 and first.read_text() == first_text
+    assert (list(logger.handlers), logger.level, logger.propagate) == before
+
+
+def test_large_pack_error_keeps_cause_when_owner_list_is_truncated(tmp_path, capsys):
+    path = tmp_path / "launcher.log"
+    with lifecycle.reporter(path) as logger:
+        scope = PackMods(tmp_path, logger)
+        scope._log("SOURCE GROUP FAILED", level="ERROR",
+                   owners=["a" * 126 + f"{i:02}" for i in range(32)], detail="Owned root cause")
+        scope.close()
+    for output in (path.read_text(), capsys.readouterr().err):
+        assert output.count("SOURCE GROUP FAILED") == 1
+        assert "ERROR modLauncher.mods" in output and "Owned root cause" in output
+        assert "[truncated]" in output and len(output) < 4400
 
 
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):

@@ -289,7 +289,7 @@ def test_rollover_unavailable_stops_retries_and_survives_native_catch(monkeypatc
 
     monkeypatch.setattr(type(state), "finalize_and_rollover_season", rollover)
     reports = []
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}, report=reports.append).install_prepared()
+    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}, submit_log=reports.append).install_prepared()
     try:
         with ThreadPoolExecutor(max_workers=1) as worker:
             with pytest.raises(HookError, match="Season rollover stopped"):
@@ -525,7 +525,7 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
         channel.message = "Rule says driver will not renew this reserve role contract"
         reports = []
         adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"},
-                                                  report=reports.append).install_prepared()
+                                                  submit_log=reports.append).install_prepared()
         try:
             def advance():
                 result = negotiations.ai_manage_drivers("reserve")
@@ -539,7 +539,7 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
             assert len(reports) == (1 if mode == "failed" else 0)
             if reports:
                 assert reports[0]["level"] == "ERROR"
-                assert "VALIDATION FAILED scope=personnel.contract" in reports[0]["detail"] and "Owned handler failed" in reports[0]["detail"]
+                assert reports[0]["scope"] == "personnel.contract" and "Owned handler failed" in reports[0]["detail"]
             if mode != "failed":
                 assert negotiations.row["permanent_block"] is (mode == "allow")
                 assert negotiations.row["blocked_role"] is None

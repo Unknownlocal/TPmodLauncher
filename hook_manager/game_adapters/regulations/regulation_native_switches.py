@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Install the two native check switches from booleans or rule-option references."""
 
+from ...diagnostics import build_log_record
+
 from ...manager import HookError
 from ...callables import method_group
 from ..drivers.rookie_check import RookieContractLengthSwitch
@@ -21,7 +23,7 @@ def _rookie_query(state, selection):
     return enabled
 
 
-def install_regulation_switches(state, values, *, report):
+def install_regulation_switches(state, values, *, submit_log):
     """Return owned hooks for trusted setup to stop on policy/career removal.
 
     No file paths, author functions or game-method names are accepted. This
@@ -44,12 +46,12 @@ def install_regulation_switches(state, values, *, report):
                     try:
                         enabled = _rookie_query(state, selection)
                     except Exception as error:
-                        report("REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
-                               + " ".join(str(error).split())[:512] + "; rookie check switch skipped; continuing native game")
+                        submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
+                               + str(error) + "; rookie check switch skipped; continuing native game", error=error, component="regulations"))
                         continue
                 else:
                     enabled = selection.enabled
-            hook = factory.create(state, enabled=enabled, report=report)
+            hook = factory.create(state, enabled=enabled, submit_log=submit_log)
             if hook is not None:
                 hooks.append(hook)
         return tuple(hooks)

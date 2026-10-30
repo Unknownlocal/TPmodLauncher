@@ -2,6 +2,8 @@
 """Connect team approaches to validators and optional refusal feedback."""
 
 import threading
+from ...diagnostics import build_log_record
+
 from contextlib import nullcontext
 
 from ...callables import CallBinding
@@ -14,18 +16,18 @@ from .guards import RegulationGuards
 
 class RegulationApproachAdapter(RegulationGuards):
     @classmethod
-    def prepare(cls, state, channel, select, report):
+    def prepare(cls, state, channel, select, submit_log):
         if not channel.bindings("personnel.approach"):
             return None
         try:
-            return cls(PersonnelApproach(state), channel, select, report)
+            return cls(PersonnelApproach(state), channel, select, submit_log)
         except Exception as error:
-            report("REGULATIONS COMPATIBILITY FAILED scope=personnel.approach: "
-                   + " ".join(str(error).split())[:512] + "; approach integration skipped")
+            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED scope=personnel.approach: "
+                   + str(error) + "; approach integration skipped", error=error, component="regulations"))
             return None
 
-    def __init__(self, approach, channel, select, report):
-        super().__init__(channel, select, "personnel.approach", report=report)
+    def __init__(self, approach, channel, select, submit_log):
+        super().__init__(channel, select, "personnel.approach", submit_log=submit_log)
         self.approach = approach
         self.personnel = None
         self.feedback = None
@@ -44,7 +46,7 @@ class RegulationApproachAdapter(RegulationGuards):
             if self.personnel is None:
                 # Without a signing adapter, this adapter owns feedback setup
                 # and cleanup.
-                self.feedback = PersonnelFeedback(self, self.approach.state, self._error_report, kinds=("driver", "staff"))
+                self.feedback = PersonnelFeedback(self, self.approach.state, self.submit_log, kinds=("driver", "staff"))
             return self
         except BaseException:
             self.stop()

@@ -190,7 +190,7 @@ def test_unrecognised_progress_is_preserved_and_reported_instead_of_reset(native
     assert manager.load_state(saved) == "native restored"
     assert manager._tpm_automatic_progress.error
     assert manager.save_state()[FIELD] == raw
-    assert "automatic changes unavailable" in state.notices[-1]
+    assert "automatic changes unavailable" in state.notices[-1]["detail"]
 
 
 def test_unsafe_progress_cannot_be_silently_dropped_from_a_save(native):
@@ -201,4 +201,4 @@ def test_unsafe_progress_cannot_be_silently_dropped_from_a_save(native):
     manager.load_state(dict(manager.save_state(), **{FIELD: raw}))
     with pytest.raises(HookError, match="Cannot safely preserve"):
         manager.save_state()
-    assert "node limit" in state.notices[-1]
+    assert "node limit" in state.notices[-1]["detail"]

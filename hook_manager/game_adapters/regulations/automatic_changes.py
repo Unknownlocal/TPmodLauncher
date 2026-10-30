@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Choose seasonal automatic changes while native code owns their adoption."""
 
+from ...diagnostics import build_log_record
+
 from copy import copy, deepcopy
 import hashlib
 import json
@@ -18,7 +20,7 @@ class AutomaticChanges:
     adapter supplies the wrappers; progress stays on each career's native manager.
     """
 
-    def __init__(self, categories, policies, report):
+    def __init__(self, categories, policies, submit_log):
         if (type(policies) is not dict or not policies or not policies.keys() <= categories.categories.keys()
                 or any(type(row) is not dict or set(row) != {"mode", "base_chance", "announcement_week"}
                        or row["mode"] != "automatic" or type(row["base_chance"]) not in (int, float)
@@ -36,8 +38,8 @@ class AutomaticChanges:
                                "(self, changes, *, source=None, decision_id=None, effective_season=None)")
         if stage.resolve(categories.regulation_changes.completed) is None:
             raise HookError("Automatic changes need the loaded native staging method")
-        self.categories, self.policies, self.report = categories, deepcopy(policies), report
-        self.announcements = AutomaticAnnouncements(categories, report)
+        self.categories, self.policies, self.submit_log = categories, deepcopy(policies), submit_log
+        self.announcements = AutomaticAnnouncements(categories, submit_log)
         self.state, self.channel = None, None
 
     def check(self, state):
@@ -80,8 +82,8 @@ class AutomaticChanges:
             try:
                 self._decide(manager, key, policy)
             except Exception as error:
-                self.report("REGULATIONS COMPATIBILITY FAILED automatic change " + key + ": " + str(error)
-                            + "; native regulation changes retained")
+                self.submit_log(build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED automatic change " + key + ": " + str(error)
+                            + "; native regulation changes retained", error=error, component="regulations"))
             # Only attempt a newly queued notice here. Older failed notices have
             # already had their attempt, even if a new season was also checked.
             if before is not None:

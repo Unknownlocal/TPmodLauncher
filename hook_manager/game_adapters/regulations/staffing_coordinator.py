@@ -54,7 +54,7 @@ class StaffingCoordinator:
                 stop_if_unavailable(result.refusal)
             # Native recovery ignores sign_staff False and itself returns None.
             # Never publish the successful prefix or leak its private name list.
-            guards._report(result.refusal.message if result.refusal else "Native staffing left required roles unfilled")
+            guards.store_error(result.refusal.message if result.refusal else "Native staffing left required roles unfilled")
             return [] if role == "onboard" else None
         return wrapped
 
@@ -80,7 +80,7 @@ class StaffingCoordinator:
         except Exception as error:
             # Unsupported native data must refuse staffing before planning or
             # publication, rather than escape as an exception in the game worker.
-            guards._report(error)
+            guards.store_error(error)
             return None
         return selection, channel.epoch, tuple((owner, channel._generations[owner], channel._owners[owner]["revision"])
                                     for owner in owners)

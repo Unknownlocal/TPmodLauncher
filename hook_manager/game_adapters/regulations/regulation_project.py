@@ -5,6 +5,8 @@ The caller supplies an authenticated channel and native adopted-rule selection.
 No mod can select a target, projection, result codec or callable registration.
 """
 
+from ...diagnostics import build_log_record
+
 from ...callables import CallBinding, refuse_boolean
 from ...manager import HookError
 from .guards import RegulationGuards
@@ -17,20 +19,20 @@ from ..projects.targets import project_targets
 
 class RegulationProjectAdapter(RegulationGuards):
     @classmethod
-    def create(cls, state, channel, select, report):
+    def create(cls, state, channel, select, submit_log):
         try:
             if not channel.bindings("development.project"):
                 return None  # No subscribing mods: do not inspect or hook the game.
             # The native planner has no regulation logging/subscription policy.
             # This consumer owns both the skip diagnostic and guard installation.
-            return cls(ProjectPlanner(state), channel, select)
+            return cls(ProjectPlanner(state), channel, select, submit_log=submit_log)
         except Exception as error:
-            report("REGULATIONS COMPATIBILITY FAILED scope=development.project: "
-                   + " ".join(str(error).split())[:512] + "; project integration skipped; continuing native game")
+            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED scope=development.project: "
+                   + str(error) + "; project integration skipped; continuing native game", error=error, component="regulations"))
             return None
 
-    def __init__(self, planner, channel, select):
-        super().__init__(channel, select, "development.project")
+    def __init__(self, planner, channel, select, *, submit_log=None):
+        super().__init__(channel, select, "development.project", submit_log=submit_log)
         self.planner = planner
         self.callers = ProjectCallers(self, planner.state)
         starts, callers = project_targets(), project_caller_targets()

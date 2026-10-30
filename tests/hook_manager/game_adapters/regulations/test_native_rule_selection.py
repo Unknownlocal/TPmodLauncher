@@ -38,7 +38,7 @@ def test_adoption_future_contracts_and_nested_scope_keep_native_checks_owned(nat
 
     drivers._negotiation_start_week = start
     binding = {"rule": category["key"], "parameter": "native_check"}
-    hooks = install_regulation_switches(state, {"rookie_contract_length_check": binding, "staff_prestige_check": binding}, report=pytest.fail)
+    hooks = install_regulation_switches(state, {"rookie_contract_length_check": binding, "staff_prestige_check": binding}, submit_log=pytest.fail)
     rookie, candidate = SimpleNamespace(rookie=True, start_week=1), SimpleNamespace(requirement=17)
     escaped = state.driver_manager.formula_rookie_contract_year_limit
     try:

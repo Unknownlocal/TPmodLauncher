@@ -28,13 +28,12 @@ from ..personnel.native_operation import native_initiator
 
 
 class RegulationPersonnelAdapter(RegulationGuards):
-    def __init__(self, state, channel, select, *, report=None):
+    def __init__(self, state, channel, select, *, submit_log=None):
         """Check all signing/staffing support without assigning native wrappers."""
-        super().__init__(channel, select, "personnel.contract", report=report)
+        super().__init__(channel, select, "personnel.contract", submit_log=submit_log)
         # Reserve career inputs through native writes, not just registry access.
         self._personnel_operation = threading.Lock()
         self.feedback = None
-        self.report = report or self._report
         self._main()
         staffing = StaffingPlanner(state)
         # Reuse staffing's checked staff planner instead of checking it twice.
@@ -68,7 +67,8 @@ class RegulationPersonnelAdapter(RegulationGuards):
             projection = self._projection
             self._install_groups(self.native_callers, [
                 CallBinding(target.name, target.name, projection, refuse_boolean) for target in self.signing])
-            self.feedback = PersonnelFeedback(self, self.planners["driver"].state, self.report)
+            # Without an outgoing callback, feedback still retains its error locally.
+            self.feedback = PersonnelFeedback(self, self.planners["driver"].state, self.submit_log or self.store_error)
         return self
 
     def _projection(self, arguments, result):

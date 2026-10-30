@@ -47,7 +47,7 @@ def vote(c,r):
 def validate(c,r): return {'decision':'allow'}
 '''
     reports = []
-    mods = make_mods({"votes.only": code, "mixed.rules": code}, report=lambda owner, text: reports.append((owner, text)))
+    mods = make_mods({"votes.only": code, "mixed.rules": code}, submit_log=lambda owner, text: reports.append((owner, text)))
     handler = bound(mods, validators={"mixed.rules": [validator()]}, voting={
         "votes.only": [{"rule": "custom.vote", "handler": "rules.vote"}],
         "mixed.rules": [{"rule": "native", "handler": "rules.vote"}]})
@@ -90,7 +90,7 @@ def test_a_late_bad_vote_or_exhausted_handler_never_returns_an_earlier_result(ma
     reports = []
     code = ("import wit_world\ndef vote(c,r):\n wit_world.report(c['team'])\n"
             " if c['team']=='A': return {'choice':'current','reason':'First valid vote'}\n " + failure)
-    mods = make_mods({"votes.only": code}, report=lambda owner, text: reports.append(text))
+    mods = make_mods({"votes.only": code}, submit_log=lambda owner, text: reports.append(text))
     handler = bound(mods)
     with pytest.raises(Exception):
         VotingRunner(handler).evaluate("votes.only", *inputs(), deadline=time.monotonic() + 5)
@@ -101,7 +101,7 @@ def test_a_late_bad_vote_or_exhausted_handler_never_returns_an_earlier_result(ma
 def test_invalid_voting_inputs_are_rejected_before_author_execution(make_mods, fault):
     reports = []
     mods = make_mods({"votes.only": "import wit_world\ndef vote(c,r):\n wit_world.report('called')\n return c['native']"},
-                     report=lambda owner, text: reports.append(text))
+                     submit_log=lambda owner, text: reports.append(text))
     handler = bound(mods)
     snapshot, rule, contexts = inputs()
     if fault == "identity":

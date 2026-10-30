@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Disable the native rookie cap while keeping its original test available."""
 
+from ...diagnostics import build_log_record
+
 from functools import update_wrapper
 import inspect
 
@@ -26,7 +28,7 @@ class RookieContractLengthSwitch(Manager):
     """Own a career's cap switch; trusted callers choose when it applies."""
 
     @classmethod
-    def create(cls, state, *, enabled=True, report):
+    def create(cls, state, *, enabled=True, submit_log):
         """Keep native by default; report and skip incompatible game helpers."""
         if type(enabled) is not bool and not callable(enabled):
             raise HookError("Rookie contract length check needs a boolean or trusted query")
@@ -35,9 +37,9 @@ class RookieContractLengthSwitch(Manager):
         try:
             return cls(state, enabled)
         except Exception as error:
-            report("REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
-                   + " ".join(str(error).split())[:512]
-                   + "; rookie check switch skipped; continuing native game")
+            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
+                   + str(error)
+                   + "; rookie check switch skipped; continuing native game", error=error, component="regulations"))
             return None
 
     def __init__(self, state, enabled=False):

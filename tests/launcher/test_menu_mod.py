@@ -140,11 +140,11 @@ def test_menu_permission_and_provider_are_required(built_menu_mod, tmp_path):
     shutil.copytree(built_menu_mod, folder)
     manifest = Manifest.read(folder)
     with pytest.raises(ManifestError, match="trusted menu provider"):
-        Mod(manifest, report=lambda *_: None)
+        Mod(manifest, submit_log=lambda *_: None)
     path = folder / "mod.toml"
     path.write_text(path.read_text().replace(', "main-menu"', ""))
     with pytest.raises(SandboxError, match="approved host operation"):
-        Mod(Manifest.read(folder), report=lambda *_: None)
+        Mod(Manifest.read(folder), submit_log=lambda *_: None)
     path.write_text(
         path.read_text()
         .replace('api = "0.2.0"', 'api = "0.1.0"')

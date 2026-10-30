@@ -176,7 +176,7 @@ def test_notice_capacity_prevents_staging_without_losing_old_notices(automatic):
     manager._tpm_automatic_progress = AutomaticProgress({FIELD: {"schema": 1, "categories": {"custom.a": record}}})
     manager.process_week()
     assert manager.stages == 0 and manager.save_state()[FIELD]["categories"]["custom.a"] == record
-    assert "no room" in a.report[-1]
+    assert "no room" in a.report[-1]["detail"]
     a.categories.automatic.policies["custom.a"]["base_chance"] = 0
     manager.process_week()
     assert manager.save_state()[FIELD]["categories"]["custom.a"] == dict(record, checked_season=34)
@@ -214,7 +214,7 @@ def test_inconsistent_native_stage_does_not_block_other_categories(automatic):
     assert state.regulation_manager.regulations["custom.a"]["upcoming"] is None
     assert "custom.a" not in manager._tpm_automatic_progress.data["categories"]
     assert "custom.b" in manager._tpm_automatic_progress.data["categories"]
-    assert len(a.report) == 1 and "disagree" in a.report[0]
+    assert len(a.report) == 1 and "disagree" in a.report[0]["detail"]
 
 
 def test_incremental_progress_budget_releases_space_without_losing_saved_records():
@@ -248,7 +248,7 @@ def test_mail_failure_confirms_insertion_and_never_recreates_completed_mail(auto
     manager.process_week()
     pending = manager._tpm_automatic_progress.data["categories"]["custom.a"]["pending_announcements"]
     assert bool(pending) is not inserted
-    assert len(mail.inbox) == int(inserted) and "Mail backend failed" in a.report[-1]
+    assert len(mail.inbox) == int(inserted) and "Mail backend failed" in a.report[-1]["detail"]
     mail.send_email = original
     manager.load_state(json.loads(json.dumps(manager.save_state())))
     manager.process_week()

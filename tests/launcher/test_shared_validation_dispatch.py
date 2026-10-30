@@ -35,7 +35,7 @@ def make_shared_dispatch(make_mods):
     def create(*, count=1):
         calls, cleaned = [], []
         mods = make_mods({owner: CODE.format(owner=owner) for owner in ("a.rules", "b.rules", "c.rules")},
-                         report=lambda owner, text: calls.append((owner, text)), cleanup=lambda: cleaned.append(True))
+                         submit_log=lambda owner, text: calls.append((owner, text)), cleanup=lambda: cleaned.append(True))
         sources = {owner: mod.snapshot for owner, mod in mods.items()}
         group = next(iter(mods.values())).runner
         sections = {owner: {"schema": 1, "validators": [validator(f"v{i:02}") for i in range(count if owner != "b.rules" else 1)],

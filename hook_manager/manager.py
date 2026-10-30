@@ -188,7 +188,8 @@ class Manager:
         if self.closed:
             raise HookError("Hook manager is stopped")
 
-    def _report(self, error):
+    def store_error(self, error):
+        """Retain recent error text for status checks without writing a log."""
         # Bound retained diagnostics; errors must not grow indefinitely or expose raw objects.
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
@@ -366,7 +367,7 @@ class Manager:
         group = self.groups[name]
         group["state"] = "failed" if error is not None else "removed"
         if error is not None:
-            self._report(error)
+            self.store_error(error)
         for owner, attribute, raw, installed, local in reversed(group["changes"]):
             try:
                 current = inspect.getattr_static(owner, attribute)
@@ -381,7 +382,7 @@ class Manager:
                 else:
                     delattr(owner, attribute)
             except Exception as failure:
-                self._report(failure)
+                self.store_error(failure)
         group["changes"].clear()
         self._watch()
 
@@ -410,7 +411,7 @@ class Manager:
                         self.observers.pop(name, None)
                 except Exception as error:
                     self.observers.pop(name, None)
-                    self._report(error)
+                    self.store_error(error)
         for name, group in list(self.groups.items()):
             if group["state"] == "pending":
                 try:

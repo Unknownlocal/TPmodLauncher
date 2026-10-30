@@ -96,8 +96,8 @@ def pulse(sources, digest, instance, game_root, request_json):
                     # continue. No callback or worker is added to the game.
                     return "WAIT: native regulation definitions are loading"
             except Exception as error:
-                notices.append("REGULATIONS COMPATIBILITY FAILED defaults: "
-                               + " ".join(str(error).split())[:512] + "; default integration skipped")
+                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED defaults: "
+                               + str(error) + "; default integration skipped", error=error, component="regulations"))
             response = module.manager.request({"operation": "status"})
             response["regulation_defaults"], response["regulation_notices"] = defaults, notices
         elif type(request) is dict and request.get("operation") == "await-regulations":
@@ -107,16 +107,16 @@ def pulse(sources, digest, instance, game_root, request_json):
                     raise ValueError("Invalid regulation loading fields")
                 module.adapters.await_regulations(request.get("regulations"))
             except Exception as error:
-                notices.append("REGULATIONS COMPATIBILITY FAILED career.preload: "
-                               + " ".join(str(error).split())[:512]
-                               + "; preload integration skipped; continuing native game")
+                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED career.preload: "
+                               + str(error)
+                               + "; preload integration skipped; continuing native game", error=error, component="regulations"))
             response = module.manager.request({"operation": "status"})
             response["regulation_notices"] = notices
         elif type(request) is dict and request.get("operation") == "prepare-regulations":
             if set(request) != {"operation", "regulations"}:
                 raise ValueError("Invalid regulation control fields")
             notices = []
-            module.adapters.prepare_regulations(request["regulations"], report=notices.append)
+            module.adapters.prepare_regulations(request["regulations"], submit_log=notices.append)
             response = module.manager.request({"operation": "status"})
             response["regulation_notices"] = notices
         elif type(request) is dict and request.get("operation") in (
@@ -126,13 +126,13 @@ def pulse(sources, digest, instance, game_root, request_json):
                 if set(request) != {"operation", "regulations"}:
                     raise ValueError("Invalid regulation control fields")
                 completed = module.adapters.control_regulations(request["operation"], request["regulations"],
-                                                               report=notices.append)
+                                                               submit_log=notices.append)
                 if not completed:
                     return "WAIT: native regulation operation is active"
             except Exception as error:
                 completed = False
-                notices.append("REGULATIONS COMPATIBILITY FAILED control: "
-                               + " ".join(str(error).split())[:512] + "; regulation control skipped")
+                notices.append(module.build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED control: "
+                               + str(error) + "; regulation control skipped", error=error, component="regulations"))
             response = module.manager.request({"operation": "status"})
             response["regulation_control"] = completed
             response["regulation_notices"] = notices

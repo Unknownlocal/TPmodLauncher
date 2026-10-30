@@ -58,9 +58,9 @@ def make_source_group(runner_bundle):
     from launcher.shared_source_mod import SharedSourceMod
     from mod_runtime.shared_runtime import SharedPythonRunner
     with ExitStack() as stack:
-        def create(snapshots, *, report=None, menu=None, settings=None, theme=None, cleanup=None):
+        def create(snapshots, *, submit_log=None, menu=None, settings=None, theme=None, cleanup=None):
             providers = {snapshot.manifest.id: {name: operation.callback for name, operation in
-                         _host_operations(snapshot.manifest, report, menu, settings, theme).items()}
+                         _host_operations(snapshot.manifest, submit_log, menu, settings, theme).items()}
                          for snapshot in snapshots}
             runner = stack.enter_context(SharedPythonRunner(runner_bundle, snapshots, providers, cleanup=cleanup))
             return {snapshot.manifest.id: SharedSourceMod(runner, snapshot) for snapshot in snapshots}

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Switch off the native staff prestige minimum without changing other checks."""
 
+from ...diagnostics import build_log_record
+
 from functools import update_wrapper
 
 from ...manager import HookError, Manager
@@ -17,7 +19,7 @@ class StaffPrestigeSwitch(Manager):
     """
 
     @classmethod
-    def create(cls, state, *, enabled=True, report):
+    def create(cls, state, *, enabled=True, submit_log):
         """Keep native behaviour by default; report and skip incompatible helpers."""
         if type(enabled) is not bool and not callable(enabled):
             raise HookError("Staff prestige check needs a boolean or trusted query")
@@ -26,9 +28,9 @@ class StaffPrestigeSwitch(Manager):
         try:
             return cls(state, enabled)
         except Exception as error:
-            report("REGULATIONS COMPATIBILITY FAILED staff.prestige-check: "
-                   + " ".join(str(error).split())[:512]
-                   + "; prestige switch skipped; continuing native game")
+            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED staff.prestige-check: "
+                   + str(error)
+                   + "; prestige switch skipped; continuing native game", error=error, component="regulations"))
             return None
 
     def __init__(self, state, enabled=False):

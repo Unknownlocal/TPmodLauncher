@@ -104,7 +104,7 @@ def test_failed_batches_do_not_publish_opening_or_missing_ballots(voting):
     channel.vote = invalid
     manager._open_review(3, 30)
     assert not manager.reviews and not manager.category_last_review and notices
-    assert "Incomplete voting results" in notices[0]
+    assert "Incomplete voting results" in notices[0]["detail"]
     channel.vote = valid
     manager._open_review(3, 30)
     custom = manager.reviews["review"]["proposals"][1]
@@ -168,4 +168,4 @@ def test_complete_reply_cannot_publish_after_its_deadline(voting, monkeypatch):
     channel.vote = late
     manager._open_review(3, 30)
     assert not manager.reviews and not manager.category_last_review
-    assert "deadline expired before ballot publication" in notices[0]
+    assert "deadline expired before ballot publication" in notices[0]["detail"]
