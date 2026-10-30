@@ -45,6 +45,9 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.manager = module.Manager()
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
+            # Save metadata must survive even when no mod requests validation.
+            module.manager.observe("managers.formula_regulation_governance",
+                                   lambda imported: module.adapters.start_governance())
             module.menu = module.MenuAdapter()
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)

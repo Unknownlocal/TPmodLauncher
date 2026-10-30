@@ -103,9 +103,19 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             self.policy = {"mode": "scripted", "scripted_changes": []}
         def restore(self, data):
             self.policy = data["policy"]
-        governance.FormulaRegulationGovernanceManager = type("Governance", (), {"__init__": construct, "load_state": restore})
+        def save(self):
+            return {"policy": self.policy, "definition_snapshot": self.definitions}
+        governance.FormulaRegulationGovernanceManager = type("Governance", (), {
+            "__init__": construct, "load_state": restore, "save_state": save})
         governance.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
         monkeypatch.setitem(sys.modules, governance.__name__, governance)
+        pulse("status")
+        inactive = governance.FormulaRegulationGovernanceManager(SimpleNamespace(
+            regulation_manager=SimpleNamespace(regulation_defs={})))
+        progress = {"schema": 1, "categories": {}}
+        inactive.load_state({"policy": inactive.policy, "mod_automatic_changes": progress})
+        assert inactive.save_state()["mod_automatic_changes"] == progress
+        assert host.adapters.categories is None and host.adapters.channel is None
         ui = ModuleType("ui.screen_manager")
         ui.ScreenManager = type("ScreenManager", (), {
             "handle_event": lambda self, event: "native event", "update": lambda self: "native update",
@@ -224,7 +234,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert guard.closed and closed == [True]
         assert host.adapters.policy is None
         assert loader.closed and host.adapters.categories is None
-        assert loader.scripts.closed
+        assert loader.governance.closed
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:

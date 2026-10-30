@@ -52,6 +52,12 @@ targets and signatures. The manager observes normal imports, installs wrappers
 when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
+The bridge also observes native governance loading. Its shared construction,
+restore and save hooks retain private automatic-rule progress with each career,
+including while all regulation mods are disabled. This does not run mod code or
+enable automatic decisions. The [regulation adapters](game_adapters/regulations/README.md)
+describe the saved data and its checks.
+
 [`callables/`](callables/README.md) adds checks around selected game methods.
 Trusted adapters choose the methods and expected arguments, supply copied inputs
 and define how a refusal returns to the game. One wrapper runs every registered

@@ -86,6 +86,8 @@ def main(argv=None):
         if options.suite == "native_regulation_policy":
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_categories")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_scripts")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_governance")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_progress")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_defaults")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.screen")
             pytest_args.append("--cov=hook_manager.game_adapters.regulations.native_rule_selection")

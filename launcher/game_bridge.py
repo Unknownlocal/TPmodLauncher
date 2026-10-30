@@ -35,7 +35,7 @@ ADAPTER_SOURCES = {
     "personnel/feedback": "__init__ bindings notice adapter",
     "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
     "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",
-    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals approach_adapter personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_rule_selection native_policy native_categories native_scripts native_defaults screen",
+    "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals approach_adapter personnel_adapter academy_adapter project_adapter staffing_result staffing_coordinator native_rules native_rule_selection native_policy native_categories native_scripts native_defaults screen automatic_progress native_governance",
 }
 
 

@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+import json
 import sys
 import threading
 from types import ModuleType, SimpleNamespace
@@ -11,6 +12,8 @@ import pytest
 
 from hook_manager.adapter_modules import AdapterModules
 from hook_manager.game_adapters.regulations.native_categories import NativeCategories
+from hook_manager.game_adapters.regulations.native_governance import NativeGovernance
+from hook_manager.game_adapters.regulations.automatic_progress import FIELD
 from hook_manager.manager import HookError, Manager
 
 
@@ -40,6 +43,10 @@ def native(monkeypatch, tmp_path):
             self.policy = deepcopy(data["policy"])
             self.applied_script_ids = set(data.get("applied_script_ids", []))
             return "native restored"
+        def save_state(self):
+            self.work()
+            return {"definition_snapshot": deepcopy(self.definitions), "policy": deepcopy(self.policy),
+                    "applied_script_ids": sorted(self.applied_script_ids)}
     module.FormulaRegulationGovernanceManager = Governance
     monkeypatch.setitem(sys.modules, module.__name__, module)
     regulation = ModuleType("managers.regulation_manager")
@@ -49,12 +56,16 @@ def native(monkeypatch, tmp_path):
     category = {"key": "owned.rule", "default": "open", "options": [{"id": 1, "key": "open", "name": "Open"}]}
     script = {"id": "owned:change", "key": "owned.rule", "new_regulation": {"key": "open"}, "effective_season": 2}
     request = {"pack": str(tmp_path), "categories": [category], "scripted_changes": [script]}
-    hook = NativeCategories(request)
+    notices = []
+    governance = NativeGovernance(notices.append)
+    hook = NativeCategories(request, governance)
     state = SimpleNamespace(data_dir=tmp_path, regulation_manager=regulation.RegulationManager())
+    state.notices = notices
     state.regulation_manager.state = state
     state.regulation_manager.regulation_defs = state.regulation_manager._load_regulation_defs()
     yield hook, state, Governance, request
     hook.stop()
+    governance.stop()
 
 
 def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progress(native):
@@ -99,16 +110,18 @@ def test_conflicting_saved_script_retains_native_load_and_prevents_activation(na
 def test_script_signature_failure_restores_earlier_hooks(native, monkeypatch):
     hook, _, Governance, request = native
     hook.stop()
+    hook.governance.stop()
     constructor = Governance.__init__
     incompatible = lambda self, changed: None
     monkeypatch.setattr(Governance, "load_state", incompatible)
     with pytest.raises(HookError, match="signature"):
-        NativeCategories(request)
+        NativeGovernance(lambda message: None)
     assert Governance.__init__ is constructor and Governance.load_state is incompatible
     assert not hasattr(sys.modules["managers.regulation_manager"].RegulationManager._load_regulation_defs, "_tpm_hook_group")
 
 
-def test_active_saved_restore_defers_pack_cleanup_and_cached_stopped_hooks_fall_through(native):
+@pytest.mark.parametrize("operation", ["load_state", "save_state"])
+def test_active_governance_defers_cleanup_and_cached_stopped_hooks_fall_through(native, operation):
     hook, state, Governance, _ = native
     manager = state.formula_regulation_governance = Governance(state)
     saved = {"definition_snapshot": manager.definitions, "policy": manager.policy}
@@ -116,19 +129,76 @@ def test_active_saved_restore_defers_pack_cleanup_and_cached_stopped_hooks_fall_
     host.manager = Manager()
     modules = AdapterModules(host, {})
     modules.categories = hook
+    modules.governance = hook.governance
+    if operation == "save_state":
+        hook.stop()
+        modules.categories = None
     entered, release = threading.Event(), threading.Event()
     def work():
         entered.set()
         assert release.wait(3)
     manager.work = work
-    cached = manager.load_state
+    cached = getattr(manager, operation)
+    arguments = (saved,) if operation == "load_state" else ()
     with ThreadPoolExecutor(max_workers=1) as worker:
-        future = worker.submit(cached, saved)
+        future = worker.submit(cached, *arguments)
         try:
             assert entered.wait(3)
-            assert modules.close() is False and not hook.scripts.closed
+            assert modules.close() is False and not hook.governance.closed
         finally:
             release.set()
-        assert future.result(timeout=3) == "native restored"
-    assert modules.close() and hook.scripts.closed
-    assert cached(saved) == "native restored"
+        result = future.result(timeout=3)
+        assert result == ("native restored" if operation == "load_state" else manager.save_state())
+    assert modules.close() and hook.governance.closed
+    assert cached(*arguments) == result
+
+
+def progress():
+    return {"schema": 1, "categories": {"disabled.rule": {"checked_season": 3,
+        "pending_announcements": [{"decision_season": 2, "option": "first"},
+                                  {"decision_season": 3, "option": "second"}]}}}
+
+
+def test_progress_survives_without_active_mods_and_stays_with_its_career(native):
+    hook, state, Governance, _ = native
+    hook.stop()
+    manager = Governance(state)
+    old = manager.save_state()
+    assert FIELD not in old
+    saved = dict(old, **{FIELD: progress()})
+    other = Governance(state, saved)
+    assert other.save_state()[FIELD] == progress()
+    manager.load_state(saved)
+    saved[FIELD]["categories"].clear()
+    outgoing = json.loads(json.dumps(manager.save_state()))
+    assert outgoing == dict(old, **{FIELD: progress()})
+    outgoing[FIELD]["categories"].clear()
+    assert manager.save_state()[FIELD] == progress()
+    manager.load_state(old)
+    assert FIELD not in manager.save_state() and other.save_state()[FIELD] == progress()
+    assert not state.notices
+
+
+@pytest.mark.parametrize("raw", [
+    {"schema": 2, "future": {"retain": [1, 2]}},
+    {"schema": 1, "categories": {"disabled.rule": {"checked_season": True, "pending_announcements": []}}}])
+def test_unrecognised_progress_is_preserved_and_reported_instead_of_reset(native, raw):
+    hook, state, Governance, _ = native
+    hook.stop()
+    manager = Governance(state)
+    saved = dict(manager.save_state(), **{FIELD: raw})
+    assert manager.load_state(saved) == "native restored"
+    assert manager._tpm_automatic_progress.error
+    assert manager.save_state()[FIELD] == raw
+    assert "automatic changes unavailable" in state.notices[-1]
+
+
+def test_unsafe_progress_cannot_be_silently_dropped_from_a_save(native):
+    hook, state, Governance, _ = native
+    hook.stop()
+    manager = Governance(state)
+    raw = {"schema": 1, "categories": {}, "excess": [None] * 32769}
+    manager.load_state(dict(manager.save_state(), **{FIELD: raw}))
+    with pytest.raises(HookError, match="Cannot safely preserve"):
+        manager.save_state()
+    assert "node limit" in state.notices[-1]

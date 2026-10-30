@@ -39,6 +39,7 @@ class AdapterModules:
         self.regulation_generation = None
         self.preload = None
         self.categories = None
+        self.governance = None
         self.regulation_screen = None
         # UI imports and game-worker validation can fail after setup returned.
         # Keep a bounded pack-owned outbox for the next ordinary bridge response.
@@ -89,7 +90,10 @@ class AdapterModules:
                 if self.state != "loaded":
                     raise HookError(self.error or "Adapter modules are not loaded")
                 loader = self.host.adapter_code.game_adapters.regulations.native_categories
-                self.categories = loader.NativeCategories(definitions)
+                self.start_governance()
+                if self.governance is None:
+                    raise HookError("Native governance load/save integration is unavailable")
+                self.categories = loader.NativeCategories(definitions, self.governance)
                 screen = self.host.adapter_code.game_adapters.regulations.screen
                 self.regulation_screen = screen.RegulationScreenAdapter(self.regulation_notices.append)
             self.preload = CareerPreload(self._career_left)
@@ -97,6 +101,20 @@ class AdapterModules:
             self.stop_regulations()
             raise
         return self.status()
+
+    def start_governance(self):
+        """Keep private save metadata through bridge lifetime, even without mods."""
+        try:
+            self.load()
+            if self.state != "loaded":
+                raise HookError(self.error or "Adapter modules are not loaded")
+            if self.governance is None:
+                module = self.host.adapter_code.game_adapters.regulations.native_governance
+                self.governance = module.NativeGovernance(self.regulation_notices.append, self.host.manager.completed)
+        except Exception as error:
+            self.regulation_notices.append("REGULATIONS COMPATIBILITY FAILED governance: "
+                + " ".join(str(error).split())[:512] + "; load/save integration skipped; continuing native game")
+        return True  # Finish the one-shot native import observation, including failure.
 
     def regulation_defaults(self):
         """Read fixed native defaults for the process's captured startup pack."""
@@ -470,8 +488,18 @@ class AdapterModules:
         if self.state == "closed":
             return True
         self.host.manager._main()
-        if not self.stop_regulations():
-            return False
-        self._remove()
-        self.state = "closed"
+        with ExitStack() as locks:
+            if self.governance is not None:
+                if not self.governance._lock.acquire(blocking=False):
+                    return False
+                locks.callback(self.governance._lock.release)
+                if self.governance._active:
+                    return False
+            if not self.stop_regulations():
+                return False
+            if self.governance is not None:
+                self.governance.stop()
+                self.governance = None
+            self._remove()
+            self.state = "closed"
         return True

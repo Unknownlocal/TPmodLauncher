@@ -50,7 +50,14 @@ wrappers; development-project integration has its own compatibility checks.
   combined definitions to initialise rule choices.
 - [native_scripts.py](native_scripts.py): `NativeScripts` keeps enabled mods'
   scheduled rule choices when governance is constructed and saved policy is
-  restored. These are JSON declarations; the game schedules and applies them.
+  restored. It supplies merging and checks to the shared governance loader.
+  These are JSON declarations; the game schedules and applies them.
+- [native_governance.py](native_governance.py): `NativeGovernance` owns the shared
+  construction, restore and save hooks. It keeps private automatic progress with
+  each native governance instance, including when no automatic mods are enabled.
+- [automatic_progress.py](automatic_progress.py): `AutomaticProgress` checks the
+  saved season records and undelivered notices. Bounded data in an unknown or
+  invalid format is retained for saving and reported as unavailable for decisions.
 - [native_defaults.py](native_defaults.py): reads built-in category defaults from
   the game's fixed definition module, including the compound default for the
   selected pack. It waits for ongoing imports before loading that module, then
@@ -142,12 +149,32 @@ rule. A UI compatibility failure leaves validation active and reports through
 the next ordinary command-line/log update. Full cleanup restores the owned
 drawing method; leaving a career keeps it installed.
 
-When custom scripts are present, the category loader also owns their two loading
-hooks. They add missing scripts to the loaded policy, using the game's own policy
-validation. A matching saved script is kept once; a changed script or category
+When custom scripts are present, the shared governance loader merges missing
+scripts into the loaded policy, using the game's own policy validation.
+A matching saved script is kept once; a changed script or category
 reports incompatibility and prevents mod activation. Saved progress remains
 native, including completed and suppressed script IDs. The loaded voting or
-scripted mode is preserved. Category-only mods install no script hooks.
+scripted mode is preserved. Script merging uses the shared governance hooks;
+category-only mods add no script work.
+
+The bridge observes the normal governance import and installs its three shared
+load/save hooks together. They outlive mod validation and category loading, so
+disabling every mod or losing the shared runner does not discard saved progress.
+Cleanup waits for native loads and saves before restoring these hooks. Cached
+stopped wrappers pass directly to the original game methods.
+
+The optional `mod_automatic_changes` field sits inside the game's existing
+governance save object. It records the last checked season per category and only
+undelivered announcements, retaining their original season and option. Ordinary
+native choices, reviews and ballots remain in their existing fields. Missing
+metadata starts empty, and each career has an independent copy. Saving copies
+cached plain data and never calls a mod. Automatic decisions are not enabled.
+
+The private field is limited to 1 MiB, eight levels below its root and 32,768 values.
+The supported format permits 128 categories and 32 pending notices per category.
+Invalid or newer formats are reported and retained when within those bounds.
+Data that cannot be copied safely causes a save error rather than being lost.
+A vanilla game re-save can omit the field because these hooks are then absent.
 
 Preparation uses `NativeRegulationPolicy` to choose rules. The installed adapters
 keep the prepared option data until removal. Setup reports which connections

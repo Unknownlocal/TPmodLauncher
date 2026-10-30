@@ -197,7 +197,9 @@ Repeated or older waiting notices do not repeat setup. Departure numbers remain
 recorded so a cancelled attempt cannot restart from a delayed notice. Retirement
 keeps the connection and handlers, but the next career must publish fresh data
 and confirm coverage again. Native captured-job and ownership checks remain in
-the game process. No enabled declarations means no native loading hooks.
+the game process. With no enabled declarations, category loading and validation
+hooks are absent. The bridge's shared governance save/load hooks still preserve
+private progress for disabled rules.
 Setup failures are reported through command-line output and the log. A failed
 validator's native bypasses are restored while its action guards stay unavailable.
 
