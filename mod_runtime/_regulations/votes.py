@@ -21,7 +21,10 @@ class RegulationVotes:
         if index >= len(bindings) or bindings[index][2] != packet["regulation"]["key"]:
             raise ValueError("Foreign voting binding")
         self.function = bindings[index][0]
-        self.snapshot, self.rule = FrozenValue(packet["snapshot"]), FrozenValue(packet["regulation"])
+        # This snapshot lasts one batch. Container templates avoid interpreting
+        # every scalar again for each team; persistent rules keep flat storage.
+        self.snapshot = FrozenValue(packet["snapshot"], templates=True)
+        self.rule = FrozenValue(packet["regulation"])
         self.contexts = [FrozenValue(context) for context in packet["contexts"]]
         self.next, self.prepared = 0, None
         gc.collect(0)

@@ -5,6 +5,10 @@ Python can stop checking tuples of scalar values for reference cycles. The
 catalogue arranges this during installation, so later calls avoid rescanning
 unchanged rule containers. Each validator gets fresh dictionaries and lists
 rebuilt from these tuples without parsing JSON.
+
+Short-lived voting snapshots can instead keep scalar-only container templates.
+Their copies use Python's built-in container copying and visit nested containers
+only. Persistent rule caches retain the flat storage used to avoid GC scans.
 """
 
 
@@ -44,10 +48,38 @@ def _unpack(tokens, cursor):
     return [_unpack(tokens, cursor) for _ in range(value)]
 
 
-class FrozenValue:
-    __slots__ = ("tokens",)
+def _templates(value):
+    kind = type(value)
+    if kind is not dict and kind is not list:
+        return value, None
+    template, children = value.copy(), []
+    for key, child in (value.items() if kind is dict else enumerate(value)):
+        if type(child) is dict or type(child) is list:
+            children.append((key, _templates(child)))
+            template[key] = None
+    # Cached containers hold scalars only. Nested mutable values are separate
+    # templates, so no caller can receive a reference into the cached tree.
+    return template, tuple(children)
 
-    def __init__(self, value):
+
+def _copy_templates(node):
+    template, children = node
+    if children is None:
+        return template
+    result = template.copy()
+    for key, child in children:
+        result[key] = _copy_templates(child)
+    return result
+
+
+class FrozenValue:
+    __slots__ = ("tokens", "_template")
+
+    def __init__(self, value, *, templates=False):
+        self._template = _templates(value) if templates else None
+        if templates:
+            self.tokens = ()
+            return
         # The caller has already checked types, size and nesting depth. The
         # finished tuple holds only strings, numbers, booleans and None, so
         # Python can remove it from cyclic-GC tracking at its first collection.
@@ -57,7 +89,7 @@ class FrozenValue:
 
     def copy(self):
         # A mod may keep and later change its arguments, so each call needs its
-        # own dicts/lists. Only this copy is passed to the mod; the tuple stays
-        # cached. Recursive reads share one position counter to avoid creating
+        # own dicts/lists. Cached storage never leaves this helper.
+        # Flat reads share one position counter to avoid creating
         # another (value, next position) tuple for every child.
-        return _unpack(self.tokens, [0])
+        return _copy_templates(self._template) if self._template is not None else _unpack(self.tokens, [0])

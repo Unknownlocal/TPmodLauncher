@@ -2,7 +2,7 @@
 """Check voting inputs and replies separately from signing decisions."""
 
 from .policy import fields
-from .values import integer, loads, measure, text
+from .values import integer, loads, measure, text, scalar, array_measure, object_measure, bounded
 
 PACKET_LIMITS = (384 * 1024, 81920, 16)
 SNAPSHOT_LIMITS = (64 * 1024, 8192, 12)
@@ -32,7 +32,7 @@ def voting_packet(packet):
     integer(snapshot["projected_races"])
     if type(snapshot["teams"]) is not dict or type(snapshot["results"]) is not list or type(snapshot["field"]) is not dict:
         raise ValueError("Invalid frozen voting snapshot")
-    measure(snapshot, limited=True, limits=SNAPSHOT_LIMITS)
+    snapshot_metric = measure(snapshot, limited=True, limits=SNAPSHOT_LIMITS)
     fields(rule, ("key", "current", "proposed"))
     text(rule["key"], 256)
     for option in (rule["current"], rule["proposed"]):
@@ -41,10 +41,11 @@ def voting_packet(packet):
         text(option.get("key"), 128)
     if rule["current"]["key"] == rule["proposed"]["key"]:
         raise ValueError("A voting proposal needs a different option")
-    measure(rule, limited=True, limits=(16 * 1024, 2048, 12))
+    rule_metric = measure(rule, limited=True, limits=(16 * 1024, 2048, 12))
     if type(contexts) is not list or not 1 <= len(contexts) <= 64:
         raise ValueError("Invalid voting calculation count")
     teams, identity = set(), None
+    context_metrics = []
     for context in contexts:
         fields(context, ("schema", "review", "proposal", "decision_season", "effective_season", "team", "native", "seed"))
         if type(context["schema"]) is not int or context["schema"] != 1:
@@ -65,9 +66,13 @@ def voting_packet(packet):
         # Native evaluation may also contain score/components. Its choice/reason
         # remain available as a fallback without making those extra fields output.
         vote_result({key: context["native"].get(key) for key in ("choice", "reason")})
-        measure(context, limited=True)
+        context_metrics.append(measure(context, limited=True))
         teams.add(context["team"])
-    return measure(packet, limited=True, limits=PACKET_LIMITS)
+    # Every field was checked above. Combine its exact measurements instead of
+    # traversing and encoding the snapshot and contexts a second time.
+    return bounded(object_measure((("owner", scalar(packet["owner"])), ("binding", scalar(packet["binding"])),
+                                  ("snapshot", snapshot_metric), ("regulation", rule_metric),
+                                  ("contexts", array_measure(context_metrics)))), limits=PACKET_LIMITS)
 
 
 def vote_reply(value, action, slot):

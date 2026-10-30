@@ -214,6 +214,13 @@ dispatches these batches on the runner's owning thread. Voting-only owners join
 publication and career retirement without creating an empty signing catalogue.
 Native activation requires the calculation and both review callers to be installed.
 
+Each voting snapshot lasts one batch. Its cached container templates hold scalar
+values; preparing a team's input copies those containers and rebuilds nested
+ones. Every team receives fresh dictionaries and lists. Persistent rules keep
+their flat tuple storage to avoid repeated garbage-collection work. Snapshot,
+option and context measurements are combined to check the complete packet,
+without measuring those values again.
+
 `ValidationDispatch` connects shared bindings to publication and execution through
 `launcher/regulations/validation/group.py`. Mod calls run one at a time against
 their own views under the original deadline. Pack binding uses one handler table

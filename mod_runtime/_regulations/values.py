@@ -154,4 +154,4 @@ def entry_fuel(byte_count, nodes, calls, work):
 KEY_BYTES = {key: scalar(key)[0] + 1 for key in (
     "schema", "key", "revision", "evaluation_season", "selected", "current", "upcoming",
     "effective_season", "parameters", "option_data", "context", "regulation",
-    "owner", "contexts", "selections", "calls", "rule")}
+    "owner", "contexts", "selections", "calls", "rule", "snapshot", "binding")}
