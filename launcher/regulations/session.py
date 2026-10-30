@@ -16,6 +16,7 @@ class RegulationSession:
         self._script_ids, self._script_targets = script_ids, script_targets
         self._categories = self._validators = 0
         self._bridges = {}
+        self._voting = {}
 
     def add(self, owner, model):
         """Reserve one converted owner's declarations against all earlier rows."""
@@ -24,6 +25,11 @@ class RegulationSession:
                 if name in self._bridges:
                     raise ValueError(f"Conflicting native rule {name}: already declared by {self._bridges[name]}")
                 self._bridges[name] = owner
+            for row in model.voting:
+                key = row["rule"]
+                if key in self._voting:
+                    raise ValueError(f"Conflicting voting category {key}: already declared by {self._voting[key]}")
+                self._voting[key] = owner
             keys = {row["key"] for row in model.categories}
             if keys & self._reserved:
                 raise ValueError("Custom category collides with an existing definition")
@@ -44,6 +50,6 @@ class RegulationSession:
 
     def finish(self):
         """Reject aggregate excess before revision finalization or model creation."""
-        if self._categories > 128 or self._validators > 256:
+        if self._categories > 128 or self._validators > 256 or len(self._voting) > 256:
             raise ValueError("Regulation session quota exceeded")
         return self.owners

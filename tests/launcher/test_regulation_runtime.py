@@ -70,6 +70,30 @@ def control_bridge(monkeypatch, control):
     return client
 
 
+@pytest.mark.parametrize("feature", ["automatic", "voting"])
+def test_incomplete_governance_cannot_activate_a_pack(feature, make_mod, tmp_path):
+    mod = make_mod("def vote(context, regulation): return {'choice': 'proposed', 'reason': 'Test'}")
+    category = {"key": "owned.rules.policy", "label": "Policy", "default": "open",
+                "options": [{"id": 1, "key": "open", "name": "Open"}]}
+    section = {"schema": 1, "categories": [category]}
+    if feature == "automatic":
+        category["change_control"] = {"mode": "automatic", "base_chance": 1, "announcement_week": 40}
+    else:
+        section["voting"] = [{"rule": category["key"], "handler": "rules.vote"}]
+    (tmp_path / "regulations.json").write_text(json.dumps({"mod_extensions": {"owned.rules": section}}), encoding="utf-8")
+    reports, progress, menus = [], [], []
+    with closing(PackMods(tmp_path, reports.append, set_loading=progress.append, set_menu=menus.append)) as pack:
+        pack.mods, pack.finished, pack._pack_root = {"owned.rules": mod}, True, tmp_path
+        mod.sandbox._resources.callback(pack._remove_menu, "owned.rules")
+        pack.menu.add("owned.rules", "button", "Button", "Message")
+        with pytest.raises(ValueError, match="not available for activation"):
+            pack.bind_regulations(scopes=set())
+        assert not pack.regulations.ready and pack.regulations.failed
+        assert mod.sandbox.closed and not pack.mods
+        assert progress[-1]["state"] == "error" and not any(menus)
+        assert any("REGULATIONS FAILED" in message for message in reports)
+
+
 def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(source_mod, runner_bundle, tmp_path, monkeypatch):
     """Load the example normally; simulate the game-side bridge replies."""
     example = Path(__file__).resolve().parents[2] / "examples/rookie_contract_mod"

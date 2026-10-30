@@ -67,6 +67,16 @@ class RegulationDefinitions:
         return {owner: deepcopy(data.native_rules) for owner, data in self._owners.items() if data.native_rules}
 
     @property
+    def automatic_changes(self):
+        """Copy automatic policies separately from native category definitions."""
+        return deepcopy({key: policy for data in self._owners.values() for key, policy in data.automatic_changes.items()})
+
+    @property
+    def voting(self):
+        """Copy declared calculations by source owner for owned handler binding."""
+        return {owner: deepcopy(data.voting) for owner, data in self._owners.items() if data.voting}
+
+    @property
     def revisions(self):
         # Digests are immutable strings, so only the owner-to-digest map is copied.
         return dict(self._revisions)

@@ -6,6 +6,7 @@ from collections import ChainMap
 from launcher.json_ingest import materialize
 from . import payload, schema
 from .bridge_converter import convert_bridges
+from .governance_converter import automatic_changes, voting_handlers
 from .owner_definition import OwnerDefinition
 
 
@@ -60,7 +61,11 @@ def _scripts(owner, value, categories, index):
 def _payloads(model, accessible, index):
     # Native option parameters/envelopes are measured once per referenced category
     # for this attempt. Each owner must still account for its own option_data.
-    for key in {row["key"] for row in model.categories} | model.rule_keys():
+    # Contract validation and voting use different inputs. A voting-only native
+    # reference should not inherit contract invocation limits.
+    keys = ({row["key"] for row in model.categories} | model.option_data.keys()
+            | {row["rule"] for row in model.validators})
+    for key in keys:
         for option, base in index.payloads(key, accessible[key]):
             payload.check_metadata(base, model.option_data.get(key, {}).get(option, {}))
 
@@ -75,10 +80,11 @@ def convert_owner(owner, section, source, base, scopes, index):
         # Strict duplicate checks apply only to this selected enabled subtree.
         # Materialization also creates the containers this owner's model will own.
         data = materialize(section)
-        schema.fields(data, ("schema",), ("categories", "option_data", "scripted_changes", "validators", "native_rules"))
+        schema.fields(data, ("schema",), ("categories", "option_data", "scripted_changes", "validators", "native_rules", "voting"))
         if type(data["schema"]) is not int or data["schema"] != 1:
             raise ValueError("Unsupported enabled regulation schema")
         categories = _categories(owner, data.get("categories", []), base)
+        automatic = automatic_changes(categories)
         # References can see native/fallback rules and this owner's categories.
         # Previously processed owners' custom categories never become accessible.
         accessible = ChainMap(categories, base)
@@ -86,7 +92,8 @@ def convert_owner(owner, section, source, base, scopes, index):
         validators = _validators(data.get("validators", []), source, accessible, scopes, index)
         scripts = _scripts(owner, data.get("scripted_changes", []), categories, index)
         bridges = convert_bridges(data.get("native_rules", {}), categories)
-        model = OwnerDefinition(list(categories.values()), metadata, validators, scripts, bridges)
+        voting = voting_handlers(data.get("voting", []), source, accessible, index, automatic)
+        model = OwnerDefinition(list(categories.values()), metadata, validators, scripts, bridges, automatic, voting)
         _payloads(model, accessible, index)
         return model
     except (ValueError, TypeError, KeyError) as error:

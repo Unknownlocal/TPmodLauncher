@@ -19,10 +19,12 @@ class OwnerDefinition:
     validators: list[dict[str, str]]
     scripted_changes: list[dict]
     native_rules: dict[str, bool | dict[str, str]] = field(default_factory=dict)
+    automatic_changes: dict[str, dict] = field(default_factory=dict)
+    voting: list[dict[str, str]] = field(default_factory=list)
 
     def rule_keys(self):
-        """List categories needed for payload checks and revision tracking."""
-        return self.option_data.keys() | {row["rule"] for row in self.validators}
+        """List referenced categories whose definitions contribute to revisions."""
+        return self.option_data.keys() | {row["rule"] for row in self.validators + self.voting}
 
     def declarations(self):
         """Build a borrowed declaration view for revision hashing.
@@ -36,4 +38,8 @@ class OwnerDefinition:
         # switch is included in this model's declarations.
         if self.native_rules:
             result["native_rules"] = self.native_rules
+        if self.automatic_changes:
+            result["automatic_changes"] = self.automatic_changes
+        if self.voting:
+            result["voting"] = self.voting
         return result

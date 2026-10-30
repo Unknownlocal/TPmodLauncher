@@ -82,6 +82,73 @@ def test_native_and_disabled_sections_keep_existing_json_semantics(tmp_path):
     with pytest.raises(ValueError, match="Duplicate JSON field"):
         RegulationDefinitions.from_bytes(b'{"mod_extensions":{"example.rules":{"schema":1,"schema":1}}}',
                               {"example.rules": source()}, scopes=SCOPES)
+    data = document()
+    data["mod_extensions"]["disabled.mod"] = {"schema": 1, "categories": [{"change_control": None}], "voting": False}
+    assert prepare(data).automatic_changes == prepare(data).voting == {}
+
+
+def test_governance_declarations_keep_native_definitions_and_owned_revisions_separate():
+    data = document()
+    section = data["mod_extensions"]["example.rules"]
+    policy = {"mode": "automatic", "base_chance": 0, "announcement_week": 0}
+    section["categories"][0]["change_control"] = policy
+    section["voting"] = [{"rule": "native", "handler": "rules.vote"}]
+    original = deepcopy(data)
+    result = prepare(data)
+    assert data == original
+    assert result.custom_categories == [category()]
+    assert result.automatic_changes == {"example.rules.policy": policy}
+    assert result.voting == {"example.rules": section["voting"]}
+    result.automatic_changes["example.rules.policy"]["base_chance"] = .5
+    result.voting["example.rules"].clear()
+    assert result.automatic_changes["example.rules.policy"] == policy and result.voting
+    policy["base_chance"] = 1
+    assert result.revisions != prepare(data).revisions
+
+
+@pytest.mark.parametrize("field, value", [
+    ("base_chance", 1.1), ("base_chance", True),
+    ("announcement_week", 52), ("announcement_week", False), ("mode", "voting")])
+def test_automatic_policies_reject_invalid_decision_settings(field, value):
+    data = document()
+    policy = {"mode": "automatic", "base_chance": 0, "announcement_week": 0}
+    data["mod_extensions"]["example.rules"]["categories"][0]["change_control"] = policy
+    policy[field] = value
+    with pytest.raises(ValueError, match="Automatic|automatic"):
+        prepare(data)
+
+
+@pytest.mark.parametrize("fault", ["source", "foreign", "special", "automatic", "duplicate"])
+def test_voting_declarations_require_owned_sources_and_one_ordinary_policy(fault):
+    data = document()
+    section = data["mod_extensions"]["example.rules"]
+    section["voting"] = [{"rule": "example.rules.policy", "handler": "rules.vote"}]
+    if fault == "source":
+        section["voting"][0]["handler"] = "other.vote"
+    elif fault == "foreign":
+        section["voting"][0]["rule"] = "other.policy"
+    elif fault == "special":
+        data["categories"].append({"key": "calendar", "options": [{"key": "open"}]})
+        section["voting"][0]["rule"] = "calendar"
+    elif fault == "automatic":
+        section["categories"][0]["change_control"] = {"mode": "automatic", "base_chance": 1, "announcement_week": 51}
+    else:
+        section["voting"] *= 2
+    with pytest.raises(ValueError, match="source snapshot|unknown or foreign|ordinary voting|Automatic category|Conflicting voting"):
+        prepare(data)
+
+
+def test_vote_only_references_track_native_data_without_contract_payload_limits():
+    data = document()
+    data["mod_extensions"]["example.rules"] = {"schema": 1, "voting": [{"rule": "native", "handler": "rules.vote"}]}
+    data["categories"][0]["options"][0]["parameters"] = {"text": "x" * 5000}
+    result = prepare(data)
+    assert result.validators == {"example.rules": []} and result.voting
+    data["categories"][0]["options"][0]["parameters"]["text"] += "changed"
+    assert result.revisions != prepare(data).revisions
+    data["mod_extensions"]["second.rules"] = {"schema": 1, "voting": [{"rule": "native", "handler": "rules.vote"}]}
+    with pytest.raises(ValueError, match="second.rules.*Conflicting voting category native"):
+        prepare(data, {"example.rules": source(), "second.rules": source("second.rules")})
 
 
 def test_enabled_owner_failure_does_not_publish_partial_categories():

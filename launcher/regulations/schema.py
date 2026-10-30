@@ -40,7 +40,7 @@ def parameters(value):
 
 
 def category(owner, value):
-    fields(value, ("key", "label", "default", "options"), ("description", "neighbours"))
+    fields(value, ("key", "label", "default", "options"), ("description", "neighbours", "change_control"))
     key = name(value["key"], 256)
     if not key.startswith(owner + "."):
         raise ValueError("Custom category leaves its owner's namespace")

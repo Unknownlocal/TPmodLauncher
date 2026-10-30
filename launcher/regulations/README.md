@@ -62,13 +62,14 @@ discarded on completion or failure.
 
 The optional root `mod_extensions` object is keyed by manifest ID. An enabled
 section requires integer `schema: 1` and permits `categories`, `option_data`,
-`validators`, `scripted_changes` and `native_rules`. Disabled sections are left
-unread beyond JSON syntax and the whole-file size check. Duplicate fields in
-enabled sections are rejected; native fields use the last value, as in the game.
+`validators`, `scripted_changes`, `native_rules` and `voting`. Disabled sections
+are left unread beyond JSON syntax and the whole-file size check. Duplicate
+fields in enabled sections are rejected; native fields use the last value, as
+in the game.
 
 - Categories require `key`, `label`, `default` and `options`, with optional
-  `description` and `neighbours`. Keys start with the owner ID and `.` and cannot
-  collide with existing categories.
+  `description`, `neighbours` and `change_control`. Keys start with the owner ID
+  and `.` and cannot collide with existing categories.
 - Options require consecutive positive integer `id`, unique `key` and printable
   `name`. Optional fields are `summary`, `description` and object `parameters`.
   Neighbours name distinct other options in the same category.
@@ -91,6 +92,22 @@ enabled sections are rejected; native fields use the last value, as in the game.
   selection uses the contract's season, without calling mod Python. Each named
   native rule can have only one enabled owner; conflicts reject preparation.
   Declarations cannot name arbitrary game functions.
+
+The converter also checks governance declarations. A custom category's optional
+`change_control` requires `mode: "automatic"`, numeric `base_chance` from 0 to 1,
+and integer `announcement_week` from 0 to 51, matching the game's week indexes.
+These settings stay separate from native category definitions and form part of
+the owner's revision. `voting` is an array of `rule`/`handler` objects, targeting
+an ordinary native category or one defined by the mod. Each category has one
+declared calculation across all enabled owners. Automatic categories cannot also
+declare voting calculations. Calendar, technical-era and native entry rules are
+excluded because they have separate governance or do not use ordinary voting.
+Voting modules must belong to the declaring mod's checked source.
+
+These governance declarations can be prepared and inspected, but runtime binding
+currently rejects them with an activation error. They cannot silently become
+active as definition-only mods. Existing declarations without these fields
+continue through normal binding.
 
 Checked native switches form part of rule revisions. After career publication,
 the runtime supplies checked booleans or option references to installation.
@@ -115,6 +132,7 @@ remain separate, so an earlier allowance does not approve a later signing.
 
 Limits are 32 owners, 32 categories/validators per owner, 32 options per custom
 category, 128 categories/256 validators per session and 128 scripts per owner.
+Voting declarations permit 32 per owner and 256 per session.
 Each validator's complete context and rule together must fit 4,096 UTF-8 bytes,
 1,024 nodes and eight container levels. These are invocation limits, separate
 from the 1 MiB file limit. Failed preparation returns no partial owner set.
