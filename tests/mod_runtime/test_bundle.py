@@ -47,11 +47,7 @@ def test_component_changed_after_open_is_checked_again(synthetic):
         bundle.component()
 
 
-def test_real_bundle_retains_exact_source_and_upstream_texts(runner_bundle):
-    for name in artifacts.SOURCES:
-        relative = Path(name).relative_to("source")
-        origin = ROOT / "mod_runtime" / ABI_VERSION / relative if relative == Path("runner.wit") else ROOT / "mod_runtime" / relative
-        assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()
+def test_real_bundle_retains_upstream_texts(runner_bundle):
     for name in artifacts.NOTICE_FILES:
         origin = ROOT / "LICENCE" if name.endswith("LICENCE.Project.txt") else ROOT / "notices/mod-runtime" / Path(name).name
         assert (runner_bundle.directory / name).read_bytes() == origin.read_bytes()

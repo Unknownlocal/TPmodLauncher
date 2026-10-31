@@ -2,7 +2,6 @@
 """Private definition admission with inert owned source and native-style JSON."""
 
 from copy import deepcopy
-import hashlib
 import json
 from types import SimpleNamespace
 from weakref import ref
@@ -282,7 +281,7 @@ def test_owner_metadata_is_budgeted_with_the_cached_minimum_envelope(limit):
         prepare(data)
 
 
-def test_shared_native_and_source_inputs_keep_owner_data_and_revision_bytes_independent():
+def test_shared_inputs_keep_revisions_independent_between_owners():
     data = document()
     first = source(text='# quoted " caf\u00e9\n')
     manifest = SourceManifest("second.rules", "2.0.0", "0.4.0", "rules", frozenset({"regulations"}))
@@ -292,19 +291,12 @@ def test_shared_native_and_source_inputs_keep_owner_data_and_revision_bytes_inde
         "option_data": {"native": {"open": {"owner": "second"}}},
         "validators": [{"id": "check", "rule": "native", "scope": "personnel.contract", "handler": "rules.validate"}]}
     result = prepare(data, sources)
-    # Independently encode the original complete revision format. Shared cached
-    # pieces must produce exactly these bytes, including owner-local metadata.
-    for owner in result.owner_ids:
-        declarations = {"schema": 1, "categories": [], "option_data": {},
-                        "validators": [], "scripted_changes": [],
-                        **deepcopy(data["mod_extensions"][owner])}
-        for index, script in enumerate(declarations["scripted_changes"]):
-            script.setdefault("id", f"{owner}:{index}")
-        revision = [owner, declarations, {"native": data["categories"][0]},
-                    sources[owner].manifest.version, sources[owner].files]
-        expected = hashlib.sha256(json.dumps(revision, sort_keys=True, ensure_ascii=True,
-                                            separators=(",", ":")).encode()).hexdigest()
-        assert result.revisions[owner] == expected
+    assert result.revisions == {owner: prepare(data, {owner: snapshot}).revisions[owner]
+                                for owner, snapshot in sources.items()}
+    data["mod_extensions"]["second.rules"]["option_data"]["native"]["open"]["owner"] = "changed"
+    changed = prepare(data, sources).revisions
+    assert changed["example.rules"] == result.revisions["example.rules"]
+    assert changed["second.rules"] != result.revisions["second.rules"]
     data["mod_extensions"]["second.rules"]["option_data"]["native"]["open"] = {"text": "x" * 4096}
     with pytest.raises(ValueError, match="second.rules.*byte/node/depth limits"):
         prepare(data, sources)

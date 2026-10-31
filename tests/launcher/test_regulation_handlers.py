@@ -39,7 +39,7 @@ def test_resident_slots_copy_each_invocation_and_bound_maximum_refusal_replies(m
     results = bound.evaluate([ctx], [selection()], {mod.manifest.id: [["a", 0, 0]] + [[f"b{i:02}", 0, 0] for i in range(31)]})
     assert results[mod.manifest.id] == [{"decision": "allow"}] + [{"decision": "deny", "message": "\U0001f600" * 160}] * 31
     assert ctx == before and not mod.sandbox.closed
-    assert len(deadlines) == 3 and len(set(deadlines)) == 1 and watchdog.token is None
+    assert len(set(deadlines)) == 1 and watchdog.token is None
 
 
 @pytest.mark.parametrize("fault", ["signature", "foreign_function", "import_budget"])

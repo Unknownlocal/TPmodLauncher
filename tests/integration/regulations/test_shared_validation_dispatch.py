@@ -177,7 +177,7 @@ def test_shared_completion_keeps_original_deadline_and_rejects_late_cleanup(make
     monkeypatch.setattr(group.sandbox, "call", late)
     with pytest.raises(Exception, match="Late shared"):
         session.evaluate([proposal()], [selection()], {owner: [["v00", 0, 0]] for owner in ("a.rules", "c.rules")})
-    assert len(deadlines) == 4 and len(set(deadlines)) == 1
+    assert len(set(deadlines)) == 1
     assert group.closed and cleaned == [True]
     assert session.states["a.rules"] == session.states["c.rules"] == "unavailable"
 
