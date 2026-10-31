@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -25,35 +24,7 @@ def test_overlapping_ownership_fails(tmp_path, monkeypatch):
         ci.suite_for(tmp_path / duplicate, tmp_path)
 
 
-@pytest.mark.parametrize("suite", ["mod_runtime", "check"])
-def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
-    original = [
-        SimpleNamespace(path=tmp_path / row["path"] / "test_fixture.py")
-        for row in ci.SUITES.values()
-    ]
-    deselections = []
-    config = SimpleNamespace(
-        pluginmanager=SimpleNamespace(getplugin=lambda _: None),
-        hook=SimpleNamespace(pytest_deselected=lambda items: deselections.extend(items)),
-    )
-    items = original.copy()
-    ci.SuiteSelection(suite, tmp_path).pytest_collection_modifyitems(config, items)
-    if suite == "check":
-        assert items == original
-        assert deselections == []
-    else:
-        assert len(items) == 1
-        assert ci.suite_for(items[0].path, tmp_path) == suite
-        assert [item for item in original if item not in items] == deselections
-
-
-def test_empty_suite_fails(tmp_path):
-    config = SimpleNamespace(pluginmanager=SimpleNamespace(getplugin=lambda _: None))
-    with pytest.raises(pytest.UsageError, match="is empty"):
-        ci.SuiteSelection("mod_runtime", tmp_path).pytest_collection_modifyitems(config, [])
-
-
-@pytest.mark.parametrize("suite", ["hook_manager", "game_adapters", "callables", "integration_regulations", "check"])
+@pytest.mark.parametrize("suite", ["game_adapters", "callables", "integration_regulations", "check"])
 def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suite):
     # Execute the CLI with a small owned tree: argument inspection alone cannot
     # prove that markers, collect-only mode or coverage exclusions take effect.
@@ -63,10 +34,7 @@ def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suit
         "hook_manager/callables/__init__.py": "",
         "hook_manager/callables/child.py": "def value(): return 'child'\n",
         "hook_manager/callables/unimported.py": "raise AssertionError('Coverage imported an unexecuted file')\n",
-        "tests/hook_manager/test_host.py": (
-            "from hook_manager import parent\nfrom hook_manager.callables import child\n"
-            "def test_host(): assert (parent.value(), child.value()) == ('parent', 'child')\n"
-        ),
+        "tests/hook_manager/test_host.py": "def test_host(): assert False\n",
         "tests/callables/test_callable.py": (
             "from hook_manager import parent\nfrom hook_manager.callables import child\n"
             "def test_callable(): assert (parent.value(), child.value()) == ('parent', 'child')\n"
@@ -79,10 +47,7 @@ def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suit
             "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
             "def test_support(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
         ),
-        "tests/hook_manager/game_adapters/regulations/test_policy.py": (
-            "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
-            "def test_policy(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
-        ),
+        "tests/hook_manager/game_adapters/regulations/test_policy.py": "def test_policy(): assert False\n",
         "tests/integration/regulations/test_integrated_policy.py": (
             "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
             "def test_integration(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
@@ -94,7 +59,6 @@ def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suit
         ) for marker in ("native", "legacy", "release")},
     }
     selected = {
-        "hook_manager": "tests/hook_manager/test_host.py",
         "game_adapters": "tests/hook_manager/game_adapters/test_support.py",
         "callables": "tests/callables/test_callable.py",
         "integration_regulations": "tests/integration/regulations/test_integrated_policy.py",
@@ -145,11 +109,18 @@ raise SystemExit(ci.main(args))
         assert "1 passed, 1 deselected" in result.stdout
         from xml.etree import ElementTree
         classes = list(ElementTree.parse(tmp_path / "coverage.xml").iter("class"))
-        files = {row.attrib["filename"] for row in classes}
-        # Both areas ran. Only the selected area's source belongs in its report.
-        assert any(name.endswith("parent.py") for name in files) == (suite == "hook_manager")
-        assert any(name.endswith("child.py") for name in files) == (suite == "callables")
-        assert any(name.endswith("common.py") for name in files) == (suite == "game_adapters")
-        assert any(name.endswith("policy.py") for name in files) == (suite in ("regulations", "integration_regulations"))
+        files = {Path(row.attrib["filename"]).name for row in classes} - {"__init__.py"}
+        # Each report contains only its area's source, including unexecuted files.
+        expected = {"game_adapters": {"common.py"}, "callables": {"child.py", "unimported.py"},
+                    "integration_regulations": {"policy.py"}}
+        assert files == expected[suite]
         if suite == "callables":
             assert next(row for row in classes if row.attrib["filename"].endswith("unimported.py")).attrib["line-rate"] == "0"
+        if suite == "game_adapters":
+            # A suite containing only acceptance tests must fail after marker filtering.
+            (tmp_path / selected).write_text(
+                "import pytest\n@pytest.mark.native\ndef test_acceptance_only(): assert False\n",
+                encoding="utf-8",
+            )
+            result = run()
+            assert result.returncode != 0 and "is empty" in result.stderr

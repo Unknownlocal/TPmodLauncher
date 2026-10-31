@@ -742,10 +742,17 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
         assert not runtime.ready  # A transport handshake is not native readiness.
         runtime.confirm_native(PERSONNEL_COMPONENTS)
         assert not runtime.ready
-        # Several policy pages of adopted replacements sharing a key.
-        # Membership is input-derived; it is not limited to current/upcoming.
-        choices = [{"key": "open", "padding": "x" * 1024, "marker": index} for index in range(260)]
+        # Publish enough choices to need two pages, including choices beyond
+        # the category's current and upcoming rules.
+        pages, exchange = [], channel._exchange
+        def exchange_policy(message):
+            if message["op"] == "policy-page":
+                pages.append(message["page"])
+            return exchange(message)
+        monkeypatch.setattr(channel, "_exchange", exchange_policy)
+        choices = [{"key": "open", "padding": "x" * 1024, "marker": index} for index in range(64)]
         pump(scope, wake, worker.submit(channel.publish, native={"native": choices}))
+        assert pages == [0, 1]
         assert runtime.ready and progress[-1]["state"] == "complete" and len(menus) == len(menus[0]) == 1
         catalog = runtime._dispatch.catalog
         pump(scope, wake, worker.submit(channel.reset, 2))

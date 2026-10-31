@@ -78,10 +78,13 @@ def test_maximum_admitted_action_and_refusals_roundtrip_in_single_frames():
 
 @pytest.mark.parametrize("shape", ["multiple-proposals", "owner-call-count", "session-call-count"])
 def test_impossible_action_tables_are_rejected_before_queueing(shape):
-    owners = {f"m{i}": {"revision": "f" * 64, "calls": [[slot, 0, 0] for slot in range(32)]}
+    count = 1 if shape == "multiple-proposals" else 32
+    owners = {f"m{i}": {"revision": "f" * 64, "calls": [[slot, 0, 0] for slot in range(count)]}
               for i in range(9 if shape == "session-call-count" else 1)}
     if shape == "owner-call-count":
         owners["m0"]["calls"].append([32, 0, 0])
+    elif shape == "session-call-count":
+        owners["m8"]["calls"] = [[0, 0, 0]]  # One call beyond the session's 256-call limit.
     value = {"version": 2, "token": "a" * 64, "id": 1, "epoch": 1, "action": 1, "op": "action",
              "deadline": time.monotonic() + .05, "generations": dict.fromkeys(owners, 1),
              "contexts": [{}] * (2 if shape == "multiple-proposals" else 1), "selections": [{}], "owners": owners}
