@@ -8,7 +8,7 @@ from ...ui import ui_bindings
 def feedback_bindings(screen, kind):
     ui = ui_bindings(screen)
     # Common drawing checks live with the reusable widgets. Negotiation hooks
-    # and the layout anchors used by PersonnelNotice stay specific to personnel.
+    # and the layout anchors used by NegotiationNotice stay specific to personnel.
     signatures = {
         "handle_event": "(self, event)", "draw": "(self, surface)",
         "_pipeline_record": "(self)",

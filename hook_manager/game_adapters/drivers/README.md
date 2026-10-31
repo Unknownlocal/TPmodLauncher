@@ -21,7 +21,7 @@ the game's signing method still decides whether an allowed proposal succeeds.
 - [terms.py](terms.py): handles returned academy loans on the working copies.
   Common person and contract formatting lives in
   [employment.py](../employment.py).
-- [rookie_check.py](rookie_check.py): `RookieContractLengthSwitch` can disable the
+- [rookie_switch.py](rookie_switch.py): `RookieContractLengthSwitch` can disable the
   native rookie length cap for one career. Missing or true installs nothing;
   false supplies the game's no-cap result. Removal restores the original helper.
   Trusted setup can supply a boolean query instead. The regulation consumer

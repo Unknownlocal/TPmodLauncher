@@ -5,7 +5,7 @@ import gc
 
 import pytest
 
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations import values as values
 from mod_runtime._regulations.action import RegulationAction
@@ -22,7 +22,7 @@ def test_bad_shared_policy_transfer_traps_and_closes_group(make_mod, fault):
         with pytest.raises(SandboxError):
             mod.sandbox.call("begin-regulation-policy", 1, 1, 1)
     else:
-        SharedHandlerRunner.bind(mod.runner, {mod.manifest.id: [validator()]})
+        RegulationHandlerBindings.bind(mod.runner, {mod.manifest.id: [validator()]})
         mod.sandbox.call("begin-regulation-policy", 1, 1, 1)
         with pytest.raises(SandboxError):
             if fault == "wrong-phase":

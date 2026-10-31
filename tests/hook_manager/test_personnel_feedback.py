@@ -226,7 +226,7 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
             return "drawn"
 
         monkeypatch.setattr(classes["staff"], "draw", draw)
-        factory = feedback.PersonnelNotice
+        factory = feedback.NegotiationNotice
         for phase in ("construction", "before", "after"):
             adapter.feedback = feedback.PersonnelFeedback(adapter, state, reports.append)
 
@@ -236,7 +236,7 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
                 raise RuntimeError("Owned response drawing failure")
 
             if phase == "construction":
-                monkeypatch.setattr(feedback, "PersonnelNotice", failed)
+                monkeypatch.setattr(feedback, "NegotiationNotice", failed)
             else:
                 screen.handle_event("unrelated")
                 monkeypatch.setattr(adapter.feedback.notices[screen], "draw", failed)
@@ -248,7 +248,7 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
             assert retained(None) == "drawn" and screen.draws == before + 2 and len(reports) == count
             assert all(group["state"] == "active" for group in adapter.groups.values())
             assert adapter.owners == {"owned.rules": "ready"}
-            monkeypatch.setattr(feedback, "PersonnelNotice", factory)
+            monkeypatch.setattr(feedback, "NegotiationNotice", factory)
             adapter.feedback.stop()
     finally:
         adapter.stop()

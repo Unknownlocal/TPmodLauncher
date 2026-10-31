@@ -65,7 +65,7 @@ def test_rollover_unavailable_stops_retries_and_survives_native_catch(monkeypatc
         with ThreadPoolExecutor(max_workers=1) as worker:
             with pytest.raises(HookError, match="Season rollover stopped"):
                 worker.submit(state.finalize_and_rollover_season).result(2)
-            assert worker.submit(implementation.native_initiator).result(2) == "unknown"
+            assert worker.submit(implementation.operation_initiator).result(2) == "unknown"
         assert state.native_cleanup and getattr(state, "native_returned", False) is swallow
         assert person.contract is None and not state.writes and len(channel.contexts) == 1
         assert not adapter._active and not adapter._personnel_operation.locked()

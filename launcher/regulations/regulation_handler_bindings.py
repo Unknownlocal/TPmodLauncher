@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bind distinct regulation owners inside one trusted shared Python runner."""
+"""Register enabled mods' regulation functions with the shared Python runner."""
 
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode, fields
@@ -22,8 +22,8 @@ def ordered_bindings(validators):
             for index, row in enumerate(ordered)}
 
 
-class SharedHandlerRunner:
-    """Keep original owner/validator IDs while the group owns execution and closure."""
+class RegulationHandlerBindings:
+    """Keep mod handler IDs and slots; the runner owns execution and cleanup."""
 
     def __init__(self, runner, validators, voting):
         self.runner, self.validators, self.voting = runner, validators, voting

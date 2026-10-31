@@ -9,14 +9,14 @@ from mod_runtime._regulations.policy import decode, encode, fields
 from mod_runtime._regulations.values import entry_fuel, integer
 from mod_runtime._regulations.voting import vote_reply, voting_packet
 from mod_runtime.source_transfer import _chunks
-from .shared_handler_runner import SharedHandlerRunner
+from .regulation_handler_bindings import RegulationHandlerBindings
 
 
 class VotingRunner:
     """Return results only after every addressed call and batch cleanup succeeds."""
 
     def __init__(self, handler):
-        if type(handler) is not SharedHandlerRunner or not handler.voting:
+        if type(handler) is not RegulationHandlerBindings or not handler.voting:
             raise ValueError("Expected bound shared voting handlers")
         self.handler = handler
 

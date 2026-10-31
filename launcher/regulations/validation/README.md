@@ -15,9 +15,10 @@ adding mod-facing methods or imports.
 | `group.py` | One install transaction, checked mod calls, shared proposals and reset |
 | `dispatch.py` | Install career data and run checks in order on the controller thread |
 
-`ValidationDispatch(admitted_definitions, bound_handler)` uses the pack's one
-shared `SharedHandlerRunner`. Its binding table must contain exactly the owners
-with validators. Definition-only packs pass no handler. The runner binds once
+`ValidationDispatch(admitted_definitions, bound_handler)` uses the pack's shared
+`RegulationHandlerBindings`. Its validator table must contain exactly the mods
+with validators. Voting uses a separate table. Definition-only packs pass no
+handler. The runner binds once
 and belongs to one dispatcher, preventing competing record caches or action IDs.
 `ValidationGroup` owns the shared install and action state. One manifest describes
 all mods and one table describes the physical records. Each mod's view contains

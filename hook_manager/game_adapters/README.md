@@ -13,6 +13,10 @@ an adapter defines its code; trusted setup owns installation and removal.
 - `ui` supplies shared game UI bindings, scrollable text and dialogs.
 - `regulations` adds rule selection, validator contexts and communication with
   the launcher to those game-specific calculations.
+- `validation_operation.py` keeps required checks available throughout an
+  admitted game action. Nested calls share failure state; each adapter retains
+  its own worker permission. `ValidationCancellation` carries a refusal to the
+  responsible caller, so an unfinished action cannot be treated as successful.
 
 Planners return `clock`, `effective` and `proposal` data without applying the
 proposed action. Native regulation data can still affect the game's seat or
@@ -41,9 +45,8 @@ removes its partially loaded modules and reports a failed status. Shutdown
 removes only definitions still owned by that bridge. Packs and control requests
 cannot add sources to the bundle.
 
-Definition loading does not install hooks, acknowledge native regulation
-coverage or enable the public regulation permission. Those operations remain
-closed in normal launcher startup.
+Loading definitions alone installs no hooks or enables validation. Trusted
+startup performs those steps after checking the enabled mods and selected career.
 
 See [driver support](drivers/README.md), [staff support](staff/README.md),
 [academy support](academy/README.md), [project support](projects/README.md),

@@ -5,11 +5,11 @@ import threading
 from contextlib import nullcontext
 
 from ...manager import HookError
-from ..personnel.cancellation import PersonnelCancellation
+from ..validation_cancellation import ValidationCancellation
 from .contexts import regulation_context
 from .outcome import ValidationOutcome
 from .staffing_result import StaffingResult
-from ..personnel.native_operation import stop_if_unavailable
+from ..validation_operation import stop_if_unavailable
 from ..personnel.payroll import payroll_identity
 
 
@@ -140,7 +140,7 @@ class StaffingCoordinator:
                                         participants, input_checks=input_checks) if participants else ValidationOutcome("allow"))
             guards._local.outcome = outcome
             if outcome.status == "unavailable":
-                raise PersonnelCancellation(outcome)
+                raise ValidationCancellation(outcome)
             if outcome.status == "deny":
                 refusals.append(outcome)
                 return False
@@ -169,7 +169,7 @@ class StaffingCoordinator:
             try:
                 plan = prepare(*args, validate=validate,
                                **({"payroll": True} if "employer_payroll" in guards.requested_inputs(participants) else {}), **kwargs)
-            except PersonnelCancellation as refusal:
+            except ValidationCancellation as refusal:
                 return StaffingResult(False, refusal=refusal.outcome)
             if plan.missing:
                 # Native recovery ignores signing False. Its None return cannot

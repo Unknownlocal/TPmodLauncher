@@ -6,7 +6,7 @@ import time
 from weakref import WeakKeyDictionary
 
 from ...manager import HookError
-from ..personnel.native_operation import native_operation
+from ..validation_operation import validation_operation
 from .feedback import draw_refusal
 from .preparation import AcademyPreparation
 
@@ -87,6 +87,6 @@ class AcademyCallers:
             owner = signature.bind(*args, **kwargs).arguments["self"]
             if guards.closed or not guards.owners or getattr(owner, "state", None) is not self.state:
                 return original(*args, **kwargs)
-            with native_operation(guards, "Academy AI " + role):
+            with validation_operation(guards, "Academy AI " + role):
                 return wrapped(*args, **kwargs)
         return automated

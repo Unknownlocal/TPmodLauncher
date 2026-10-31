@@ -10,7 +10,7 @@ from weakref import WeakKeyDictionary
 from ....callables import CallableTarget
 from ....manager import Manager
 from .bindings import feedback_bindings
-from .notice import PersonnelNotice
+from .negotiation_notice import NegotiationNotice
 from .inbox_notice import InboxNotice
 from ...ui import ui_bindings
 
@@ -96,7 +96,7 @@ class PersonnelFeedback(Manager):
             if notice is None:
                 try:
                     notice = self.notices[screen] = (InboxNotice(self.ui[kind]) if kind == "inbox"
-                                                   else PersonnelNotice(self.ui[kind], kind))
+                                                   else NegotiationNotice(self.ui[kind], kind))
                 except Exception as error:
                     self._disable(name, error)
                     return original(*args, **kwargs)

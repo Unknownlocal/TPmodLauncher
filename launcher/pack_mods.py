@@ -221,7 +221,7 @@ class PackMods:
                 raise ManifestError(result["menu"]["detail"])
         self.applied_menu = [dict(item) for item in records]
 
-    def _remove_menu(self, owner):
+    def _remove_mod(self, owner):
         """Revoke an independent component's owned registrations."""
         self._remove_mods((owner,))
 
@@ -630,7 +630,7 @@ class PackMods:
                     mod = Mod(manifest, submit_log=self._diagnostic,
                               menu=self.menu.add if self.set_menu is not None else None,
                               settings=self.settings.call, theme=self.themes.register,
-                              cleanup=lambda owner=manifest.id: self._remove_menu(owner),
+                              cleanup=lambda owner=manifest.id: self._remove_mod(owner),
                               timings=timings, prepared=prepared)
                 # Retain ownership before activation so interruption can still close this instance.
                 self.mods[manifest.id] = mod
@@ -654,7 +654,7 @@ class PackMods:
                     failed = self.mods.get(manifest.id)
                     if failed is not None:
                         failed.close()
-                    self._remove_menu(manifest.id)
+                    self._remove_mod(manifest.id)
                     self._log("REJECTED", level="WARNING" if isinstance(error, ManifestError) else "ERROR",
                               id=manifest.id, folder=candidate.root.name, detail=str(error)[:512], error=error)
                 for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.values import measure
 from launcher.regulations.validation.group import ValidationGroup
@@ -48,10 +48,10 @@ def test_binding_failure_closes_the_owner_without_publishing_partial_handlers(ma
             "foreign_function": "from json import loads as validate\n",
             "import_budget": "while True: pass\n"}[fault]
     if fault == "import_budget":
-        monkeypatch.setattr("launcher.regulations.shared_handler_runner.SOURCE_FUEL", 1_000_000)
+        monkeypatch.setattr("launcher.regulations.regulation_handler_bindings.SOURCE_FUEL", 1_000_000)
     mod = make_mod(code)
     with pytest.raises(SandboxError, match="synchronous|fuel"):
-        SharedHandlerRunner.bind(mod.runner, {mod.manifest.id: [validator()]})
+        RegulationHandlerBindings.bind(mod.runner, {mod.manifest.id: [validator()]})
     assert mod.sandbox.closed
 
 

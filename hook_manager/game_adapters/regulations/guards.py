@@ -14,7 +14,7 @@ import time
 from ...callables import CallableAdapters
 from ...manager import HookError, Manager, data_copy
 from .outcome import ValidationOutcome
-from ..personnel.native_operation import operation_failure, report_failure, stop_if_unavailable
+from ..validation_operation import operation_failure, submit_validation_failure, stop_if_unavailable
 
 
 class RegulationGuards(CallableAdapters):
@@ -171,7 +171,7 @@ class RegulationGuards(CallableAdapters):
             self.store_error(error)
             # Only actual validation errors use this failure notice. Other
             # callers also retain ordinary policy refusals through store_error.
-            report_failure(self, error)
+            submit_validation_failure(self, error)
             return ValidationOutcome("unavailable", "Validation unavailable")
         finally:
             if acquired:

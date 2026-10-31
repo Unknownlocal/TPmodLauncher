@@ -6,7 +6,7 @@ import math
 from ...manager import HookError, data_copy
 from .methods import driver_methods
 from .snapshot import DriverContractSnapshot, rookie_check_applies
-from .rookie_check import native_rookie_limit
+from .rookie_switch import native_rookie_limit
 from ..employment import BONUS_KEYS, contract_terms, employer_identity, person_identity
 from .terms import return_owner_loans
 from ..personnel.payroll import prepare_payroll

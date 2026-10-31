@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.voting_runner import VotingRunner
 from mod_runtime._regulations.policy import decode, encode
@@ -17,7 +17,7 @@ from tests.regulation_data import voting_inputs as inputs
 
 def bound(mods, *, validators=None, voting=None):
     runner = next(iter(mods.values())).runner
-    return SharedHandlerRunner.bind(runner, validators or {}, voting=voting or {
+    return RegulationHandlerBindings.bind(runner, validators or {}, voting=voting or {
         owner: [{"rule": "native", "handler": "rules.vote"}] for owner in mods})
 
 

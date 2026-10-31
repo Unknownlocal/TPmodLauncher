@@ -6,7 +6,7 @@ import json
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation.dispatch import ValidationDispatch
 
 from mod_runtime.source import SourceManifest
@@ -39,7 +39,7 @@ def dispatch(mods, *, count=1, sections=None):
                        "validators": [validator("check" if i == 0 else f"check{i:02}") for i in range(count)],
                        "option_data": {"native": {"open": {"owner": owner}}}} for owner in mods}
     model = definitions({owner: mod.snapshot for owner, mod in mods.items()}, sections=sections)
-    handler = SharedHandlerRunner.bind(next(iter(mods.values())).runner, model.validators)
+    handler = RegulationHandlerBindings.bind(next(iter(mods.values())).runner, model.validators)
     return ValidationDispatch(model, handler)
 
 

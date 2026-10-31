@@ -4,7 +4,7 @@
 from ...ui import ScrollableDialog, ScrollText
 
 
-class PersonnelNotice:
+class NegotiationNotice:
     def __init__(self, ui, kind):
         self.ui, self.kind, self.reason = ui, kind, None
         self.approach_refusal = False
@@ -31,13 +31,13 @@ class PersonnelNotice:
         missing = object()
         previous = vars(screen).get("action_feedback", missing)
 
-        def report(successful):
+        def observe_feedback(successful):
             nonlocal outcome
             outcome = successful
             return feedback(successful)
 
         try:
-            screen.action_feedback = report
+            screen.action_feedback = observe_feedback
             result = original()
         finally:
             if previous is missing:

@@ -28,12 +28,12 @@ PYTHON_SOURCES = (
 # inside this bundle using the modules' existing relative imports.
 ADAPTER_SOURCES = {
     'shared': '__init__ native_switch_installer',
-    'game_adapters': '__init__ native_methods employment native_values',
+    'game_adapters': '__init__ native_methods employment native_values validation_cancellation validation_operation',
     'game_adapters/ui': '__init__ bindings scroll_text dialog',
-    'game_adapters/drivers': '__init__ native_methods targets methods snapshot terms query_inputs queries planner rookie_check',
+    'game_adapters/drivers': '__init__ native_methods targets methods snapshot terms query_inputs queries planner rookie_switch',
     'game_adapters/staff': '__init__ native_methods targets methods planner prestige_switch staff_signing staffing_methods staffing_plan staffing_publication staffing',
-    'game_adapters/personnel': '__init__ native_methods caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation approach offer rollover native_operation payroll',
-    'game_adapters/personnel/feedback': '__init__ bindings notice inbox_notice adapter',
+    'game_adapters/personnel': '__init__ native_methods caller_targets callers preparation preparation_methods market_graph market_mail market_preparation approach offer rollover payroll',
+    'game_adapters/personnel/feedback': '__init__ bindings negotiation_notice inbox_notice adapter',
     'game_adapters/academy': '__init__ native_methods targets methods terms planner caller_targets callers feedback preparation preparation_methods',
     'game_adapters/projects': '__init__ native_methods targets methods snapshot technical_profile planner caller_targets callers',
     'game_adapters/regulations': '__init__ framing protocol channel contexts outcome guards refused_proposals regulation_approach regulation_personnel regulation_academy regulation_project staffing_result staffing_coordinator regulation_native_switches regulation_selection regulation_policy regulation_category regulation_scripts regulation_native_defaults regulation_screen automatic_progress automatic_announcements automatic_changes regulation_change regulation_voting',

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime._regulations.values import integer
-from .shared_handler_runner import SharedHandlerRunner
+from .regulation_handler_bindings import RegulationHandlerBindings
 from .voting_runner import VotingRunner
 from .publication import PolicyPublication
 from .server import RegulationServer
@@ -203,7 +203,7 @@ class RegulationRuntime:
             tables = {owner: rows for owner, rows in validators_by_owner.items() if rows}
             # Definition-only owners share availability, but need no guest table.
             if tables or voting:
-                self._handler = SharedHandlerRunner.bind(self._runner, tables, voting=voting)
+                self._handler = RegulationHandlerBindings.bind(self._runner, tables, voting=voting)
             if voting:
                 self._voting = VotingRunner(self._handler)
             self._dispatch = ValidationDispatch(self.definitions, self._handler)

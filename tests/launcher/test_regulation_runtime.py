@@ -41,7 +41,7 @@ def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract", inputs
     for owner, mod in mods.items():
         # Model pack adoption of these already-constructed fixture Stores,
         # including the same cleanup callback used by real source loading.
-        mod.sandbox._resources.callback(scope._remove_menu, owner)
+        mod.sandbox._resources.callback(scope._remove_mod, owner)
     # A staged UI declaration must stay unpublished until native acknowledgement.
     scope.menu.add(next(iter(mods)), "owned", "Owned", "Message")
     runtime = scope.bind_regulations(scopes={semantic_scope})
@@ -130,7 +130,7 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
     reports, progress, menus, wake = [], [], [], threading.Event()
     with closing(PackMods(tmp_path, reports.append, wake=wake.set, set_loading=progress.append, set_menu=menus.append)) as pack:
         pack.mods, pack.finished, pack._pack_root = {"owned.rules": mod}, True, tmp_path
-        mod.sandbox._resources.callback(pack._remove_menu, "owned.rules")
+        mod.sandbox._resources.callback(pack._remove_mod, "owned.rules")
         pack.menu.add("owned.rules", "button", "Button", "Message")
         runtime = pack.bind_regulations(scopes=set())
         with closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
@@ -508,7 +508,7 @@ def test_unmapped_native_scope_is_rejected_before_guest_binding(make_mod, tmp_pa
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     def unexpected(*args):
         pytest.fail("Unmapped scope reached guest binding")
-    monkeypatch.setattr("launcher.regulations.runtime.SharedHandlerRunner.bind", unexpected)
+    monkeypatch.setattr("launcher.regulations.runtime.RegulationHandlerBindings.bind", unexpected)
     with pytest.raises(ValueError, match="No complete native regulation mapping for scope: future.scope"):
         prepare_scope(tmp_path, {mod.manifest.id: mod}, semantic_scope="future.scope")
     assert mod.sandbox.closed

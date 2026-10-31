@@ -177,7 +177,7 @@ up to four invocations has a separate allowance; each handler keeps its own
 action deadline. Framework storage and cleanup count towards their relevant budgets.
 Trusted launcher adapters own publication across mods and native readiness.
 
-For a shared runner, `launcher/regulations/shared_handler_runner.py` binds each
+For a shared runner, `launcher/regulations/regulation_handler_bindings.py` binds each
 owner's admitted functions within that owner's source package. A peer's function
 cannot stand in for an owned handler merely because its local filename matches.
 Each table keeps its 32-binding limit; there is no 32-binding limit for the whole

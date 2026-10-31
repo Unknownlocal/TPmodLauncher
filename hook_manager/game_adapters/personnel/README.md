@@ -1,9 +1,8 @@
 # Shared personnel negotiations
 
-Driver and staff negotiations use many of the same game functions. This package
-gives `RegulationPersonnelAdapter` one shared set of wrappers for offers,
-deadlines, AI choices and player confirmations. It handles the game's records and presentation;
-rule selection and mod checks belong to the
+Driver and staff negotiations share game functions. This package supplies
+wrappers for offers, deadlines, AI choices and player confirmations. It handles
+records and feedback; rule selection and mod checks belong to the
 [regulation adapter](../regulations/README.md).
 
 ## Main parts
@@ -38,12 +37,13 @@ rule selection and mod checks belong to the
   preserves the game's original dictionaries and lists.
 - [market_mail.py](market_mail.py): `MarketMail` keeps messages with the offer that
   produced them, so unfinished work does not send premature mail.
-- [cancellation.py](cancellation.py): `PersonnelCancellation` carries a refusal
-  back to the caller responsible for the action.
 - [rollover.py](rollover.py): grants worker access for the active career while
   the game's season-end function performs its normal work.
-- [native_operation.py](native_operation.py): keeps worker permission within
-  identified game calls and carries unavailable validation back to their owner.
+
+Shared [validation operation support](../validation_operation.py) keeps worker
+permission within identified game calls. `ValidationCancellation` carries a
+refusal back to the caller responsible for the action, including when a native
+helper catches the interruption.
 
 ## Decisions and feedback
 

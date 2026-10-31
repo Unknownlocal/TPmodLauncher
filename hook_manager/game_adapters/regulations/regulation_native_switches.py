@@ -5,7 +5,7 @@ from ...diagnostics import build_log_record
 
 from ...manager import HookError
 from ...callables import method_group
-from ..drivers.rookie_check import RookieContractLengthSwitch
+from ..drivers.rookie_switch import RookieContractLengthSwitch
 from ..staff.prestige_switch import StaffPrestigeSwitch
 from .regulation_selection import RegulationSelection
 

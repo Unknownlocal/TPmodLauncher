@@ -12,7 +12,7 @@ from hook_manager.game_adapters.regulations.protocol import regulation_native_op
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.values import bounded, integer, measure
 from ..definitions import RegulationDefinitions
-from ..shared_handler_runner import ordered_bindings
+from ..regulation_handler_bindings import ordered_bindings
 from .record import CatalogRecord
 from .view import OwnerView
 

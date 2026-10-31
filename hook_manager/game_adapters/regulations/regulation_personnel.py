@@ -24,7 +24,7 @@ from ..staff.staffing import StaffingPlanner
 from ..staff.targets import staff_target, staffing_targets
 from .staffing_coordinator import StaffingCoordinator
 from .regulation_selection import RegulationSelection
-from ..personnel.native_operation import native_initiator
+from ..validation_operation import operation_initiator
 
 
 class RegulationPersonnelAdapter(RegulationGuards):
@@ -76,7 +76,7 @@ class RegulationPersonnelAdapter(RegulationGuards):
         # Both signing targets share one projection and dispatch path. Native
         # manager identity selects the planner, never a mod-supplied target name.
         context = regulation_context("personnel.contract", self._build_contract(arguments),
-                                     initiator=caller["initiator"] if caller else native_initiator())
+                                     initiator=caller["initiator"] if caller else operation_initiator())
         self._local.native_check_season = context["effective"]["season"]
         return context
 

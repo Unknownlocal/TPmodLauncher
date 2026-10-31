@@ -5,7 +5,7 @@ from copy import copy, deepcopy
 from contextlib import ExitStack, nullcontext
 import threading
 
-from .cancellation import PersonnelCancellation
+from ..validation_cancellation import ValidationCancellation
 from .market_preparation import MarketPreparation
 from .preparation import PRESTIGE_FIELDS, preparation_draft, publish_preparation
 from .rollover import rollover_wrapper
@@ -133,7 +133,7 @@ class PersonnelCallers:
                         return self._offer(original, bound, frame, previous)
                     try:
                         result = original(*bound.args, **bound.kwargs)
-                    except PersonnelCancellation as refused:
+                    except ValidationCancellation as refused:
                         frame["refusal"] = refused.outcome
                         if refused.outcome.status == "unavailable" and previous is not None:
                             # AI can ignore an inner uncontested-signing result.
@@ -203,7 +203,7 @@ class PersonnelCallers:
             return result
         if outcome.status == "unavailable" and previous:
             previous["refusal"] = outcome
-            raise PersonnelCancellation(outcome)
+            raise ValidationCancellation(outcome)
         # Deliberately do not call the signing refusal presenter: submit_offer's
         # false/message/row result already drives the native inline error path.
         return False, outcome.message, row
@@ -298,5 +298,5 @@ class PersonnelCallers:
                 # Player acceptance would try backups and close after False.
                 # Unavailability must also stop automated failure/closing logic;
                 # an automated policy denial still follows native alternatives.
-                raise PersonnelCancellation(refusal)
+                raise ValidationCancellation(refusal)
         return result

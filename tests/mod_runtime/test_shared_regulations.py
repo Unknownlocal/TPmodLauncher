@@ -8,7 +8,7 @@ from contextlib import contextmanager
 import pytest
 
 from launcher.regulations import RegulationDefinitions
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation.action import PreparedAction
 from launcher.regulations.validation.catalog import CombinedCatalog
 from launcher.regulations.validation.install import PolicyInstall
@@ -59,7 +59,7 @@ def shared(runner_bundle, *, count=1, peer_handler=False):
                             cleanup=lambda: cleaned.append(True)) as group:
         for owner in group.manifests:
             group.activate(owner)
-        binding = SharedHandlerRunner.bind(group, definitions.validators)
+        binding = RegulationHandlerBindings.bind(group, definitions.validators)
         yield group, binding, CombinedCatalog(definitions), calls, cleaned
     assert cleaned == [True]
 

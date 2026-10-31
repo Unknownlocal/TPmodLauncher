@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from launcher.regulations.shared_handler_runner import SharedHandlerRunner
+from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation import group as group_module
 from launcher.regulations.validation.dispatch import ValidationDispatch
 from regulation_support import context, definitions, make_mods, selection, validator
@@ -46,7 +46,7 @@ def make_shared_dispatch(make_mods):
         sections["a.rules"]["validators"].append({**validator("private"), "rule": private})
         sections["a.rules"]["option_data"][private] = {"open": {"owner": "a.rules"}}
         model = definitions(sources, sections=sections)
-        binding = SharedHandlerRunner.bind(group, model.validators)
+        binding = RegulationHandlerBindings.bind(group, model.validators)
         session = ValidationDispatch(model, binding)
         return session, group, calls, cleaned, model, binding
     return create

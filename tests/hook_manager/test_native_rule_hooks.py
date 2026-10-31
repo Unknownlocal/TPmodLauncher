@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from hook_manager.game_adapters.regulations import regulation_native_switches
-from hook_manager.game_adapters.drivers import rookie_check
+from hook_manager.game_adapters.drivers import rookie_switch
 from hook_manager.game_adapters.staff import prestige_switch
 from hook_manager.manager import HookError
 from tests.hook_manager.native_switch_support import native_switches as native
@@ -15,7 +15,7 @@ from tests.hook_manager.native_switch_support import native_switches as native
 def test_default_switches_need_no_hook_or_inspection(native, monkeypatch):
     state, drivers, staff = native
     originals = drivers.formula_rookie_contract_year_limit, staff.required_prestige
-    monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: pytest.fail("Default inspected"))
+    monkeypatch.setattr(rookie_switch, "rookie_check_target", lambda: pytest.fail("Default inspected"))
     monkeypatch.setattr(prestige_switch, "staff_prestige_target", lambda: pytest.fail("Default inspected"))
     for values in ({}, {"rookie_contract_length_check": True, "staff_prestige_check": True}):
         assert regulation_native_switches.install_regulation_switches(state, values, submit_log=pytest.fail) == ()
@@ -24,7 +24,7 @@ def test_default_switches_need_no_hook_or_inspection(native, monkeypatch):
 
 def test_native_switch_queries_require_boolean_results(native):
     state, _, _ = native
-    hooks = [rookie_check.RookieContractLengthSwitch.create(state, enabled=lambda *args: "yes", submit_log=pytest.fail),
+    hooks = [rookie_switch.RookieContractLengthSwitch.create(state, enabled=lambda *args: "yes", submit_log=pytest.fail),
              prestige_switch.StaffPrestigeSwitch.create(state, enabled=lambda: 1, submit_log=pytest.fail)]
     try:
         with pytest.raises(HookError, match="return a boolean"):
@@ -38,7 +38,7 @@ def test_native_switch_queries_require_boolean_results(native):
 
 def test_switch_keeps_original_applicability_available_and_restores_owned_helper(native):
     state, drivers, staff = native
-    original = rookie_check.native_rookie_limit(state.driver_manager)
+    original = rookie_switch.native_rookie_limit(state.driver_manager)
     hooks = regulation_native_switches.install_regulation_switches(state, {
         "rookie_contract_length_check": False, "staff_prestige_check": False}, submit_log=pytest.fail)
     escaped = state.driver_manager.formula_rookie_contract_year_limit
@@ -48,7 +48,7 @@ def test_switch_keeps_original_applicability_available_and_restores_owned_helper
         assert escaped("Team", rookie) is None and state.driver_manager.calls == 0
         assert state.staff_manager.required_prestige(object()) == 0
         # Disabling the native cap must not erase the game's applicability test.
-        retained = rookie_check.native_rookie_limit(state.driver_manager)
+        retained = rookie_switch.native_rookie_limit(state.driver_manager)
         assert retained is original
         assert retained(state.driver_manager, "Team", rookie) == 2
         assert retained(state.driver_manager, "Team", veteran) is None

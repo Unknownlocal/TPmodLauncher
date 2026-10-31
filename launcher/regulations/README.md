@@ -115,8 +115,9 @@ No guest callback runs for an automatic decision. Custom voting declarations
 bind their Python calculations separately from validators and require native
 voting coverage before activation.
 
-The private execution layer can bind voting functions through
-`SharedHandlerRunner`, including owners with no validators. `VotingRunner`
+`RegulationHandlerBindings` registers validator and voting functions with the
+pack's shared runner, including voting-only mods. It keeps each mod's handler IDs;
+the runner owns execution and cleanup. `VotingRunner`
 transfers one snapshot per proposal and returns all team results only after
 every call succeeds. Voting has separate tables and choice/reason checks, so
 it cannot return a validation allowance or alter signing limits. Each author
@@ -160,8 +161,8 @@ from the 1 MiB file limit. Failed preparation returns no partial owner set.
 
 ## Loading checks and keeping rule data in memory
 
-`PackMods.bind_regulations()` creates a `RegulationRuntime`. It binds handler
-tables once in the pack's shared source runner through `SharedHandlerRunner`.
+`PackMods.bind_regulations()` creates a `RegulationRuntime`.
+`RegulationHandlerBindings` registers the functions once in the pack's shared runner.
 It rejects owners using separate runners. Mods keep their own IDs and declarations,
 with one career number shared by all installed data. Owners declaring data without
 validators stay required but need no handler table. A single source mod uses the

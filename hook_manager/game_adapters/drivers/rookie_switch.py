@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Disable the native rookie cap while keeping its original test available."""
+"""Switch the native rookie cap while keeping its original test available."""
 
 from functools import update_wrapper
 import inspect

@@ -6,7 +6,7 @@ import threading
 import time
 
 from mod_runtime._regulations.values import integer
-from ..shared_handler_runner import SharedHandlerRunner
+from ..regulation_handler_bindings import RegulationHandlerBindings
 from .action import PreparedAction
 from .catalog import CombinedCatalog
 from .group import ValidationGroup
@@ -21,7 +21,7 @@ class ValidationDispatch:
         self.handler = handler
         self.group = None
         if self.catalog.owners or definitions.voting or handler is not None:
-            if (type(handler) is not SharedHandlerRunner
+            if (type(handler) is not RegulationHandlerBindings
                     or getattr(handler.runner, "_regulation_handlers", None) is not handler
                     or handler.validators.keys() != self.catalog.owners.keys()):
                 raise ValueError("Every regulation owner must use one admitted shared handler")

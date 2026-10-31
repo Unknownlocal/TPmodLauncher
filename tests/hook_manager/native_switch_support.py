@@ -8,7 +8,7 @@ from typing import Optional
 
 import pytest
 
-from hook_manager.game_adapters.drivers import rookie_check
+from hook_manager.game_adapters.drivers import rookie_switch
 
 
 @pytest.fixture
@@ -31,9 +31,9 @@ def native_switches(monkeypatch):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     # Bind the fixture's signature because annotation formatting can differ
     # between the test interpreter and the game interpreter.
-    target = rookie_check.rookie_check_target()
+    target = rookie_switch.rookie_check_target()
     target.signature = str(inspect.signature(driver.DriverManager.formula_rookie_contract_year_limit))
-    monkeypatch.setattr(rookie_check, "rookie_check_target", lambda: target)
+    monkeypatch.setattr(rookie_switch, "rookie_check_target", lambda: target)
     state = SimpleNamespace(driver_manager=driver.DriverManager(), staff_manager=staff.StaffManager())
     state.driver_manager.state = state.staff_manager.state = state
     state.driver_manager.calls, state.staff_manager.calls = 0, []
