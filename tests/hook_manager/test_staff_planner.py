@@ -52,12 +52,17 @@ def test_staff_terms_resolve_employer_and_cover_without_live_effects(monkeypatch
     assert proposal["employer"] == {"ref": "supplier:" + str(id(supplier)), "name": "target", "kind": "supplier",
                                     "nationality": "DE", "prestige_base": 30, "heritage_prestige": 40., "form_prestige": 50.}
     assert proposal["proposed"]["bonuses_m"] == {"point": .1, "win": -2., "podium": 0.}
+    assert planner.prepare(arguments, payroll_checks=[])["proposal"]["employer"]["payroll"] is None
     proposal["proposed"]["bonuses_m"]["point"] = 99
     arguments.update(signer_kind="team", allow_current_cover=False, contract_start_week=157, bonuses=None)
     future = planner.prepare(arguments)
     assert future["effective"] == {"season": 4, "start_week": 157, "end_week": 261}
     assert all(future["proposal"]["employer"][key] is None
                for key in ("nationality", "prestige_base", "heritage_prestige", "form_prestige"))
+    state.driver_manager = SimpleNamespace(drivers=[SimpleNamespace(
+        contract={"team": "target", "salary_m": 7, "start_week": 105, "length_weeks": 156}, future_contract=None)])
+    assert planner.prepare(arguments, payroll_checks=[])["proposal"]["employer"]["payroll"] == {
+        "as_of_week": 157, "staff_annual_salary_m": 2.5, "driver_annual_salary_m": 7.}
     assert future["proposal"]["proposed"]["bonuses_m"] == {"point": None, "win": None, "podium": None}
     assert before[:3] == (vars(staff), state.teams, vars(supplier)) and before[3] == bonuses
     for incomplete in (True, None, float("nan")):

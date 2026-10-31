@@ -88,12 +88,22 @@ def option_keys(category):
 
 def validator(value, owned_paths, accessible, scopes):
     """Check a semantic rule/context and an owned source reference, without binding."""
-    fields(value, ("id", "rule", "scope", "handler"))
+    fields(value, ("id", "rule", "scope", "handler"), ("inputs",))
     name(value["id"])
     rule(value["rule"], accessible)
     if type(value["scope"]) is not str or value["scope"] not in scopes:
         raise ValueError("Validator context has no trusted mapping")
+    validator_inputs(value.get("inputs", []), value["scope"])
     handler(value["handler"], owned_paths)
+
+
+def validator_inputs(value, scope):
+    """Allow only named data supported by this fixed validation scope."""
+    if (type(value) is not list or len(value) > 1
+            or any(type(item) is not str or item != "employer_payroll" for item in value)
+            or value and scope != "personnel.contract"):
+        raise ValueError("Unsupported validator inputs for this scope")
+    return value
 
 
 def rule(value, accessible):

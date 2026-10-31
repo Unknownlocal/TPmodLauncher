@@ -24,15 +24,16 @@ class StaffingPlanner:
         self.sign = inspect.getattr_static(self.manager, "sign_staff")
         self.signature = inspect.signature(self.sign)
 
-    def prepare_onboarding(self, team_name, *, contract_years=1, validate=None):
+    def prepare_onboarding(self, team_name, *, contract_years=1, validate=None, payroll=False):
         """Prepare native joining-team staff choices and their final cover terms."""
-        return self._prepare("onboard_joining_team_staff", team_name, contract_years=contract_years, validate=validate)
+        return self._prepare("onboard_joining_team_staff", team_name, contract_years=contract_years,
+                             validate=validate, payroll=payroll)
 
-    def prepare_recovery(self, roles=None, *, validate=None):
+    def prepare_recovery(self, roles=None, *, validate=None, payroll=False):
         """Prepare missing team staff and native population seeds for these roles."""
-        return self._prepare("ensure_active_teams_have_staff", roles, validate=validate)
+        return self._prepare("ensure_active_teams_have_staff", roles, validate=validate, payroll=payroll)
 
-    def _prepare(self, method, *args, validate=None, **kwargs):
+    def _prepare(self, method, *args, validate=None, payroll=False, **kwargs):
         if self.state.staff_manager is not self.manager or self.manager.state is not self.state:
             raise HookError("Staffing planner belongs to another native state")
         # Capture the baseline before copying roots. Otherwise an old private
@@ -94,7 +95,10 @@ class StaffingPlanner:
             else:
                 original, person = publication.person(person)
             values["staff"] = person
-            prepared = contracts.prepare(dict(values))
+            # This planner is bound to the evolving private roster. Earlier
+            # accepted hires therefore contribute to the next candidate's total.
+            checks = [] if payroll else None
+            prepared = contracts.prepare(dict(values), **({"payroll_checks": checks} if payroll else {}))
             # Terms come from the temporary person; identity belongs to the live
             # person or the retained unsigned generator result, never that copy.
             prepared["proposal"]["person"]["ref"] = "staff:" + str(id(original))
@@ -102,7 +106,8 @@ class StaffingPlanner:
             # The callback can withhold execution. Allowed native effects stay
             # private so later choices see the roster native signing would leave.
             # None records withheld execution separately from native False.
-            accepted = self.sign(*bound.args, **bound.kwargs) if validate is None or validate(prepared) else None
+            accepted = self.sign(*bound.args, **bound.kwargs) if validate is None or validate(
+                prepared, **({"input_checks": checks} if payroll else {})) else None
             signings.append(StaffSigning(arguments, prepared, accepted))
             return False if accepted is None else accepted
 

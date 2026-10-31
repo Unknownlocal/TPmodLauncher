@@ -9,6 +9,7 @@ from .snapshot import DriverContractSnapshot, rookie_check_applies
 from .rookie_check import native_rookie_limit
 from ..employment import BONUS_KEYS, contract_terms, employer_identity, person_identity
 from .terms import return_owner_loans
+from ..personnel.payroll import prepare_payroll
 
 
 class DriverContractPlanner:
@@ -21,7 +22,7 @@ class DriverContractPlanner:
         self.methods = driver_methods(state)
         self.rookie_limit = native_rookie_limit(self.manager)
 
-    def prepare(self, arguments):
+    def prepare(self, arguments, *, payroll_checks=None):
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
                 or self.state.driver_manager is not self.manager or self.manager.state is not self.state):
             raise HookError("Driver planner belongs to another native state")
@@ -104,6 +105,10 @@ class DriverContractPlanner:
         # The person may have no independent role attribute; employment role is
         # carried in the proposed terms. Never invent an identity field from it.
         person = person_identity(original, "driver")
+        owner = employer_identity(self.state.teams[employer], employer, "team")
+        if payroll_checks is not None:
+            owner["payroll"] = prepare_payroll(self.state, employer, original, "driver", proposed,
+                                               week, next_start, payroll_checks)
         # Keep native proposal data independent of regulation schema/operation
         # metadata so other trusted game adapters can use the same preparation.
         return data_copy({
@@ -111,7 +116,7 @@ class DriverContractPlanner:
             "effective": {"season": state.season_no + int(start == next_start),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "renew" if prior and prior.get("team") == employer else "sign", "person": person,
-                         "employer": employer_identity(self.state.teams[employer], employer, "team"),
+                         "employer": owner,
                          "native_checks": {"rookie_contract_length_applies": rookie},
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
         })

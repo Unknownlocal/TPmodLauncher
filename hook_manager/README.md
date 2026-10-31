@@ -171,7 +171,15 @@ screens display approach refusals through their existing feedback.
 For both personnel scopes, `context["proposal"]["employer"]` contains `ref`, `name`
 and `kind`, plus `prestige_base`, `heritage_prestige`, `form_prestige` and
 `nationality` from the loaded employer. Missing values are `null`; prestige values
-are finite numbers and nationality is a string. Other employer fields stay private.
+are finite numbers and nationality is a string. Contract validators can request
+`"inputs": ["employer_payroll"]`. The employer then includes `payroll` with
+`as_of_week`, `staff_annual_salary_m` and `driver_annual_salary_m`: known annual
+base salaries after the proposed deal, in millions. Immediate/backdated deals
+use today; future deals use their start week and scheduled contracts. Academy
+and supplier contexts provide `null`. No request means no payroll scan.
+Participating handlers receive independent copies of the shared input, within
+the existing argument limits. Caps and enforcement remain in mod code.
+Other employer fields stay private.
 
 The runner calls each handler with fresh `context` and `regulation` dictionaries.
 Handlers return allow/deny dictionaries; conditions stay in mod Python. The

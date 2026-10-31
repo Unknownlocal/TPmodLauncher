@@ -196,7 +196,7 @@ class PersonnelCallers:
             # that a healthy mod failed. Full planning still runs under budget.
             return False, "Invalid contract offer terms.", row
         outcome, result = self.guards.validate_submission(
-            lambda: self.guards.planners[kind].prepare(arguments),
+            lambda: self.guards.prepare_contract(arguments),
             lambda: original(*bound.args, **bound.kwargs),
             initiator=previous["initiator"] if previous else "player")
         if outcome.status == "allow":

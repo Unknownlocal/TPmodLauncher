@@ -45,7 +45,11 @@ class RegulationAcademyAdapter(RegulationGuards):
     def _projection(self, target):
         def project(arguments, result):
             caller = getattr(self._local, "academy_caller", None)
-            return regulation_context("personnel.contract", self.planner.prepare(target, arguments),
+            prepared = self.planner.prepare(target, arguments)
+            if "employer_payroll" in getattr(self._local, "inputs", ()):
+                # Academy fees are separate from team employment salaries.
+                prepared["proposal"]["employer"]["payroll"] = None
+            return regulation_context("personnel.contract", prepared,
                                       initiator=caller["initiator"] if caller else "unknown")
         return project
 

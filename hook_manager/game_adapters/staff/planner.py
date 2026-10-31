@@ -7,6 +7,7 @@ from types import MethodType, SimpleNamespace
 from ...manager import HookError, data_copy
 from ..employment import BONUS_KEYS, contract_terms, employer_identity, person_identity
 from .methods import staff_methods
+from ..personnel.payroll import prepare_payroll
 
 
 class StaffContractPlanner:
@@ -18,7 +19,7 @@ class StaffContractPlanner:
         self.state, self.manager = state, state.staff_manager
         self.methods = staff_methods(state)
 
-    def prepare(self, arguments):
+    def prepare(self, arguments, *, payroll_checks=None):
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
                 or self.state.staff_manager is not self.manager or self.manager.state is not self.state):
             raise HookError("Staff planner belongs to another native state")
@@ -85,12 +86,19 @@ class StaffContractPlanner:
         prior = getattr(staff, "contract", None) or getattr(staff, "future_contract", None)
         terms = contract_terms(proposed, role=role)
         existing = contract_terms(prior, role=role)
+        employer_record = employer_identity(owner, employer, kind)
+        if payroll_checks is not None:
+            # Supplier employment uses the same validation scope but is outside
+            # team payroll. Its context says so without reading either roster.
+            employer_record["payroll"] = (prepare_payroll(self.state, employer, staff, "staff", proposed,
+                                                         week, next_start, payroll_checks)
+                                           if kind == "team" else None)
         return data_copy({
             "clock": {"season": self.state.season_no, "absolute_week": week},
             "effective": {"season": self.state.season_no + int(start == next_start),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
             "proposal": {"action": "renew" if prior and prior.get("team") == employer else "sign",
                          "person": person_identity(staff, "staff"),
-                         "employer": employer_identity(owner, employer, kind),
+                         "employer": employer_record,
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
         })

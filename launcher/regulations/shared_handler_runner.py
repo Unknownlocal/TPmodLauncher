@@ -5,6 +5,7 @@ from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode, fields
 from mod_runtime.source_transfer import SOURCE_FUEL, SOURCE_SECONDS
 from mod_runtime.shared_runtime import SharedPythonRunner
+from . import schema
 
 
 def ordered_bindings(validators):
@@ -12,11 +13,12 @@ def ordered_bindings(validators):
     if type(validators) is not list or len(validators) > 32:
         raise ValueError("Invalid regulation binding count")
     for row in validators:
-        fields(row, ("id", "rule", "scope", "handler"))
+        schema.fields(row, ("id", "rule", "scope", "handler"), ("inputs",))
+        schema.validator_inputs(row.get("inputs", []), row["scope"])
     ordered = sorted(validators, key=lambda row: row["id"])
     if len({row["id"] for row in ordered}) != len(ordered):
         raise ValueError("Duplicate regulation validator ID")
-    return {row["id"]: (index, {key: row[key] for key in ("rule", "scope", "handler")})
+    return {row["id"]: (index, {key: row[key] for key in ("rule", "scope", "handler", "inputs") if key in row})
             for index, row in enumerate(ordered)}
 
 
@@ -72,8 +74,11 @@ class SharedHandlerRunner:
             for owner in sorted(tables.keys() | votes.keys()):
                 with runner.sandbox.phase(fuel=SOURCE_FUEL, seconds=SOURCE_SECONDS):
                     for index, declaration in (*tables.get(owner, {}).values(), *votes.get(owner, {}).values()):
+                        # Input demand belongs to native preparation; guest
+                        # functions keep their existing binding format.
+                        guest = {key: value for key, value in declaration.items() if key != "inputs"}
                         error = runner.sandbox.call("bind-source-regulation", index,
-                                                    encode({"owner": owner, **declaration}))
+                                                    encode({"owner": owner, **guest}))
                         if error:
                             raise SandboxError((f"Regulation binding failed for {owner}: " + error)[:512])
             binding = cls(runner, tables, votes)

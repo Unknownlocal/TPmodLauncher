@@ -91,6 +91,13 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
         regulation_context("personnel.contract", prepared, operation="activate")
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache,
                       manager._ai_car_package_components_cache, arguments["bonuses"])
+    state.staff_manager = SimpleNamespace(staff=[SimpleNamespace(
+        contract={"team": "target", "salary_m": 3, "start_week": 105, "length_weeks": 156}, future_contract=None)])
+    enriched = planner.prepare(arguments, payroll_checks=[])
+    assert enriched["proposal"]["employer"]["payroll"] == {
+        "as_of_week": 157, "staff_annual_salary_m": 3., "driver_annual_salary_m": 2.5}
+    assert before == (state.teams, vars(driver), manager._ai_signing_query_cache,
+                      manager._ai_car_package_components_cache, arguments["bonuses"])
 
     class CustomBonus:
         def __float__(self):

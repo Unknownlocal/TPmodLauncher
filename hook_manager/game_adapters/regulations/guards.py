@@ -26,6 +26,11 @@ class RegulationGuards(CallableAdapters):
         # used without a live policy have no changing selection inputs.
         self.policy_identity = getattr(getattr(select, "__self__", None), "identity", lambda: None)
         self.subscriptions = channel.bindings(scope)
+        self.input_requests = getattr(channel, "input_requests", {}).get(scope, {})
+
+    def requested_inputs(self, participants):
+        """Combine data demand only for the owners taking part in this attempt."""
+        return frozenset(name for owner in participants for name in self.input_requests.get(owner, ()))
 
     @contextmanager
     def _installation(self):
@@ -99,11 +104,13 @@ class RegulationGuards(CallableAdapters):
         """Capture inputs that must stay unchanged during this validation."""
         return self.policy_identity()
 
-    def _decision(self, project, participants, *, identity=None):
+    def _decision(self, project, participants, *, identity=None, input_checks=None):
         """Check one proposal without executing native code or choosing its return shape."""
         deadline = time.monotonic() + self.seconds
         identity = identity or self.policy_identity
         acquired = False
+        previous_inputs = getattr(self._local, "inputs", ())
+        previous_checks = getattr(self._local, "input_checks", None)
         try:
             failed = operation_failure()
             if failed is not None:
@@ -122,6 +129,10 @@ class RegulationGuards(CallableAdapters):
             if remaining <= 0 or not self._guest.acquire(timeout=remaining):
                 raise HookError("Regulation dispatch deadline expired")
             acquired = self._local.dispatching = True
+            self._local.inputs = self.requested_inputs(participants) if self.input_requests else ()
+            # Only trusted data preparers can add these checks; declarations
+            # cannot supply a callback or a native function name.
+            self._local.input_checks = input_checks if input_checks is not None else ([] if self._local.inputs else None)
             policy = identity()
             context = data_copy(project())
             # Only small choice references vary by rule. The complete proposal
@@ -145,6 +156,8 @@ class RegulationGuards(CallableAdapters):
                 # Native choices changed while preparing inputs or waiting for
                 # a reply. Decline this attempt without disabling healthy mods.
                 return ValidationOutcome("unavailable", "Regulation choices changed during validation")
+            if any(not check() for check in self._local.input_checks or ()):
+                return ValidationOutcome("unavailable", "Regulation inputs changed during validation")
             if time.monotonic() >= deadline or any(self.owners[owner] != "ready" for owner in participants):
                 raise HookError("Regulation allowance expired or became unavailable")
             if refusal:
@@ -162,6 +175,8 @@ class RegulationGuards(CallableAdapters):
             return ValidationOutcome("unavailable", "Validation unavailable")
         finally:
             if acquired:
+                self._local.inputs = previous_inputs
+                self._local.input_checks = previous_checks
                 self._local.dispatching = False
                 self._guest.release()
         # Execution belongs to the caller, outside validation error handling.

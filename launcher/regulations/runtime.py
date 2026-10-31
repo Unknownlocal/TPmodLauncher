@@ -221,7 +221,8 @@ class RegulationRuntime:
             # Native adapters receive subscriptions, never handler Python code.
             metadata = {"epoch": self._dispatch.epoch, "custom": sorted(catalog.custom),
                         "owners": {owner: {"revision": revision, "rules": sorted({row["rule"] for _, row in validators.values()}),
-                                           "bindings": [{key: row[key] for key in ("rule", "scope")} for _, row in validators.values()]}
+                                           "bindings": [{key: row[key] for key in ("rule", "scope", "inputs") if key in row}
+                                                        for _, row in validators.values()]}
                                    for owner, (revision, validators, _) in catalog.owners.items()}}
             revisions = self.definitions.revisions
             for owner, rows in voting.items():

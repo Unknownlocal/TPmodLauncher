@@ -290,6 +290,22 @@ A `validators` entry names a rule, a supported scope and a Python function:
 {"id":"rookie_length","rule":"example.rookie_contracts.length","scope":"personnel.contract","handler":"mod.validate_contract"}
 ```
 
+Contract validators can request annual payroll with `"inputs": ["employer_payroll"]`.
+The adapter then adds `context["proposal"]["employer"]["payroll"]` containing
+`as_of_week`, `staff_annual_salary_m` and `driver_annual_salary_m`. Amounts are in
+millions per year, after the proposed agreement replaces the person's old deal.
+The week is today for an immediate or backdated signing, or the future start week.
+Scheduled agreements and earlier hires in the same staffing operation are included.
+Bonuses, buyouts and academy fees are excluded. Academy and supplier proposals
+receive `null` for this input.
+
+One payroll input is shared through independent copies with the participating
+validators. Its totals are checked again before allowing a write. When nobody
+requests it, no payroll records are scanned. The added fields count towards the
+existing argument limits. The mod chooses its own caps
+and returns its validation decision; it does not receive the full roster or save.
+Unknown input names, duplicates and requests outside `personnel.contract` are rejected.
+
 Rules can use native categories or categories declared by that mod. Custom
 category keys must begin with the mod ID and `.`. Current scopes are
 `personnel.approach` (driver and staff approaches to Formula teams),

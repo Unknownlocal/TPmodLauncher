@@ -129,6 +129,9 @@ def owned(monkeypatch):
 
 def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
+    channel.input_requests = {"personnel.contract": {"a.rules": frozenset({"employer_payroll"})}}
+    prepare = planner.prepare
+    planner.prepare = lambda *a: dict(prepare(*a), proposal={"employer": {"kind": "academy"}})
     originals = [target.resolve({})[2] for target in (*targets, *callers)]
     adapter = implementation.RegulationAcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     messages = []
@@ -139,6 +142,7 @@ def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch
         screen.handle_event(False)
         screen.draw(None)
         assert screen.selected is None and messages == ["Owned refusal"]
+        assert channel.contexts[-1]["proposal"]["employer"]["payroll"] is None
         state.academy_manager.ai_sign_drivers(3)
         assert channel.contexts[-1]["initiator"] == "ai"
         channel.mode = "failed"

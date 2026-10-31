@@ -10,6 +10,7 @@ from .contexts import regulation_context
 from .outcome import ValidationOutcome
 from .staffing_result import StaffingResult
 from ..personnel.native_operation import stop_if_unavailable
+from ..personnel.payroll import payroll_identity
 
 
 class StaffingCoordinator:
@@ -77,13 +78,17 @@ class StaffingCoordinator:
             return None
         try:
             selection = guards.policy_identity()
+            # Staff publication already checks its complete source roster.
+            # Payroll also borrows driver contracts for this multi-team batch.
+            driver_inputs = (payroll_identity(self.planner.state.driver_manager.drivers)
+                             if "employer_payroll" in guards.requested_inputs(owners) else None)
         except Exception as error:
             # Unsupported native data must refuse staffing before planning or
             # publication, rather than escape as an exception in the game worker.
             guards.store_error(error)
             return None
         return selection, channel.epoch, tuple((owner, channel._generations[owner], channel._owners[owner]["revision"])
-                                    for owner in owners)
+                                              for owner in owners), driver_inputs
 
     def _run(self, prepare, *args, **kwargs):
         """Reserve one staffing run while retaining its bindings and caller frame."""
@@ -128,11 +133,11 @@ class StaffingCoordinator:
             return StaffingResult(False, plan.native_result if plan else None,
                                   plan.missing if plan else (), outcome)
 
-        def validate(prepared):
+        def validate(prepared, *, input_checks=None):
             # Validation grants private native execution, not live publication.
             # After the last owner is removed, the channel is no longer required.
             outcome = (guards._decision(lambda: regulation_context("personnel.contract", prepared, initiator="system"),
-                                        participants) if participants else ValidationOutcome("allow"))
+                                        participants, input_checks=input_checks) if participants else ValidationOutcome("allow"))
             guards._local.outcome = outcome
             if outcome.status == "unavailable":
                 raise PersonnelCancellation(outcome)
@@ -162,7 +167,8 @@ class StaffingCoordinator:
             if policy is None:
                 return unavailable()
             try:
-                plan = prepare(*args, validate=validate, **kwargs)
+                plan = prepare(*args, validate=validate,
+                               **({"payroll": True} if "employer_payroll" in guards.requested_inputs(participants) else {}), **kwargs)
             except PersonnelCancellation as refusal:
                 return StaffingResult(False, refusal=refusal.outcome)
             if plan.missing:

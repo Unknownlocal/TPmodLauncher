@@ -64,9 +64,24 @@ def test_owned_view_preserves_native_data_and_isolates_copies_and_revisions():
     scripts.clear()
     assert result.custom_scripts
     assert result.revisions == prepare(data).revisions
+    data["mod_extensions"]["example.rules"]["validators"][0]["inputs"] = ["employer_payroll"]
+    requested = prepare(data)
+    assert requested.validators["example.rules"][0]["inputs"] == ["employer_payroll"]
+    assert requested.revisions != result.revisions
+    del data["mod_extensions"]["example.rules"]["validators"][0]["inputs"]
     assert result.revisions != prepare(data, {"example.rules": source(text="# changed code")}).revisions
     data["categories"][0]["options"][0]["parameters"] = {"limit": 2}
     assert result.revisions != prepare(data).revisions
+
+
+@pytest.mark.parametrize("inputs,scope", [("employer_payroll", "personnel.contract"),
+    (["arbitrary.native.function"], "personnel.contract"), (["employer_payroll"], "personnel.approach")])
+def test_named_inputs_reject_invalid_lists_names_and_scopes(inputs, scope):
+    data = document()
+    data["mod_extensions"]["example.rules"]["validators"][0].update(inputs=inputs, scope=scope)
+    with pytest.raises(ValueError, match="inputs"):
+        RegulationDefinitions.from_bytes(json.dumps(data).encode(), {"example.rules": source()},
+                                         scopes={"personnel.contract", "personnel.approach"})
 
 
 def test_native_and_disabled_sections_keep_existing_json_semantics(tmp_path):

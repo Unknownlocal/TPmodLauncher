@@ -19,6 +19,7 @@ class Channel:
 
     def __init__(self):
         self._unavailable, self.actions = set(), []
+        self.input_requests = {}
         self.mode = "allow"
         self.message = None
         self.before_reply = lambda: None

@@ -12,6 +12,9 @@ rule selection and mod checks belong to the
   staff and driver salaries from supplied contract records. It includes a
   proposed agreement, accounts for replacements and scheduled deals, and returns
   the totals and the week they describe without changing either roster.
+  Requested totals are checked again before allowing a write. Staffing also
+  checks the borrowed driver records before applying the completed batch.
+  These checks last only for that operation; they do not cache the career.
 
 - [offer.py](offer.py): `PersonnelOffer` translates a submitted offer into the
   existing planners' signing arguments. It preserves native salary/bonus field

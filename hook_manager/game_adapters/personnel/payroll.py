@@ -10,6 +10,7 @@ the consuming rule, separately from this calculation.
 import math
 
 from ...manager import HookError
+from ..native_values import native_value
 
 
 def _week(value):
@@ -31,6 +32,47 @@ def _salary(contract, employer, week):
     if type(salary) not in (int, float) or not math.isfinite(salary):
         raise HookError("Payroll money needs finite native numbers")
     return salary
+
+
+def payroll_identity(drivers):
+    """Remember driver salary inputs across a private staffing batch.
+
+    Staff publication checks its own source roster. Borrowed driver contracts
+    need this separate comparison, without copying people or their histories.
+    """
+    identities = []
+    for person in drivers:
+        records = (person.contract, getattr(person, "future_contract", None))
+        if not any(records):
+            continue
+        values = tuple(
+            tuple(native_value(record.get(key, default)) for key, default in (
+                ("team", None), ("start_week", 1), ("length_weeks", 0), ("salary_m", 0.0)))
+            if type(record) is dict else native_value(record)
+            for record in records)
+        identities.append((id(person), values))
+    return tuple(identities)
+
+
+def prepare_payroll(state, employer, candidate, kind, proposed, current_week, next_start, checks):
+    """Collect totals and a private freshness check from the same roster view."""
+    clock = state.season_no, state.week_index
+    def collect():
+        return project_payroll(state.driver_manager.drivers, state.staff_manager.staff, employer,
+                               candidate, kind, proposed, current_week, next_start)
+
+    totals = collect()
+
+    def unchanged():
+        try:
+            # Rules receive only these totals. Rechecking them avoids keeping a
+            # second roster snapshot while still covering changes during dispatch.
+            return clock == (state.season_no, state.week_index) and totals == collect()
+        except (AttributeError, TypeError, HookError):
+            return False
+
+    checks.append(unchanged)
+    return totals
 
 
 def project_payroll(drivers, staff, employer, candidate, kind, proposed, current_week, next_start):
@@ -55,7 +97,7 @@ def project_payroll(drivers, staff, employer, candidate, kind, proposed, current
                 # Replace the candidate once, including any scheduled deal. A
                 # generated candidate can also be absent from the supplied roster.
                 continue
-            current = getattr(person, "contract", None)
+            current = person.contract
             future = getattr(person, "future_contract", None)
             if ((current is not None and type(current) is not dict)
                     or (future is not None and type(future) is not dict)):

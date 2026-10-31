@@ -16,7 +16,7 @@ class OwnerDefinition:
 
     categories: list[dict]
     option_data: dict[str, dict]
-    validators: list[dict[str, str]]
+    validators: list[dict[str, object]]
     scripted_changes: list[dict]
     native_rules: dict[str, bool | dict[str, str]] = field(default_factory=dict)
     automatic_changes: dict[str, dict] = field(default_factory=dict)

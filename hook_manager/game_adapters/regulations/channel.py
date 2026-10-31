@@ -20,6 +20,7 @@ class RegulationChannel:
         # Publication IDs increase across careers; each career installs once.
         # The explicit flag also covers switch-only packs with no owner tables.
         self._unavailable, self._generations, self._generation = set(), {}, 0
+        self.input_requests = {}
         self._published = False
         try:
             if (type(endpoint) is not dict or set(endpoint) != {"port", "token"}
@@ -62,22 +63,32 @@ class RegulationChannel:
         Slots follow the launcher's ascending validator IDs. A single binding
         per owner/target can therefore fan out to every applicable mod handler.
         """
-        result = {}
+        result, requests = {}, {}
         for owner, row in sorted(self._owners.items()):
             bindings = row.get("bindings")
             if type(bindings) is not list or not 0 <= len(bindings) <= 32 or not (bindings or row.get("voting")):
                 raise HookError("Missing admitted regulation bindings")
-            selected = []
+            selected, inputs = [], set()
             for slot, binding in enumerate(bindings):
-                if (type(binding) is not dict or set(binding) != {"rule", "scope"}
+                if (type(binding) is not dict or not {"rule", "scope"} <= binding.keys()
+                        or binding.keys() - {"rule", "scope", "inputs"}
                         or binding["rule"] not in row["rules"] or type(binding["scope"]) is not str):
                     raise HookError("Invalid admitted regulation binding")
+                demand = binding.get("inputs", [])
+                if (type(demand) is not list or len(demand) > 1
+                        or any(type(item) is not str or item != "employer_payroll" for item in demand)
+                        or demand and binding["scope"] != "personnel.contract"):
+                    raise HookError("Invalid admitted regulation inputs")
                 if binding["scope"] == scope:
                     # Keep the original slot: other scopes can leave gaps, and
                     # renumbering would call a different admitted handler.
                     selected.append((slot, binding["rule"]))
+                    inputs.update(demand)
             if selected:
                 result[owner] = tuple(selected)
+                if inputs:
+                    requests[owner] = frozenset(inputs)
+        self.input_requests[scope] = requests
         return result
 
     def _enter(self):

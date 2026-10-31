@@ -75,11 +75,16 @@ class RegulationPersonnelAdapter(RegulationGuards):
         caller = getattr(self._local, "personnel_caller", None)
         # Both signing targets share one projection and dispatch path. Native
         # manager identity selects the planner, never a mod-supplied target name.
-        planner = next(planner for planner in self.planners.values() if planner.manager is arguments["self"])
-        context = regulation_context("personnel.contract", planner.prepare(arguments),
+        context = regulation_context("personnel.contract", self.prepare_contract(arguments),
                                      initiator=caller["initiator"] if caller else native_initiator())
         self._local.native_check_season = context["effective"]["season"]
         return context
+
+    def prepare_contract(self, arguments):
+        """Prepare one shared contract with the current participants' data inputs."""
+        planner = next(planner for planner in self.planners.values() if planner.manager is arguments["self"])
+        return planner.prepare(arguments, **({"payroll_checks": self._local.input_checks}
+                                             if "employer_payroll" in getattr(self._local, "inputs", ()) else {}))
 
     def native_check_scope(self, start_week):
         """Share an offer's explicit date with the native check switches."""
@@ -97,7 +102,7 @@ class RegulationPersonnelAdapter(RegulationGuards):
                 context = regulation_context(self.scope, prepare(), initiator=initiator, operation="preview")
                 return context
 
-            outcome = self._decision(project, set(self.subscriptions))
+            outcome = self._decision(project, {owner for owner, _ in self.entries})
             self._local.outcome = outcome
             if outcome.status != "allow":
                 return outcome, None

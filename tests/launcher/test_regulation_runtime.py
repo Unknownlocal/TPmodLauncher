@@ -31,10 +31,11 @@ from regulation_support import context, make_mod, selection, validator
 PERSONNEL_COMPONENTS = dict(driver_signing=True, staff_signing=True, academy_signing=True, staffing=True)
 
 
-def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract"):
+def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract", inputs=()):
     wake, progress, menus = threading.Event(), [], []
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [{"key": "native", "options": [{"key": "open"}]}],
-        "mod_extensions": {owner: {"schema": 1, "validators": [dict(validator(), scope=semantic_scope)]} for owner in mods}}), encoding="utf-8")
+        "mod_extensions": {owner: {"schema": 1, "validators": [dict(validator(), scope=semantic_scope,
+                               **({"inputs": ["employer_payroll"]} if owner in inputs else {}))]} for owner in mods}}), encoding="utf-8")
     scope = PackMods(tmp_path, lambda _: None, wake=wake.set, set_loading=progress.append, set_menu=menus.append)
     scope.mods, scope.finished, scope._pack_root, scope.total = dict(mods), True, tmp_path, len(mods)
     for owner, mod in mods.items():
@@ -68,6 +69,55 @@ def control_bridge(monkeypatch, control):
         client._message({"type": "send", "payload": {"event": "reply", "id": record["id"], "status": status}}, lambda *a: None)
     monkeypatch.setattr(client, "_post", post)
     return client
+
+
+def test_payroll_input_reaches_independent_mod_copies_once_and_removed_requests_do_not_read_rosters(make_mods, tmp_path, monkeypatch):
+    from hook_manager.game_adapters.personnel.payroll import prepare_payroll
+
+    mods = make_mods({
+        "a.rules": "def validate(c,r):\n c['proposal']['employer']['payroll']['staff_annual_salary_m']=0\n return {'decision':'allow'}\n",
+        "b.rules": "def validate(c,r):\n if c['proposal']['employer']['payroll']['staff_annual_salary_m']>12:\n  return {'decision':'deny','message':'Payroll cap'}\n return {'decision':'allow'}\n",
+        "c.rules": "def validate(c,r): return {'decision':'allow'}\n"})
+    scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods, inputs=("a.rules", "b.rules"))
+    state = SimpleNamespace(season_no=1, week_index=3, driver_manager=SimpleNamespace(drivers=[]),
+        staff_manager=SimpleNamespace(staff=[SimpleNamespace(contract={"team": "A", "salary_m": 5,
+                                                "start_week": 1, "length_weeks": 52}, future_contract=None)]))
+    module = ModuleType("owned_payroll_entry")
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    writes, collections = [], []
+    def native(salary):
+        writes.append(salary)
+        return True
+    module.start = native
+    def project(arguments, result):
+        employer = {"name": "A", "kind": "team"}
+        if "employer_payroll" in engine._local.inputs:
+            collections.append(arguments["salary"])
+            employer["payroll"] = prepare_payroll(state, "A", None, "staff",
+                {"team": "A", "salary_m": arguments["salary"], "start_week": 4, "length_weeks": 52},
+                4, 53, engine._local.input_checks)
+        return dict(context(), proposal={"employer": employer})
+    with closing(scope), closing(RegulationChannel(runtime.endpoint)) as channel, ThreadPoolExecutor(max_workers=1) as worker:
+        pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
+        runtime.confirm_native(PERSONNEL_COMPONENTS)
+        engine = RegulationGuards(channel, lambda *args: selection(), "personnel.contract")
+        engine.approve(CallableTarget("payroll", module.__name__, (), "start", "(salary)"))
+        try:
+            for owner in mods:
+                engine.register(owner, [CallBinding("payroll", "payroll", project, refuse_boolean)])
+            def start(salary):
+                with engine.operation():
+                    return module.start(salary)
+            assert pump(scope, wake, worker.submit(start, 8)) is False and not writes
+            assert pump(scope, wake, worker.submit(start, 4)) is True
+            assert writes == [4] and collections == [8, 4]
+            for owner in ("a.rules", "b.rules"):
+                engine.remove_owner(owner)
+            state.staff_manager.staff = None  # A payroll scan would now fail.
+            assert pump(scope, wake, worker.submit(start, 8)) is True
+            assert writes == [4, 8] and collections == [8, 4] and runtime.ready
+        finally:
+            engine.stop()
 
 
 def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(make_mod, tmp_path, monkeypatch):

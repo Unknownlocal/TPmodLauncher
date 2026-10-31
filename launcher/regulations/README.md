@@ -76,9 +76,12 @@ in the game.
 - `option_data[category][option]` holds the mod's extra JSON object for a native
   or owned option. It does not overwrite native fields or contain executable
   operators.
-- Validators have exactly `id`, `rule`, `scope` and `handler`. Rules are native
-  or defined by the mod; scopes need trusted game adapters. Python modules named
+- Validators require `id`, `rule`, `scope` and `handler`, with optional `inputs`.
+  Rules are native or defined by the mod; scopes need trusted game adapters. Python modules named
   by a handler must exist in that mod's source. Function lookup happens inside Wasm.
+  `inputs` admits only `employer_payroll` for `personnel.contract`. The launcher
+  retains this request in the native binding metadata and rule revision, while
+  guest functions keep their existing binding format. Disabled sections stay unread.
 - Scripts require `key`, `new_regulation` and positive `effective_season`, with
   optional `id`. `new_regulation` contains the option's `key`. Scripts target
   owned categories. IDs are owner-qualified; omitted IDs use declaration order.
@@ -109,9 +112,8 @@ Automatic settings travel through the fixed category-loading request. Native
 setup checks persistence, weekly decisions and mail delivery before reporting
 automatic-change coverage; the launcher requires that coverage for activation.
 No guest callback runs for an automatic decision. Custom voting declarations
-remain rejected during runtime binding and cannot become active as
-definition-only mods. Existing declarations without these fields
-continue through normal binding.
+bind their Python calculations separately from validators and require native
+voting coverage before activation.
 
 The private execution layer can bind voting functions through
 `SharedHandlerRunner`, including owners with no validators. `VotingRunner`
@@ -125,7 +127,8 @@ contain exactly `choice` (`current` or `proposed`) and a nonblank reason limited
 to 2,048 UTF-8 bytes. Native scores/components remain input data.
 The snapshot allowance is 64 KiB/8,192 values; up to 64 controlling teams share
 one bounded batch. Any handler failure closes the shared runner without returning
-earlier results. This execution support does not enable native voting integration.
+earlier results. Native voting wrappers supply the electorate and record the
+completed results through the game's existing voting system.
 
 Checked native switches form part of rule revisions. After career publication,
 the runtime supplies checked booleans or option references to installation.
