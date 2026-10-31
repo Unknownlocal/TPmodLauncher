@@ -38,9 +38,17 @@ def pulse(sources, digest, instance, game_root, request_json):
             for filename, source in sources.items():
                 exec(compile(source, filename, "exec"), module.__dict__)
             module.source_digest, module.instance = digest, instance
+            # Later pulses reuse this callable; do not resend/compile the full
+            # infrastructure and adapter source literals for every status poll.
+            module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
+            module.readiness = module.NativeReadiness()
+            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
+            # Save metadata must survive even when no mod requests validation.
+            module.manager.observe("managers.formula_regulation_governance",
+                                   lambda imported: module.adapters.start_regulation_changes())
             module.menu = module.MenuAdapter()
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)
@@ -76,14 +84,87 @@ def pulse(sources, digest, instance, game_root, request_json):
                     raise ValueError("Invalid settings request fields")
                 module.settings.update(settings["records"], settings["result"])
             response = module.manager.request({"operation": "status"})
+        elif type(request) is dict and request.get("operation") == "prerequisites":
+            if set(request) != {"operation", "prerequisites"}:
+                raise ValueError("Invalid prerequisite request fields")
+            module.readiness.configure(request["prerequisites"])
+            response = module.manager.request({"operation": "status"})
+        elif request == {"operation": "adapters"}:
+            module.adapters.load()
+            response = module.manager.request({"operation": "status"})
+        elif request == {"operation": "regulation-defaults"}:
+            notices = []
+            defaults = None
+            try:
+                defaults = module.adapters.regulation_defaults()
+                if defaults is None:
+                    # Keep this same bounded request pending while native imports
+                    # continue. No callback or worker is added to the game.
+                    return "WAIT: native regulation definitions are loading"
+            except Exception as error:
+                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED defaults: "
+                               + str(error) + "; default integration skipped", error=error, component="regulations"))
+            response = module.manager.request({"operation": "status"})
+            response["regulation_defaults"], response["regulation_notices"] = defaults, notices
+        elif type(request) is dict and request.get("operation") == "await-regulations":
+            notices = []
+            try:
+                if set(request) not in ({"operation"}, {"operation", "regulations"}):
+                    raise ValueError("Invalid regulation loading fields")
+                module.adapters.await_regulations(request.get("regulations"))
+            except Exception as error:
+                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED career.preload: "
+                               + str(error)
+                               + "; preload integration skipped; continuing native game", error=error, component="regulations"))
+            response = module.manager.request({"operation": "status"})
+            response["regulation_notices"] = notices
+        elif type(request) is dict and request.get("operation") == "prepare-regulations":
+            if set(request) != {"operation", "regulations"}:
+                raise ValueError("Invalid regulation control fields")
+            notices = []
+            module.adapters.prepare_regulations(request["regulations"], submit_log=notices.append)
+            response = module.manager.request({"operation": "status"})
+            response["regulation_notices"] = notices
+        elif type(request) is dict and request.get("operation") in (
+                "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
+            notices = []
+            try:
+                if set(request) != {"operation", "regulations"}:
+                    raise ValueError("Invalid regulation control fields")
+                completed = module.adapters.control_regulations(request["operation"], request["regulations"],
+                                                               submit_log=notices.append)
+                if not completed:
+                    return "WAIT: native regulation operation is active"
+            except Exception as error:
+                completed = False
+                notices.append(module.build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED control: "
+                               + str(error) + "; regulation control skipped", error=error, component="regulations"))
+            response = module.manager.request({"operation": "status"})
+            response["regulation_control"] = completed
+            response["regulation_notices"] = notices
         else:
             if request == {"operation": "shutdown"}:
+                if not module.adapters.close():
+                    # Keep guard modules and their channel until every
+                    # admitted operation finishes; retry without blocking here.
+                    return "WAIT: native regulation operation is active"
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
+                module.readiness.stop()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
+        if module.adapters.preload is not None:
+            module.adapters.preload.poll()
+        response["adapters"] = module.adapters.status()
+        # UI imports and validation can fail between control requests. Drain
+        # pack-owned notices through the existing CLI/log transport once.
+        notices = response.setdefault("regulation_notices", [])
+        # Remove only notices included in this reply: a game worker can append
+        # between statements, so extending then clearing could lose a new error.
+        while module.adapters.regulation_notices:
+            notices.append(module.adapters.regulation_notices.popleft())
         response["pack"] = module.discovery.poll()
         response["menu"] = module.menu.poll()
         loading = response["menu"].get("loading", {})
@@ -93,6 +174,7 @@ def pulse(sources, digest, instance, game_root, request_json):
                 module.settings.refresh()
         response["themes"] = module.themes.poll()
         response["settings"] = module.settings.poll()
+        response["readiness"] = module.readiness.snapshot()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         return json.dumps({"event": "error", "detail": str(error)[:4096]})

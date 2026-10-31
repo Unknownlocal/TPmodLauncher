@@ -12,6 +12,7 @@ from launcher.bundled_dependencies import local_path
 from launcher.load_timing import measure
 from launcher.mod_api import CAPABILITIES, EXPORTS
 from launcher.sandbox import Limits, Operation, Sandbox, SandboxError
+from mod_runtime.prerequisites import prerequisite_declarations
 
 # Fuel counts Wasm work, including the guest Python interpreter (see Limits).
 # Measured startup needs about 12 million units and more than 32 core instances.
@@ -42,6 +43,7 @@ class Manifest:
     runtime: str
     component: str
     capabilities: frozenset[str]
+    prerequisites: tuple = ()
 
     @classmethod
     def read(cls, folder):
@@ -72,7 +74,7 @@ class Manifest:
                 raise ValueError("Expected at most 16 KiB of manifest bytes")
             data = tomllib.loads(content.decode("utf-8"))
             if (
-                set(data) != _FIELDS
+                set(data) - {"prerequisites"} != _FIELDS
                 or type(data["schema"]) is not int
                 or data["schema"] != 1
             ):
@@ -112,6 +114,7 @@ class Manifest:
                 data["runtime"],
                 component,
                 frozenset(capabilities),
+                prerequisite_declarations(data.get("prerequisites", {}), capabilities),
             )
         except (OSError, ValueError, TypeError, RuntimeError) as error:
             raise ManifestError(str(error)[:512]) from None
@@ -138,20 +141,20 @@ class Manifest:
             raise ManifestError(str(error)[:512]) from None
 
 
-def _host_operations(manifest, report, menu, settings=None, theme=None):
+def _host_operations(manifest, submit_log, menu, settings=None, theme=None):
     """Attach host-owned identity to the launcher's approved mod operations."""
     operations = {}
     if "diagnostics" in manifest.capabilities:
-        if not callable(report):
+        if not callable(submit_log):
             raise ManifestError("Diagnostics requires a trusted report handler")
 
-        def emit(message):
-            report(
+        def submit_mod_log(message):
+            submit_log(
                 manifest.id,
                 "".join(char if char.isprintable() else " " for char in message),
             )
 
-        operations["report"] = Operation(("string",), None, emit)
+        operations["report"] = Operation(("string",), None, submit_mod_log)
     if "main-menu" in manifest.capabilities:
         if not callable(menu):
             raise ManifestError("Main menu requires a trusted menu provider")
@@ -181,7 +184,7 @@ class Mod:
         self,
         manifest: Manifest,
         *,
-        report=None,
+        submit_log=None,
         menu=None,
         settings=None,
         theme=None,
@@ -191,7 +194,7 @@ class Mod:
     ):
         # A manifest requests permissions; only this fixed registry can turn them into operations.
         try:
-            operations = _host_operations(manifest, report, menu, settings, theme)
+            operations = _host_operations(manifest, submit_log, menu, settings, theme)
             # The loader owns this timing dictionary; it is never passed into guest code.
             if prepared is None:
                 with measure(timings, "component_read"):

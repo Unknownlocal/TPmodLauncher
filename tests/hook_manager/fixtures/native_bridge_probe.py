@@ -2,7 +2,10 @@
 """Run the real bridge against an owned target; copied beside entry.py before execution."""
 
 import importlib.util, json, runpy, sys, time
+import io
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 root = Path(__file__).resolve().parent.parent
 
@@ -15,17 +18,23 @@ def load(name, filename):
 
 
 frida = load("test_binding", "native_test_binding.py").load(root)
-lifecycle = load("lifecycle", "process_lifecycle.py")
-bridge = load("bridge", "game_bridge.py")
+load("dependencies", "bundled_dependencies.py").load_source_packages(root)
+from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 output = Path(sys.argv[3])
-messages = []
+messages = io.StringIO()
+logger = logging.getLogger("owned.bridge_probe")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+handler = logging.StreamHandler(messages)
+handler.setFormatter(logging.Formatter("%(levelno)s %(message)s"))
+logger.addHandler(handler)
 # The bridge receives the installation folder beside this isolated launcher copy.
 pack = root.parent / "data/owned pack"
 pack.mkdir(parents=True)
 controller = lifecycle.Controller(
     frida.get_local_device(),
     [sys.argv[1], "-B", sys.argv[2], str(output)],
-    messages.append,
+    logger,
     bridge_factory=bridge.factory(root, frida),
     restart_grace=0.2,
 )
@@ -36,8 +45,11 @@ try:
         controller.poll(timeout=0.02)
     controller.poll(timeout=0.02)
     assert (output / "active.json").exists(), messages
-    assert any("HOOK MANAGER READY" in message for message in messages), messages
+    assert any("HOOK MANAGER READY" in message for message in messages.getvalue().splitlines()), messages
     current = next(iter(controller.bridges.values()))
+    # The helper waits for a worker that crosses another SaveThread hook.
+    # This must finish without locking that worker out of JavaScript with the GIL.
+    assert current.set_loading(dict(state="loading", loaded=0, failed=0, total=31))["menu"]["loading"]["total"] == 31
     current.set_loading(dict(state="loading", loaded=0, failed=0, total=1))
     status = current.set_menu(
         [
@@ -105,6 +117,29 @@ try:
     while not (output / "settings-again-acknowledged").exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert (output / "settings-again-acknowledged").exists(), messages
+    attempts = []
+    pid = next(iter(controller.sessions))
+    controller.pack_mods[pid] = SimpleNamespace(career_preload=attempts.append, poll=lambda: None, close=lambda: None,
+        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None)
+    current.request("await-regulations")
+    deadline = time.monotonic() + 3
+    while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    waiting = [row for row in attempts if row["state"] == "waiting"]
+    assert len(waiting) == 1, attempts
+    for _ in range(3):
+        current.request("status")
+        controller.poll()
+    assert sum(row["state"] == "waiting" for row in attempts) == 1, attempts
+    (output / "leave-request").touch()
+    deadline = time.monotonic() + 3
+    while not any(row["state"] == "left" for row in attempts) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    assert any(row["state"] == "left" and row["generation"] == waiting[0]["generation"] for row in attempts), attempts
+    assert current.request("retire-regulations", regulations={"generation": waiting[0]["generation"],
+        "endpoint": {"port": 1, "token": "0" * 64}}, _service=lambda: None)["regulation_control"] is True
+    assert current.request("stop-regulations", regulations={"generation": waiting[0]["generation"],
+        "endpoint": {"port": 1, "token": "0" * 64}})["regulation_control"] is True
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:
@@ -130,7 +165,9 @@ try:
         "root": str(pack.resolve()),
     }, status
     controller.poll()
-    assert sum("PACK DISCOVERY" in message for message in messages) == 1, messages
+    assert sum("PACK DISCOVERY" in message for message in messages.getvalue().splitlines()) == 1, messages
+    errors = [line for line in messages.getvalue().splitlines() if line.startswith("40 ")]
+    assert len(errors) == 1 and errors[0].endswith("Owned bridge validation failure"), messages.getvalue()
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")
@@ -145,4 +182,6 @@ deadline = time.monotonic() + 5
 while not (output / "closed.json").exists() and time.monotonic() < deadline:
     time.sleep(0.02)
 assert (output / "closed.json").exists(), messages
-print(json.dumps(messages))
+logger.removeHandler(handler)
+handler.close()
+print(json.dumps(messages.getvalue().splitlines()))

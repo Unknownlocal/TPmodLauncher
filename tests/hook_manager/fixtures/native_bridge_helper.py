@@ -1,21 +1,45 @@
 # SPDX-License-Identifier: MPL-2.0
 """Owned Python target for hook activation, timeout coordination and restoration."""
 
-import importlib, json, sys, time
+import importlib, json, os, sys, time
+from pathlib import Path
+from types import ModuleType
 
 # No threading module exists yet: the bridge must wait rather than choose the wrong main thread.
 time.sleep(0.1)
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
-from pathlib import Path
-from types import ModuleType
 
 output = Path(sys.argv[1])
+(output / "target.pid").write_text(str(os.getpid()), encoding="ascii")
 deadline = time.monotonic() + 15
 while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadline:
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
+host.adapters.enqueue_log_record({"level": "ERROR", "detail": "Owned bridge validation failure"})
+
+# Reproduce the bridge lock ordering with real Python threads. Evaluating the
+# loading request releases the GIL; the worker must be able to pass its native
+# SaveThread hook, release the GIL itself, and finish that request's wait.
+loading_start = threading.Event()
+
+def loading_worker():
+    loading_start.wait()
+    time.sleep(.001)
+
+loading_thread = threading.Thread(target=loading_worker, daemon=True)
+loading_thread.start()
+original_loading = host.menu.set_loading
+
+def set_loading(record):
+    if record["total"] == 31:
+        loading_start.set()
+        loading_thread.join(timeout=2)
+        assert not loading_thread.is_alive(), "Bridge blocked a worker holding the GIL"
+    return original_loading(record)
+
+host.menu.set_loading = set_loading
 
 
 # Finish an owned Formula-like startup after the bridge has already become ready.
@@ -40,6 +64,24 @@ utils._ACTIVE_PACK_CACHE.clear()
 sys.path.insert(0, str(Path(__file__).parent))
 hub = importlib.import_module("ui.screens.hub_screen")
 HubScreen = hub.HubScreen
+# A disposable loading job lets the client check status-change delivery through
+# the real JavaScript bridge. It performs no actual game or asset work.
+preload_module = ModuleType("ui.session_preload")
+def advance_session_preload(screen, state):
+    return True
+preload_module.advance_session_preload = hub.advance_session_preload = advance_session_preload
+sys.modules[preload_module.__name__] = preload_module
+game = ModuleType("game_state")
+game.GameState = type("GameState", (), {})
+sys.modules[game.__name__] = game
+loading_screen = HubScreen()
+navigation = ModuleType("ui.screen_manager")
+navigation.ScreenManager = type("OwnedManager", (), {"switch_to": lambda self, screen: setattr(self, "current", screen)})
+sys.modules[navigation.__name__] = navigation
+loading_screen.manager = navigation.ScreenManager()
+loading_screen.manager.current = loading_screen
+loading_screen.state = game.GameState()
+loading_screen._preload_job = type("OwnedJob", (), {})()
 options = importlib.import_module("ui.screens.options_screen")
 from native_themes_fixture import modules
 theme_path = output / "display_settings.json"
@@ -90,7 +132,11 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
-    if host.menu.loading["state"] == "error" and host.themes.placeholder is None:
+    if (output / "leave-request").exists() and loading_screen.manager.current is loading_screen:
+        loading_screen.manager.switch_to(HubScreen())
+    if host.adapters.preload is not None and loading_screen.manager.current is loading_screen:
+        assert hub.advance_session_preload(loading_screen, loading_screen.state) is False
+    if (host.menu.loading or {}).get("state") == "error" and host.themes.placeholder is None:
         assert "code-mod:owned.theme" not in packs.COLOR_PACK_LABELS
         (output / "themes-error-cleaned").touch()
     if host.themes.applied == "owned.theme" and not (output / "themes-applied.json").exists():
@@ -113,7 +159,7 @@ while not manager.closed and time.monotonic() < deadline:
         (output / "settings-again-acknowledged").touch()
     if (
         "Owned UI" in hub.MENU_ITEMS
-        and host.menu.loading["state"] == "complete"
+        and (host.menu.loading or {}).get("state") == "complete"
         and not (output / "menu.json").exists()
     ):
         screen = HubScreen()

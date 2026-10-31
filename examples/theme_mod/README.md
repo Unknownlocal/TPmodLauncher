@@ -3,6 +3,12 @@
 This Python source mod uses API `0.3.0` and the `ui-settings` permission to
 connect an Options editor to a restart-only Color Pack palette. The launcher
 loads its source through the shared trusted runner.
+Its Options tab and Color Pack choice register when the pack's code mods finish
+loading, without requiring an open career.
+The adapters handle their native UI imports and compatibility checks. The example
+therefore needs no extra `[prerequisites]` declaration or other code mod. The
+[registration prerequisites API](../../hook_manager/README.md#registration-prerequisites)
+describes additional conditions for features which need them.
 
 ## Registration and saved values
 
@@ -25,7 +31,7 @@ data through the [implemented settings API](../../hook_manager/README.md#ui-sett
 Each `COLOR_GROUPS` record contains a stable number, a default RGB or RGBA tuple
 and the native roles coupled to that colour. Editor fields use `colour_<number>`
 IDs and role-name labels such as **Text / Selection Text** for group 18.
-Labels replace underscores with spaces, capitalize each word and join coupled
+Labels replace underscores with spaces, capitalise each word and join coupled
 roles with ` / `. Display labels do not change saved IDs or the palette schema.
 Palette expansion copies a group's value to
 every role in that record; equal edited values never merge groups.

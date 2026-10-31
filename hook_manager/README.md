@@ -10,13 +10,46 @@ integration through fixed bridge operations and declarative data.
 
 `launcher/game_bridge.py` supplies `bridge.js` and the fixed Python adapter
 sources to each tracked game session. The transport waits for CPython 3.13 and
-enters Python on its main thread with the GIL held. Requests are serialized and
-bounded, covering status, shutdown, native UI registration and loading progress.
+enters Python on its main thread with the GIL held. Requests run one at a time
+with deadlines, covering status, shutdown, native UI registration, loading
+progress, private adapter-definition loading and regulation preparation.
 
-`bootstrap.py` creates a private manager, pack discovery, menu, settings and theme
-adapters. A source digest and session token identify their owner and prevent
-another active controller from replacing them. The bridge loads trusted adapter source; it does
-not import author Python into the game.
+During Python evaluation, the bridge lets other game threads pass its entry
+check. The busy guard keeps them from starting another operation. Holding the
+script lock while Python releases the GIL could otherwise deadlock a worker.
+
+`bootstrap.py` creates a private manager, readiness, pack discovery, menu, settings
+and theme adapters. A source digest and session token identify their owner and prevent
+another active controller from replacing them. Later requests reuse the stored
+bootstrap function without resending its source. Author Python runs in Wasm.
+
+`diagnostics.py` provides `build_log_record()` for short log records containing
+severity and relevant check or action details. Adapters hand them to
+`submit_log`; the bridge's `enqueue_log_record` callback holds them for delivery
+to the launcher's standard logger. `Manager.store_error()` separately retains
+recent error text for status checks. Mod `report` messages continue through their
+existing host operation and use INFO severity.
+
+`adapter_modules.py` handles the private `adapters` operation. It imports only
+the launcher's fixed bundle as separate modules, sharing the existing manager
+and callable classes. Regulation transport loads only in this private bundle;
+bootstrap carries no second copy. It leaves the game's import path alone,
+removes its temporary importer after loading and removes owned definitions on
+shutdown. Failed imports roll back their definitions. Loading installs no game
+hooks and does not declare regulations ready.
+
+The private `prepare-regulations` request supplies a loading-attempt number and an
+authenticated local connection. It loads the fixed bundle and publishes a
+snapshot of the career's rule data without installing game hooks. Prepared data
+and its connection stay owned until cleanup. A failed preparation closes its
+connection and reports a compatibility notice without stopping the game.
+
+Fixed installation and activation requests reuse that prepared snapshot. Wrapped
+actions are refused temporarily while the launcher checks complete hook coverage;
+this does not disable healthy validators. Activation rechecks the career, rule
+choices and installed wrappers before enabling them together. Control requests
+must match the prepared connection and loading attempt. A stop request restores owned
+hooks, waiting for admitted operations to finish before removing them.
 
 ### Hooks, discovery and native UI
 
@@ -26,12 +59,62 @@ targets and signatures. The manager observes normal imports, installs wrappers
 when targets are ready, and restores only its own changes during cleanup.
 These facilities are internal; mods are granted the public operations below.
 
+The bridge also observes the game's regulation change manager being imported.
+Its shared construction, restore and save hooks retain private automatic-rule
+progress with each career, including while all regulation mods are disabled.
+This does not run mod code. Prepared automatic policies add weekly wrappers
+owned by the regulation change adapter. They run only for the activated career,
+stage next-season choices through the game and announce them through its inbox.
+Removing the category loader detaches its policies and weekly wrappers while
+the change adapter keeps save/load handling installed.
+The [regulation adapters](game_adapters/regulations/README.md)
+describe the saved data and its checks.
+
+[`callables/`](callables/README.md) adds checks around selected game methods.
+Trusted adapters choose the methods and expected arguments, supply copied inputs
+and define how a refusal returns to the game. One wrapper runs every registered
+check for its method. The game's own refusals stay intact. Failed mod checks
+remain unavailable until removed; their wrappers stay installed to prevent
+unchecked actions. Only the main thread changes registrations, while no operation
+is active. Trusted native wrappers use an `operation()` block to grant a worker
+access only while that operation runs. Direct worker calls outside such a block
+cannot run required validation.
+Existing decorators are checked and called intact. The bootstrap polls pending
+work and retries shutdown while operations finish. These registration and native
+call facilities are private; no mod permission or bridge request exposes them.
+
+[`game_adapters/`](game_adapters/README.md) separates native contract/project
+calculations from regulation selection, proposal formatting and dispatch.
+Trusted code owns hook installation; mods cannot load these definitions or
+select native targets.
+
 `pack_discovery.py` observes the game's startup Formula selection and retains one
 pack snapshot per process. `menu.py` validates mod-owned button declarations and
 waits for the normal menu import before adapting native rendering and input.
 It also displays loading progress and guards New Season, Load Game and Continue
 Season until loading and menu-registration outcomes settle. Ownership and
 registry generations keep stale acknowledgements from removing later entries.
+
+`career_preload.py` extends the game's existing loading wait. Continue Season,
+Load Game and new-season creation share one preload helper, imported into three
+screen modules. Trusted setup wraps those fixed copies, including later imports.
+Native asset loading runs normally. Once it completes, the helper reports
+unfinished until that loading job's regulation activation succeeds. Input,
+drawing and screen transitions remain native. The existing loading message shows
+when regulation preparation is pending. Each attempt gets a new setup
+number, so a cancelled job's reply cannot release a retry of the same career.
+This adapter alone tracks which screen, career and loading job belong to the
+attempt. Setup checks those captured objects without searching the game's stack.
+Cleanup restores owned helper copies. For a pack with admitted regulation
+declarations, the launcher arms this adapter before enabling career selection.
+Changes in loading status reach the controller once; it prepares and activates
+the captured attempt before the game completes loading.
+`native_readiness.py` owns the shared `ScreenManager.switch_to` observer. Career
+loading subscribes to return to the hub or a different career. It revokes approval
+locally and reports departure; cancelled
+jobs also lose approval. The controller retires the old hooks once admitted work
+finishes, clears career rule data and prepares the next captured attempt. Mod
+instances, bound validators and their connection stay loaded between careers.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence
@@ -49,8 +132,9 @@ status and readiness are trusted infrastructure rather than mod API capabilities
 ## Current mod API overview
 
 The implemented public operations are diagnostic reporting, declarative native
-menu buttons, native UI settings with mod-local storage and restart-only palettes.
-Python source mods use API `0.2.0` or `0.3.0` and the prebuilt runner's
+menu buttons, native UI settings with mod-local storage, restart-only palettes
+and regulation validators. Python source mods use API `0.2.0`, `0.3.0` or `0.4.0`
+and the prebuilt runner's
 `wit_world` facade. The runner supplies its base class and functions;
 authors supply their manifest and Python source without generated bindings.
 Mods with prebuilt Wasm components implement the versioned `code-mod` contracts.
@@ -59,6 +143,7 @@ Mods with prebuilt Wasm components implement the versioned `code-mod` contracts.
 | --- | --- | --- |
 | Python source mod | `0.2.0` | `diagnostics`, `main-menu` |
 | Python source mod | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
+| Python source mod | `0.4.0` | `diagnostics`, `main-menu`, `ui-settings`, `regulations` |
 | Mod with prebuilt Wasm component | `0.1.0` | `diagnostics` |
 | Mod with prebuilt Wasm component | `0.2.0` | `diagnostics`, `main-menu` |
 | Mod with prebuilt Wasm component | `0.3.0` | `diagnostics`, `main-menu`, `ui-settings` |
@@ -69,6 +154,46 @@ runners bind every host operation before instantiation: granted operations need
 trusted providers, and ungranted operations fail before reaching a provider.
 Wasm components may import only operations granted by their manifest. The
 [versioned WIT definitions](api/README.md) describe the component contracts.
+
+### Regulation validators
+
+API `0.4.0` source mods can request `regulations`. The pack's root
+`regulations.json` holds their `mod_extensions` sections, keyed by manifest ID.
+Each section declares categories or native option data and names ordinary
+synchronous Python handlers through `validators`. The supported scopes are
+`personnel.approach`, `personnel.contract` and `development.project`; trusted adapters select the game
+methods and prepare copied proposals.
+
+`personnel.approach` checks driver/staff approaches to Formula teams before
+talks start. It supplies person/employer identities, role and intended start,
+without salary or duration. The same rule can declare handlers for approach
+and contract checks; the mod chooses which inputs each handler needs. Native
+screens display approach refusals through their existing feedback.
+
+For both personnel scopes, `context["proposal"]["employer"]` contains `ref`, `name`
+and `kind`, plus `prestige_base`, `heritage_prestige`, `form_prestige` and
+`nationality` from the loaded employer. Missing values are `null`; prestige values
+are finite numbers and nationality is a string. Contract validators can request
+`"inputs": ["employer_payroll"]`. The employer then includes `payroll` with
+`as_of_week`, `staff_annual_salary_m` and `driver_annual_salary_m`: known annual
+base salaries after the proposed deal, in millions. Immediate/backdated deals
+use today; future deals use their start week and scheduled contracts. Academy
+and supplier contexts provide `null`. No request means no payroll scan.
+Participating handlers receive independent copies of the shared input, within
+the existing argument limits. Caps and enforcement remain in mod code.
+Other employer fields stay private.
+
+The runner calls each handler with fresh `context` and `regulation` dictionaries.
+Handlers return allow/deny dictionaries; conditions stay in mod Python. The
+selected option supplies parameters for the proposal's effective season. Optional
+rookie-length and staff-prestige switches bypass only their named native checks;
+other game refusals remain. Declarations belonging to disabled mods are ignored.
+
+The [regulation package](../launcher/regulations/README.md) owns declaration
+checks and bounds. Game adapters own native selection and guarded actions; the
+launcher owns retained data and execution. This permission supplies no direct
+native-call API, endpoint access or new `WitWorld` method. Prebuilt Wasm components
+retain their existing API versions and cannot request `regulations`.
 
 ### Lifecycle and events
 
@@ -94,10 +219,10 @@ message and do not invoke `on_event()`.
 | Python facade | WIT import | Required permission |
 | --- | --- | --- |
 | `wit_world.report(message)` | `report: func(message: string)` | `diagnostics` |
-| `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0` or `0.3.0` |
-| `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0` |
-| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-settings`, API `0.3.0` |
-| `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0` |
+| `wit_world.add_menu_button(id, label, message)` | `add-menu-button: func(id: string, label: string, message: string)` | `main-menu`, API `0.2.0`/`0.3.0`/`0.4.0` |
+| `wit_world.register_settings(definition)` | `register-settings: func(definition: string) -> string` | `ui-settings`, API `0.3.0`/`0.4.0` |
+| `wit_world.register_theme(definition)` | `register-theme: func(definition: string)` | `ui-settings`, API `0.3.0`/`0.4.0` |
+| `wit_world.save_settings(values)` | `save-settings: func(values: string) -> string` | `ui-settings`, API `0.3.0`/`0.4.0` |
 
 `report` logs the supplied message with the host-owned mod ID. Non-printable
 characters are replaced with spaces before logging.
@@ -115,9 +240,53 @@ unique within their owner; labels must also avoid registered and native menu
 items. The bridge bounds the encoded declaration list to 16 KiB. Failure or
 closure removes that mod's registrations.
 
+### Registration prerequisites
+
+Both Python source mods and mods with prebuilt Wasm components can add an optional
+`[prerequisites]` table to `mod.toml`. Each entry holds only the named registration;
+the mod still imports and activates normally. Adapter permissions, native imports
+and signature checks remain required.
+
+```toml
+schema = 2
+id = "example.tools"
+version = "0.1.0"
+api = "0.3.0"
+runtime = "python"
+entry = "mod"
+capabilities = ["main-menu", "ui-settings"]
+
+[prerequisites]
+"menu:career_tools" = ["career.loaded", "mod:example.data"]
+settings = ["module:ui.screens.calendar_screen"]
+```
+
+`menu:<id>` names a button registered by that mod; `settings` names its Options
+tab and `theme` its palette. Omitted entries have no extra wait. All conditions
+listed for an entry must be met:
+
+- `career.loaded`: a career has reached its game screens. Options overlays retain
+  it; returning to the main menu or entering another load removes it.
+- `regulations.active`: the current career's regulation integration is active.
+  This does not request regulation support or replace its validation checks.
+- `mod:<id>`: that enabled code mod has activated and its runner is still available.
+- `module:<name>`: the named game module has completed a normal import in this
+  process. The launcher never imports it to satisfy the requirement.
+
+Each mod can name eight different conditions, reused across up to six entries.
+Conditions do not pause game progress or delay other registrations. Career and
+regulation conditions are checked again on departure or replacement; dependent
+UI is removed until they are met again. A module condition records its completed
+import for the process. Missing conditions leave the affected registration hidden.
+
+Palettes retain their restart-only behaviour: they must be available at startup
+to apply. `theme` therefore cannot require `career.loaded` or `regulations.active`.
+An added module requirement must be satisfied during startup for a saved palette
+choice to apply. Existing declarations and Wasm interfaces are unchanged.
+
 ### UI settings and palettes
 
-API `0.3.0` grants all three settings/palette operations through `ui-settings`.
+API `0.3.0` and `0.4.0` grant all three settings/palette operations through `ui-settings`.
 Each definition, values document and result is a JSON string limited to 4,096
 UTF-8 bytes. `register_settings` declares one Options tab per mod and returns
 saved values, or defaults when `settings.json` is absent:
@@ -146,7 +315,7 @@ without overwriting the file. Schema migrations are not automatic.
 
 `save_settings` accepts and returns the complete `schema`/`values` document.
 Every registered field must appear exactly once; additional fields are rejected.
-Colours accept either letter case and normalize to uppercase, retaining each
+Colours accept either letter case and normalise to uppercase, retaining each
 field's RGB or RGBA width. Saving the declared defaults implements reset.
 The launcher owns the fixed mod-local `settings.json` path, rejects linked,
 shared or special files, and saves by atomic replacement. Failed writes preserve
@@ -183,21 +352,24 @@ describes how these operations cross the guest, host and native boundaries.
 
 ### Execution boundary
 
-Each mod has its own Store, permissions and guest state, with a 64 MiB guest
-linear-memory limit. The trusted Python runner has a private loading protocol;
-its source-transfer operations are not public mod capabilities.
+Python source mods in one pack share a Python interpreter and Wasm Store. They
+can share Python objects; permissions and resources are still attributed to
+individual mods. A shared runner failure closes the whole source group. Mods
+with prebuilt Wasm components have separate Stores. Each Store has a 64 MiB
+guest linear-memory limit. The trusted Python runner's source-transfer
+operations are private loading support, not public mod capabilities.
 
 | Execution phase | Fuel | Deadline |
 | --- | ---: | ---: |
-| Python interpreter initialization | 20,000,000 | 5 seconds |
+| Shared Python interpreter initialisation | 20,000,000 | 5 seconds |
 | Python source transfer and import, shared across loading calls | 256,000,000 | 5 seconds |
-| Wasm component initialization | 5,000,000 | 1 second |
+| Wasm component initialisation | 5,000,000 | 1 second |
 | Activation or one event | 5,000,000 | 1 second |
 
 Each phase or ordinary call permits 64 host calls. Fuel counts Wasm execution
 work, including the guest Python interpreter. Deadline checks include host work
 and post-return cleanup. Trusted handlers are not preempted; returns after the
 deadline are rejected.
-Guest entry is serialized. Traps and limit failures close the affected instance
+Guest calls run in order. Traps and limit failures close the affected instance
 and release its owned resources. Components receive no host WASI filesystem,
 network or process environment.

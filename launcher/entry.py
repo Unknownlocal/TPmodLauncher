@@ -96,9 +96,9 @@ def main(argv=None) -> int:
             _dependencies.local_path(root, "logs/launcher.log"),
             restart_grace=arguments.restart_grace,
             bridge_factory=bridge_factory,
-            mods_factory=lambda report, bridge: PackMods(
+            mods_factory=lambda submit_log, bridge: PackMods(
                 root.parent,
-                report,
+                submit_log,
                 set_menu=bridge.set_menu,
                 set_settings=bridge.set_settings,
                 set_themes=bridge.set_themes,
@@ -106,6 +106,8 @@ def main(argv=None) -> int:
                 background=True,
                 cache=cache,
                 runner_bundle=runner_bundle,
+                wake=bridge.wake,
+                bridge=bridge,
             ),
         )
     # Frida setup errors must produce a failed launch, even before the controller loop starts.

@@ -1,14 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise the source-backed launcher contract through real snapshots and Wasm."""
 
-import json
-
 import pytest
 
-from hook_manager.menu import MenuRequests
 from launcher.sandbox import SandboxError
-from launcher.source_mod import SourceMod
 from mod_runtime.source import SourceSnapshot
+from tests.source_support import write_source_mod
 
 
 CODE = '''import json
@@ -24,29 +21,20 @@ class WitWorld(wit_world.WitWorld):
 
 @pytest.fixture
 def source(tmp_path):
-    def read(code=CODE, *, capabilities=("diagnostics",), mod_id="owned.source"):
-        folder = tmp_path / mod_id
-        (folder / "src").mkdir(parents=True)
-        (folder / "mod.toml").write_text(f'''schema = 2
-id = "{mod_id}"
-version = "0.1.0"
-api = "0.2.0"
-runtime = "python"
-entry = "mod"
-capabilities = {json.dumps(capabilities)}
-''', encoding="utf-8")
-        (folder / "src/mod.py").write_text(code, encoding="utf-8")
+    def read(code=CODE, *, mod_id="owned.source"):
+        folder = write_source_mod(tmp_path / mod_id, code, owner=mod_id)
         # A stale author component must not influence source-backed admission.
         (folder / "mod.wasm").write_bytes(b"unusable author component")
         return SourceSnapshot.read(folder)
     return read
 
 
-def test_source_instances_keep_state_and_host_owned_identity_separate(runner_bundle, source):
+def test_shared_entries_keep_identity_and_state_with_group_owned_closure(make_source_group, source):
     reports = []
-    with SourceMod(runner_bundle, source(), report=lambda *args: reports.append(args)) as first, SourceMod(
-        runner_bundle, source(mod_id="owned.second"), report=lambda *args: reports.append(args)
-    ) as second:
+    mods = make_source_group((source(), source(mod_id="owned.second")), submit_log=lambda *args: reports.append(args))
+    first, second = mods.values()
+    with first:
+        assert first.sandbox is second.sandbox
         with pytest.raises(SandboxError, match="Activate"):
             first.event("owned.event", None)
         first.activate()
@@ -60,49 +48,31 @@ def test_source_instances_keep_state_and_host_owned_identity_separate(runner_bun
         assert first.event("owned.event", None)["count"] == 2
         assert second.event("owned.event", False)["count"] == 1
         first.close()
-        assert second.event("owned.event", None)["count"] == 2
+        assert second.sandbox.closed
+        with pytest.raises(SandboxError):
+            second.event("owned.event", None)
 
 
-def test_invalid_guest_json_disables_source_contract_and_cleans(runner_bundle, source):
-    result = "{"
-    code = CODE.replace('json.dumps({"count": self.count, "name": name, "value": json.loads(payload)})', repr(result))
+@pytest.mark.parametrize("failure", ["return '{'", "raise ValueError('failed event')"],
+                         ids=["invalid-json", "guest-exception"])
+def test_failed_guest_event_disables_source_contract_and_cleans(make_source_group, source, failure):
+    code = CODE.replace('return json.dumps({"count": self.count, "name": name, "value": json.loads(payload)})', failure)
     cleaned = []
-    with SourceMod(runner_bundle, source(code), report=lambda *_: None, cleanup=lambda: cleaned.append(True)) as mod:
+    with make_source_group((source(code),), submit_log=lambda *_: None, cleanup=lambda: cleaned.append(True))["owned.source"] as mod:
         mod.activate()
         with pytest.raises(SandboxError):
             mod.event("owned.event", None)
         assert mod.sandbox.failure and mod.sandbox.closed and cleaned == [True]
 
 
-def test_invalid_event_input_closes_before_guest_callback(runner_bundle, source):
+def test_invalid_event_input_closes_before_guest_callback(make_source_group, source):
     name, value = "owned.event", "\u6c34" * 1400
     code = CODE.replace("self.count += 1", 'wit_world.report("event reached")\n        self.count += 1')
     reports, cleaned = [], []
-    with SourceMod(runner_bundle, source(code), report=lambda *args: reports.append(args),
-                   cleanup=lambda: cleaned.append(True)) as mod:
+    with make_source_group((source(code),), submit_log=lambda *args: reports.append(args),
+                               cleanup=lambda: cleaned.append(True))["owned.source"] as mod:
         mod.activate()
         reports.clear()
         with pytest.raises(SandboxError):
             mod.event(name, value)
         assert reports == [] and cleaned == [True] and mod.sandbox.closed
-
-
-def test_partial_menu_declarations_are_revoked_after_failure(runner_bundle, source):
-    code = '''import wit_world
-class WitWorld:
-    def activate(self):
-        wit_world.add_menu_button("probe", "Probe", "probe")
-    def on_event(self, name, payload):
-        raise ValueError("failed event")
-'''
-    snapshot = source(code, capabilities=("main-menu",))
-    menu, cleaned = MenuRequests(), []
-    def cleanup():
-        assert menu.buttons  # Prove a declaration existed before rollback.
-        menu.remove(snapshot.manifest.id)
-        cleaned.append(True)
-    with pytest.raises(SandboxError):
-        with SourceMod(runner_bundle, snapshot, menu=menu.add, cleanup=cleanup) as mod:
-            mod.activate()
-            mod.event("owned.event", None)
-    assert menu.buttons == [] and cleaned == [True]

@@ -45,8 +45,18 @@ jobs:
               for suite, label in (
                   ("launcher", "Launcher"),
                   ("hook_manager", "Hook manager"),
+                  ("career_preload", "Career loading"),
+                  ("game_adapters", "Game adapters"),
+                  ("personnel", "Personnel adapters"),
+                  ("regulations", "Regulation adapters"),
+                  ("projects", "Development projects"),
+                  ("callables", "Private callable adapters"),
                   ("mod_runtime", "Mod runtime"),
+                  ("mod_runtime_loading", "Source loading"),
                   ("ci", "CI helpers"),
+                  ("integration_regulations", "Integration: regulations"),
+                  ("integration_source_loading", "Integration: source loading"),
+                  ("integration_session_lifetime", "Integration: session lifetime"),
               )
               for platform, platform_label in (("windows", "Windows x64"), ("linux", "Linux x64"))
           }
@@ -62,6 +72,8 @@ jobs:
               "",
               f"Workflow definition commit: `{os.environ['TEST_RUN_SHA']}`; test result: **{conclusion}**.",
               "The tested PR head commit is recorded in the linked test run's claim summary and manual-ci status.",
+              "",
+              "Integration rows span components and overlap their reports; percentages remain separate.",
               "",
               "| Suite | Platform | Lines | Branches |",
               "| --- | --- | --- | --- |",

@@ -11,7 +11,9 @@ from coverage import Coverage, CoverageData
 from coverage.exceptions import CoverageException
 
 
-SUITES = ("embedded", "native")
+# Acceptance has three required fragments. The callable-native name also avoids
+# colliding with the portable callable job's test-data-windows-callables artifact.
+SUITES = ("embedded", "native", "callables-native")
 
 
 def _clear_report(output_dir: Path) -> None:
@@ -24,7 +26,7 @@ def _clear_report(output_dir: Path) -> None:
 
 
 def combine(input_dir: Path, output_dir: Path) -> list[str]:
-    """Write one Windows report only when both acceptance fragments are valid.
+    """Write one Windows report only when all acceptance fragments are valid.
 
     Portable component workflows generate their own reports in each test job.
     Run from the tested checkout so Windows relative paths resolve on Linux.

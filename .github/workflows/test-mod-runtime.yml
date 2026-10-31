@@ -12,6 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  loading:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-mod-runtime-loading.yml
+    with:
+      ref: ${{ inputs.ref }}
+
   test:
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/portable.yml
