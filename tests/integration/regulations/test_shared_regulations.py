@@ -1,64 +1,35 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Shared guest regulation storage; launcher dispatch owns end-to-end acceptance."""
+"""Check guest rejection of repeated calls and invalid policy transfers."""
 
 import json
 from contextlib import contextmanager
 
 import pytest
 
-from launcher.regulations import RegulationDefinitions
 from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation.action import PreparedAction
 from launcher.regulations.validation.catalog import CombinedCatalog
 from launcher.regulations.validation.install import PolicyInstall
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode
-from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest
-from tests.source_support import source_snapshot
+from tests.regulation_support import definitions
 from tests.regulation_data import contract_context as context
 
 
 OWNERS = ("a.rules", "b.rules")
-ENTRY = "class WitWorld:\n def activate(self): pass\n def on_event(self,n,p): raise AssertionError('not lifecycle dispatch')\n"
-RULES = '''import wit_world
-OWNER = {owner!r}
-count = 0
-def validate(c,r):
- global count
- assert r['current']['option_data']['owner'] == OWNER
- assert r['current']['parameters']['points'] == c['proposal']['points']
- assert 'changed' not in c['proposal'] and 'changed' not in r['current']['parameters']
- c['proposal']['changed'] = r['current']['parameters']['changed'] = True
- count += 1
- wit_world.report(str(count))
- return {{'decision':'allow'}}
-'''
 
 
 @contextmanager
-def shared(runner_bundle, *, count=1, peer_handler=False):
-    sources, calls, cleaned = {}, [], []
-    for owner in OWNERS:
-        manifest = SourceManifest(owner, "1", "0.4.0", "mod", frozenset({"regulations", "diagnostics"}))
-        code = RULES.format(owner=owner)
-        if peer_handler and owner == OWNERS[1]:
-            code = "import wit_world\nvalidate = wit_world.import_mod('a.rules','rules').validate\n"
-        files = (("mod.py", ENTRY), ("rules.py", code))
-        sources[owner] = source_snapshot(manifest, files)
-    providers = {owner: {"report": lambda text, owner=owner: calls.append((owner, text))} for owner in OWNERS}
-    data = {"categories": [{"key": "native", "options": [{"key": "open"}]}],
-            "mod_extensions": {owner: {"schema": 1,
-                "validators": [{"id": f"v{index:02}", "rule": "native", "scope": "personnel.contract",
-                                "handler": "rules.validate"} for index in range(count)],
-                "option_data": {"native": {"open": {"owner": owner}}}} for owner in OWNERS}}
-    definitions = RegulationDefinitions.from_bytes(encode(data).encode(), sources, scopes={"personnel.contract"})
-    with SharedPythonRunner(runner_bundle, tuple(sources.values()), providers,
-                            cleanup=lambda: cleaned.append(True)) as group:
-        for owner in group.manifests:
-            group.activate(owner)
-        binding = RegulationHandlerBindings.bind(group, definitions.validators)
-        yield group, binding, CombinedCatalog(definitions), calls, cleaned
+def shared(make_mods, *, peer_handler=False):
+    cleaned = []
+    rules = {owner: "def validate(c,r): return {'decision':'allow'}\n" for owner in OWNERS}
+    if peer_handler:
+        rules[OWNERS[1]] = "import wit_world\nvalidate = wit_world.import_mod('a.rules','rules').validate\n"
+    mods = make_mods(rules, cleanup=lambda: cleaned.append(True))
+    model = definitions({owner: mod.snapshot for owner, mod in mods.items()})
+    with next(iter(mods.values())).runner as group:
+        RegulationHandlerBindings.bind(group, model.validators)
+        yield group, CombinedCatalog(model), cleaned
     assert cleaned == [True]
 
 
@@ -82,18 +53,18 @@ def publish(group, catalog):
     catalog.commit()
 
 
-def evaluate(group, catalog, action, ctx, *, count=1, fault=None):
-    """Exercise guest admission directly; normal dispatch preflights these inputs."""
+def evaluate(group, catalog, fault):
+    """Send invalid packets directly so host checks cannot hide guest failures."""
+    action, ctx = 1, context(points=25)
     selection = {"rule": "native", "evaluation_season": 2026, "selected": "current",
                  "current": [0, 2026], "upcoming": None}
     frame = PreparedAction([ctx], [selection])
     contexts = encode([ctx, ctx] if fault == "extra-context" else [ctx])
-    results = {}
     with group.sandbox.phase(fuel=128_000_000, seconds=1):
         assert reply(group, "begin-regulation-contexts", action, contexts) == {
             "action": action, "contexts": 1}
         for owner, view in catalog.views.items():
-            calls = [[validator, 0, 0] for validator in list(view.validators)[:count]]
+            calls = [[next(iter(view.validators)), 0, 0]]
             text = frame.for_owner(view, calls, f"{view.revision}:1:1")[0]
             if fault == "repeat-validator":
                 # Bypass host preflight to check the guest's once-per-validator fence.
@@ -102,46 +73,31 @@ def evaluate(group, catalog, action, ctx, *, count=1, fault=None):
                 text = encode(packet)
             assert reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text) == {
                 "action": action, "prepared": len(calls)}
-            results[owner] = [reply(group, "validate-resident-regulation", action, slot, fuel=5_000_000)["result"]
-                              for slot in range(len(calls))]
+            reply(group, "validate-resident-regulation", action, 0, fuel=5_000_000)
         if fault == "repeat-owner":
             # Multiple calls belong in one packet; a second packet cannot
             # bypass that mod's per-action call limit.
             reply(group, "begin-regulation-action", owner, action, 1, 1, len(text.encode()), text)
-        frame.seal()
-        # No result leaves this harness before the group checks completion.
-        reply(group, "finish-regulation-action", action, fuel=64_000_000)
-    return results
 
 
-def test_shared_proposal_keeps_fresh_arguments_across_owner_calls(runner_bundle):
-    with shared(runner_bundle, count=2) as (group, _, catalog, calls, _):
-        publish(group, catalog)
-        for action in (1, 2):
-            assert evaluate(group, catalog, action, context(points=25), count=2) == {
-                owner: [{"decision": "allow"}] * 2 for owner in OWNERS}
-        assert calls[-4:] == [(owner, str(index)) for owner in OWNERS for index in (3, 4)]
-
-
-def test_shared_binding_rejects_a_peer_function_with_the_same_local_filename(runner_bundle):
+def test_shared_binding_rejects_a_peer_function_with_the_same_local_filename(make_mods):
     with pytest.raises(SandboxError, match="b.rules.*owned synchronous"):
-        with shared(runner_bundle, peer_handler=True):
+        with shared(make_mods, peer_handler=True):
             pytest.fail("A peer re-export must not be admitted as this owner's handler")
 
 
 @pytest.mark.parametrize("failure", ["extra-context", "repeat-validator", "repeat-owner"])
-def test_failed_shared_action_cannot_leave_other_residents_available(runner_bundle, failure):
-    with shared(runner_bundle) as (group, _, catalog, _, cleaned):
+def test_failed_shared_action_cannot_leave_other_residents_available(make_mods, failure):
+    with shared(make_mods) as (group, catalog, cleaned):
         publish(group, catalog)
-        ctx = context(points=25)
         with pytest.raises(SandboxError):
-            evaluate(group, catalog, 1, ctx, fault=failure)
+            evaluate(group, catalog, failure)
         assert group.closed and cleaned == [True]
 
 
 @pytest.mark.parametrize("replacement", [False, True])
-def test_guest_requires_a_nonempty_manifest_and_reset_before_replacement(runner_bundle, replacement):
-    with shared(runner_bundle) as (group, _, catalog, _, cleaned):
+def test_guest_requires_a_nonempty_manifest_and_reset_before_replacement(make_mods, replacement):
+    with shared(make_mods) as (group, catalog, cleaned):
         if replacement:
             publish(group, catalog)
         with pytest.raises(SandboxError):

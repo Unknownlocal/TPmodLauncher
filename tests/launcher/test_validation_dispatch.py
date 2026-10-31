@@ -9,7 +9,6 @@ import pytest
 from launcher.regulations.publication import PolicyPublication
 from hook_manager.game_adapters.regulations.protocol import regulation_policy_value
 from launcher.regulations.validation import catalog as catalog_module
-from launcher.regulations.validation import action as action_module
 from launcher.regulations.validation import dispatch as dispatch_module
 from launcher.regulations.validation.catalog import CombinedCatalog
 from mod_runtime._regulations import values
@@ -82,61 +81,6 @@ def test_catalog_borrows_admission_and_projects_shared_effective_native_data_onc
     with pytest.raises(ValueError, match="custom"):
         catalog.stage({"native": [{"key": "open"}], "fallback": [{"key": "open"}],
                        "a.rules.private": [{"key": "open"}]}, {})
-
-
-def test_validation_dispatch_warm_actions_use_references_and_independent_arguments(make_mods, monkeypatch):
-    mods = make_mods({owner: f"""retained=None
-def validate(c,r):
- global retained
- assert r['current']['parameters']['points']==[c['proposal']['expect']]
- assert r['current']['option_data']['owner']=={owner!r}
- if retained:
-  retained[0]['proposal']['leak']=True
-  retained[0]['proposal']['empty'].append(999)
-  retained[1]['current']['parameters']['points'].append(999)
- assert 'leak' not in c['proposal']
- assert c['proposal']['empty']==[]
- retained=(c,r)
- return {{'decision':'allow'}}
-""" for owner in ("a.rules", "b.rules")})
-    # Cross the four-argument preparation boundary; maximum-size cases live separately.
-    session = dispatch(mods, count=5)
-    traffic = []
-    sandbox = next(iter(mods.values())).sandbox
-    original = sandbox.call
-    def call(name, *args, **kwargs):
-        traffic.append(name)
-        return original(name, *args, **kwargs)
-    monkeypatch.setattr(sandbox, "call", call)
-    native = [{"key": "open", "points": [value]} for value in (25, 30, 35)]
-    session.publish(native={"native": native})
-    assert session.ready
-    assert max(i for i, name in enumerate(traffic) if name == "seal-regulation-policy") < min(
-        i for i, name in enumerate(traffic) if name == "commit-regulation-policy")
-    encode = values.encode
-    def no_payload_encode(value):
-        def check(item):
-            if type(item) is dict:
-                assert "points" not in item
-                for child in item.values():
-                    check(child)
-            elif type(item) is list:
-                for child in item:
-                    check(child)
-        check(value)
-        return encode(value)
-    monkeypatch.setattr(values, "encode", no_payload_encode)
-    monkeypatch.setattr(catalog_module, "encode", no_payload_encode)
-    monkeypatch.setattr(action_module, "encode", no_payload_encode)
-    traffic.clear()
-    ctx = context()
-    ctx["proposal"] = {"expect": 35, "empty": []}
-    requests = {owner: [["check" if i == 0 else f"check{i:02}", 0, 0] for i in range(5)] for owner in mods}
-    assert session.evaluate([ctx], [selection(2)], requests) == {owner: [{"decision": "allow"}] * 5 for owner in mods}
-    ctx["proposal"]["expect"] = 25
-    assert session.evaluate([ctx], [selection()], {owner: [["check", 0, 0]] for owner in mods}) == {
-        owner: [{"decision": "allow"}] for owner in mods}
-    assert not any("policy" in name or "record" in name for name in traffic)
 
 
 def test_host_composed_limits_apply_before_author_execution(make_mod):

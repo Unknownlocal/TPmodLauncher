@@ -7,23 +7,33 @@ from types import SimpleNamespace
 import pytest
 
 from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
+from launcher.regulations.validation import action as action_module
+from launcher.regulations.validation import catalog as catalog_module
 from launcher.regulations.validation import group as group_module
 from launcher.regulations.validation.dispatch import ValidationDispatch
+from mod_runtime._regulations import values
 from tests.regulation_support import context, definitions, make_mods, selection, validator
 
 
 CODE = '''import wit_world
 OWNER = {owner!r}
 retained = None
+count = 0
 def validate(c,r):
- global retained
+ global retained, count
+ if retained:
+  retained[0]['proposal']['leak'] = True
+  retained[0]['proposal']['empty'].append(999)
+  previous = retained[1]['current']['parameters']
+  previous['points' if 'points' in previous else 'custom'].append(999)
+  retained[1]['current']['option_data']['owner'] = 'leaked'
  assert r['current']['option_data']['owner'] == OWNER
- if r['key'] == 'native': assert r['current']['parameters']['points'] == c['proposal']['points']
+ if r['key'] == 'native': assert r['current']['parameters']['points'] == c['proposal']['expected']
  else: assert r['current']['parameters']['custom'] == [7]
- if retained: retained['proposal']['leak'] = True
- assert 'leak' not in c['proposal']
- retained = c
- wit_world.report(r['key'])
+ assert 'leak' not in c['proposal'] and c['proposal']['empty'] == []
+ retained = c,r
+ count += 1
+ wit_world.report(r['key'] + ':' + str(count))
  if c['proposal'].get('error') == OWNER: raise ValueError('deliberate handler error')
  if c['proposal'].get('deny') == OWNER: return {{'decision':'deny','message':OWNER}}
  return {{'decision':'allow'}}
@@ -54,16 +64,17 @@ def make_shared_dispatch(make_mods):
 
 def proposal(**extra):
     value = context()
-    value["proposal"] = {"points": [25], **extra}
+    value["proposal"] = {"expected": [25], "empty": [], **extra}
     return value
 
 
-def publish(session):
-    return session.publish(native={"native": [{"key": "open", "points": [25]}]}, custom={"a.rules.private": ["open"]})
+def publish(session, points=(25,)):
+    return session.publish(native={"native": [{"key": "open", "points": [value]} for value in points]},
+                           custom={"a.rules.private": ["open"]})
 
 
 def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_actions_and_career_reset(make_shared_dispatch, monkeypatch):
-    # Five declarations exercise a second prepared batch without repeating a capacity test.
+    # Five calls cross the four-argument preparation boundary.
     session, group, calls, _, model, handler = make_shared_dispatch(count=5)
     traffic = []
     original = group.sandbox.call
@@ -71,38 +82,55 @@ def test_shared_dispatch_reuses_records_and_contexts_in_owner_order_through_acti
         traffic.append((name, args))
         return original(name, *args, **kwargs)
     monkeypatch.setattr(group.sandbox, "call", record)
-    publish(session)
+    publish(session, (25, 30, 35))
     assert session.ready
     assert session.group.active.operations == []  # Sent JSON fragments must not remain resident.
     with pytest.raises(ValueError, match="already belongs"):
         ValidationDispatch(model, handler)
     records = [value for name, args in traffic if name == "install-regulation-records" for _, value in json.loads(args[0])]
-    assert sum("points" in value for value in records) == 1
+    assert sum("points" in value for value in records) == 3
     manifest = json.loads("".join(args[0] for name, args in traffic if name == "put-regulation-policy"))
     native_slots = {base for view in manifest["owners"] for rule, _, base, _ in view["choices"]
                     if view["rules"][rule] == "native"}
-    assert len(native_slots) == 1
+    assert len(native_slots) == 3
     assert len(manifest["records"]) == len({row["id"] for row in manifest["records"]})
     assert max(i for i, (name, _) in enumerate(traffic) if name == "seal-regulation-policy") < min(
         i for i, (name, _) in enumerate(traffic) if name == "commit-regulation-policy")
-    traffic.clear()
     requests = {owner: [[f"v{i:02}", 0, 0] for i in range(5 if owner != "b.rules" else 1)] for owner in session.states}
     requests["a.rules"].insert(0, ["private", 0, 1])
     private_selection = {**selection(), "rule": "a.rules.private"}
-    result = session.evaluate([proposal(deny="c.rules")], [selection(), private_selection], requests)
-    assert len(result["a.rules"]) == 6 and result["b.rules"] == [{"decision": "allow"}]
-    assert result["c.rules"] == [{"decision": "deny", "message": "c.rules"}] * 5
-    assert calls == [("a.rules", "a.rules.private")] + [("a.rules", "native")] * 5 + [("b.rules", "native")] + [("c.rules", "native")] * 5
-    assert sum(name == "begin-regulation-contexts" for name, _ in traffic) == 1
-    assert all(json.loads(args[-1])["contexts"] == [0] for name, args in traffic if name == "begin-regulation-action")
+    encode = values.encode
+    def no_rule_encoding(value):
+        encoded = encode(value)
+        assert '"points"' not in encoded
+        return encoded
+    with monkeypatch.context() as encoding:
+        for module in (values, catalog_module, action_module):
+            encoding.setattr(module, "encode", no_rule_encoding)
+        traffic.clear()
+        result = session.evaluate([proposal(expected=[35], deny="c.rules")], [selection(2), private_selection], requests)
+        assert result == {"a.rules": [{"decision": "allow"}] * 6, "b.rules": [{"decision": "allow"}],
+                          "c.rules": [{"decision": "deny", "message": "c.rules"}] * 5}
+        assert calls == [("a.rules", "a.rules.private:1")] + [("a.rules", f"native:{i}") for i in range(2, 7)] + [
+            ("b.rules", "native:1")] + [("c.rules", f"native:{i}") for i in range(1, 6)]
+        assert sum(name == "begin-regulation-contexts" for name, _ in traffic) == 1
+        assert all(json.loads(args[-1])["contexts"] == [0] for name, args in traffic if name == "begin-regulation-action")
+        repeated = {owner: [["v00", 0, 0]] for owner in session.states}
+        repeated["a.rules"].insert(0, ["private", 0, 1])
+        assert session.evaluate([proposal()], [selection(), private_selection], repeated) == {
+            "a.rules": [{"decision": "allow"}] * 2, "b.rules": [{"decision": "allow"}], "c.rules": [{"decision": "allow"}]}
+        # Each mod keeps its own counter across validation attempts.
+        assert calls[-4:] == [("a.rules", "a.rules.private:7"), ("a.rules", "native:8"), ("b.rules", "native:2"), ("c.rules", "native:6")]
+        assert not any("policy" in name or "record" in name for name, _ in traffic)
     action = session.action
     traffic.clear()
+    # Changing career replaces the rules without restarting the mods.
     session.reset(2)
     assert sum(name == "reset-regulation-group" for name, _ in traffic) == 1
     assert not session.ready and not group.closed
     publish(session)
     assert session.evaluate([proposal()], [selection()], {"c.rules": [["v00", 0, 0]]}) == {"c.rules": [{"decision": "allow"}]}
-    assert session.action > action and session.ready
+    assert calls[-1] == ("c.rules", "native:7") and session.action > action and session.ready
 
 
 def test_failed_shared_publication_fences_all_peers_and_preserves_host_view(make_shared_dispatch, monkeypatch):
@@ -152,7 +180,7 @@ def test_failed_shared_execution_closes_all_members_without_returning_partial_ap
     if failure in ("multiple-proposals", "duplicate-validator"):
         assert not calls  # Invalid shapes must fail before any mod runs.
     if failure in ("handler", "completion-reply"):
-        assert calls[:2] == [("a.rules", "native"), ("b.rules", "native")]
+        assert calls[:2] == [("a.rules", "native:1"), ("b.rules", "native:1")]
     with pytest.raises(RuntimeError, match="unavailable"):
         session.evaluate([proposal()], [selection()], {"b.rules": [["v00", 0, 0]]})
 
