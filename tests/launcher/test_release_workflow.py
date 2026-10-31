@@ -12,6 +12,7 @@ import hashlib
 from importlib.metadata import version
 import io
 import json
+from pathlib import Path
 import zipfile
 
 import pytest
@@ -52,6 +53,10 @@ def clean_source(tmp_path, monkeypatch):
     for directory in (*workflow.packaging.SOURCE_DIRECTORIES, "notices"):
         (root / directory).mkdir()
         (root / directory / "owned.py").write_text("# Source-only fixture\n")
+    for name in workflow.packaging.SOURCE_DATA_FILES:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((Path(__file__).resolve().parents[2] / name).read_bytes())
     (root / "launcher/frida_build.toml").write_text("# Fixture recipe\n")
     for name in ("README.md", "LICENCE", "ATTRIBUTION.txt"):
         (root / name).write_text("Owned source fixture\n")
@@ -126,7 +131,7 @@ def clean_source(tmp_path, monkeypatch):
         for name in bundle.FILES:
             data = b"\0asm\x0d\0\x01\0" if name == "runner.wasm" else b"Owned runner fixture\n"
             target = output / name
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             records[name] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         (output / bundle.MANIFEST).write_text(json.dumps({
@@ -159,26 +164,6 @@ def clean_source(tmp_path, monkeypatch):
     return root, events
 
 
-def test_clean_checkout_builds_a_paired_release_without_rewriting_source_pins(clean_source):
-    root, events = clean_source
-    original = (root / "pylock.toml").read_bytes()
-    assert not (root / ".cache").exists() and not (root / "libs").exists()
-    archive = workflow.run(root, "1.0")
-    assert archive.parent == root / "dist"
-    assert archive.with_suffix(".zip.sha256").is_file()
-    assert events[:2] == ["compile-frida", "export-matching-source"]
-    assert "download-companion" in events and "compile-runner" in events
-    assert events.count("verify-executable") == 2
-    assert (root / "pylock.toml").read_bytes() == original
-    assert not (root / "libs").exists() and not (root / "bundled_packages.toml").exists()
-    with zipfile.ZipFile(archive) as package:
-        generated_lock = package.read("modLauncher/source/release/pylock.toml")
-        assert b'"' + b"0" * 64 + b'"' not in generated_lock
-        assert "modLauncher/source/frida/frida-sources.tar.xz" in package.namelist()
-        assert "modLauncher/SteamLaunchOptions.cmd" in package.namelist()
-        assert not any("/.cache/" in name for name in package.namelist())
-
-
 def test_failed_extracted_launch_check_never_publishes_zip(clean_source, monkeypatch):
     root, _ = clean_source
     original_check = workflow.packaging.check_release
@@ -192,9 +177,23 @@ def test_failed_extracted_launch_check_never_publishes_zip(clean_source, monkeyp
     assert list((root / "dist").iterdir()) == []
 
 
-def test_platforms_keep_separate_outputs_candidates_and_check_only_records(clean_source, monkeypatch):
+def test_clean_checkout_builds_both_platforms_and_reuses_release_records(clean_source, monkeypatch):
     root, events = clean_source
+    original = (root / "pylock.toml").read_bytes()
+    assert not (root / ".cache").exists() and not (root / "libs").exists()
     windows = workflow.run(root, "0.1.0")
+    assert windows.parent == root / "dist" and windows.with_suffix(".zip.sha256").is_file()
+    assert events[:2] == ["compile-frida", "export-matching-source"]
+    assert "download-companion" in events and "compile-runner" in events
+    assert events.count("verify-executable") == 2
+    assert (root / "pylock.toml").read_bytes() == original
+    assert not (root / "libs").exists() and not (root / "bundled_packages.toml").exists()
+    with zipfile.ZipFile(windows) as package:
+        generated_lock = package.read("modLauncher/source/release/pylock.toml")
+        assert b'"' + b"0" * 64 + b'"' not in generated_lock
+        assert "modLauncher/source/frida/frida-sources.tar.xz" in package.namelist()
+        assert "modLauncher/SteamLaunchOptions.cmd" in package.namelist()
+        assert not any("/.cache/" in name for name in package.namelist())
     windows_data = windows.read_bytes()
     windows_record = root / ".cache/releases/windows-0.1.0.json"
     windows_receipt = windows_record.read_bytes()

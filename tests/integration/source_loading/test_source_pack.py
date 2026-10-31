@@ -83,8 +83,7 @@ class WitWorld:
         assert scope.mods["owned.a"].snapshot is scope.mods["owned.c"].snapshot is None
         assert scope.mods["owned.a"].event("peer", None) == ["owned.a", "owned.c"]
         assert scope.mods["owned.c"].event("peer", None) == ["owned.a", "owned.c"]
-        # Existing API mods cannot claim regulation ownership; even a missing
-        # regulations.json stays untouched when no eligible owner is enabled.
+        # Mods without regulation access must not read regulations.json.
         assert scope.prepare_regulations(scopes=set()) is None
         assert scope.mods["owned.a"].event("owned.event", {"ok": True}) == {"ok": True}
         assert scope.mods["owned.a"].sandbox._thread == threading.get_ident()
@@ -283,7 +282,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     game, folder, startup = pack
     theme = folder / "theme example"
     shutil.copytree(Path(__file__).resolve().parents[3] / "examples/theme_mod", theme)
-    # A saved document from the numbered-label editor keeps the same schema and IDs.
+    # Saved colours are loaded by field ID when the mod registers.
     palette = runpy.run_path(str(theme / "src/palette.py"))
     saved = {"schema": palette["PALETTE_SCHEMA"], "values": {
         f"colour_{n}": "#" + "".join(f"{channel:02X}" for channel in colour)
@@ -358,7 +357,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
         assert scope.themes.records == palettes[-1] == []
     assert native_settings.OptionsScreen.draw is native_originals["draw"]
     assert native_settings.OPTION_TABS == [("game", "Game"), ("graphics", "Graphics")]
-    # A fresh process's mod registration consumes the saved palette immediately.
+    # A new mod group reads the saved palette during registration.
     with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
                           set_themes=lambda rows: palettes.append(rows))) as restarted:
         restarted.load(startup)
@@ -372,20 +371,15 @@ def test_deferred_ui_failure_revokes_all_shared_operation_owners(pack, source_mo
     palette = {"label": "Palette Only", "colours": {
         role: "#00000080" if role == "OVERLAY" else "#112233" for role in sorted(THEME_ROLES)
     }}
-    source_mod(folder, "owned.palette", capabilities=("ui-settings",), api="0.3.0", code=f'''import wit_world
-class WitWorld(wit_world.WitWorld):
-    def activate(self):
-        wit_world.register_theme({json.dumps(json.dumps(palette))})
-    def on_event(self, name, payload):
-        return payload
-''')
     definition = {"schema": 1, "label": "Widget", "fields": [
         {"id": "accent", "label": "Accent", "color": "#112233"},
     ]}
-    source_mod(folder, "owned.settings", capabilities=("ui-settings",), api="0.3.0", code=f'''import wit_world
+    for owner, operation, data in (("owned.palette", "register_theme", palette),
+                                   ("owned.settings", "register_settings", definition)):
+        source_mod(folder, owner, capabilities=("ui-settings",), api="0.3.0", code=f'''import wit_world
 class WitWorld(wit_world.WitWorld):
     def activate(self):
-        wit_world.register_settings({json.dumps(json.dumps(definition))})
+        wit_world.{operation}({json.dumps(json.dumps(data))})
     def on_event(self, name, payload):
         return payload
 ''')
@@ -413,13 +407,19 @@ class WitWorld(wit_world.WitWorld):
         assert registries["settings"][-1] == registries["themes"][-1] == []
 
 
-def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):
+@pytest.mark.parametrize("availability", ["ready", "pending", "conflict"])
+def test_source_menu_readiness_and_failure_rollback(
+    pack, source_mod, runner_bundle, native_menu, monkeypatch, availability,
+):
     game, folder, record = pack
     root = Path(__file__).resolve().parents[3]
     source_mod(folder, "owned.menu", code=(root / "examples/menu_mod/src/mod.py").read_text(),
                capabilities=("diagnostics", "main-menu"))
     source_mod(folder, "owned.diagnostics")
     hub, _ = native_menu
+    native_rows, native_activate = hub.MENU_ITEMS.copy(), hub.HubScreen._activate
+    if availability != "ready":
+        monkeypatch.delitem(sys.modules, hub.__name__)
     messages = []
     with closing(MenuAdapter()) as adapter, closing(PackMods(
         game, messages.append, runner_bundle=runner_bundle,
@@ -427,13 +427,27 @@ def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bun
     )) as scope:
         scope.load(record)
         finish(scope, messages)
-        assert adapter._notice() == "Mods loaded: 2" and not adapter.status()["loading"]["blocked"]
-        assert "Mod Launcher" in hub.MENU_ITEMS
-        menu_mod = scope.mods["owned.menu"]
-        with pytest.raises(SandboxError):
-            menu_mod.event("bad/event", None)
-        assert "Mod Launcher" not in hub.MENU_ITEMS and not scope.mods
-    assert hub.MENU_ITEMS == ["Career", "Load", "Exit"]
+        if availability != "ready":
+            assert len(scope.mods) == 2 and adapter.state == "pending"
+            assert adapter.status()["loading"]["blocked"]
+            if availability == "conflict":
+                # A native row with the same label must survive rejected mod registration.
+                hub.MENU_ITEMS.insert(0, "Mod Launcher")
+                native_rows = hub.MENU_ITEMS.copy()
+            monkeypatch.setitem(sys.modules, hub.__name__, hub)
+            scope.menu_status(adapter.poll())
+        assert not adapter.status()["loading"]["blocked"]
+        assert list(scope.mods) == ([] if availability == "conflict" else ["owned.diagnostics", "owned.menu"])
+        if availability != "conflict":
+            assert adapter._notice() == "Mods loaded: 2" and "Mod Launcher" in hub.MENU_ITEMS
+            screen = hub.HubScreen()
+            screen._activate("Mod Launcher")
+            assert screen.error_message == "The sandboxed UI mod is active"
+            assert scope.mods["owned.diagnostics"].event("owned.event", {"ok": True}) == {"ok": True}
+            with pytest.raises(SandboxError):
+                scope.mods["owned.menu"].event("bad/event", None)
+            assert "Mod Launcher" not in hub.MENU_ITEMS and not scope.mods
+    assert hub.MENU_ITEMS == native_rows and hub.HubScreen._activate is native_activate
 
 
 def test_import_time_ui_publishes_all_members_once_and_rolls_back_rejected_group(pack, source_mod, code_mod, runner_bundle):
@@ -459,30 +473,3 @@ class WitWorld:
         assert list(scope.mods) == ["owned.b"] and scope.failed == 2
         assert scope._source_runner.closed and scope.menu.buttons == []
         assert progress[-1] == dict(state="complete", loaded=1, failed=2, total=3)
-
-
-@pytest.mark.parametrize("fail", [False, True])
-def test_deferred_native_menu_keeps_readiness_blocked_until_result(pack, source_mod, runner_bundle, native_menu, monkeypatch, fail):
-    game, folder, record = pack
-    root = Path(__file__).resolve().parents[3]
-    source_mod(folder, "owned.menu", code=(root / "examples/menu_mod/src/mod.py").read_text(),
-               capabilities=("diagnostics", "main-menu"))
-    source_mod(folder, "owned.diagnostics")
-    hub, _ = native_menu
-    monkeypatch.delitem(sys.modules, hub.__name__)
-    with closing(MenuAdapter()) as adapter, closing(PackMods(
-        game, lambda _: None, runner_bundle=runner_bundle,
-        set_menu=lambda items: {"menu": adapter.update(items)}, set_loading=adapter.set_loading,
-    )) as scope:
-        scope.load(record)
-        finish(scope)
-        assert len(scope.mods) == 2 and adapter.state == "pending"
-        assert adapter.status()["loading"]["blocked"]
-        if fail:
-            hub.MENU_ITEMS.insert(0, "Mod Launcher")  # A UI declaration conflict can be rolled back.
-        monkeypatch.setitem(sys.modules, hub.__name__, hub)
-        scope.menu_status(adapter.poll())
-        assert not adapter.status()["loading"]["blocked"]
-        assert list(scope.mods) == ([] if fail else ["owned.diagnostics", "owned.menu"])
-        if not fail:
-            assert scope.mods["owned.diagnostics"].event("owned.event", {"ok": True}) == {"ok": True}

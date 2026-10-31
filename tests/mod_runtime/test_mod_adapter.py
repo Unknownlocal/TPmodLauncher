@@ -3,7 +3,6 @@
 
 import pytest
 
-from hook_manager.menu import MenuRequests
 from launcher.sandbox import SandboxError
 from mod_runtime.source import SourceSnapshot
 from tests.source_support import write_source_mod
@@ -22,8 +21,8 @@ class WitWorld(wit_world.WitWorld):
 
 @pytest.fixture
 def source(tmp_path):
-    def read(code=CODE, *, capabilities=("diagnostics",), mod_id="owned.source"):
-        folder = write_source_mod(tmp_path / mod_id, code, owner=mod_id, capabilities=capabilities)
+    def read(code=CODE, *, mod_id="owned.source"):
+        folder = write_source_mod(tmp_path / mod_id, code, owner=mod_id)
         # A stale author component must not influence source-backed admission.
         (folder / "mod.wasm").write_bytes(b"unusable author component")
         return SourceSnapshot.read(folder)
@@ -54,9 +53,10 @@ def test_shared_entries_keep_identity_and_state_with_group_owned_closure(make_so
             second.event("owned.event", None)
 
 
-def test_invalid_guest_json_disables_source_contract_and_cleans(make_source_group, source):
-    result = "{"
-    code = CODE.replace('json.dumps({"count": self.count, "name": name, "value": json.loads(payload)})', repr(result))
+@pytest.mark.parametrize("failure", ["return '{'", "raise ValueError('failed event')"],
+                         ids=["invalid-json", "guest-exception"])
+def test_failed_guest_event_disables_source_contract_and_cleans(make_source_group, source, failure):
+    code = CODE.replace('return json.dumps({"count": self.count, "name": name, "value": json.loads(payload)})', failure)
     cleaned = []
     with make_source_group((source(code),), submit_log=lambda *_: None, cleanup=lambda: cleaned.append(True))["owned.source"] as mod:
         mod.activate()
@@ -76,24 +76,3 @@ def test_invalid_event_input_closes_before_guest_callback(make_source_group, sou
         with pytest.raises(SandboxError):
             mod.event(name, value)
         assert reports == [] and cleaned == [True] and mod.sandbox.closed
-
-
-def test_partial_menu_declarations_are_revoked_after_failure(make_source_group, source):
-    code = '''import wit_world
-class WitWorld:
-    def activate(self):
-        wit_world.add_menu_button("probe", "Probe", "probe")
-    def on_event(self, name, payload):
-        raise ValueError("failed event")
-'''
-    snapshot = source(code, capabilities=("main-menu",))
-    menu, cleaned = MenuRequests(), []
-    def cleanup():
-        assert menu.buttons  # Prove a declaration existed before rollback.
-        menu.remove(snapshot.manifest.id)
-        cleaned.append(True)
-    with pytest.raises(SandboxError):
-        with make_source_group((snapshot,), menu=menu.add, cleanup=cleanup)[snapshot.manifest.id] as mod:
-            mod.activate()
-            mod.event("owned.event", None)
-    assert menu.buttons == [] and cleaned == [True]
