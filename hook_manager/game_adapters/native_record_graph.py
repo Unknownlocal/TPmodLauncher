@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Copy market dictionaries/lists together and publish without losing their aliases."""
+"""Keep private dictionary/list copies and publish changes to their originals."""
 
 
-class MarketGraph:
+class NativeRecordGraph:
     """Copy native dictionaries/lists while keeping their shared values shared."""
 
     def __init__(self):
@@ -10,18 +10,18 @@ class MarketGraph:
         self._originals = {}
 
     def copy(self, value):
-        """Copy mutable market containers once; borrow other native values."""
+        """Copy each dictionary or list once; borrow other native values."""
         if not isinstance(value, (dict, list)):
             return value
-        # Nested callers already use the private view. Copying it again would
-        # split shared offers from the context dictionaries that refer to them.
+        # Nested callers can already hold private copies. Copying those again
+        # would split shared records from the fields that refer to them.
         if id(value) in self._originals:
             return value
         if id(value) in self._copies:
             return self._copies[id(value)]
         private = {} if isinstance(value, dict) else []
         # Register before descending: repeated references and cycles must point
-        # to the same private container, just as they do in the live market.
+        # to the same private container, just as they do in the live records.
         self._copies[id(value)] = private
         self._originals[id(private)] = value
         if isinstance(value, dict):
@@ -31,14 +31,16 @@ class MarketGraph:
         return private
 
     def private(self, value):
+        """Return the working copy when one exists, or the value itself."""
         return self._copies.get(id(value), value)
 
     def original(self, value):
+        """Return the live container belonging to a private copy, if known."""
         return self._originals.get(id(value))
 
     def publish(self, values):
         """Update the game's existing containers without exposing private ones."""
-        # One memo covers all selected stores and mail in this publication.
+        # One memo covers all selected records in this publication.
         memo = {}
 
         def publish(value):

@@ -20,7 +20,8 @@ mod checks and permission to apply changes.
   result from the game's signing code. That result is separate from mod approval.
 - [staffing_publication.py](staffing_publication.py): `StaffingPublication` checks
   that the relevant career inputs still match, then applies prepared changes to
-  the game's original people and containers.
+  the game's original people and containers. It uses the shared
+  [NativeRecordGraph](../native_record_graph.py) to keep related records linked.
 - [prestige_switch.py](prestige_switch.py): `StaffPrestigeSwitch` supplies the
   private boolean hook for the native prestige minimum. Enabled is the default
   and installs nothing. Disabled returns zero from the career's

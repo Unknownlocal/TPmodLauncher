@@ -13,6 +13,9 @@ an adapter defines its code; trusted setup owns installation and removal.
 - `ui` supplies shared game UI bindings, scrollable text and dialogs.
 - `regulations` adds rule selection, validator contexts and communication with
   the launcher to those game-specific calculations.
+- `native_record_graph.py` shares record copying and publication between
+  negotiations and staffing. `native_values.py` describes record contents and
+  identities so callers can detect changes before applying their updates.
 - `validation_operation.py` keeps required checks available throughout an
   admitted game action. Nested calls share failure state; each adapter retains
   its own worker permission. `ValidationCancellation` carries a refusal to the

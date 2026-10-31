@@ -32,8 +32,9 @@ records and feedback; rule selection and mod checks belong to the
   offers, deadlines, pending confirmations and mail separate from live records.
   Completed market actions can be applied as the batch progresses; a later
   interruption discards the remaining drafts.
-- [market_graph.py](market_graph.py): `MarketGraph` copies related records together
-  so references to the same offer still refer to one offer. Applying changes
+- [native_record_graph.py](../native_record_graph.py): the shared
+  `NativeRecordGraph` copies related records together, so references to the same
+  offer still refer to one offer. Applying changes
   preserves the game's original dictionaries and lists.
 - [market_mail.py](market_mail.py): `MarketMail` keeps messages with the offer that
   produced them, so unfinished work does not send premature mail.

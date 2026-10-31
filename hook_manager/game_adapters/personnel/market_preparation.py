@@ -8,7 +8,7 @@ from ...callables import method_group
 from ...manager import HookError
 from ..native_methods import native_signatures
 from .native_methods import EMAIL
-from .market_graph import MarketGraph
+from ..native_record_graph import NativeRecordGraph
 from .market_mail import MarketMail
 
 
@@ -42,7 +42,7 @@ class MarketPreparation:
         # still acts on real people/teams through the existing signing guards.
         self.state = copy(state)
         self.manager = copy(self.live)
-        self.graph = MarketGraph()
+        self.graph = NativeRecordGraph()
         for name in self._STORES:
             setattr(self.manager, name, self.graph.copy(getattr(self.live, name)))
         for name, value in vars(self.live).items():

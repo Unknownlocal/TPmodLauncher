@@ -11,16 +11,15 @@ from copy import copy
 
 from ...manager import HookError
 from ..native_values import native_value
-from ..personnel.market_graph import MarketGraph
+from ..native_record_graph import NativeRecordGraph
 
 
 class StaffingPublication:
     def __init__(self, state):
         self.state, self.manager = state, state.staff_manager
         # Compare live values and container identities before publishing writes.
-        # The existing market helper preserves shared staff dicts/lists;
-        # there is no need to copy the whole career or introduce a second copier.
-        self.graph = MarketGraph()
+        # Shared staff dictionaries/lists retain their links in the working copy.
+        self.graph = NativeRecordGraph()
         # Both original and private person IDs resolve to the same saved pair.
         self.people = {}
         self.before = self._inputs()
