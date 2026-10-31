@@ -32,9 +32,10 @@ def inputs(tmp_path):
     for directory in (*packaging.SOURCE_DIRECTORIES, "notices", "libs/mod-runners"):
         (root / directory).mkdir(parents=True)
         (root / directory / "owned.py").write_text("# owned fixture\n")
-    fragment = root / "examples/rookie_contract_mod/regulations.json"
-    fragment.parent.mkdir(parents=True)
-    fragment.write_bytes((Path(__file__).resolve().parents[2] / "examples/rookie_contract_mod/regulations.json").read_bytes())
+    for fragment in (Path(__file__).resolve().parents[2] / "examples").glob("*/regulations.json"):
+        target = root / "examples" / fragment.parent.name / fragment.name
+        target.parent.mkdir(parents=True)
+        target.write_bytes(fragment.read_bytes())
     (root / "launcher/owned.sh").write_bytes(b"#!/bin/bash\ntrue\n")
     manifest = packaging.paths.read_manifest(root)
     runtime = root / manifest["runtime"]["directory"]
@@ -60,7 +61,8 @@ def test_archive_is_relocatable_selected_and_repeatable(inputs):
         assert (extracted / "bundled_packages.toml").is_file()
         assert (extracted / manifest["directory"]).is_dir()
         assert (extracted / "source/frida/fixture.txt").read_text() == "owned source fixture"
-        assert (extracted / "examples/rookie_contract_mod/regulations.json").read_bytes() == (root / "examples/rookie_contract_mod/regulations.json").read_bytes()
+        for fragment in (root / "examples").glob("*/regulations.json"):
+            assert (extracted / fragment.relative_to(root)).read_bytes() == fragment.read_bytes()
         assert b"must not ship" not in [file.read_bytes() for file in extracted.rglob("*") if file.is_file()]
         checks.append(extracted)
 

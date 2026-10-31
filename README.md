@@ -229,12 +229,26 @@ that pack. Mods with prebuilt Wasm components keep separate runtime instances.
 #### Regulation validators (API `0.4.0`)
 
 API `0.4.0` keeps the earlier source operations and adds the `regulations`
-permission. Start with the [rookie-contract example](examples/rookie_contract_mod).
-Authors supply its `mod.toml`, Python under `src/` and regulation declarations;
-the launcher supplies the runner, game adapters and validation connection.
+permission. These Python source mods demonstrate its use:
 
-Install the example's code folder beside other mods in the selected Formula
-pack. Merge its [`regulations.json`](examples/rookie_contract_mod/regulations.json)
+| Example | Behaviour |
+| --- | --- |
+| [Rookie contracts](examples/rookie_contract_mod) | Use the native limit, remove it, or enforce a custom four-year limit. |
+| [Team nationality](examples/team_nationality_mod) | Restrict approaches and contracts to the team's nationality, including academy signings. |
+| [Annual payroll](examples/staff_spend_mod) | No cap, staff-only caps of $12M/$24M, or staff-and-driver caps of $60M/$80M. Counts total annual salaries, including the proposed agreement. |
+| [DRS voting](examples/regulation_vote_mod) | Teams outside the top three favour DRS; the top three oppose it. The game still records player ballots and counts votes. |
+
+Nationality defaults to matching the team; payroll defaults to no cap. Both
+examples use a 25% automatic change chance, with announcements in week 41 for
+the next season. Payroll counts annual base salaries, excluding bonuses,
+buyouts and academy fees.
+
+Authors supply each example's `mod.toml`, Python under `src/` and regulation
+declarations; the launcher supplies the runner, game adapters and validation
+connection.
+
+Install an example's code folder beside other mods in the selected Formula
+pack. Merge that folder's `regulations.json`
 `mod_extensions` entries into the pack's existing **root** `regulations.json`.
 Keep the native fields and other mods' entries; do not replace the whole file.
 The copy inside the code folder is an example fragment, not a second loaded file.

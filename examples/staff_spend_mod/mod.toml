@@ -1,0 +1,7 @@
+schema = 2
+id = "example.staff_spend"
+version = "0.1.0"
+api = "0.4.0"
+runtime = "python"
+entry = "mod"
+capabilities = ["regulations"]

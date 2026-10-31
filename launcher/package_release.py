@@ -33,9 +33,14 @@ paths = release.dependencies
 SOURCE_DIRECTORIES = ("launcher", "hook_manager", "mod_runtime", "examples")
 SOURCE_SUFFIXES = {".py", ".js", ".md", ".toml", ".wit", ".sh"}
 ROOT_FILES = ("README.md", "LICENCE", "ATTRIBUTION.txt", "bundled_packages.toml")
-# Ship the supplied rule fragment, while continuing to exclude saved settings
+# Ship example rule fragments, while continuing to exclude saved settings
 # and other local JSON from the source-directory scan.
-SOURCE_DATA_FILES = ("examples/rookie_contract_mod/regulations.json",)
+SOURCE_DATA_FILES = (
+    "examples/rookie_contract_mod/regulations.json",
+    "examples/team_nationality_mod/regulations.json",
+    "examples/staff_spend_mod/regulations.json",
+    "examples/regulation_vote_mod/regulations.json",
+)
 PLATFORM_SUFFIXES = {"windows": "windows-x64", "linux": "linux-proton-x64"}
 
 
