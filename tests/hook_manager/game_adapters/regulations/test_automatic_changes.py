@@ -87,6 +87,71 @@ def automatic(monkeypatch, tmp_path):
     owner.stop()
 
 
+def test_failed_weekly_install_restores_native_methods_and_can_retry(automatic, monkeypatch):
+    a = automatic
+    week, candidates = a.native.process_week, a.native._trigger_candidates
+    install = a.owner.install
+
+    def fail_after_install(*args, **kwargs):
+        install(*args, **kwargs)
+        raise RuntimeError("Owned installation failure")
+
+    monkeypatch.setattr(a.owner, "install", fail_after_install)
+    with pytest.raises(RuntimeError, match="Owned installation failure"):
+        a.owner.install_automatic(a.policies)
+    assert a.native.process_week is week and a.native._trigger_candidates is candidates
+    assert a.categories.automatic is None and a.owner.categories is a.categories
+    saved = a.build().formula_regulation_governance.save_state()
+    saved[FIELD] = {"schema": 1, "categories": {}}
+    state = a.build(saved=saved)
+    assert state.formula_regulation_governance.save_state() == saved
+    monkeypatch.setattr(a.owner, "install", install)
+    a.owner.install_automatic(a.policies)
+    state = a.build()
+    state.week_index = 5
+    state.formula_regulation_governance.process_week()
+    assert len(state.regulation_manager.pending_rules) == 2
+
+
+def test_failed_category_construction_retains_busy_owner_until_cleanup(automatic, monkeypatch):
+    a = automatic
+    state = a.build()
+    manager = state.formula_regulation_governance
+    saved = manager.save_state()
+    saved[FIELD] = {"schema": 1, "categories": {}}
+    manager.load_state(saved)
+    a.categories.stop()
+    entered, release = threading.Event(), threading.Event()
+
+    class HeldPolicy(dict):
+        def __deepcopy__(self, memo):
+            entered.set()
+            assert release.wait(3)
+            return dict(self)
+
+    manager.policy = HeldPolicy(manager.policy)
+    monkeypatch.setattr(a.native, "process_week", lambda self, changed: None)
+    host = ModuleType("_automatic_failed_setup_test")
+    host.manager = Manager()
+    modules = AdapterModules(host, {})
+    modules.regulation_changes = a.owner
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        task = worker.submit(manager.save_state)
+        try:
+            assert entered.wait(3)
+            with pytest.raises(HookError, match="busy"):
+                modules.categories = RegulationCategoryAdapter({"pack": str(a.folder),
+                    "categories": list(a.categories.categories.values()), "automatic_changes": a.policies}, a.owner)
+            partial = a.owner.categories
+            assert not modules.stop_regulations() and modules.categories is partial
+        finally:
+            release.set()
+        assert task.result(timeout=3) == saved
+    assert modules.stop_regulations() and partial.closed and a.owner.categories is None
+    assert set(state.regulation_manager._load_regulation_defs()) == {"native"}
+    assert manager.save_state() == saved
+
+
 def test_catch_up_draws_are_independent_and_survive_reload(automatic):
     a = automatic
     a.owner.install_automatic(a.policies)
@@ -201,6 +266,15 @@ def test_native_quotas_scope_and_category_cleanup(automatic):
     a.categories.stop()
     assert a.native.process_week is original
     assert cached() == "native week completed" and manager.save_state() == saved
+    replacement = RegulationCategoryAdapter({"pack": str(a.folder),
+        "categories": list(a.categories.categories.values())}, a.owner)
+    try:
+        a.owner.install_automatic(a.policies)
+        state = a.build(saved=saved)
+        replacement.check(state)
+        assert state.formula_regulation_governance.save_state() == saved
+    finally:
+        replacement.stop()
 
 
 def test_inconsistent_native_stage_does_not_block_other_categories(automatic):
@@ -316,6 +390,7 @@ def test_weekly_work_waits_for_the_current_careers_activation(automatic):
     host.manager = Manager()
     modules = AdapterModules(host, {})
     modules.categories, modules.channel = a.categories, helper.channel
+    modules.regulation_changes = a.owner
     with ThreadPoolExecutor(max_workers=1) as worker:
         future = worker.submit(manager.process_week)
         try:

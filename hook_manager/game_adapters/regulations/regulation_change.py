@@ -19,7 +19,7 @@ class RegulationChangeAdapter(Manager):
     """Keep persistence with the bridge, independent of enabled mod execution.
 
     A category loader may attach while its pack is active. Script merging and
-    category-owned weekly hooks share the same active-operation count. Each
+    weekly hooks share the same active-operation count. Each
     native manager owns its own progress, including inactive categories.
     """
 
@@ -53,31 +53,48 @@ class RegulationChangeAdapter(Manager):
             raise HookError("Native regulation change load/save hooks are unavailable")
 
     def install_automatic(self, policies):
-        """Install weekly work for this pack's prepared automatic policies.
-
-        Weekly wrappers belong to the category loader so removing its pack also
-        removes its decisions. Career progress keeps its separate save/load hooks.
-        """
+        """Own weekly hooks while enabled pack declarations are attached."""
         self.check()
         categories = self.categories
         if categories is None or categories.automatic is not None:
             raise HookError("Automatic changes need an available category loader")
         helper = AutomaticChanges(categories, policies, self.submit_log)
-        categories.completed.update(self.completed)
-        bindings = []
+        targets = []
         for method, signature in (("process_week", "(self)"), ("_trigger_candidates", "(self, snapshot)")):
             target = CallableTarget("regulations.automatic." + method, "managers.formula_regulation_governance",
                                     ("FormulaRegulationGovernanceManager",), method, signature)
-            if target.resolve(categories.completed) is None:
+            if target.resolve(self.completed) is None:
                 raise HookError("Automatic changes need the loaded weekly regulation methods")
-            categories.approve(target)
-            bindings.append({"target": target.name, "callback": "internal", "phase": "after"})
-        categories.automatic = helper
+            targets.append(target)
         try:
-            categories.install("regulations.automatic", bindings)
+            for target in targets:
+                self.approve(target)
+            self.install("regulations.automatic", [{"target": target.name, "callback": "internal", "phase": "after"}
+                                                   for target in targets])
+            categories.automatic = helper
         except BaseException:
-            categories.automatic = None
+            self._remove_automatic()
             raise
+
+    def _remove_automatic(self):
+        """Restore weekly methods without removing load/save preservation."""
+        if "regulations.automatic" in self.groups:
+            if not self.closed:
+                self.remove("regulations.automatic")
+            del self.groups["regulations.automatic"]
+        for method in ("process_week", "_trigger_candidates"):
+            self.targets.pop("regulations.automatic." + method, None)
+
+    def detach_categories(self, categories):
+        """Detach only the current pack, after its admitted native work ends."""
+        with self._lock:
+            if self.categories is not categories:
+                return
+            if self._active:
+                raise HookError("Regulation changes are busy")
+            self._remove_automatic()
+            categories.automatic = None
+            self.categories = None
 
     def defer_voting(self, pack):
         """Hold load-time ballot filling until this pack's career is activated."""
@@ -120,11 +137,11 @@ class RegulationChangeAdapter(Manager):
             else:
                 manager._resolve_uncontrolled_reviews = previous
 
-    def _wrapper(self, name, binding, target, original, signature, *, group=None):
+    def _wrapper(self, name, binding, target, original, signature):
         # Keep the native result and exception; only completed calls reach the
         # metadata and script work. Cleanup waits for this whole operation.
-        # Weekly groups belong to the category loader; persistence uses our group.
-        group, method = self.groups[name] if group is None else group, target.attribute
+        # Both groups belong to this adapter; only weekly work detaches with the pack.
+        group, method = self.groups[name], target.attribute
 
         def wrapped(*args, **kwargs):
             arguments = signature.bind(*args, **kwargs).arguments

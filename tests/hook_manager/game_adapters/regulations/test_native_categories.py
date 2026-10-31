@@ -30,7 +30,7 @@ def native(monkeypatch, tmp_path):
     manager.calls, manager.failure, manager.base = 0, None, {"native": {"options": ["native fallback"]}}
     manager.work = lambda: None
     category = {"key": "owned.rule", "default": "open", "options": [{"id": 1, "key": "open", "name": "Open"}]}
-    regulation_changes = SimpleNamespace(_lock=threading.RLock(), _active=0, categories=None, check=lambda: None)
+    regulation_changes = SimpleNamespace(categories=None, check=lambda: None, detach_categories=lambda categories: None)
     hook = RegulationCategoryAdapter({"pack": str(tmp_path), "categories": [category]}, regulation_changes)
     yield hook, manager, category
     hook.stop()
@@ -84,7 +84,7 @@ def test_incompatible_signature_leaves_native_function_intact(monkeypatch, tmp_p
     monkeypatch.setitem(sys.modules, module.__name__, module)
     with pytest.raises(HookError, match="signature"):
         RegulationCategoryAdapter({"pack": str(tmp_path), "categories": [{"key": "owned.rule"}]},
-                         SimpleNamespace(_lock=threading.RLock(), categories=None, check=lambda: None))
+                         SimpleNamespace(categories=None, check=lambda: None, detach_categories=lambda categories: None))
     assert module.RegulationManager._load_regulation_defs is original
 
 

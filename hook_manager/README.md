@@ -63,9 +63,10 @@ The bridge also observes the game's regulation change manager being imported.
 Its shared construction, restore and save hooks retain private automatic-rule
 progress with each career, including while all regulation mods are disabled.
 This does not run mod code. Prepared automatic policies add weekly wrappers
-owned by the category loader. They run only for the activated career, stage
-next-season choices through the game and announce them through its inbox.
-Removing the category loader restores these wrappers while retaining save data.
+owned by the regulation change adapter. They run only for the activated career,
+stage next-season choices through the game and announce them through its inbox.
+Removing the category loader detaches its policies and weekly wrappers while
+the change adapter keeps save/load handling installed.
 The [regulation adapters](game_adapters/regulations/README.md)
 describe the saved data and its checks.
 

@@ -68,7 +68,7 @@ def native(monkeypatch, tmp_path):
     regulation_changes.stop()
 
 
-def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progress(native):
+def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progress(native, monkeypatch):
     hook, state, RegulationChanges, request = native
     manager = state.formula_regulation_governance = RegulationChanges(state)
     row = request["scripted_changes"][0]
@@ -90,6 +90,24 @@ def test_constructor_and_saved_restore_merge_once_and_keep_native_mode_and_progr
     state.data_dir = state.data_dir / "other-pack"
     manager.load_state(saved)
     assert manager.policy["scripted_changes"] == []
+    state.data_dir = hook.pack
+    hook.stop()
+    from hook_manager.game_adapters.regulations import regulation_category
+    prepare_scripts = regulation_category.RegulationScripts
+
+    def preparing(categories, rows):
+        provisional = RegulationChanges(state, saved)
+        assert provisional.definitions == {} and provisional.policy["scripted_changes"] == []
+        return prepare_scripts(categories, rows)
+
+    monkeypatch.setattr(regulation_category, "RegulationScripts", preparing)
+    replacement = RegulationCategoryAdapter(request, hook.regulation_changes)
+    try:
+        manager.load_state(saved)
+        replacement.check(state)
+        assert manager.policy["scripted_changes"] == [row]
+    finally:
+        replacement.stop()
 
 
 def test_conflicting_saved_script_retains_native_load_and_prevents_activation(native):

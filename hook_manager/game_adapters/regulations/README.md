@@ -62,7 +62,8 @@ wrappers; development-project integration has its own compatibility checks.
 - [regulation_change.py](regulation_change.py):
   `RegulationChangeAdapter` owns the shared construction, restore and save hooks.
   It keeps private automatic progress with each native manager, including when
-  no automatic mods are enabled.
+  no automatic mods are enabled. It also owns weekly hooks while the pack's
+  automatic policies are attached.
 - [automatic_progress.py](automatic_progress.py): `AutomaticProgress` checks the
   saved season records and undelivered notices. Bounded data in an unknown or
   invalid format is retained for saving and reported as unavailable for decisions.
@@ -197,10 +198,13 @@ The optional `mod_automatic_changes` field sits inside the game's existing
 per category and only undelivered announcements, retaining their original season
 and option. Ordinary native choices, reviews and ballots remain in their existing fields. Missing
 metadata starts empty, and each career has an independent copy. Saving copies
-cached plain data and never calls a mod. Prepared weekly hooks belong to the
-category loader and are removed with it; shared persistence stays installed.
-They check room before staging and recover a completed native decision by its
-saved identity, even if native staging finishes and then raises an error.
+cached plain data and never calls a mod. The change adapter owns the weekly hooks.
+Stopping the category loader detaches its policies and removes those weekly
+hooks; shared persistence stays installed. Category loading has its own lock and
+active-call count. Cleanup checks both owners before restoring their hooks.
+The automatic-change helper checks room before staging and recovers a completed
+native decision by its saved identity, even if staging finishes and then raises
+an error.
 Inconsistent saved records are reported without repeating staging.
 Updating progress measures the changed
 record rather than encoding all saved progress.

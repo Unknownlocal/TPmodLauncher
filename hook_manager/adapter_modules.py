@@ -421,17 +421,20 @@ class AdapterModules:
         reuses admitted handlers, but must publish data and approve coverage anew.
         """
         self.host.manager._main()
+        # Keep a partially constructed loader reachable until its active calls
+        # finish; its constructor may not have reached the normal assignment.
+        if self.categories is None and self.regulation_changes is not None:
+            self.categories = self.regulation_changes.categories
         with ExitStack() as locks:
             # Category loading belongs to the pack, so career retirement keeps
             # it installed. Full cleanup must also wait for its loading workers.
             hooks = [*self.regulations, *([self.categories] if self.categories is not None and not retain else []),
                      *([self.regulation_screen] if self.regulation_screen is not None and not retain else [])]
-            # Retiring keeps category hooks, but must still wait for their
-            # weekly decisions and persistence work before changing careers.
+            # Retirement retains pack hooks, but must still wait for weekly
+            # decisions and persistence before changing careers.
             for hook in [*hooks, *([self.categories] if retain and self.categories is not None
                                    and self.categories.automatic is not None else []),
-                         *([self.regulation_changes] if self.regulation_changes is not None
-                           and self.regulation_changes.voting_pack is not None else [])]:
+                         *([self.regulation_changes] if self.regulation_changes is not None else [])]:
                 lock = getattr(hook, "_lock", None)
                 if lock is not None:
                     if not lock.acquire(blocking=False):

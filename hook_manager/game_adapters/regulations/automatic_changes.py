@@ -16,8 +16,8 @@ from .automatic_announcements import AutomaticAnnouncements
 class AutomaticChanges:
     """Process trusted, prepared policies without calling a mod interpreter.
 
-    The category adapter owns this helper and its weekly hook group. The change
-    adapter supplies the wrappers; progress stays on each career's native manager.
+    Enabled declarations retain this helper; the change adapter owns its
+    weekly hook group. Progress stays on each career's native manager.
     """
 
     def __init__(self, categories, policies, submit_log):
@@ -45,7 +45,7 @@ class AutomaticChanges:
     def check(self, state):
         """Require the complete owned installation and usable saved progress."""
         self.categories.regulation_changes.check()
-        if not self.categories.group_intact("regulations.automatic"):
+        if not self.categories.regulation_changes.group_intact("regulations.automatic"):
             raise HookError("Automatic regulation weekly hooks are unavailable")
         manager = state.formula_regulation_governance
         progress = manager._tpm_automatic_progress

@@ -4,6 +4,7 @@
 from copy import deepcopy
 from functools import update_wrapper
 from pathlib import Path
+import threading
 
 from ...callables import CallableTarget
 from ...manager import HookError, Manager
@@ -20,12 +21,13 @@ class RegulationCategoryAdapter(Manager):
 
     def __init__(self, request, regulation_changes):
         super().__init__(lambda record: None)
-        # Bundle cleanup shares this reservation with regulation change loads and saves.
-        # Native work runs outside the lock, so workers can do normal file I/O.
+        # This owner reserves only definition loading. Bundle cleanup checks
+        # it together with the separate weekly/load/save owner.
         regulation_changes.check()
         if regulation_changes.categories is not None:
             raise HookError("Regulation change adapter already owns a category loader")
-        self.regulation_changes, self._lock = regulation_changes, regulation_changes._lock
+        self.regulation_changes = regulation_changes
+        self._lock, self._active = threading.RLock(), 0
         self.scripts, self.automatic = None, None
         if (type(request) is not dict or set(request) - {"pack", "categories", "scripted_changes", "automatic_changes"}
                 or not {"pack", "categories"} <= request.keys()
@@ -47,12 +49,14 @@ class RegulationCategoryAdapter(Manager):
             if target.resolve({}) is None:
                 raise HookError("Category loading needs the loaded native regulation manager")
             self.approve(target)
-            self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "after"}])
             if request.get("scripted_changes"):
                 # Scripts can target only owned categories, so their loading
                 # helper shares this pack's lifetime and cleanup reservation.
                 self.scripts = RegulationScripts(self, request["scripted_changes"])
+            # Attach complete declarations before installing hooks. Cleanup can
+            # find this owner if construction fails while a native call is active.
             regulation_changes.categories = self
+            self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "after"}])
             if request.get("automatic_changes"):
                 regulation_changes.install_automatic(request["automatic_changes"])
         except BaseException:
@@ -82,28 +86,22 @@ class RegulationCategoryAdapter(Manager):
         return definitions
 
     def stop(self):
-        """Detach prepared declarations while retaining shared save/load handling."""
-        if self.regulation_changes.categories is self:
-            self.regulation_changes.categories = None
-        return super().stop()
-
-    @property
-    def _active(self):
-        """Share the load/save reservation used by bundle cleanup."""
-        return self.regulation_changes._active
+        """Detach enabled declarations while keeping bridge-owned save hooks."""
+        with self._lock:
+            if self._active:
+                raise HookError("Regulation category loading is busy")
+            self.regulation_changes.detach_categories(self)
+            return super().stop()
 
     def _wrapper(self, name, binding, target, original, signature):
         """Keep native loading first, then add this pack's checked category copies."""
-        if name == "regulations.automatic":
-            return self.regulation_changes._wrapper(name, binding, target, original, signature,
-                                                    group=self.groups[name])
         group = self.groups[name]
 
         def wrapped(manager):
             with self._lock:
                 if group["state"] != "active":
                     return original(manager)
-                self.regulation_changes._active += 1
+                self._active += 1
             try:
                 definitions = original(manager)
                 try:
@@ -123,7 +121,7 @@ class RegulationCategoryAdapter(Manager):
                     return definitions
             finally:
                 with self._lock:
-                    self.regulation_changes._active -= 1
+                    self._active -= 1
 
         update_wrapper(wrapped, original)
         wrapped._tpm_hook_group = name
