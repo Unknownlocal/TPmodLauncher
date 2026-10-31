@@ -9,7 +9,8 @@ from launcher.regulations import RegulationDefinitions
 from launcher.regulations.shared_handler_runner import SharedHandlerRunner
 from launcher.regulations.validation.dispatch import ValidationDispatch
 
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 def context():
@@ -58,7 +59,7 @@ def make_mods(make_source_group):
             manifest = SourceManifest(owner, "1.0.0", "0.4.0", "mod", frozenset(caps))
             files = (("mod.py", "import wit_world\nclass WitWorld:\n def activate(self):\n  assert not hasattr(wit_world,'bind_regulation')\n def on_event(self,n,p): raise AssertionError('must use dedicated dispatch')\n"),
                      ("rules.py", code), *extra)
-            snapshots.append(SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files)))
+            snapshots.append(source_snapshot(manifest, files))
         mods = make_source_group(tuple(snapshots), submit_log=submit_log, cleanup=cleanup)
         for mod in mods.values():
             mod.activate()

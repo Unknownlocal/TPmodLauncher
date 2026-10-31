@@ -16,7 +16,8 @@ from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode
 from mod_runtime._regulations.contexts import RegulationContexts
 from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 OWNERS = ("a.rules", "b.rules")
@@ -45,7 +46,7 @@ def shared(runner_bundle, *, count=1, peer_handler=False):
         if peer_handler and owner == OWNERS[1]:
             code = "import wit_world\nvalidate = wit_world.import_mod('a.rules','rules').validate\n"
         files = (("mod.py", ENTRY), ("rules.py", code))
-        sources[owner] = SourceSnapshot(manifest, files, sum(len(text.encode()) for _, text in files))
+        sources[owner] = source_snapshot(manifest, files)
     providers = {owner: {"report": lambda text, owner=owner: calls.append((owner, text))} for owner in OWNERS}
     data = {"categories": [{"key": "native", "options": [{"key": "open"}]}],
             "mod_extensions": {owner: {"schema": 1,

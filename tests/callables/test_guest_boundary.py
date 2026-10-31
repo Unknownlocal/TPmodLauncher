@@ -2,7 +2,8 @@
 """Real sandbox isolation for the private callable package and native host."""
 
 from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 MANIFEST = SourceManifest.parse(b'''schema = 2
 id = "owned.callables"
@@ -12,10 +13,6 @@ runtime = "python"
 entry = "mod"
 capabilities = ["diagnostics", "regulations"]
 ''')
-
-
-def snapshot(code):
-    return SourceSnapshot(MANIFEST, (("mod.py", code),), len(code.encode("utf-8")))
 
 
 def test_private_native_callable_layer_is_absent_from_real_guest(runner_bundle):
@@ -32,6 +29,7 @@ class WitWorld(wit_world.WitWorld):
         wit_world.report("Private native hooks absent")
 '''
     messages = []
-    with SharedPythonRunner(runner_bundle, (snapshot(code),), {MANIFEST.id: {"report": messages.append}}) as runner:
+    source = source_snapshot(MANIFEST, (("mod.py", code),))
+    with SharedPythonRunner(runner_bundle, (source,), {MANIFEST.id: {"report": messages.append}}) as runner:
         runner.activate(MANIFEST.id)
     assert messages == ["Private native hooks absent"]

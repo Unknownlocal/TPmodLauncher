@@ -14,6 +14,7 @@ from mod_runtime import preparation
 from mod_runtime.preparation import SourcePreparation
 from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceError, SourceManifest, SourceSnapshot
+from tests.source_support import write_source_mod
 
 
 CODE = '''import wit_world
@@ -25,18 +26,7 @@ class WitWorld(wit_world.WitWorld):
 
 @pytest.fixture
 def source_folder(tmp_path):
-    folder = tmp_path / "owned source"
-    (folder / "src").mkdir(parents=True)
-    (folder / "mod.toml").write_text('''schema = 2
-id = "owned.prepared"
-version = "0.1.0"
-api = "0.2.0"
-runtime = "python"
-entry = "mod"
-capabilities = ["diagnostics"]
-''', encoding="utf-8")
-    (folder / "src/mod.py").write_text(CODE, encoding="utf-8")
-    return folder
+    return write_source_mod(tmp_path / "owned source", CODE, owner="owned.prepared")
 
 
 @pytest.fixture

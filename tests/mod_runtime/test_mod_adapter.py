@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise the source-backed launcher contract through real snapshots and Wasm."""
 
-import json
-
 import pytest
 
 from hook_manager.menu import MenuRequests
 from launcher.sandbox import SandboxError
 from mod_runtime.source import SourceSnapshot
+from tests.source_support import write_source_mod
 
 
 CODE = '''import json
@@ -24,17 +23,7 @@ class WitWorld(wit_world.WitWorld):
 @pytest.fixture
 def source(tmp_path):
     def read(code=CODE, *, capabilities=("diagnostics",), mod_id="owned.source"):
-        folder = tmp_path / mod_id
-        (folder / "src").mkdir(parents=True)
-        (folder / "mod.toml").write_text(f'''schema = 2
-id = "{mod_id}"
-version = "0.1.0"
-api = "0.2.0"
-runtime = "python"
-entry = "mod"
-capabilities = {json.dumps(capabilities)}
-''', encoding="utf-8")
-        (folder / "src/mod.py").write_text(code, encoding="utf-8")
+        folder = write_source_mod(tmp_path / mod_id, code, owner=mod_id, capabilities=capabilities)
         # A stale author component must not influence source-backed admission.
         (folder / "mod.wasm").write_bytes(b"unusable author component")
         return SourceSnapshot.read(folder)

@@ -12,7 +12,8 @@ from mod_runtime.bundle import EXPORTS
 from mod_runtime.source_transfer import RUNNER_LIMITS, SOURCE_FUEL
 from mod_runtime import shared_sources
 from mod_runtime.shared_sources import transfer_sources
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 ENTRY = '''import json
@@ -49,7 +50,7 @@ def snapshot(owner, value, *, entry="mod", code=ENTRY):
     if "." in entry:
         files[entry.split(".")[0] + "/__init__.py"] = ""
     manifest = SourceManifest(owner, "1.0.0", "0.3.0", entry, frozenset())
-    return SourceSnapshot(manifest, tuple(files.items()), sum(len(text.encode()) for text in files.values()))
+    return source_snapshot(manifest, files)
 
 
 def sandbox(bundle, cleaned):

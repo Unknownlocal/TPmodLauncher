@@ -13,14 +13,15 @@ from launcher.regulations.validation import action as action_module
 from launcher.regulations.validation import dispatch as dispatch_module
 from launcher.regulations.validation.catalog import CombinedCatalog
 from mod_runtime._regulations import values
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 from regulation_support import context, definitions, dispatch, make_mod, selection, validator
 
 
 def test_policy_pages_require_the_closed_membership_plan_before_publication():
     owner = "owned.rules"
-    source = SourceSnapshot(SourceManifest(owner, "1", "0.4.0", "rules", frozenset({"regulations"})),
-                            (("rules.py", "# inert"),), 7)
+    source = source_snapshot(SourceManifest(owner, "1", "0.4.0", "rules", frozenset({"regulations"})),
+                             (("rules.py", "# inert"),))
     catalog = CombinedCatalog(definitions({owner: source}))
     published = []
     dispatch = SimpleNamespace(catalog=catalog, states=dict.fromkeys(catalog.owners, "pending"),
@@ -48,8 +49,8 @@ def test_policy_pages_require_the_closed_membership_plan_before_publication():
 
 def test_catalog_borrows_admission_and_projects_shared_effective_native_data_once(monkeypatch):
     owners = ("a.rules", "b.rules")
-    sources = {owner: SourceSnapshot(SourceManifest(owner, "1", "0.4.0", "rules", frozenset({"regulations"})),
-                                     (("rules.py", "# inert"),), 7) for owner in owners}
+    sources = {owner: source_snapshot(SourceManifest(owner, "1", "0.4.0", "rules", frozenset({"regulations"})),
+                                     (("rules.py", "# inert"),)) for owner in owners}
     sections = {owner: {"schema": 1, "validators": [validator(), {**validator("fallback"), "rule": "fallback"}],
                         "option_data": {"native": {"open": {"owner": owner}}}} for owner in owners}
     sections[owners[0]]["categories"] = [{"key": "a.rules.private", "label": "Private", "default": "open",

@@ -8,7 +8,8 @@ import pytest
 from launcher.regulations import RegulationDefinitions
 from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.validation import dispatch as dispatch_module
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 OWNER = "example.rules"
 ROOKIE = "rookie_contract_length_check"
@@ -19,7 +20,7 @@ def source(owner=OWNER):
     # Admission must not import author Python on the host.
     text = "raise AssertionError('author code imported during admission')"
     manifest = SourceManifest(owner, "1.0.0", "0.4.0", "rules", frozenset({"regulations"}))
-    return SourceSnapshot(manifest, (("rules.py", text),), len(text))
+    return source_snapshot(manifest, (("rules.py", text),))
 
 
 def document(bridges):

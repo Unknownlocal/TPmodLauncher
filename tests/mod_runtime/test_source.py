@@ -11,25 +11,13 @@ from launcher.sandbox import SandboxError
 from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime import source
 from mod_runtime.source import SourceError, SourceSnapshot
-
-
-MANIFEST = b'''schema = 2
-id = "owned.source"
-version = "0.1.0"
-api = "0.2.0"
-runtime = "python"
-entry = "mod"
-capabilities = ["diagnostics"]
-'''
+from tests.source_support import write_source_mod
 
 
 @pytest.fixture
 def mod(tmp_path):
-    root = tmp_path / "owned mod"
-    (root / "src").mkdir(parents=True)
-    (root / "mod.toml").write_bytes(MANIFEST)
-    (root / "src/mod.py").write_text('raise AssertionError("Host must not execute this")\n', encoding="utf-8")
-    return root
+    return write_source_mod(tmp_path / "owned mod", 'raise AssertionError("Host must not execute this")\n',
+                            owner="owned.source")
 
 
 def test_source_metadata_and_snapshot_are_immutable_and_do_not_execute(mod):

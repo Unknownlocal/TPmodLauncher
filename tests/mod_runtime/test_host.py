@@ -6,7 +6,8 @@ import pytest
 from launcher.shared_runner_host import bind_shared_operations
 from launcher.sandbox import SandboxError
 from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 OWNER = "owned.host"
@@ -32,7 +33,7 @@ class WitWorld:
   return payload
 '''
     manifest = SourceManifest(OWNER, "1", "0.3.0", "mod", frozenset())
-    snapshot = SourceSnapshot(manifest, (("mod.py", code),), len(code.encode()))
+    snapshot = source_snapshot(manifest, (("mod.py", code),))
     calls, cleaned = [], []
     with pytest.raises(SandboxError, match="Capability.*required"):
         with SharedPythonRunner(runner_bundle, (snapshot,), {OWNER: {operation: lambda *args: calls.append(args)}},

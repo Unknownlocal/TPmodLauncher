@@ -8,7 +8,8 @@ import pytest
 from launcher.sandbox import SandboxError
 from mod_runtime import shared_sources
 from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 MANIFEST = SourceManifest.parse(b'''schema = 2
@@ -28,7 +29,7 @@ class WitWorld(wit_world.WitWorld):
 
 def snapshot(code=CODE, **extra):
     files = tuple(sorted({"mod.py": code, **extra}.items()))
-    return SourceSnapshot(MANIFEST, files, sum(len(text.encode("utf-8")) for _, text in files))
+    return source_snapshot(MANIFEST, files)
 
 
 def test_multibyte_source_crosses_chunk_boundaries_and_dotted_entry_loads(runner_bundle):

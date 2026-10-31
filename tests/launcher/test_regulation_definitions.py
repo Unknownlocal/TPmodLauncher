@@ -13,6 +13,7 @@ from launcher.pack_mods import PackMods
 from launcher.regulations import RegulationDefinitions
 from launcher.shared_source_mod import SharedSourceMod
 from mod_runtime.source import SourceManifest, SourceSnapshot
+from tests.source_support import source_snapshot
 
 SCOPES = {"personnel.contract"}
 
@@ -20,7 +21,7 @@ SCOPES = {"personnel.contract"}
 def source(owner="example.rules", text="raise AssertionError('host imported author code')"):
     # Inert source proves definition admission never imports mod Python.
     manifest = SourceManifest(owner, "1.0.0", "0.4.0", "rules", frozenset({"regulations"}))
-    return SourceSnapshot(manifest, (("rules.py", text),), len(text.encode()))
+    return source_snapshot(manifest, (("rules.py", text),))
 
 
 def category(key="example.rules.policy"):

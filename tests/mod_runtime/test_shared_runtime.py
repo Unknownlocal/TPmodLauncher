@@ -10,7 +10,8 @@ from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import _host_operations
 from launcher.sandbox import SandboxError
 from mod_runtime.shared_runtime import SharedPythonRunner
-from mod_runtime.source import SourceManifest, SourceSnapshot
+from mod_runtime.source import SourceManifest
+from tests.source_support import source_snapshot
 
 
 ENTRY = '''class WitWorld:
@@ -22,7 +23,7 @@ ENTRY = '''class WitWorld:
 def snapshot(owner, code=ENTRY, *, grants=(), extra=None):
     files = {"mod.py": code, **(extra or {})}
     manifest = SourceManifest(owner, "1.0.0", "0.3.0", "mod", frozenset(grants))
-    return SourceSnapshot(manifest, tuple(files.items()), sum(len(text.encode()) for text in files.values()))
+    return source_snapshot(manifest, files)
 
 
 def providers(snapshots, calls):
