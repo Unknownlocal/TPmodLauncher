@@ -2,99 +2,16 @@
 """Required staffing stays private until validation, completion and freshness agree."""
 
 from copy import deepcopy
-import inspect
-import sys
 import threading
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
-from hook_manager.game_adapters.regulations.guards import RegulationGuards
-from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
-from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
 from hook_manager.game_adapters.personnel.native_operation import native_operation
 from hook_manager.game_adapters.staff import staffing
-from hook_manager.game_adapters.staff.staffing import StaffingPlanner
 from hook_manager.manager import HookError
-from tests.hook_manager.test_staffing_planner import owned
-
-
-def coordinator(monkeypatch, mode="allow", *, callers=False):
-    state, manager, person = owned(monkeypatch)
-    planner = StaffingPlanner(state)
-
-    class Channel:
-        def __init__(self):
-            self.epoch, self.closed, self.mode = 1, False, mode
-            self._lock = threading.Lock()
-            self._generations = dict.fromkeys(("owned.rules", "peer.rules"), 1)
-            self._owners = {owner: {"revision": "owned"} for owner in self._generations}
-            self._unavailable, self.actions, self.calls = set(), [], []
-            self.after = lambda: None
-
-        def bindings(self, scope):
-            return {owner: ((0, "rule"),) for owner in self._owners}
-
-        def __call__(self, contexts, selections, calls, deadline):
-            assert contexts[0]["initiator"] in ("system", "unknown") and contexts[0]["operation"] == "commit"
-            self.actions.append(contexts[0])
-            self.calls.append(calls)
-            if self.mode == "unavailable":
-                self._unavailable.add("owned.rules")
-                raise RuntimeError("Owned unavailable handler")
-            result = {owner: [{"decision": "allow"} if self.mode == "allow" else
-                              {"decision": "deny", "message": "Owned policy refusal"}] for owner in calls}
-            self.after()
-            return result
-
-    class Guards(RegulationPersonnelAdapter):
-        def __init__(self, channel):
-            RegulationGuards.__init__(self, channel, lambda *args: {"selected": "current"}, "personnel.contract")
-            self.planners, self.feedback = {"staff": planner.contracts}, None
-            self._personnel_operation = threading.Lock()
-
-    channel = Channel()
-    module = ModuleType("owned_staffing_coordinator")
-    module.StaffManager = type(manager)
-    monkeypatch.setitem(sys.modules, module.__name__, module)
-    signing = CallableTarget("staff.sign", module.__name__, ("StaffManager",), "sign_staff", str(inspect.signature(planner.sign)))
-    if callers:
-        targets = tuple(CallableTarget("staffing." + role, module.__name__, ("StaffManager",), method,
-                                      str(inspect.signature(getattr(type(manager), method))))
-                        for role, method in (("onboard", "onboard_joining_team_staff"), ("recover", "ensure_active_teams_have_staff")))
-        class DriverManager:
-            def sign_driver(self, driver):
-                return True
-
-        class Negotiations:
-            def get_record(self, candidate_type: 'str', candidate: 'Any', team_name: 'Optional[str]', *, signer_kind: 'str' = 'team') -> 'Optional[Dict[str, Any]]':
-                return None
-
-        state.personnel_negotiation_manager = Negotiations()
-        module.DriverManager = DriverManager
-        driver = DriverManager()
-        driver.state = state
-        state.driver_manager = driver
-        monkeypatch.setattr(implementation, "DriverContractPlanner", lambda state:
-                            SimpleNamespace(state=state, manager=driver))
-        monkeypatch.setattr(implementation, "driver_target", lambda: CallableTarget(
-            "drivers.sign", module.__name__, ("DriverManager",), "sign_driver", "(self, driver)"))
-        monkeypatch.setattr(implementation, "StaffingPlanner", lambda state: planner)
-        monkeypatch.setattr(implementation, "staff_target", lambda: signing)
-        monkeypatch.setattr(implementation, "staffing_targets", lambda: targets)
-        monkeypatch.setattr(implementation, "personnel_caller_targets", lambda: ())
-        monkeypatch.setattr(implementation, "check_preparation", lambda *args: None)
-        guards = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
-        assert guards.staffing is not None
-        return state, manager, person, channel, guards, guards.staffing
-    guards = Guards(channel)
-    guards.approve(signing)
-    project = guards._projection
-    for owner in channel._owners:
-        guards.register(owner, [CallBinding("staff", "staff.sign", project, refuse_boolean)])
-    return state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
+from tests.hook_manager.staffing_support import staffing_coordinator as coordinator
 
 
 def test_native_staffing_callers_preserve_returns_and_discard_refused_batch(monkeypatch):

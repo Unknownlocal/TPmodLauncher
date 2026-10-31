@@ -142,7 +142,7 @@ def test_installation_reports_complete_personnel_coverage(installation):
 
 def test_late_academy_preflight_failure_leaves_all_personnel_methods_native(installation, monkeypatch):
     from hook_manager.game_adapters.regulations import regulation_personnel, regulation_academy
-    from tests.hook_manager.test_personnel_adapter import owned
+    from tests.hook_manager.negotiation_support import negotiation_state as owned
 
     modules, _, channel, adapters, hooks = installation
     state, _, negotiations, _, _, signing, callers = owned(monkeypatch)

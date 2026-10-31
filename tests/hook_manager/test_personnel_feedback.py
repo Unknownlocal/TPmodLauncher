@@ -9,8 +9,8 @@ import pytest
 
 from hook_manager.game_adapters.personnel.feedback import adapter as feedback
 from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
-from tests.hook_manager.test_personnel_adapter import owned
-from tests.hook_manager.test_personnel_approach import setup as approach_setup
+from tests.hook_manager.negotiation_support import negotiation_state as owned
+from tests.hook_manager.approach_support import approach_setup
 
 
 def screens(monkeypatch):

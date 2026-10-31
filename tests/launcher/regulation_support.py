@@ -11,12 +11,7 @@ from launcher.regulations.validation.dispatch import ValidationDispatch
 
 from mod_runtime.source import SourceManifest
 from tests.source_support import source_snapshot
-
-
-def context():
-    return {"schema": 1, "scope": "personnel.contract", "operation": "commit", "initiator": "player",
-            "clock": {"season": 2026, "absolute_week": 4},
-            "effective": {"season": 2026, "start_week": 4, "end_week": None}, "proposal": {}}
+from tests.regulation_data import contract_context as context
 
 
 def selection(index=0):

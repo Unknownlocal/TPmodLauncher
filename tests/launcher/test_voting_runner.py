@@ -12,17 +12,7 @@ from launcher.regulations.voting_runner import VotingRunner
 from mod_runtime._regulations.policy import decode, encode
 from mod_runtime._regulations.voting import vote_reply
 from regulation_support import context, definitions, selection, validator
-
-
-def inputs(rule="native", *, padding=0):
-    snapshot = {"voting_model_version": 1, "season": 2026, "teams": {"A": {"cash": 10}, "B": {"cash": 20}},
-                "results": [], "field": {"padding": "x" * padding}, "projected_races": 22}
-    regulation = {"key": rule, "current": {"key": "open"}, "proposed": {"key": "closed"}}
-    contexts = [{"schema": 1, "review": "review-2026", "proposal": "proposal-1", "decision_season": 2026,
-                 "effective_season": 2027, "team": team, "seed": "fixed",
-                 "native": {"choice": "current", "reason": "Native evaluation", "score": 7, "components": []}}
-                for team in ("A", "B")]
-    return snapshot, regulation, contexts
+from tests.regulation_data import voting_inputs as inputs
 
 
 def bound(mods, *, validators=None, voting=None):

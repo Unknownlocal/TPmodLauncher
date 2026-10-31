@@ -18,6 +18,7 @@ from mod_runtime._regulations.contexts import RegulationContexts
 from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceManifest
 from tests.source_support import source_snapshot
+from tests.regulation_data import contract_context as context
 
 
 OWNERS = ("a.rules", "b.rules")
@@ -81,12 +82,6 @@ def publish(group, catalog):
                 assert value == {"epoch": 1, "generation": 1, "state": state}
         assert reply(group, "commit-regulation-policy", 1, 1)["state"] == "active"
     catalog.commit()
-
-
-def context(**proposal):
-    return {"schema": 1, "scope": "personnel.contract", "operation": "commit", "initiator": "player",
-            "clock": {"season": 2026, "absolute_week": 4},
-            "effective": {"season": 2026, "start_week": 4, "end_week": None}, "proposal": proposal}
 
 
 def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():

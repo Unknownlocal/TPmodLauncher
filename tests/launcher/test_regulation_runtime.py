@@ -139,7 +139,7 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
             with pytest.raises(ValueError, match="regulation_voting"):
                 runtime.confirm_native({})
             assert not runtime.ready and not menus
-            from test_voting_runner import inputs
+            from tests.regulation_data import voting_inputs as inputs
             snapshot, regulation, contexts = inputs(category["key"])
             client = control_bridge(monkeypatch, lambda operation: {})
             replay = []

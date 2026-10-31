@@ -9,7 +9,7 @@ import pytest
 
 from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.refused_proposals import RefusedProposals
-from tests.hook_manager.test_personnel_adapter import owned
+from tests.hook_manager.negotiation_support import negotiation_state as owned
 
 
 @contextmanager

@@ -10,7 +10,7 @@ import pytest
 
 from hook_manager.game_adapters.regulations.regulation_native_switches import install_regulation_switches
 from hook_manager.game_adapters.regulations.regulation_selection import RegulationSelection
-from tests.hook_manager.test_native_rule_hooks import native
+from tests.hook_manager.native_switch_support import native_switches as native
 
 
 def test_adoption_future_contracts_and_nested_scope_keep_native_checks_owned(native, monkeypatch):

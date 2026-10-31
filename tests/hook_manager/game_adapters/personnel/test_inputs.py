@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.hook_manager.test_personnel_adapter import submitted
-from tests.hook_manager.test_staffing_coordinator import coordinator
+from tests.hook_manager.negotiation_support import submitted_negotiation as submitted
+from tests.hook_manager.staffing_support import staffing_coordinator as coordinator
 
 
 @pytest.mark.parametrize("scenario", ["allow", "cap", "stale_publication"])
