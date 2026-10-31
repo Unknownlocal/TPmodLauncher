@@ -9,6 +9,7 @@ import pytest
 
 from hook_manager.game_adapters.regulations.regulation_voting import RegulationVotingAdapter
 from hook_manager.game_adapters.regulations.regulation_change import RegulationChangeAdapter
+from hook_manager.manager import HookError
 
 
 @pytest.fixture
@@ -99,18 +100,18 @@ def test_saved_electorate_recorded_ballots_and_player_analysis(voting):
 def test_failed_batches_do_not_publish_opening_or_missing_ballots(voting):
     manager, channel, notices, batches, _ = voting
     valid = channel.vote
-    def invalid(*args, **kwargs):
-        return {"A": {"choice": "proposed", "reason": "Incomplete"}}
-    channel.vote = invalid
+    def unavailable(*args, **kwargs):
+        raise HookError("Voting unavailable")
+    channel.vote = unavailable
     manager._open_review(3, 30)
     assert not manager.reviews and not manager.category_last_review and notices
-    assert "Incomplete voting results" in notices[0]["detail"]
+    assert "Voting unavailable" in notices[0]["detail"]
     channel.vote = valid
     manager._open_review(3, 30)
     custom = manager.reviews["review"]["proposals"][1]
     custom["votes"].clear()
     before = deepcopy(custom)
-    channel.vote = invalid
+    channel.vote = unavailable
     manager._resolve_uncontrolled_reviews()
     assert custom == before and len(notices) == 2
 

@@ -11,7 +11,6 @@ import time
 
 from ...callables import CallableTarget
 from ...manager import HookError, Manager
-from .protocol import regulation_votes
 
 
 class RegulationVotingAdapter(Manager):
@@ -179,7 +178,8 @@ class RegulationVotingAdapter(Manager):
                                 ("voting_model_version", "season", "teams", "results", "field", "projected_races")}
                     results = self.channel.vote(snapshot, {"key": category, "current": current, "proposed": proposed},
                                                 contexts, deadline=deadline)
-                    regulation_votes(results, [row["team"] for row in contexts])
+                    # The channel supplies complete, checked ballots. Keep the
+                    # native review inputs current until those ballots are recorded.
                     if (manager is not self.state.formula_regulation_governance
                             or not self.channel.validation_ready or self.channel.closed
                             or electorate != frozen_electorate

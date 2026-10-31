@@ -7,23 +7,29 @@ import time
 
 from .framing import regulation_encode
 
+
+def regulation_native_option(value):
+    """Combine operational fields; each caller still checks values and size limits."""
+    if type(value) is not dict or type(value.get("key")) is not str or not 1 <= len(value["key"]) <= 128:
+        raise ValueError("Invalid effective regulation option")
+    parameters = value.get("parameters", {})
+    if type(parameters) is not dict:
+        raise ValueError("Invalid native regulation parameters")
+    # Saved replacements and synthesised choices may add operational fields.
+    # Preserve those fields while leaving display metadata out of rule data.
+    flat = {key: item for key, item in value.items()
+            if key not in ("id", "key", "name", "summary", "description", "parameters")}
+    if flat.keys() & parameters.keys():
+        raise ValueError("Native flat and explicit parameters collide")
+    flat.update(parameters)
+    return {"key": value["key"], "parameters": flat}
+
+
 def regulation_policy_value(kind, value):
-    """Normalize only native operational data; custom values are admitted keys."""
+    """Normalise native rule data; custom values are admitted keys."""
     if kind == "native":
-        if type(value) is not dict or type(value.get("key")) is not str or not 1 <= len(value["key"]) <= 128:
-            raise ValueError("Invalid effective regulation option")
-        parameters = value.get("parameters", {})
-        if type(parameters) is not dict:
-            raise ValueError("Invalid native regulation parameters")
-        # Saved replacements and synthesized choices may add operational fields.
-        # Keep those fields while excluding display-only definition metadata.
-        flat = {key: item for key, item in value.items()
-                if key not in ("id", "key", "name", "summary", "description", "parameters")}
-        if flat.keys() & parameters.keys():
-            raise ValueError("Native parameter collision")
-        flat.update(parameters)
-        payload = flat
-        value = {"key": value["key"], "parameters": flat}
+        value = regulation_native_option(value)
+        payload = value["parameters"]
     elif kind == "custom" and type(value) is str and 1 <= len(value) <= 128:
         payload = value
     else:

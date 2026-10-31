@@ -175,6 +175,26 @@ def test_invalid_or_expired_replies_close_the_channel_without_retry(monkeypatch,
             future.result(timeout=2)
 
 
+@pytest.mark.parametrize("reply", [
+    {"A": {"choice": "current", "reason": "Valid"}},
+    {"A": {"choice": "current", "reason": "Valid"}, "B": {"choice": "abstain", "reason": "Invalid"}},
+], ids=("missing-team", "invalid-later-vote"))
+def test_vote_reply_is_complete_and_valid_before_leaving_the_channel(reply):
+    metadata = {**METADATA, "owners": {"owned.rules": {
+        **METADATA["owners"]["owned.rules"], "voting": ["native"]}}}
+    wake = threading.Event()
+    with closing(RegulationServer(metadata, wake.set)) as server, ThreadPoolExecutor(max_workers=1) as worker:
+        with closing(RegulationChannel(server.endpoint)) as channel:
+            # Isolate reply admission; pack tests exercise policy publication.
+            channel._generations = {"owned.rules": 1}
+            future = worker.submit(channel.vote, {}, {"key": "native"}, [{"team": "A"}, {"team": "B"}])
+            assert wake.wait(timeout=1)
+            server.poll(lambda message: reply)
+            with pytest.raises(HookError, match="Voting unavailable") as raised:
+                future.result(timeout=1)
+            assert isinstance(raised.value.__cause__, ValueError) and channel.closed
+
+
 def test_unauthenticated_connection_cannot_latch_a_required_owner_or_retain_completed_actions(monkeypatch):
     wake = threading.Event()
     retired, requests, idle_reads = threading.Event(), [], []

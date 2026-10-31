@@ -8,14 +8,13 @@ once. The shared runner retains the installed copies.
 
 from copy import deepcopy
 
+from hook_manager.game_adapters.regulations.protocol import regulation_native_option
 from mod_runtime._regulations.policy import encode
-from mod_runtime._regulations.values import bounded, integer, measure, text
+from mod_runtime._regulations.values import bounded, integer, measure
 from ..definitions import RegulationDefinitions
 from ..shared_handler_runner import ordered_bindings
 from .record import CatalogRecord
 from .view import OwnerView
-
-_PRESENTATION = frozenset(("id", "key", "name", "summary", "description", "parameters"))
 
 
 class CombinedCatalog:
@@ -88,19 +87,9 @@ class CombinedCatalog:
             raise ValueError("A reachable rule needs its complete nonempty choice list")
         result, seen = [], set()
         for option in options:
-            if type(option) is not dict:
-                raise ValueError("Expected an effective native option object")
-            key = text(option["key"], 128)
-            parameters = option.get("parameters", {})
-            if type(parameters) is not dict:
-                raise ValueError("Expected native parameters")
-            flat = {name: value for name, value in option.items() if name not in _PRESENTATION}
-            if flat.keys() & parameters.keys():
-                raise ValueError("Native flat and explicit parameters collide")
-            # Effective objects may be saved replacements or synthesized options.
-            # Preserve unfamiliar operational fields; presentation is excluded.
-            flat.update(parameters)
-            record = self._record(cache, None, rule, key, "parameters", flat)
+            option = regulation_native_option(option)
+            key = option["key"]
+            record = self._record(cache, None, rule, key, "parameters", option["parameters"])
             if (key, record.identity) in seen:
                 raise ValueError("Repeated reachable native choice")
             seen.add((key, record.identity))
