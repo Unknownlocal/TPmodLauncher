@@ -3,6 +3,7 @@
 
 import sys
 from types import ModuleType, SimpleNamespace
+from typing import Dict
 
 import pytest
 
@@ -74,6 +75,43 @@ def screen_for(cls, state, kind):
     screen._draw_clipped = screen._draw_action_buttons = lambda *args, **kwargs: None
     screen._button = lambda *args, **kwargs: None
     screen.get_mouse_canvas_pos = lambda: None
+    screen.window_to_canvas = lambda pos: pos
+    return screen
+
+
+def inbox_screen(monkeypatch, state):
+    screens(monkeypatch)
+    monkeypatch.setattr(feedback, "ui_bindings", lambda cls: feedback.feedback_bindings(cls, "inbox"))
+    module = ModuleType("ui.screens.mailbox_screen")
+
+    class MailboxScreen:
+        def _execute_action(self, action: Dict) -> bool:
+            self.executions += 1
+            if self.error:
+                raise ValueError("Native inbox error")
+            if self.native_refuse:
+                return False
+            ok, _ = self.state.personnel_negotiation_manager.resolve_player_contract_decision(
+                action["decision_id"], action["choice"] == "accept")
+            return bool(ok)
+
+        def handle_event(self, event):
+            if getattr(event, "type", None) == 7:
+                ok = self._execute_action(self.action)
+                self.sounds.append(ok)
+                if ok:
+                    self.action["completed"] = True
+
+        def draw(self, surface):
+            self.draws += 1
+            return "inbox drawn"
+
+    module.MailboxScreen = MailboxScreen
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    screen = MailboxScreen()
+    screen.state, screen.executions, screen.draws, screen.sounds = state, 0, 0, []
+    screen.native_refuse, screen.error = False, False
+    screen.action = {"type": "personnel_contract_decision", "decision_id": "decision", "choice": "accept", "completed": False}
     screen.window_to_canvas = lambda pos: pos
     return screen
 
@@ -212,5 +250,97 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
             assert adapter.owners == {"owned.rules": "ready"}
             monkeypatch.setattr(feedback, "PersonnelNotice", factory)
             adapter.feedback.stop()
+    finally:
+        adapter.stop()
+
+
+@pytest.mark.parametrize("kind", ["driver", "staff"])
+def test_inbox_refusals_keep_approval_pending_and_fresh_failures_do_not_reuse_messages(monkeypatch, kind):
+    state, person, negotiations, _, channel, _, _ = owned(monkeypatch)
+    negotiations.row["candidate_type"] = kind
+    negotiations.pending["decision"]["candidate_name"] = "Candidate"
+    screen = inbox_screen(monkeypatch, state)
+    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
+    try:
+        screen.handle_event(SimpleNamespace(type=7))
+        notice = adapter.feedback.notices[screen]
+        assert notice.dialog.open and notice.reason == "Owned refusal" and notice.candidate == "Candidate"
+        assert screen.executions == 1 and screen.sounds == [False]
+        assert not screen.action["completed"] and "decision" in negotiations.pending and not state.writes
+        screen.handle_event(SimpleNamespace(type=1, key=2))
+        assert not notice.dialog.open and screen.executions == 1
+        screen.native_refuse = True
+        screen.handle_event(SimpleNamespace(type=7))
+        assert notice.reason is None and not notice.dialog.open and not screen.action["completed"]
+        screen.native_refuse = False
+        channel.validation_ready = False
+        screen.handle_event(SimpleNamespace(type=7))
+        assert notice.dialog.open and notice.reason == "Validation unavailable" and not state.writes
+        screen.handle_event(SimpleNamespace(type=1, key=2))
+        channel.validation_ready, channel.mode = True, "allow"
+        screen.handle_event(SimpleNamespace(type=7))
+        assert person.contract is not None and screen.action["completed"] and screen.sounds == [False, False, False, True]
+        assert notice.reason is None and not notice.dialog.open
+        assert getattr(adapter._local, "personnel_screen", None) is None
+    finally:
+        adapter.stop()
+    assert not adapter.feedback.notices
+
+
+def test_inbox_decline_exception_and_retired_wrapper_preserve_the_caller_scope(monkeypatch):
+    state, _, negotiations, _, channel, _, _ = owned(monkeypatch)
+    screen = inbox_screen(monkeypatch, state)
+    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
+    try:
+        # A native decline may try another offer. Its denial is not an acceptance refusal.
+        adapter._local.personnel_screen = screen
+        assert screen._execute_action(dict(screen.action, choice="decline"))
+        notice = adapter.feedback.notices[screen]
+        assert not notice.dialog.open and state.writes == ["backup"]
+        assert adapter._local.personnel_screen is screen
+        screen.error = True
+        before = screen.executions
+        with pytest.raises(ValueError, match="Native inbox error"):
+            screen._execute_action(screen.action)
+        assert screen.executions == before + 1 and adapter._local.personnel_screen is screen
+        assert adapter.feedback.groups["personnel.ui.inbox"]["state"] == "active"
+        adapter._local.personnel_screen = None
+        screen.error = False
+        negotiations.pending["decision"] = {"status": "pending"}
+        retained = screen._execute_action
+        adapter.feedback.stop()
+        assert not retained(screen.action) and not adapter.feedback.notices
+        assert adapter.owners == {"owned.rules": "ready"}
+    finally:
+        adapter.stop()
+
+
+def test_inbox_presentation_failure_keeps_validation_and_native_results(monkeypatch):
+    state, _, _, _, channel, _, _ = owned(monkeypatch)
+    screen = inbox_screen(monkeypatch, state)
+    reports = []
+    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, submit_log=reports.append).install_prepared()
+    try:
+        screen.handle_event(SimpleNamespace(type=7))
+        notice = adapter.feedback.notices[screen]
+        def failed_draw(*args, **kwargs):
+            raise RuntimeError("Inbox presentation failed")
+        monkeypatch.setattr(notice.dialog, "draw", failed_draw)
+        before = screen.draws
+        retained = screen.draw
+        assert retained(None) == "inbox drawn" and screen.draws == before + 1
+        assert adapter.feedback.groups["personnel.ui.inbox"]["state"] == "failed"
+        assert not adapter.feedback.notices and adapter.owners == {"owned.rules": "ready"}
+        assert len(reports) == 1 and all(group["state"] == "active" for group in adapter.groups.values())
+        assert retained(None) == "inbox drawn" and len(reports) == 1
+        # A failure while recording a refusal must also leave the actual refusal intact.
+        adapter.feedback.stop()
+        adapter.feedback = feedback.PersonnelFeedback(adapter, state, reports.append)
+        screen.draw(None)
+        notice = adapter.feedback.notices[screen]
+        monkeypatch.setattr(notice, "refuse", failed_draw)
+        assert not screen._execute_action(screen.action)
+        assert not adapter.feedback.notices and adapter.owners == {"owned.rules": "ready"}
+        assert not state.writes and not screen.action["completed"]
     finally:
         adapter.stop()

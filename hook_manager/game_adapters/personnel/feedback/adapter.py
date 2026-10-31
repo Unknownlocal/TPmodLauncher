@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Attach optional feedback when native negotiation screens import normally."""
+"""Attach optional personnel feedback when native screens import normally."""
 
 from ....diagnostics import build_log_record
 
@@ -11,6 +11,8 @@ from ....callables import CallableTarget
 from ....manager import Manager
 from .bindings import feedback_bindings
 from .notice import PersonnelNotice
+from .inbox_notice import InboxNotice
+from ...ui import ui_bindings
 
 
 class PersonnelFeedback(Manager):
@@ -23,6 +25,10 @@ class PersonnelFeedback(Manager):
         for kind in guards.planners if kinds is None else kinds:
             module = "ui.screens." + kind + "_negotiation_screen"
             self.observe(module, lambda module, kind=kind: self._ready(kind, module))
+        if kinds is None:
+            # Only contract feedback owns inbox approvals; approach checks do
+            # not sign agreements or require a mailbox integration.
+            self.observe("ui.screens.mailbox_screen", lambda module: self._ready("inbox", module))
 
     def store_error(self, error):
         """Retain a feedback failure and submit its compatibility warning."""
@@ -31,10 +37,12 @@ class PersonnelFeedback(Manager):
                     + "; feedback integration skipped; signing guards remain active", error=error, component="regulations"))
 
     def _ready(self, kind, module):
-        screen = getattr(module, kind.title() + "NegotiationScreen")
-        self.ui[kind] = feedback_bindings(screen, kind)
+        screen = getattr(module, "MailboxScreen" if kind == "inbox" else kind.title() + "NegotiationScreen")
+        self.ui[kind] = ui_bindings(screen) if kind == "inbox" else feedback_bindings(screen, kind)
         methods = [("event", "handle_event", "(self, event)"), ("draw", "draw", "(self, surface)")]
-        if kind == "staff":
+        if kind == "inbox":
+            methods.append(("execute", "_execute_action", "(self, action: Dict) -> bool"))
+        elif kind == "staff":
             methods.append(("approach", "_confirm_begin_approach", "(self)"))
         else:
             methods.append(("approach_failure", "_show_approach_failure",
@@ -48,8 +56,20 @@ class PersonnelFeedback(Manager):
         return True
 
     def refuse(self, screen, message):
-        if screen in self.notices:
-            self.notices[screen].refuse(message)
+        notice = self.notices.get(screen)
+        if notice is not None:
+            try:
+                notice.refuse(message)
+            except Exception as error:
+                # Presentation failure must not replace the signing refusal.
+                self._disable("personnel.ui." + notice.kind, error)
+
+    def _disable(self, name, error=None):
+        """Restore a screen's hooks and discard its retained presentation state."""
+        super()._disable(name, error)
+        for screen, notice in tuple(self.notices.items()):
+            if name == "personnel.ui." + notice.kind:
+                del self.notices[screen]
 
     def _wrapper(self, name, binding, target, original, signature):
         kind, role = target.name.split(".")[-2:]
@@ -75,11 +95,12 @@ class PersonnelFeedback(Manager):
             notice = self.notices.get(screen)
             if notice is None:
                 try:
-                    notice = self.notices[screen] = PersonnelNotice(self.ui[kind], kind)
+                    notice = self.notices[screen] = (InboxNotice(self.ui[kind]) if kind == "inbox"
+                                                   else PersonnelNotice(self.ui[kind], kind))
                 except Exception as error:
                     self._disable(name, error)
                     return original(*args, **kwargs)
-            if role in ("draw", "approach"):
+            if role in ("draw", "approach", "execute"):
                 # Distinguish native exceptions from presentation failures. Before
                 # native starts we can fall back; after it returns we keep its
                 # result. A native error propagates and native is never retried.
@@ -93,8 +114,11 @@ class PersonnelFeedback(Manager):
                     return result
 
                 try:
-                    return (notice.draw(screen, bound.arguments["surface"], native) if role == "draw"
-                            else notice.confirm_approach(screen, native))
+                    if role == "draw":
+                        return notice.draw(screen, bound.arguments["surface"], native)
+                    if role == "execute":
+                        return notice.execute(screen, bound.arguments["action"], native, self.guards._local)
+                    return notice.confirm_approach(screen, native)
                 except Exception as error:
                     if started and not completed:
                         raise
@@ -105,6 +129,10 @@ class PersonnelFeedback(Manager):
                     return None
             except Exception as error:
                 self._disable(name, error)
+                return original(*args, **kwargs)
+            if kind == "inbox":
+                # The action wrapper scopes the particular approval. The whole
+                # inbox event can contain unrelated actions and has no message field.
                 return original(*args, **kwargs)
             previous = getattr(self.guards._local, "personnel_screen", None)
             # Only this player event associates a refusal with a screen. AI and

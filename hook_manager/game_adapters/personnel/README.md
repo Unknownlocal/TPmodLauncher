@@ -69,6 +69,14 @@ retain native candidate selection.
 refusal dialogs and retain the reason in the scrollable Latest Response panel.
 Its screen wrappers are separate from signing checks.
 
+Inbox contract approvals use the same refusal callback. `InboxNotice` shows the
+reason and candidate in the shared dialog while the agreement remains pending.
+Only the current Accept action receives that feedback; declining and trying
+backup offers keep their normal handling. The inbox retains its own action
+results and sound cues. Dialog input stays within the dialog until it closes.
+Screen compatibility failures disable only that screen's optional feedback;
+contract validation remains active.
+
 Staff approach failures reuse that dialog with approach-specific wording while
 keeping native inline text and error sound. The adapter observes the native
 confirmation's outcome only during that call; it restores the sound helper
