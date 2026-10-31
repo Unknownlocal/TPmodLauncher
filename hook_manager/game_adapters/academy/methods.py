@@ -5,6 +5,8 @@ import inspect
 import sys
 
 from ...callables import method_group
+from ..native_methods import native_signatures, GAME_STATE
+from .native_methods import ACADEMY
 from ...manager import HookError
 from .targets import academy_targets
 
@@ -12,15 +14,8 @@ from .targets import academy_targets
 # These helpers read source data or copy a single contract record.
 # Do not use ensure_team_state: it normalizes live academy lists and dictionaries.
 _ACADEMY_METHODS = {
-    'academy': {
-        '_seasons_until_age_cap': '(self, driver) -> int',
-        'signing_cost_m': '(self, driver) -> float',
-        'contract_for': '(self, driver_name: str) -> Optional[Dict]',
-    },
-    'state': {
-        '_team_record': '(self, name)',
-        'current_season_start_week': '(self)',
-    },
+    'academy': native_signatures(ACADEMY, '_seasons_until_age_cap signing_cost_m contract_for'),
+    'state': native_signatures(GAME_STATE, '_team_record current_season_start_week'),
 }
 
 

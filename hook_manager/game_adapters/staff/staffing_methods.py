@@ -4,45 +4,24 @@
 import sys
 
 from ...callables import method_group
+from ..native_methods import native_signatures
+from .native_methods import STAFF
 from ...manager import HookError
 from .methods import _STAFF_GROUPS
-from .targets import staffing_targets
 
 
 # These methods run on a private manager. Ranking and name-pool helpers only read
 # borrowed data; generation and signing write newly created or selected people.
-# Compatibility checks call shapes, while native conformance checks these writes.
-_STAFFING_METHODS = {
-    **{target.attribute: target.signature for target in staffing_targets()},
-    '_create_free_staff_for_role': "(self, role: 'str', rng: 'random.Random') -> 'Staff'",
-    '_generate_skill_profile': "(self, role: 'str', rng: 'random.Random') -> 'Dict[str, int]'",
-    '_generate_talent_profile': "(self, skills: 'Dict[str, int]', rng: 'random.Random') -> 'Dict[str, int]'",
-    '_adjust_profile_to_total': "(self, profile: 'Dict[str, int]', target_total: 'int', rng: 'random.Random') -> 'Dict[str, int]'",
-    '_unique_staff_identity': "(self, rng: 'random.Random') -> 'Tuple[str, str]'",
-    '_next_staff_id': "(self, reserved: 'Optional[Set[str]]' = None) -> 'str'",
-    '_refresh_cached_skill': "(self, staff: 'Staff') -> 'None'",
-    'set_team': "(self, staff: 'Staff', team_name: 'Optional[str]')",
-    'role_skill_keys': "(role: 'str') -> 'List[str]'",
-    '_normalize_skill_profile': "(self, role: 'str', raw_skills: 'Any', fallback_skill: 'int') -> 'Dict[str, int]'",
-    '_normalize_talent_profile': "(self, role: 'str', raw_talent: 'Any', skills: 'Dict[str, int]') -> 'Dict[str, int]'",
-    '_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
-    '_staff_talent_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
-    '_effective_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
-    '_morale_skill_delta': "(self, staff: 'Staff') -> 'float'",
-    'morale': "(self, staff: 'Staff') -> 'float'",
-    '_clamp_score': "(value: 'Any', default: 'float' = 50.0) -> 'float'",
-    'average_skill': "(self, staff: 'Staff') -> 'float'",
-    'average_skill_int': "(self, staff: 'Staff') -> 'int'",
-    'overall_skill': "(self, staff: 'Staff') -> 'int'",
-    'raw_average_skill': "(self, staff: 'Staff') -> 'float'",
-    'raw_average_skill_int': "(self, staff: 'Staff') -> 'int'",
-    'expected_salary': "(self, staff: 'Staff') -> 'float'",
-    'staff_team_next_season': "(self, staff: 'Staff') -> 'Optional[str]'",
-    'staff_contracted_next_season': "(self, team_name: 'str', role: 'str') -> 'bool'",
-    'add_staff_effect': "(self, staff: 'Staff', amount: 'float', weeks: 'int', reason: 'str', category: 'str' = '') -> 'None'",
-    '_dedupe_staff_effects': "(self, effects: 'Any', fallback: 'str' = 'staff_morale') -> 'List[Dict[str, Any]]'",
-    '_effect_key': "(effect: 'Dict[str, Any]', fallback: 'str' = '') -> 'str'",
-}
+_STAFFING_METHODS = native_signatures(STAFF, (
+    'onboard_joining_team_staff ensure_active_teams_have_staff _create_free_staff_for_role '
+    '_generate_skill_profile _generate_talent_profile _adjust_profile_to_total '
+    '_unique_staff_identity _next_staff_id _refresh_cached_skill set_team role_skill_keys '
+    '_normalize_skill_profile _normalize_talent_profile _staff_skill_map _staff_talent_map '
+    '_effective_staff_skill_map _morale_skill_delta morale _clamp_score average_skill '
+    'average_skill_int overall_skill raw_average_skill raw_average_skill_int expected_salary '
+    'staff_team_next_season staff_contracted_next_season add_staff_effect _dedupe_staff_effects '
+    '_effect_key'
+))
 
 
 def staffing_methods(manager):

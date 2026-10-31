@@ -6,7 +6,8 @@ from contextlib import nullcontext
 
 from ...callables import method_group
 from ...manager import HookError
-from .caller_targets import PERSONNEL_MAIL_SIGNATURE
+from ..native_methods import native_signatures
+from .native_methods import EMAIL
 from .market_graph import MarketGraph
 from .market_mail import MarketMail
 
@@ -29,7 +30,7 @@ class MarketPreparation:
             if (mail.state is not state or type(mail.inbox) is not list
                     or type(mail.urgent_sound_serial) is not int):
                 raise HookError("Personnel mailbox storage is unavailable")
-            method_group(mail, {"send_email": PERSONNEL_MAIL_SIGNATURE})
+            method_group(mail, native_signatures(EMAIL, "send_email"))
         relationships = getattr(state, "relationship_manager", None)
         if callable(getattr(relationships, "adjust_market_team_relationship", None)):
             method_group(relationships, {"adjust_market_team_relationship": "(self, driver_name: 'str', team_name: 'str', amount: 'int', reason: 'str' = '') -> 'int'"})

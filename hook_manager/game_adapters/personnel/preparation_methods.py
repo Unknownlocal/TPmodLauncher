@@ -2,46 +2,29 @@
 """Check helpers whose lazy initialization must stay private before signing."""
 
 from ...callables import method_group
+from ..native_methods import native_signatures
+from .native_methods import PERSONNEL, PRESTIGE
+from ..staff.native_methods import STAFF
+from ..drivers.native_methods import DRIVER
 from .market_preparation import MarketPreparation
 
 
-# Check both driver and staff preparation. Runtime compatibility uses signatures;
-# native behaviour is checked separately in developer conformance work.
 _PREPARATION_GROUPS = {
-    'personnel_negotiation_manager': {
-        '_normalize_ai_rookie_offer_duration': "(self, row: 'Dict[str, Any]', driver: 'Any' = None) -> 'None'",
-        '_candidate_already_committed': "(self, candidate_type: 'str', candidate: 'Any') -> 'bool'",
-        '_prestige_eligible': "(self, row: 'Dict[str, Any]', candidate: 'Any') -> 'bool'",
-        'player_contract_decision_accept_block_reason': "(self, decision_id: 'str', team_name: 'Optional[str]' = None) -> 'Optional[str]'",
-    },
-    'driver_negotiation': {
-        'driver_contract_block_reason': "(self, team_name: 'str', driver: 'Any', role: 'str', priority: 'str', contract_start_week: 'int', *, entry_id: 'Optional[str]' = None, years: 'int' = 1, check_seat: 'bool' = True, check_prestige: 'bool' = True) -> 'Optional[str]'",
-    },
-    'staff_manager': {
-        'staff_team_next_season': "(self, staff: 'Staff') -> 'Optional[str]'",
-        'staff_contracted_next_season': "(self, team_name: 'str', role: 'str') -> 'bool'",
-        'required_prestige': "(self, staff: 'Staff') -> 'int'",
-        'average_skill': "(self, staff: 'Staff') -> 'float'",
-        '_effective_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
-        '_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
-        '_morale_skill_delta': "(self, staff: 'Staff') -> 'float'",
-        'morale': "(self, staff: 'Staff') -> 'float'",
-        '_clamp_score': "(value: 'Any', default: 'float' = 50.0) -> 'float'",
-        '_normalize_skill_profile': "(self, role: 'str', raw_skills: 'Any', fallback_skill: 'int') -> 'Dict[str, int]'",
-        'role_skill_keys': "(role: 'str') -> 'List[str]'",
-    },
-    'driver_manager': {
-        'refresh_driver_career_stage': '(self, driver: managers.driver.Driver, *, allow_regression: bool = False) -> str',
-        'evaluate_career_stage': '(self, driver: managers.driver.Driver) -> str',
-        '_driver_career_totals': '(self, driver: managers.driver.Driver) -> Dict[str, int]',
-        '_career_requirement_met': '(self, requirement: str, totals: Dict[str, int]) -> bool',
-        'get_season_history': '(self, name: str, *, include_poles: bool = True) -> List[Dict[str, Any]]',
-        '_main_series_poles_by_season': '(self, driver_name: str) -> Dict[int, int]',
-    },
-    'prestige_manager': {
-        'ensure_team_state': '(self, team: Dict[str, Any]) -> managers.prestige_manager.TeamPrestigeState',
-        '_write_team_state': '(self, team: Dict[str, Any], state: managers.prestige_manager.TeamPrestigeState) -> None',
-    },
+    'personnel_negotiation_manager': native_signatures(PERSONNEL, (
+        '_normalize_ai_rookie_offer_duration _candidate_already_committed _prestige_eligible '
+        'player_contract_decision_accept_block_reason'
+    )),
+    'driver_negotiation': native_signatures(PERSONNEL, 'driver_contract_block_reason'),
+    'staff_manager': native_signatures(STAFF, (
+        'staff_team_next_season staff_contracted_next_season required_prestige average_skill '
+        '_effective_staff_skill_map _staff_skill_map _morale_skill_delta morale _clamp_score '
+        '_normalize_skill_profile role_skill_keys'
+    )),
+    'driver_manager': native_signatures(DRIVER, (
+        'refresh_driver_career_stage evaluate_career_stage _driver_career_totals _career_requirement_met '
+        'get_season_history _main_series_poles_by_season'
+    )),
+    'prestige_manager': native_signatures(PRESTIGE, 'ensure_team_state _write_team_state'),
 }
 
 

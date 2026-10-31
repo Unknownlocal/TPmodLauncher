@@ -2,35 +2,23 @@
 """Check the call signatures used by private academy AI preparation."""
 
 from ...callables import method_group
+from ..native_methods import native_signatures, BASE_SCREEN
+from .native_methods import ACADEMY
+from ..drivers.native_methods import DRIVER
 from ...manager import HookError
 import sys
 
 
 _PREPARATION_METHODS = {
-    # These native queries run on the private AI view. Check their public call
-    # shapes once; changed implementations with matching signatures stay supported.
-    'academy': {
-        'ensure_team_state': '(self, team: Dict) -> Dict',
-        'max_slots': '(self, team_or_name: Union[str, Dict]) -> int',
-        'is_eligible': '(self, driver) -> bool',
-        '_has_main_series_history': '(self, driver) -> bool',
-        'academy_owner': '(self, driver_name: str) -> Optional[str]',
-        '_ai_candidate_pool': '(self) -> List',
-        '_ai_meets_thresholds': '(self, team: Dict) -> bool',
-        '_team_prestige_value': '(self, team: Dict) -> float',
-        'max_renew_years': '(self, driver_name: str, season: int) -> int',
-        'seasons_remaining': '(self, contract: Optional[Dict], season: int) -> int',
-    },
-    'driver': {
-        'active_contract': '(self, driver: managers.driver.Driver, week: Optional[int] = None) -> Optional[Dict[str, Any]]',
-        'normalize_contract_status': '(self, contract: Any) -> Any',
-        'is_structurally_valid_contract': '(contract: Any) -> bool',
-        'driver_overall': '(self, driver: managers.driver.Driver) -> float',
-        'get_season_history': '(self, name: str, *, include_poles: bool = True) -> List[Dict[str, Any]]',
-    },
-    'ui': {
-        'fit_text': "(text, font, max_width, *, suffix='...')",
-    },
+    'academy': native_signatures(ACADEMY, (
+        'ensure_team_state max_slots is_eligible _has_main_series_history academy_owner '
+        '_ai_candidate_pool _ai_meets_thresholds _team_prestige_value max_renew_years seasons_remaining'
+    )),
+    'driver': native_signatures(DRIVER, (
+        'active_contract normalize_contract_status is_structurally_valid_contract driver_overall '
+        'get_season_history'
+    )),
+    'ui': native_signatures(BASE_SCREEN, 'fit_text'),
 }
 
 

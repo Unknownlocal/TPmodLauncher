@@ -5,6 +5,8 @@ import inspect
 import sys
 
 from ...callables import method_group
+from ..native_methods import native_signatures, GAME_STATE
+from .native_methods import DRIVER, DRIVER_MODULE, FORMULA_ENTRIES
 from ...manager import HookError
 from .targets import driver_target
 
@@ -12,44 +14,22 @@ from .targets import driver_target
 # Signing delegates date/capacity/status queries to these named helpers. Check
 # their call signatures too, without pinning their bodies or private locals.
 _DRIVER_GROUPS = {
-    'driver': {
-        'current_reserve_cover_weeks': '(self, team_name, driver, role, contract_start_week)',
-        'active_contract': '(self, driver: managers.driver.Driver, week: Optional[int] = None) -> Optional[Dict[str, Any]]',
-        'active_driver_count': "(self, team_name: str, role: str = 'main', week: Optional[int] = None) -> int",
-        'drivers_contracted_next_season': "(self, team_name: str, role: str = 'main') -> int",
-        'driver_role_contract_limit': '(self, team_name: str, role: str, *, season_no=None, week=None) -> int',
-        'driver_team_next_season': '(self, driver: managers.driver.Driver) -> Optional[str]',
-        'normalize_contract_status': '(self, contract: Any) -> Any',
-        'driver_overall': '(self, driver: managers.driver.Driver) -> float',
-        '_contract_covers_week': '(self, contract: Dict[str, Any], week: int) -> bool',
-        '_set_contract_status': '(self, contract: Dict[str, Any], status: Any) -> None',
-        '_next_season_main_contract_entries': '(self, team_name: str) -> List[Tuple[managers.driver.Driver, Dict[str, Any]]]',
-        'normalize_ai_team_hierarchy': '(self, team_name: str) -> None',
-        'ensure_main_status_consistency': '(self, team_name: str, week: int, *, apply_effects: bool = False) -> None',
-        'contract_status_at_week': '(self, contract: Any, week: Optional[int] = None) -> str',
-        '_schedule_contract_status_change': "(self, driver: managers.driver.Driver, contract: Dict[str, Any], new_status: Any, start_week: int, *, reason: str = 'Status changed by teammate signing', category: str = 'status_reconciliation', apply_effects: bool = True) -> bool",
-        'reconcile_player_main_statuses': '(self, team_name: str, signed_driver: managers.driver.Driver, signed_contract: Dict[str, Any], start_week: int) -> None',
-        '_compatible_teammate_status': '(status: Any) -> str',
-    },
-    'state': {
-        'current_season_start_week': '(self)',
-        'next_season_start': '(self)',
-    },
-    'globals': {
-        'canonical_driver_status': '(value: Any) -> str',
-        'normalize_driver_contract_status': '(contract: Any) -> Any',
-        'driver_contract_capacity': "(manager, team_name, role='main', *, week=None)",
-        'formula_statuses_valid': '(statuses, capacity)',
-    },
-    'entries': {
-        '_int': '(value, default=0)',
-        'is_formula': '(state)',
-        'team_entry_count': '(team, season_no=None, current_season=1)',
-        'entry_rule_profile': '(state, season_no=None)',
-        'entry_count_for_season': '(state, team_name, season_no=None)',
-        'entry_count_for_week': '(state, team_name, week)',
-        'next_entry_count': '(state, team_name)',
-    },
+    'driver': native_signatures(DRIVER, (
+        'current_reserve_cover_weeks active_contract active_driver_count drivers_contracted_next_season '
+        'driver_role_contract_limit driver_team_next_season normalize_contract_status driver_overall '
+        '_contract_covers_week _set_contract_status _next_season_main_contract_entries '
+        'normalize_ai_team_hierarchy ensure_main_status_consistency contract_status_at_week '
+        '_schedule_contract_status_change reconcile_player_main_statuses _compatible_teammate_status'
+    )),
+    'state': native_signatures(GAME_STATE, 'current_season_start_week next_season_start'),
+    'globals': native_signatures(DRIVER_MODULE, (
+        'canonical_driver_status normalize_driver_contract_status driver_contract_capacity '
+        'formula_statuses_valid'
+    )),
+    'entries': native_signatures(FORMULA_ENTRIES, (
+        '_int is_formula team_entry_count entry_rule_profile entry_count_for_season entry_count_for_week '
+        'next_entry_count'
+    )),
 }
 
 

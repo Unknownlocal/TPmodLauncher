@@ -5,6 +5,8 @@ import inspect
 import sys
 
 from ...callables import method_group
+from ..native_methods import native_signatures, GAME_STATE
+from .native_methods import STAFF
 from ...manager import HookError
 from .targets import staff_target
 
@@ -12,18 +14,11 @@ from .targets import staff_target
 # These helpers read employer eligibility and season dates without changing
 # live records. Check their exposed signatures before preparing terms.
 _STAFF_GROUPS = {
-    'staff': {
-        'normalize_role': "(role: 'Optional[str]') -> 'str'",
-        'team_can_sign_role': "(self, team_name: 'str', role: 'str') -> 'bool'",
-        'supplier_can_sign_role': "(self, supplier_id: 'str', role: 'str') -> 'bool'",
-        '_team_engine_plant_level': "(self, team_name: 'str') -> 'int'",
-        '_supplier_by_id': "(self, supplier_id: 'str')",
-        'team_has_active_staff': "(self, team_name: 'str', role: 'str', week: 'Optional[int]' = None) -> 'bool'",
-    },
-    'state': {
-        'current_season_start_week': '(self)',
-        'next_season_start': '(self)',
-    },
+    'staff': native_signatures(STAFF, (
+        'normalize_role team_can_sign_role supplier_can_sign_role _team_engine_plant_level '
+        '_supplier_by_id team_has_active_staff'
+    )),
+    'state': native_signatures(GAME_STATE, 'current_season_start_week next_season_start'),
 }
 
 

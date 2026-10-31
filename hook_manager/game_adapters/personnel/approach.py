@@ -4,7 +4,9 @@
 from copy import copy
 import inspect
 
-from ...callables import CallableTarget, method_group
+from ...callables import method_group
+from ..native_methods import native_signatures, native_target
+from .native_methods import PERSONNEL
 from ...manager import HookError
 from ..employment import employer_identity, person_identity
 from ..drivers.methods import driver_methods
@@ -15,9 +17,7 @@ from ..staff.methods import staff_methods
 class PersonnelApproach:
     """Own the native approach mapping and its small, read-only description."""
 
-    target = CallableTarget("personnel.approach", "managers.personnel_negotiation_manager",
-        ("PersonnelNegotiationManager",), "begin_approach",
-        "(self, candidate_type: 'str', candidate: 'Any', team_name: 'str', *, signer_kind: 'str' = 'team', context: 'Optional[Dict[str, Any]]' = None, initiated_by: 'str' = 'player') -> 'Tuple[bool, str, Optional[Dict[str, Any]]]'")
+    target = native_target(PERSONNEL, "personnel.approach", "begin_approach")
 
     def __init__(self, state):
         self.state, self.manager = state, state.personnel_negotiation_manager
@@ -28,9 +28,7 @@ class PersonnelApproach:
                 or self.manager.state is not state
                 or inspect.getattr_static(self.manager, "begin_approach") is not resolved[2]):
             raise HookError("Approach needs the mapped native manager entry point")
-        self.start = method_group(self.manager, {
-            "_default_target_contract_start_week": "(self, candidate_type: 'str', candidate: 'Any', team_name: 'str', *, signer_kind: 'str', context: 'Dict[str, Any]') -> 'int'",
-        })["_default_target_contract_start_week"][0]
+        self.start = method_group(self.manager, native_signatures(PERSONNEL, '_default_target_contract_start_week'))["_default_target_contract_start_week"][0]
         self.drivers = driver_methods(state)
         # Staff date helpers read live data without writes; check their
         # compatibility but retain no unused copy of their function map.

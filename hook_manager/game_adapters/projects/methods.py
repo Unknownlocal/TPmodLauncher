@@ -4,59 +4,30 @@
 import inspect
 
 from ...callables import method_group
+from ..native_methods import native_signatures, GAME_STATE
+from .native_methods import AERO, CHASSIS, ERS
 from .targets import project_targets
 
 
 # Check native arguments, defaults and annotations while allowing changes
 # to method implementations.
 _GROUPS = {
-    'aero': {
-        '_absolute_week': "(self) -> 'int'",
-        'budget_options': "(self, project_type: 'str' = 'development') -> 'Dict[str, Dict[str, float]]'",
-        'default_budget_key': "(self) -> 'str'",
-        '_sanitize_budget_key': "(self, raw_key: 'Optional[str]', project_type: 'str' = 'development', legacy_weekly: 'Optional[float]' = None) -> 'str'",
-        '_budget_meta': "(self, budget_key: 'Optional[str]', project_type: 'str' = 'development') -> 'Dict[str, float]'",
-        '_staff_capacity': "(self, team: 'Dict') -> 'int'",
-        'staff_in_use': "(self, team: 'Dict', exclude_part: 'Optional[str]' = None) -> 'int'",
-        'available_staff': "(self, team: 'Dict', part_key: 'Optional[str]' = None) -> 'int'",
-        'technical_staff_capacity': "(self, team: 'Dict') -> 'int'",
-        'available_technical_staff': "(self, team: 'Dict', part_key: 'Optional[str]' = None) -> 'int'",
-        '_clamp_staff': "(self, team: 'Dict', staff: 'int', part_key: 'Optional[str]' = None) -> 'int'",
-        '_clamp_technical_staff': "(self, team: 'Dict', staff: 'int', part_key: 'Optional[str]' = None) -> 'int'",
-        '_project_store': "(self, team: 'Dict') -> 'Dict[str, Optional[Dict]]'",
-    },
-    'chassis': {
-        '_absolute_week': '(self) -> int',
-        'staff_capacity': '(self, team: Dict) -> int',
-        'cfd_capacity': '(self, team: Dict) -> int',
-        'technical_staff_capacity': '(self, team: Dict) -> int',
-        '_upkeep_staff_factor': '(self, team: Dict, building: str) -> float',
-        'effective_staff_capacity': '(self, team: Dict) -> int',
-        'effective_cfd_capacity': '(self, team: Dict) -> int',
-        'effective_technical_staff_capacity': '(self, team: Dict) -> int',
-        'technical_staff_in_use': '(self, team: Dict, *, exclude_group: Optional[str] = None, exclude_key: Optional[str] = None) -> int',
-        'technical_staff_available': '(self, team: Dict, *, exclude_group: Optional[str] = None, exclude_key: Optional[str] = None) -> int',
-        'chassis_staff_in_use': '(self, team: Dict, exclude: Optional[str] = None) -> int',
-        '_project_store': '(self, team: Dict) -> Dict[str, Optional[Dict]]',
-        '_available_staff': '(self, team: Dict, project_type: str) -> int',
-        '_clamp_staff': '(self, team: Dict, project_type: str, staff: int) -> int',
-        '_clamp_technical_staff': '(self, team: Dict, project_type: str, staff: int) -> int',
-        '_sanitize_budget_key': '(self, raw_key) -> str',
-        '_default_budget_option': '(self) -> Dict',
-        '_default_budget_options': '(self) -> Dict[str, Dict]',
-        '_budget_amount_for_project_type': '(meta: Dict, project_type: str) -> float',
-        '_sanitize_current_package_key': '(self, raw_key) -> str',
-        '_canonical_current_package_key': '(self, raw_key) -> str',
-        '_current_package_budget_multiplier': '(self, project: Dict, package_key: Optional[str] = None) -> float',
-        '_is_spec_b_chassis_package_key': '(self, package_key: object) -> bool',
-    },
-    'ers': {
-        'is_open': "(self) -> 'bool'",
-        'regulation_mode': "(self) -> 'str'",
-    },
-    'state': {
-        'get_hq_upkeep_pct': '(self, team: Dict[str, Any], building: str, default: float = 1.0) -> float',
-    },
+    'aero': native_signatures(AERO, (
+        '_absolute_week budget_options default_budget_key _sanitize_budget_key _budget_meta '
+        '_staff_capacity staff_in_use available_staff technical_staff_capacity available_technical_staff '
+        '_clamp_staff _clamp_technical_staff _project_store'
+    )),
+    'chassis': native_signatures(CHASSIS, (
+        '_absolute_week staff_capacity cfd_capacity technical_staff_capacity _upkeep_staff_factor '
+        'effective_staff_capacity effective_cfd_capacity effective_technical_staff_capacity '
+        'technical_staff_in_use technical_staff_available chassis_staff_in_use _project_store '
+        '_available_staff _clamp_staff _clamp_technical_staff _sanitize_budget_key '
+        '_default_budget_option _default_budget_options _budget_amount_for_project_type '
+        '_sanitize_current_package_key _canonical_current_package_key _current_package_budget_multiplier '
+        '_is_spec_b_chassis_package_key'
+    )),
+    'ers': native_signatures(ERS, 'is_open regulation_mode'),
+    'state': native_signatures(GAME_STATE, 'get_hq_upkeep_pct'),
 }
 
 

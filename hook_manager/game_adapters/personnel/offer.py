@@ -5,6 +5,8 @@ import inspect
 import math
 
 from ...callables import method_group
+from ..native_methods import native_signatures
+from .native_methods import PERSONNEL
 from ...manager import HookError, data_copy
 from ..employment import BONUS_KEYS
 
@@ -14,9 +16,7 @@ class PersonnelOffer:
 
     def __init__(self, state, planners):
         self.planners = planners
-        self.record = method_group(state.personnel_negotiation_manager, {
-            "get_record": "(self, candidate_type: 'str', candidate: 'Any', team_name: 'Optional[str]', *, signer_kind: 'str' = 'team') -> 'Optional[Dict[str, Any]]'",
-        })["get_record"][0]
+        self.record = method_group(state.personnel_negotiation_manager, native_signatures(PERSONNEL, 'get_record'))["get_record"][0]
         self.signatures = {kind: inspect.signature(getattr(type(planner.manager), "sign_" + kind))
                            for kind, planner in planners.items()}
 

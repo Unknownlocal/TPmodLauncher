@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Fixed native method definitions used by staff integrations."""
+
+from ..native_methods import define_methods
+
+
+STAFF = define_methods('managers.staff_manager', 'StaffManager', {
+    'normalize_role': "(role: 'Optional[str]') -> 'str'",
+    'team_can_sign_role': "(self, team_name: 'str', role: 'str') -> 'bool'",
+    'supplier_can_sign_role': "(self, supplier_id: 'str', role: 'str') -> 'bool'",
+    '_team_engine_plant_level': "(self, team_name: 'str') -> 'int'",
+    '_supplier_by_id': "(self, supplier_id: 'str')",
+    'team_has_active_staff': "(self, team_name: 'str', role: 'str', week: 'Optional[int]' = None) -> 'bool'",
+    'onboard_joining_team_staff': "(self, team_name: 'str', *, contract_years: 'int' = 1) -> 'List[str]'",
+    'ensure_active_teams_have_staff': "(self, roles: 'Optional[List[str]]' = None) -> 'None'",
+    '_create_free_staff_for_role': "(self, role: 'str', rng: 'random.Random') -> 'Staff'",
+    '_generate_skill_profile': "(self, role: 'str', rng: 'random.Random') -> 'Dict[str, int]'",
+    '_generate_talent_profile': "(self, skills: 'Dict[str, int]', rng: 'random.Random') -> 'Dict[str, int]'",
+    '_adjust_profile_to_total': "(self, profile: 'Dict[str, int]', target_total: 'int', rng: 'random.Random') -> 'Dict[str, int]'",
+    '_unique_staff_identity': "(self, rng: 'random.Random') -> 'Tuple[str, str]'",
+    '_next_staff_id': "(self, reserved: 'Optional[Set[str]]' = None) -> 'str'",
+    '_refresh_cached_skill': "(self, staff: 'Staff') -> 'None'",
+    'set_team': "(self, staff: 'Staff', team_name: 'Optional[str]')",
+    'role_skill_keys': "(role: 'str') -> 'List[str]'",
+    '_normalize_skill_profile': "(self, role: 'str', raw_skills: 'Any', fallback_skill: 'int') -> 'Dict[str, int]'",
+    '_normalize_talent_profile': "(self, role: 'str', raw_talent: 'Any', skills: 'Dict[str, int]') -> 'Dict[str, int]'",
+    '_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
+    '_staff_talent_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
+    '_effective_staff_skill_map': "(self, staff: 'Staff') -> 'Dict[str, int]'",
+    '_morale_skill_delta': "(self, staff: 'Staff') -> 'float'",
+    'morale': "(self, staff: 'Staff') -> 'float'",
+    '_clamp_score': "(value: 'Any', default: 'float' = 50.0) -> 'float'",
+    'average_skill': "(self, staff: 'Staff') -> 'float'",
+    'average_skill_int': "(self, staff: 'Staff') -> 'int'",
+    'overall_skill': "(self, staff: 'Staff') -> 'int'",
+    'raw_average_skill': "(self, staff: 'Staff') -> 'float'",
+    'raw_average_skill_int': "(self, staff: 'Staff') -> 'int'",
+    'expected_salary': "(self, staff: 'Staff') -> 'float'",
+    'staff_team_next_season': "(self, staff: 'Staff') -> 'Optional[str]'",
+    'staff_contracted_next_season': "(self, team_name: 'str', role: 'str') -> 'bool'",
+    'add_staff_effect': "(self, staff: 'Staff', amount: 'float', weeks: 'int', reason: 'str', category: 'str' = '') -> 'None'",
+    '_dedupe_staff_effects': "(self, effects: 'Any', fallback: 'str' = 'staff_morale') -> 'List[Dict[str, Any]]'",
+    '_effect_key': "(effect: 'Dict[str, Any]', fallback: 'str' = '') -> 'str'",
+    'required_prestige': "(self, staff: 'Staff') -> 'int'",
+    'sign_staff': "(self, team_name: 'str', staff: 'Staff', salary_m: 'float', years: 'int', *, bonuses: 'Optional[Dict[str, Any]]' = None, signer_kind: 'str' = 'team', bypass_requirements: 'bool' = False, allow_current_cover: 'bool' = False, contract_start_week: 'Optional[int]' = None) -> 'bool'",
+})

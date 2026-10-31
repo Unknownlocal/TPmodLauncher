@@ -27,14 +27,14 @@ PYTHON_SOURCES = (
 # this folder cannot extend what the game loads. Python resolves dependencies
 # inside this bundle using the modules' existing relative imports.
 ADAPTER_SOURCES = {
-    "": "__init__ employment native_values",
+    "": "__init__ native_methods employment native_values",
     "ui": "__init__ bindings scroll_text dialog",
-    "drivers": "__init__ targets methods snapshot terms query_inputs queries planner rookie_check",
-    "staff": "__init__ targets methods planner prestige_switch staff_signing staffing_methods staffing_plan staffing_publication staffing",
-    "personnel": "__init__ caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation approach offer rollover native_operation payroll",
+    "drivers": "__init__ native_methods targets methods snapshot terms query_inputs queries planner rookie_check",
+    "staff": "__init__ native_methods targets methods planner prestige_switch staff_signing staffing_methods staffing_plan staffing_publication staffing",
+    "personnel": "__init__ native_methods caller_targets callers cancellation preparation preparation_methods market_graph market_mail market_preparation approach offer rollover native_operation payroll",
     "personnel/feedback": "__init__ bindings notice inbox_notice adapter",
-    "academy": "__init__ targets methods terms planner caller_targets callers feedback preparation preparation_methods",
-    "projects": "__init__ targets methods snapshot technical_profile planner caller_targets callers",
+    "academy": "__init__ native_methods targets methods terms planner caller_targets callers feedback preparation preparation_methods",
+    "projects": "__init__ native_methods targets methods snapshot technical_profile planner caller_targets callers",
     "regulations": "__init__ framing protocol channel contexts outcome guards refused_proposals regulation_approach regulation_personnel regulation_academy regulation_project staffing_result staffing_coordinator regulation_native_switches regulation_selection regulation_policy regulation_category regulation_scripts regulation_native_defaults regulation_screen automatic_progress automatic_announcements automatic_changes regulation_change regulation_voting",
 }
 

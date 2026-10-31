@@ -6,35 +6,21 @@ its package before start; the start itself stores it
 on success, so the earlier write can be suppressed within that checked caller.
 """
 
-from ...callables import CallableTarget
-
-
-_PROJECT_CALLERS = (
-    ('aero_ui', 'ui.screens.aerodynamics_screen', 'AerodynamicsScreen', '_execute_action',
-     "(self, part: 'str', action: 'str') -> 'None'"),
-    ('chassis_ui', 'ui.screens.development_screen', 'DevelopmentScreen', '_handle_button',
-     "(self, key: 'str')"),
-    ('ai_current', 'managers.ai_development', 'AIDevelopment', '_ensure_current_project',
-     "(self, team_name: 'str', team: 'Dict[str, Any]', fiscal_tier: 'str', pool: 'Dict[str, Dict[str, float]]', week_no: 'int') -> 'bool'"),
-    ('ai_future', 'managers.ai_development', 'AIDevelopment', '_ensure_future_project',
-     "(self, team_name: 'str', team: 'Dict[str, Any]', fiscal_tier: 'str', pool: 'Dict[str, Dict[str, float]]') -> 'bool'"),
-    ('ai_aero', 'managers.ai_development', 'AIDevelopment', '_ensure_aero_projects',
-     "(self, team_name: 'str', team: 'Dict[str, Any]', fiscal_tier: 'str', finance: 'Dict[str, float]', pool: 'Dict[str, Dict[str, float]]') -> 'bool'"),
-    ('aero_ai', 'managers.aero_manager', 'AeroDevelopmentManager', '_ai_try_launch_project',
-     "(self, team_name: 'str', team: 'Dict', part_key: 'str', ai_state: 'Dict', bracket: 'str') -> 'Tuple[bool, float]'"),
-    ('package', 'managers.development_manager', 'DevelopmentManager', 'set_current_package_choice',
-     '(self, team_name: str, package_key: str) -> bool'),
-    ('aero_parts', 'managers.aero_manager', 'AeroDevelopmentManager', '_part_record',
-     "(self, team: 'Dict', part_key: 'str') -> 'Dict'"),
-    ('aero_store', 'managers.aero_manager', 'AeroDevelopmentManager', '_project_store',
-     "(self, team: 'Dict') -> 'Dict[str, Optional[Dict]]'"),
-    ('chassis_store', 'managers.development_manager', 'DevelopmentManager', '_project_store',
-     '(self, team: Dict) -> Dict[str, Optional[Dict]]'),
-    ('ai_project', 'managers.ai_development', 'AIDevelopment', '_dev_project',
-     "(self, team: 'Dict[str, Any]', key: 'str') -> 'Optional[Dict[str, Any]]'"),
-)
+from ..native_methods import native_target
+from .native_methods import AERO_SCREEN, CHASSIS_SCREEN, AI_DEVELOPMENT, AERO, CHASSIS
 
 
 def project_caller_targets():
-    return tuple(CallableTarget("projects.caller." + role, module, (owner,), method, signature)
-                 for role, module, owner, method, signature in _PROJECT_CALLERS)
+    return (
+        native_target(AERO_SCREEN, 'projects.caller.aero_ui', '_execute_action'),
+        native_target(CHASSIS_SCREEN, 'projects.caller.chassis_ui', '_handle_button'),
+        native_target(AI_DEVELOPMENT, 'projects.caller.ai_current', '_ensure_current_project'),
+        native_target(AI_DEVELOPMENT, 'projects.caller.ai_future', '_ensure_future_project'),
+        native_target(AI_DEVELOPMENT, 'projects.caller.ai_aero', '_ensure_aero_projects'),
+        native_target(AERO, 'projects.caller.aero_ai', '_ai_try_launch_project'),
+        native_target(CHASSIS, 'projects.caller.package', 'set_current_package_choice'),
+        native_target(AERO, 'projects.caller.aero_parts', '_part_record'),
+        native_target(AERO, 'projects.caller.aero_store', '_project_store'),
+        native_target(CHASSIS, 'projects.caller.chassis_store', '_project_store'),
+        native_target(AI_DEVELOPMENT, 'projects.caller.ai_project', '_dev_project'),
+    )
