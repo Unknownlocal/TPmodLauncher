@@ -12,6 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  personnel:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-game-adapters-personnel.yml
+    with:
+      ref: ${{ inputs.ref }}
+
   projects:
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-game-adapters-projects.yml

@@ -33,7 +33,7 @@ def reports(tmp_path, monkeypatch):
         directory = tmp_path / name
         directory.mkdir()
         (directory / "coverage.xml").write_text(
-            f'<coverage lines-covered="{covered}" lines-valid="20" '
+            f'<coverage lines-covered="{covered}" lines-valid="{len(names)}" '
             'branches-covered="1" branches-valid="2"/>', encoding="utf-8"
         )
     for name, value in {
@@ -55,7 +55,7 @@ def test_reports_every_suite_and_platform_separately(reports):
     rows = [line for line in summary.splitlines() if "x64 |" in line]
     assert len(rows) == len(names)
     for covered, row in enumerate(rows, start=1):
-        assert f"{covered / 20:.2%} ({covered}/20)" in row
+        assert f"{covered / len(names):.2%} ({covered}/{len(names)})" in row
         assert "50.00% (1/2)" in row
     assert "| Launcher | Windows x64 |" in rows[0]
     assert "| Launcher | Linux x64 |" in rows[1]

@@ -46,6 +46,7 @@ jobs:
                   ("launcher", "Launcher"),
                   ("hook_manager", "Hook manager"),
                   ("career_preload", "Career loading"),
+                  ("personnel_payroll", "Personnel payroll"),
                   ("native_regulation_policy", "Native regulation policy"),
                   ("project_context", "Development projects"),
                   ("callables", "Private callable adapters"),

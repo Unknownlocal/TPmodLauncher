@@ -8,6 +8,11 @@ rule selection and mod checks belong to the
 
 ## Main parts
 
+- [payroll.py](payroll.py): the internal `project_payroll` helper reads annual
+  staff and driver salaries from supplied contract records. It includes a
+  proposed agreement, accounts for replacements and scheduled deals, and returns
+  the totals and the week they describe without changing either roster.
+
 - [offer.py](offer.py): `PersonnelOffer` translates a submitted offer into the
   existing planners' signing arguments. It preserves native salary/bonus field
   choices without calling a signer or changing a negotiation.
@@ -68,6 +73,6 @@ afterwards. Approach-only mods own the same optional feedback through
 their approach adapter. Driver approaches keep the native failure dialog, paired
 with the native action-error cue when it opens.
 
-Driver and staff proposal calculations stay in their respective packages.
+The driver and staff packages prepare their own contract terms.
 Accepted future contracts are not checked again when loaded or activated.
 Importing this package installs nothing; it exposes no game-function API to mods.
