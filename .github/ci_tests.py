@@ -86,12 +86,17 @@ def main(argv=None):
     if options.needs_runner:
         print(str(SUITES.get(options.suite, {}).get("runner", False)).lower())
         return 0
+    path = ROOT / ("tests" if options.suite == "check" else SUITES[options.suite]["path"])
+    # Child suites have their own jobs; skip their directories before importing tests.
+    pytest_args.extend("--ignore=" + str(ROOT / child["path"]) for child in children(options.suite))
     if options.suite == "check":
         pytest_args.append("--collect-only")
     elif options.coverage:
         suite = SUITES[options.suite]
-        sources = [source[:-3].replace("/", ".") if source.endswith(".py") else (ROOT / source).as_posix()
-                   for source in suite["sources"]]
+        # Discover files from directories so unimported declared files stay in reports.
+        sources = sorted({((ROOT / source).parent if source.endswith(".py") else ROOT / source).as_posix()
+                          for source in suite["sources"]})
+        include = ["*/" + source + ("" if source.endswith(".py") else "/*") for source in suite["sources"]]
         # Integration measurements intentionally span components. Component
         # reports omit their children's sources, including unexecuted files.
         omit = ["*/" + source + ("" if source.endswith(".py") else "/*")
@@ -99,10 +104,11 @@ def main(argv=None):
         config = ROOT / ".state/ci-coverage" / (options.suite + ".toml")
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text("[tool.coverage.run]\nbranch = true\nrelative_files = true\n"
-                          + "source = " + json.dumps(sources) + "\nomit = " + json.dumps(omit) + "\n", encoding="utf-8")
+                          + "source = " + json.dumps(sources) + "\nomit = " + json.dumps(omit)
+                          + "\n[tool.coverage.report]\ninclude = " + json.dumps(include) + "\n", encoding="utf-8")
         pytest_args.extend(["--cov", f"--cov-config={config}"])
     return pytest.main(
-        [str(ROOT / "tests"), *pytest_args, "-m", PORTABLE],
+        [str(path), *pytest_args, "-m", PORTABLE],
         plugins=[SuiteSelection(options.suite)],
     )
 

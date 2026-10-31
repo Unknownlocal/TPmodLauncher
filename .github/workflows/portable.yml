@@ -64,6 +64,9 @@ jobs:
         with:
           name: trusted-python-runner
           path: libs/mod-runners
+      - name: Check ownership of every portable test
+        if: ${{ inputs.suite == 'ci' }}
+        run: '"${{ matrix.platform.python }}" -B .github/ci_tests.py --suite check -q'
       - name: Run the selected suite
         env:
           TPM_TEST_RUNNER_BUNDLE: ${{ github.workspace }}/libs/mod-runners

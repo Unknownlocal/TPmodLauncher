@@ -80,14 +80,16 @@ can publish `manual-ci`. Claim/status jobs use trusted code and write permission
 PR-code jobs have read-only tokens and no inherited secrets.
 
 Reusable workflows run portable areas on Windows/Linux and acceptance on Windows.
-[The selector](../.github/ci_tests.py) collects all portable modules, requires one
-directory-based owner per module and rejects unknown, overlapping or empty suites.
+The CI-helper job checks the whole test tree once per platform without running
+the tests. [The selector](../.github/ci_tests.py) requires one suite per portable
+test module and rejects unknown or overlapping ownership. Suite test commands
+collect only their own directory, skip child suites and reject empty selections.
 One table defines test paths, coverage sources, parent suites and shared-runner
 requirements. Parent suites exclude their declared children. The game-adapter
 parent covers generic native support; personnel, regulations and projects have
 their own child suites. Integration features have a reusable parent workflow
 and one child workflow per populated feature folder.
-Shared fixtures and test imports still load across areas during collection.
+Shared fixtures remain available to their consumers without collecting other suites.
 
 `dev-dependencies.yml` prepares one wheelhouse per platform. Jobs install those
 same-run wheels into separate environments without a package index. Build caches
@@ -113,6 +115,7 @@ coverage measures `hook_manager.callables`; the parent report excludes separatel
 owned modules, using exclusions derived from that same suite table. Integration
 reports span several components and can overlap their component reports;
 percentages stay separate and are never added or averaged.
+Declared source files remain in reports even when no test imports them.
 Coverage measures Python run by pytest. Wasm execution and embedded child
 processes remain uninstrumented. Windows aggregation rejects missing or corrupt fragments.
 
