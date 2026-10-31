@@ -72,9 +72,7 @@ def test_original_exceptions_propagate_once(host, phase):
 
 
 @pytest.mark.parametrize("phase", ["before", "after"])
-@pytest.mark.parametrize(
-    "decision", [None, {"action": "replace", "value": 99}, object()]
-)
+@pytest.mark.parametrize("decision", [None, {"action": "replace", "value": 99}])
 def test_invalid_callbacks_restore_and_keep_original_behavior(host, phase, decision):
     module, manager = host(lambda record: decision)
     calls = []

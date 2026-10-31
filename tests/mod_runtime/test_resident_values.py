@@ -11,6 +11,7 @@ from mod_runtime._regulations import values
 from mod_runtime._regulations.frozen import FrozenValue
 from mod_runtime._regulations.policy import decode, encode
 from mod_runtime._regulations.voting import vote_reply, voting_packet
+from tests.regulation_data import voting_inputs
 
 
 def test_component_metrics_match_expanded_encoding_with_unicode_depth_and_big_integers():
@@ -64,19 +65,24 @@ def test_template_copies_keep_cached_and_nested_mutable_values_independent():
     assert cached.copy() == expected
 
 
-def test_voting_part_measurements_match_complete_encoding():
-    packet = {"owner": "sample", "binding": 0,
-              "snapshot": {"voting_model_version": 1, "season": 1, "teams": {}, "results": [],
-                           "field": {"quoted\"": ["é😀\n", 10**100, {}, []]}, "projected_races": 0},
-              "regulation": {"key": "rule", "current": {"key": "a"}, "proposed": {"key": "b"}},
-              "contexts": [{"schema": 1, "review": "r", "proposal": "p", "decision_season": 1,
-                            "effective_season": 2, "team": "team", "native": {"choice": "current", "reason": "Keep"}, "seed": "s"}]}
+def test_voting_packets_match_encoding_and_enforce_snapshot_limits():
+    snapshot, regulation, contexts = voting_inputs()
+    snapshot["field"] = {"quoted\"": ["é😀\n", 10**100, {}, []]}
+    packet = {"owner": "sample", "binding": 0, "snapshot": snapshot,
+              "regulation": regulation, "contexts": contexts}
     assert voting_packet(packet) == values.measure(packet)
+    for oversized in ("x" * 65536, [None] * 8192):
+        snapshot["field"] = {"extra": oversized}
+        with pytest.raises(ValueError, match="limits"):
+            voting_packet(packet)
 
 
-def test_escaped_vote_reasons_have_their_own_reply_limit():
+def test_vote_replies_validate_results_and_allow_escaped_reasons():
     result = {"choice": "current", "reason": "x" + "\t" * 2047}
     reply = encode({"action": 1, "slot": 0, "result": result})
     assert vote_reply(reply, 1, 0) == result
     with pytest.raises(ValueError, match="4096"):
         decode(reply)
+    for invalid in ({"decision": "allow"}, {"choice": "current", "reason": "é" * 1025}):
+        with pytest.raises(ValueError, match="fields|vote result"):
+            vote_reply(encode({"action": 1, "slot": 0, "result": invalid}), 1, 0)

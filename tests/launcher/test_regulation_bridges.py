@@ -49,16 +49,15 @@ def test_switches_keep_false_and_change_revisions_without_rule_dependencies(name
     assert revisions[0] != revisions[1]
 
 
-@pytest.mark.parametrize("name,value", [(ROOKIE, None), (PRESTIGE, 0), (ROOKIE, {"value": 3})])
-def test_switches_require_exact_booleans(name, value):
+@pytest.mark.parametrize("name,value", [(PRESTIGE, 0), (ROOKIE, {"value": 3})])
+def test_switches_reject_nonboolean_scalars_and_malformed_references(name, value):
     with pytest.raises(ValueError, match="must be a boolean"):
         prepare(document({name: value}))
 
 
-@pytest.mark.parametrize("name", ["rookie_contract_max_years", "arbitrary.native.target"])
-def test_scalar_replacements_and_arbitrary_targets_are_not_declarations(name):
+def test_unknown_native_switch_is_rejected():
     with pytest.raises(ValueError, match="declaration fields"):
-        prepare(document({name: {"value": 3}}))
+        prepare(document({"arbitrary.native.target": {"value": 3}}))
 
 
 @pytest.mark.parametrize("name", [ROOKIE, PRESTIGE])

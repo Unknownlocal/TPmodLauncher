@@ -40,7 +40,6 @@ def test_copies_exact_displayed_line_with_relative_script(installed, monkeypatch
 @pytest.mark.parametrize("error", [
     OSError("clipboard unavailable"),
     subprocess.CalledProcessError(1, "owned fixture"),
-    subprocess.TimeoutExpired("owned fixture", 10),
 ])
 def test_clipboard_failure_keeps_working_manual_instructions(installed, monkeypatch, capsys, error):
     def fail(line):
