@@ -45,9 +45,7 @@ class AutomaticChanges:
     def check(self, state):
         """Require the complete owned installation and usable saved progress."""
         self.categories.regulation_changes.check()
-        group = self.categories.groups["regulations.automatic"]
-        if group["state"] != "active" or any(vars(owner).get(attribute) is not wrapper
-                for owner, attribute, _, wrapper, _ in group["changes"]):
+        if not self.categories.group_intact("regulations.automatic"):
             raise HookError("Automatic regulation weekly hooks are unavailable")
         manager = state.formula_regulation_governance
         progress = manager._tpm_automatic_progress

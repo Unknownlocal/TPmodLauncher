@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
 """Disable the native rookie cap while keeping its original test available."""
 
-from ...diagnostics import build_log_record
-
 from functools import update_wrapper
 import inspect
 
-from ...manager import HookError, Manager
+from ...manager import HookError
+from ...shared.native_switch_installer import NativeSwitchInstaller
 from .targets import rookie_check_target
 
 
@@ -24,38 +23,18 @@ def native_rookie_limit(manager):
     return original
 
 
-class RookieContractLengthSwitch(Manager):
+class RookieContractLengthSwitch(NativeSwitchInstaller):
     """Own a career's cap switch; trusted callers choose when it applies."""
 
     @classmethod
     def create(cls, state, *, enabled=True, submit_log):
-        """Keep native by default; report and skip incompatible game helpers."""
-        if type(enabled) is not bool and not callable(enabled):
-            raise HookError("Rookie contract length check needs a boolean or trusted query")
-        if enabled is True:
-            return None  # The default installs nothing and performs no inspection.
-        try:
-            return cls(state, enabled)
-        except Exception as error:
-            submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED drivers.rookie-check: "
-                   + str(error)
-                   + "; rookie check switch skipped; continuing native game", error=error, component="regulations"))
-            return None
+        return super().create(state, enabled=enabled, submit_log=submit_log,
+                              label='Rookie contract length check', name='drivers.rookie-check',
+                              skipped='rookie check switch')
 
     def __init__(self, state, enabled=False):
-        super().__init__(lambda record: None)
-        self.state, self.manager = state, state.driver_manager
-        self.enabled = enabled
-        try:
-            target = rookie_check_target()
-            resolved = target.resolve({})
-            if resolved is None or not isinstance(self.manager, resolved[0]):
-                raise HookError("Rookie switch needs the loaded native driver manager")
-            self.approve(target)
-            self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
-        except Exception:
-            self.stop()
-            raise
+        super().__init__(state, enabled, 'driver_manager', rookie_check_target,
+                         'Rookie switch needs the loaded native driver manager')
 
     def _wrapper(self, name, binding, target, original, signature):
         state, manager, group, enabled = self.state, self.manager, self.groups[name], self.enabled

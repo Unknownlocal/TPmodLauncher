@@ -201,6 +201,14 @@ class Manager:
             raise HookError("Invalid or duplicate target approval")
         self.targets[target.name] = target
 
+    def group_intact(self, name):
+        """Whether the group is active and its installed wrappers are unchanged."""
+        group = self.groups.get(name)
+        # Stored attributes retain descriptors for an exact object identity check.
+        return (not self.closed and group is not None and group["state"] == "active"
+                and all(vars(owner).get(attribute) is installed
+                        for owner, attribute, _, installed, _ in group["changes"]))
+
     def _watch(self):
         self.wanted = {
             self.targets[binding["target"]].module

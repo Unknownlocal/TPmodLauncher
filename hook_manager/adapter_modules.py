@@ -294,10 +294,8 @@ class AdapterModules:
                 for hook in self.regulations:
                     if hook.closed or any(row["state"] != "active" for row in hook.groups.values()):
                         raise HookError("Regulation hooks are no longer installed")
-                    for row in hook.groups.values():
-                        if any(vars(owner).get(attribute) is not installed
-                               for owner, attribute, _, installed, _ in row["changes"]):
-                            raise HookError("Another owner replaced a regulation hook")
+                    if any(not hook.group_intact(name) for name in hook.groups):
+                        raise HookError("Another owner replaced a regulation hook")
                 self._check_voting_preload(policy.state, channel)
                 self.preload.allow(policy.state)
                 channel.validation_ready = True

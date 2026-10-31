@@ -49,9 +49,7 @@ class RegulationChangeAdapter(Manager):
 
     def check(self):
         """Require the complete native load/save group before attaching mod data."""
-        group = self.groups["regulations.changes"]
-        if (self.closed or group["state"] != "active" or any(
-                vars(owner).get(attribute) is not wrapper for owner, attribute, _, wrapper, _ in group["changes"])):
+        if not self.group_intact("regulations.changes"):
             raise HookError("Native regulation change load/save hooks are unavailable")
 
     def install_automatic(self, policies):

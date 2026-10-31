@@ -61,10 +61,7 @@ class RegulationCategoryAdapter(Manager):
 
     def check(self, state):
         """Confirm this career loaded our categories before publishing its policy."""
-        group = self.groups["regulations.categories"]
-        if (self.closed or self.errors or group["state"] != "active"
-                or any(vars(owner).get(attribute) is not wrapper
-                       for owner, attribute, _, wrapper, _ in group["changes"])
+        if (self.errors or not self.group_intact("regulations.categories")
                 or Path(state.data_dir).resolve() != self.pack
                 or any(state.regulation_manager.regulation_defs.get(key) != value
                        for key, value in self.categories.items())):
