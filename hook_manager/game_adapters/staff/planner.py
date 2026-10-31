@@ -20,6 +20,11 @@ class StaffContractPlanner:
         self.methods = staff_methods(state)
 
     def prepare(self, arguments, *, payroll_checks=None):
+        """Return checked, independent terms for standalone callers."""
+        return data_copy(self._build_proposal(arguments, payroll_checks=payroll_checks))
+
+    def _build_proposal(self, arguments, *, payroll_checks=None):
+        """Build fresh proposal records; the caller must check their size and value types."""
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
                 or self.state.staff_manager is not self.manager or self.manager.state is not self.state):
             raise HookError("Staff planner belongs to another native state")
@@ -93,7 +98,7 @@ class StaffContractPlanner:
             employer_record["payroll"] = (prepare_payroll(self.state, employer, staff, "staff", proposed,
                                                          week, next_start, payroll_checks)
                                            if kind == "team" else None)
-        return data_copy({
+        return {
             "clock": {"season": self.state.season_no, "absolute_week": week},
             "effective": {"season": self.state.season_no + int(start == next_start),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
@@ -101,4 +106,4 @@ class StaffContractPlanner:
                          "person": person_identity(staff, "staff"),
                          "employer": employer_record,
                          "contract_kind": "employment", "existing": existing, "proposed": terms},
-        })
+        }

@@ -19,6 +19,11 @@ class AcademyContractPlanner:
         self.methods = academy_methods(state)
 
     def prepare(self, target, arguments):
+        """Return checked, independent terms for standalone callers."""
+        return data_copy(self._build_proposal(target, arguments))
+
+    def _build_proposal(self, target, arguments):
+        """Build fresh proposal records; the caller must check their size and value types."""
         if (type(arguments) is not dict or arguments.get("self") is not self.manager
                 or self.state.academy_manager is not self.manager or self.manager.state is not self.state):
             raise HookError("Academy planner belongs to another native state")
@@ -71,7 +76,7 @@ class AcademyContractPlanner:
         terms = academy_terms(proposed, season, calendar)
         # A renewal's dates can begin in the past. Evaluate this decision under
         # current rules unless its stored membership start is still in the future.
-        return data_copy({
+        return {
             "clock": {"season": season, "absolute_week": calendar(self.state) + self.state.week_index},
             "effective": {"season": max(season, int(proposed.get("start_season", season))),
                           "start_week": terms["start_week"], "end_week": terms["end_week"]},
@@ -80,4 +85,4 @@ class AcademyContractPlanner:
                          "employer": employer_identity(owner, employer, "academy"),
                          "contract_kind": "academy", "existing": academy_terms(prior, season, calendar),
                          "proposed": terms},
-        })
+        }

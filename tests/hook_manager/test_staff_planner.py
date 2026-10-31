@@ -65,6 +65,10 @@ def test_staff_terms_resolve_employer_and_cover_without_live_effects(monkeypatch
         "as_of_week": 157, "staff_annual_salary_m": 2.5, "driver_annual_salary_m": 7.}
     assert future["proposal"]["proposed"]["bonuses_m"] == {"point": None, "win": None, "podium": None}
     assert before[:3] == (vars(staff), state.teams, vars(supplier)) and before[3] == bonuses
+    staff.name = "x" * 4097
+    with pytest.raises(HookError, match="bounded plain values"):
+        planner.prepare(arguments)
+    staff.name = "Engineer"
     for incomplete in (True, None, float("nan")):
         arguments["salary_m"] = incomplete
         with pytest.raises(HookError, match="finite native numbers"):

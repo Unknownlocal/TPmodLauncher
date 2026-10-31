@@ -52,6 +52,10 @@ def test_academy_sign_and_renew_prepare_full_season_terms_without_live_writes(mo
     assert renewed["proposal"]["proposed"]["annual_retainer_m"] == .8
     assert renewed["proposal"]["person"]["nationality"] == "GB"
     assert before == (state.teams, vars(driver))
+    driver.nationality = "x" * 4097
+    with pytest.raises(HookError, match="bounded plain values"):
+        planner.prepare("academy.renew", args)
+    driver.nationality = "GB"
     state.academy_manager = SimpleNamespace()
     with pytest.raises(HookError, match="another native state"):
         planner.prepare("academy.renew", args)

@@ -27,7 +27,7 @@ def repeating(monkeypatch, scenario):
 
     monkeypatch.setattr(type(manager), "_execute_offer", execute)
     monkeypatch.setattr(type(manager), "resolve_due_decisions", due)
-    planner.prepare = lambda arguments: {
+    planner._build_proposal = lambda arguments: {
         "clock": {"season": state.season}, "effective": {"season": state.season},
         "proposal": {"person": {"ref": str(id(arguments["driver"]))},
                      "employer": {"ref": state.employer}, "salary": arguments["salary"],

@@ -45,7 +45,8 @@ class RegulationAcademyAdapter(RegulationGuards):
     def _projection(self, target):
         def project(arguments, result):
             caller = getattr(self._local, "academy_caller", None)
-            prepared = self.planner.prepare(target, arguments)
+            # _decision checks and copies this whole context before dispatch.
+            prepared = self.planner._build_proposal(target, arguments)
             if "employer_payroll" in getattr(self._local, "inputs", ()):
                 # Academy fees are separate from team employment salaries.
                 prepared["proposal"]["employer"]["payroll"] = None

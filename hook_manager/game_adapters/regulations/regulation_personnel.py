@@ -75,15 +75,15 @@ class RegulationPersonnelAdapter(RegulationGuards):
         caller = getattr(self._local, "personnel_caller", None)
         # Both signing targets share one projection and dispatch path. Native
         # manager identity selects the planner, never a mod-supplied target name.
-        context = regulation_context("personnel.contract", self.prepare_contract(arguments),
+        context = regulation_context("personnel.contract", self._build_contract(arguments),
                                      initiator=caller["initiator"] if caller else native_initiator())
         self._local.native_check_season = context["effective"]["season"]
         return context
 
-    def prepare_contract(self, arguments):
-        """Prepare one shared contract with the current participants' data inputs."""
+    def _build_contract(self, arguments):
+        """Build fresh terms for _decision to check and copy with the full context."""
         planner = next(planner for planner in self.planners.values() if planner.manager is arguments["self"])
-        return planner.prepare(arguments, **({"payroll_checks": self._local.input_checks}
+        return planner._build_proposal(arguments, **({"payroll_checks": self._local.input_checks}
                                              if "employer_payroll" in getattr(self._local, "inputs", ()) else {}))
 
     def native_check_scope(self, start_week):

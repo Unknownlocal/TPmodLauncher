@@ -99,6 +99,11 @@ def test_driver_planning_uses_private_records_and_keeps_native_effects_out(monke
     assert before == (state.teams, vars(driver), manager._ai_signing_query_cache,
                       manager._ai_car_package_components_cache, arguments["bonuses"])
 
+    driver.name = "x" * 4097
+    with pytest.raises(HookError, match="bounded plain values"):
+        planner.prepare(arguments)
+    driver.name = "Driver"
+
     class CustomBonus:
         def __float__(self):
             pytest.fail("Proposal input checks must precede custom conversion")

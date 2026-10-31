@@ -208,9 +208,9 @@ def negotiation_state(monkeypatch):
                                     else {"decision": "deny", "message": self.message}]}
 
     planner = SimpleNamespace(state=state, manager=manager,
-                              prepare=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
+                              _build_proposal=lambda arguments: {"clock": {"season": 3, "absolute_week": 114},
                                                          "effective": {"season": 3}, "proposal": {}})
-    staff_planner = SimpleNamespace(state=state, manager=state.staff_manager, prepare=planner.prepare)
+    staff_planner = SimpleNamespace(state=state, manager=state.staff_manager, _build_proposal=planner._build_proposal)
     staffing = SimpleNamespace(state=state, manager=state.staff_manager, contracts=staff_planner,
                                sign=StaffManager.sign_staff)
     monkeypatch.setattr(implementation, "DriverContractPlanner", lambda state: planner)
@@ -229,7 +229,7 @@ def submitted_negotiation(monkeypatch):
     negotiations.row.update(status="talks_open", context={"contract_start_week": 157})
     def signing(self, team_name, driver, salary_m, years, *, bonuses=None, role="main", priority="equal", contract_start_week=None):
         pass  # Signature only; no signer is executed during submission.
-    planner.prepare = lambda arguments: {
+    planner._build_proposal = lambda arguments: {
         "clock": {"season": 3, "absolute_week": 114},
         "effective": {"season": 4, "start_week": 157, "end_week": 157 + 52 * arguments["years"]},
         "proposal": {"proposed": {"salary_m": arguments["salary_m"], "duration_weeks": 52 * arguments["years"]}},

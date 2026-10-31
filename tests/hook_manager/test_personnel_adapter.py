@@ -103,6 +103,25 @@ def test_submission_refusal_preserves_talks_and_final_offer_then_rechecks_signin
         adapter.stop()
 
 
+def test_submission_checks_and_detaches_planner_data_before_dispatch(monkeypatch):
+    state, person, negotiations, channel, adapter = submitted(monkeypatch)
+    planner = adapter.planners["driver"]
+    prepared = planner._build_proposal({"salary_m": 2.5, "years": 4})
+    planner._build_proposal = lambda arguments: prepared
+    before = dict(negotiations.row)
+    try:
+        assert not negotiations.submit_offer("driver", person, "target", {"years": 4}, 100)[0]
+        channel.contexts[-1]["proposal"]["proposed"]["salary_m"] = 99
+        assert prepared["proposal"]["proposed"]["salary_m"] == 2.5
+        prepared["proposal"]["person"] = {"name": "x" * 4097}
+        result = negotiations.submit_offer("driver", person, "target", {"years": 4}, 100)
+        assert result == (False, "Validation unavailable", negotiations.row)
+        assert len(channel.contexts) == 1 and negotiations.row == before
+        assert not state.writes and person.contract is None
+    finally:
+        adapter.stop()
+
+
 def test_worker_submission_unavailability_preserves_pending_offer(monkeypatch):
     state, person, negotiations, channel, adapter = submitted(monkeypatch)
     preparing, release = threading.Event(), threading.Event()

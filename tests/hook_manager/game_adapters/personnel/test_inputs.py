@@ -81,7 +81,7 @@ def test_requested_payroll_previews_and_signing_refuse_stale_or_missing_data(mon
             employer["payroll"] = prepare_payroll(state, "target", person, "driver", proposed, 114, 157, payroll_checks)
         return {"clock": {"season": 3, "absolute_week": 114},
                 "effective": {"season": 4, "start_week": 157, "end_week": 209}, "proposal": {"employer": employer}}
-    adapter.planners["driver"].prepare = prepare
+    adapter.planners["driver"]._build_proposal = prepare
     dispatch = type(channel).__call__
     try:
         channel.mode = "allow"

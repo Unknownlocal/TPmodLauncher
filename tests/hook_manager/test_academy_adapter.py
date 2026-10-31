@@ -121,7 +121,7 @@ def owned(monkeypatch):
             return {owner: [{"decision": "allow"} if self.mode == "allow" or owner == "a.rules"
                             else {"decision": "deny", "message": "Owned refusal"}] for owner in calls}
 
-    planner = SimpleNamespace(state=state, manager=manager, prepare=lambda *a: {
+    planner = SimpleNamespace(state=state, manager=manager, _build_proposal=lambda *a: {
         "clock": {"season": 3, "absolute_week": 114}, "effective": {"season": 3}, "proposal": {}})
     monkeypatch.setattr(implementation, "AcademyContractPlanner", lambda state: planner)
     return state, screen, planner, Channel(), starts, callers
@@ -130,8 +130,8 @@ def owned(monkeypatch):
 def test_academy_refusal_keeps_ai_state_rng_and_ui_selection_private(monkeypatch):
     state, screen, planner, channel, targets, callers = owned(monkeypatch)
     channel.input_requests = {"personnel.contract": {"a.rules": frozenset({"employer_payroll"})}}
-    prepare = planner.prepare
-    planner.prepare = lambda *a: dict(prepare(*a), proposal={"employer": {"kind": "academy"}})
+    build = planner._build_proposal
+    planner._build_proposal = lambda *a: dict(build(*a), proposal={"employer": {"kind": "academy"}})
     originals = [target.resolve({})[2] for target in (*targets, *callers)]
     adapter = implementation.RegulationAcademyAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
     messages = []
