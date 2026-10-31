@@ -7,9 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.regulations.refused_proposals import RefusedProposals
-from tests.hook_manager.negotiation_support import negotiation_state as owned
+from tests.hook_manager.negotiation_support import negotiation_state as owned, personnel_adapter
 
 
 @contextmanager
@@ -47,12 +46,8 @@ def repeating(monkeypatch, scenario):
         return dispatch(self, contexts, selections, calls, deadline)
 
     monkeypatch.setattr(type(channel), "__call__", send)
-    adapter = implementation.RegulationPersonnelAdapter(state, channel,
-        lambda *args: {"selected": state.selection, "current": [0, 3], "upcoming": [1, 4]}).install_prepared()
-    try:
+    with personnel_adapter(state, channel, lambda *args: {'selected': state.selection, 'current': [0, 3], 'upcoming': [1, 4]}) as adapter:
         yield state, driver, manager, channel, adapter
-    finally:
-        adapter.stop()
 
 
 def test_unchanged_denials_share_nested_operation_but_changed_proposals_and_later_calls_recheck(monkeypatch):

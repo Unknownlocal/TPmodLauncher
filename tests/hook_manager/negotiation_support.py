@@ -3,6 +3,7 @@
 
 import inspect
 import sys
+from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 
 from hook_manager.callables import CallableTarget
@@ -221,8 +222,19 @@ def negotiation_state(monkeypatch):
     return state, driver, negotiations, planner, Channel(), signing, callers
 
 
+@contextmanager
+def personnel_adapter(state, channel, select=lambda *args: {"selected": "current"}, *, submit_log=None):
+    """Install personnel validation for this block and restore its hooks on exit."""
+    adapter = implementation.RegulationPersonnelAdapter(state, channel, select, submit_log=submit_log)
+    try:
+        yield adapter.install_prepared()
+    finally:
+        adapter.stop()
+
+
+@contextmanager
 def submitted_negotiation(monkeypatch):
-    """Install offer validation without executing a signer; the caller stops the adapter."""
+    """Provide a fresh offer-validation scope without executing a signer."""
     state, person, negotiations, planner, channel, _, _ = negotiation_state(monkeypatch)
     state.season_no, state.next_season_start = 3, lambda: 157
     state.current_season_start_week = lambda: 105
@@ -234,7 +246,7 @@ def submitted_negotiation(monkeypatch):
         "effective": {"season": 4, "start_week": 157, "end_week": 157 + 52 * arguments["years"]},
         "proposal": {"proposed": {"salary_m": arguments["salary_m"], "duration_weeks": 52 * arguments["years"]}},
     }
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    adapter.offers.signatures["driver"] = inspect.signature(signing)
-    return state, person, negotiations, channel, adapter
+    with personnel_adapter(state, channel) as adapter:
+        adapter.offers.signatures["driver"] = inspect.signature(signing)
+        yield state, person, negotiations, channel, adapter
 

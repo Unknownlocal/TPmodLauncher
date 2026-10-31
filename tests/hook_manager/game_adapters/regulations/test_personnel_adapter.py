@@ -12,7 +12,9 @@ import pytest
 from hook_manager.manager import HookError
 from hook_manager.game_adapters.regulations import regulation_personnel as implementation
 from hook_manager.game_adapters.personnel.market_preparation import MarketPreparation
-from tests.hook_manager.negotiation_support import negotiation_state as owned, submitted_negotiation as submitted
+from tests.hook_manager.negotiation_support import (
+    negotiation_state as owned, personnel_adapter, submitted_negotiation as submitted,
+)
 
 
 def test_rollover_worker_retains_candidate_refusals_and_releases_admission(monkeypatch):
@@ -27,8 +29,7 @@ def test_rollover_worker_retains_candidate_refusals_and_releases_admission(monke
         return dispatch(*args)
 
     monkeypatch.setattr(type(channel), "__call__", decide)
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}).install_prepared()
-    try:
+    with personnel_adapter(state, channel, lambda *a: {}) as adapter:
         with ThreadPoolExecutor(max_workers=1) as worker:
             worker.submit(state.finalize_and_rollover_season).result(2)
             assert state.rollover_complete and state.rollover_signed is accepted
@@ -39,8 +40,6 @@ def test_rollover_worker_retains_candidate_refusals_and_releases_admission(monke
             assert worker.submit(state.driver_manager.sign_driver, denied).result(2) is False
         assert denied.contract is None and not adapter._active
         assert state.writes == [2]
-    finally:
-        adapter.stop()
 
 
 @pytest.mark.parametrize("swallow", [False, True])
@@ -60,8 +59,7 @@ def test_rollover_unavailable_stops_retries_and_survives_native_catch(monkeypatc
 
     monkeypatch.setattr(type(state), "finalize_and_rollover_season", rollover)
     reports = []
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {}, submit_log=reports.append).install_prepared()
-    try:
+    with personnel_adapter(state, channel, lambda *a: {}, submit_log=reports.append) as adapter:
         with ThreadPoolExecutor(max_workers=1) as worker:
             with pytest.raises(HookError, match="Season rollover stopped"):
                 worker.submit(state.finalize_and_rollover_season).result(2)
@@ -71,15 +69,12 @@ def test_rollover_unavailable_stops_retries_and_survives_native_catch(monkeypatc
         assert not adapter._active and not adapter._personnel_operation.locked()
         assert len(reports) == 1 and reports[0]["level"] == "ERROR"
         assert "Owned handler failed" in reports[0]["detail"]
-    finally:
-        adapter.stop()
 
 
 def test_submission_refusal_preserves_talks_and_final_offer_then_rechecks_signing(monkeypatch):
-    state, person, negotiations, channel, adapter = submitted(monkeypatch)
-    offer = {"salary_m": 2.5, "years": 4}
-    before = dict(negotiations.row)
-    try:
+    with submitted(monkeypatch) as (state, person, negotiations, channel, adapter):
+        offer = {"salary_m": 2.5, "years": 4}
+        before = dict(negotiations.row)
         monkeypatch.setattr(adapter.feedback, "refuse", lambda *a: pytest.fail("Submission opened signing dialog"))
         assert negotiations.submit_offer(" Driver ", person, "target", offer, 100, finalize=True) == (
             False, "Owned refusal", negotiations.row)
@@ -99,17 +94,14 @@ def test_submission_refusal_preserves_talks_and_final_offer_then_rechecks_signin
         assert negotiations.row["offer"] is stored and stored == offer
         assert not negotiations._execute_offer(negotiations.row, person)
         assert person.contract is None  # Submission allowance never authorises signing.
-    finally:
-        adapter.stop()
 
 
 def test_submission_checks_and_detaches_planner_data_before_dispatch(monkeypatch):
-    state, person, negotiations, channel, adapter = submitted(monkeypatch)
-    planner = adapter.planners["driver"]
-    prepared = planner._build_proposal({"salary_m": 2.5, "years": 4})
-    planner._build_proposal = lambda arguments: prepared
-    before = dict(negotiations.row)
-    try:
+    with submitted(monkeypatch) as (state, person, negotiations, channel, adapter):
+        planner = adapter.planners["driver"]
+        prepared = planner._build_proposal({"salary_m": 2.5, "years": 4})
+        planner._build_proposal = lambda arguments: prepared
+        before = dict(negotiations.row)
         assert not negotiations.submit_offer("driver", person, "target", {"years": 4}, 100)[0]
         channel.contexts[-1]["proposal"]["proposed"]["salary_m"] = 99
         assert prepared["proposal"]["proposed"]["salary_m"] == 2.5
@@ -118,20 +110,17 @@ def test_submission_checks_and_detaches_planner_data_before_dispatch(monkeypatch
         assert result == (False, "Validation unavailable", negotiations.row)
         assert len(channel.contexts) == 1 and negotiations.row == before
         assert not state.writes and person.contract is None
-    finally:
-        adapter.stop()
 
 
 def test_worker_submission_unavailability_preserves_pending_offer(monkeypatch):
-    state, person, negotiations, channel, adapter = submitted(monkeypatch)
-    preparing, release = threading.Event(), threading.Event()
-    arguments = adapter.offers.arguments
-    def held_arguments(*args):
-        preparing.set()
-        assert release.wait(3)
-        return arguments(*args)
-    monkeypatch.setattr(adapter.offers, "arguments", held_arguments)
-    try:
+    with submitted(monkeypatch) as (state, person, negotiations, channel, adapter):
+        preparing, release = threading.Event(), threading.Event()
+        arguments = adapter.offers.arguments
+        def held_arguments(*args):
+            preparing.set()
+            assert release.wait(3)
+            return arguments(*args)
+        monkeypatch.setattr(adapter.offers, "arguments", held_arguments)
         channel.mode = "failed"
         with ThreadPoolExecutor(max_workers=1) as worker:
             pending = worker.submit(negotiations.submit_offer, "driver", person, "target", {"years": 2}, 100)
@@ -145,8 +134,6 @@ def test_worker_submission_unavailability_preserves_pending_offer(monkeypatch):
         assert result == (False, "Validation unavailable", negotiations.row)
         assert negotiations.row["status"] == "talks_open" and "offer_score" not in negotiations.row
         assert not negotiations.candidate_deadlines and not state.writes and person.contract is None
-    finally:
-        adapter.stop()
 
 
 def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing(monkeypatch):
@@ -177,8 +164,7 @@ def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing
 
     monkeypatch.setattr(type(negotiations), "_execute_offer", offer)
     monkeypatch.setattr(type(negotiations), "resolve_player_contract_decision", decision)
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         with pytest.raises(ValueError, match="Native confirmation failed"):
             negotiations.resolve_player_contract_decision("decision", True)
         assert stores[0] is stores[1] is stores[2]
@@ -186,8 +172,6 @@ def test_nested_offer_reuses_then_discards_query_inputs_without_reaching_signing
         assert not stores[0].drivers and not stores[0].managers
         assert adapter._local.personnel_caller is None and not state.writes
         assert "decision" in negotiations.pending and driver.contract is None
-    finally:
-        adapter.stop()
 
 
 def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_preparation(monkeypatch):
@@ -209,8 +193,7 @@ def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_prepar
         return original(*args)
 
     monkeypatch.setattr(type(channel), "__call__", dispatch)
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         negotiations.resolve_due_decisions()
         assert first["status"] == "completed" and driver.contract == {"salary": 2} and other.contract is None
         assert negotiations.candidate_deadlines == {"b": 114} and "prepared" not in blocked
@@ -219,8 +202,6 @@ def test_market_checkpoints_keep_prior_candidate_mail_and_discard_blocked_prepar
         assert state.email_manager.urgent_sound_serial == 3
         assert roots[0] is negotiations.records and roots[1] is negotiations.candidate_deadlines
         assert roots[2] is state.email_manager.inbox and roots[3] is first["offer"] is first["context"]["planned_offer"]
-    finally:
-        adapter.stop()
 
 
 def test_market_save_publishes_aliases_and_new_containers_without_exposing_private_writes(monkeypatch):
@@ -298,14 +279,11 @@ def test_market_keeps_native_fallback_and_stops_unavailable_after_prior_completi
         return original_dispatch(*args)
 
     monkeypatch.setattr(type(channel), "__call__", dispatch)
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         assert negotiations.resolve_due_decisions() is None
         assert attempts == ["deny", "allow", "failed"]
         assert state.writes == [2, "closed"] and driver.contract == {"salary": 2}
         assert adapter.last_outcome.status == "unavailable" and not adapter._active
-    finally:
-        adapter.stop()
 
 
 def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_failure_continue(monkeypatch):
@@ -314,9 +292,7 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
         channel.mode, state.native_refuse = mode, True
         channel.message = "Rule says driver will not renew this reserve role contract"
         reports = []
-        adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"},
-                                                  submit_log=reports.append).install_prepared()
-        try:
+        with personnel_adapter(state, channel, submit_log=reports.append) as adapter:
             def advance():
                 result = negotiations.ai_manage_drivers("reserve")
                 return result, adapter.last_outcome, getattr(adapter._local, "operation", False)
@@ -334,16 +310,13 @@ def test_ai_unavailability_unwinds_nested_uncontested_but_policy_and_native_fail
                 assert negotiations.row["permanent_block"] is (mode == "allow")
                 assert negotiations.row["blocked_role"] is None
                 assert negotiations.row["failure_reason"] == (channel.message if mode == "deny" else "Native driver will not renew")
-        finally:
-            adapter.stop()
 
 
 def test_weekly_worker_policy_refusal_does_not_disable_later_player_signing(monkeypatch):
     state, driver, negotiations, _, channel, _, _ = owned(monkeypatch)
     negotiations.records = {"first": negotiations.row}
     negotiations.markets = [(["first"], driver)]
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         def advance():
             result = negotiations.resolve_due_decisions()
             return result, getattr(adapter._local, "operation", False)
@@ -353,15 +326,12 @@ def test_weekly_worker_policy_refusal_does_not_disable_later_player_signing(monk
         channel.mode = "allow"
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert driver.contract == {"salary": 2} and not adapter._active
-    finally:
-        adapter.stop()
 
 
 def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(monkeypatch):
     state, driver, negotiations, planner, channel, signing, _ = owned(monkeypatch)
     original = type(state.driver_manager).sign_driver
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         # Each refused confirmation must remain pending; a native False would
         # otherwise try a backup and close it. Offer preparation must not stick.
         for mode, reason in (("deny", "Owned refusal"), ("failed", "Validation unavailable")):
@@ -378,14 +348,11 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         assert adapter.last_outcome is None
         assert negotiations.row["execution_block_reason"] == "Validation unavailable"
         negotiations.row.pop("native_precheck_failure")
-    finally:
-        adapter.stop()
     assert type(state.driver_manager).sign_driver is original
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.RegulationPersonnelAdapter(state, channel, lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert state.writes == [2] and negotiations.row["offer"]["years"] == 1
         assert driver.personality == "loyal" and driver.career_stage == "youngster" and state.teams["target"]["prestige"] == 50
@@ -401,8 +368,6 @@ def test_driver_guard_cancels_confirmation_keeps_native_exceptions_and_restores(
         other.state = SimpleNamespace(writes=[], native_refuse=False)
         channel.mode = "deny"
         assert other.sign_driver(SimpleNamespace(contract=None)) is True and other.state.writes == [2]
-    finally:
-        adapter.stop()
     assert type(state.driver_manager).sign_driver is original
 
 
@@ -424,24 +389,18 @@ def test_staff_and_driver_share_callers_without_publishing_refused_staff_prepara
                         "context": {"entry_id": "native-hint"}}
     original_offer = type(negotiations)._execute_offer
     original_staff = type(state.staff_manager).sign_staff
-    adapter = implementation.RegulationPersonnelAdapter(state, channel,
-                                              lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         assert len([name for name in adapter.groups if name.endswith("caller.offer")]) == 1
         for mode, reason in (("deny", "Owned refusal"), ("failed", "Validation unavailable")):
             channel.mode = mode
             assert negotiations.resolve_player_contract_decision("decision", True) == (False, reason)
             assert "decision" in negotiations.pending and vars(staff) == {"contract": None}
             assert not state.writes and state.teams == {"target": {}}
-    finally:
-        adapter.stop()
     assert type(negotiations)._execute_offer is original_offer and type(state.staff_manager).sign_staff is original_staff
 
     channel = type(channel)()
     channel.mode = "allow"
-    adapter = implementation.RegulationPersonnelAdapter(state, channel,
-                                              lambda *a: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         assert negotiations.resolve_player_contract_decision("decision", True) == (True, "closed")
         assert staff.contract == {"salary": 2} and staff._oval_target_entry_id == "native-hint"
         assert driver.contract is None and state.writes == ["staff"] and state.teams["target"]["prestige"] == 50
@@ -449,5 +408,3 @@ def test_staff_and_driver_share_callers_without_publishing_refused_staff_prepara
         other = type(state.staff_manager)()
         other.state = SimpleNamespace(writes=[], teams={"target": {}}, prestige_manager=type(state.prestige_manager)(), native_refuse=False)
         assert other.sign_staff(SimpleNamespace(contract=None)) is True and other.state.writes == ["staff"]
-    finally:
-        adapter.stop()

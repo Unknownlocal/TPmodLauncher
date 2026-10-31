@@ -4,6 +4,7 @@
 import inspect
 import sys
 import threading
+from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 
 from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
@@ -13,6 +14,7 @@ from hook_manager.game_adapters.regulations import regulation_personnel as imple
 from hook_manager.game_adapters.regulations.staffing_coordinator import StaffingCoordinator
 from hook_manager.game_adapters.staff import planner as contracts, staffing
 from hook_manager.game_adapters.staff.staffing import StaffingPlanner
+from tests.hook_manager.negotiation_support import personnel_adapter
 
 
 def staffing_state(monkeypatch):
@@ -75,10 +77,11 @@ def staffing_state(monkeypatch):
     return state, manager, person
 
 
+@contextmanager
 def staffing_coordinator(monkeypatch, mode="allow", *, callers=False):
-    """Create a coordinator; callers=True also wraps the native staffing callers.
+    """Provide fresh staffing state and restore guards after the block ends.
 
-    The test must stop the returned guard in either case.
+    callers=True also wraps the native staffing entry points.
     """
     state, manager, person = staffing_state(monkeypatch)
     planner = StaffingPlanner(state)
@@ -144,13 +147,17 @@ def staffing_coordinator(monkeypatch, mode="allow", *, callers=False):
         monkeypatch.setattr(implementation, "staffing_targets", lambda: targets)
         monkeypatch.setattr(implementation, "personnel_caller_targets", lambda: ())
         monkeypatch.setattr(implementation, "check_preparation", lambda *args: None)
-        guards = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
-        assert guards.staffing is not None
-        return state, manager, person, channel, guards, guards.staffing
+        with personnel_adapter(state, channel) as guards:
+            assert guards.staffing is not None
+            yield state, manager, person, channel, guards, guards.staffing
+        return
     guards = Guards(channel)
-    guards.approve(signing)
-    project = guards._projection
-    for owner in channel._owners:
-        guards.register(owner, [CallBinding("staff", "staff.sign", project, refuse_boolean)])
-    return state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
+    try:
+        guards.approve(signing)
+        project = guards._projection
+        for owner in channel._owners:
+            guards.register(owner, [CallBinding("staff", "staff.sign", project, refuse_boolean)])
+        yield state, manager, person, channel, guards, StaffingCoordinator(guards, planner)
+    finally:
+        guards.stop()
 

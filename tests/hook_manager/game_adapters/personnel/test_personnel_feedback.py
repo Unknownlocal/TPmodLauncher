@@ -8,8 +8,7 @@ from typing import Dict
 import pytest
 
 from hook_manager.game_adapters.personnel.feedback import adapter as feedback
-from hook_manager.game_adapters.regulations.regulation_personnel import RegulationPersonnelAdapter
-from tests.hook_manager.negotiation_support import negotiation_state as owned
+from tests.hook_manager.negotiation_support import negotiation_state as owned, personnel_adapter
 from tests.hook_manager.approach_support import approach_setup
 
 
@@ -124,26 +123,23 @@ def test_staff_approach_dialog_preserves_native_reason_sound_and_helper_ownershi
     screen = screen_for(classes["staff"], state, "staff")
     reason = "Nationality must match Audi (german)."
     screen.approach_result = False, reason
-    try:
+    screen.handle_event("approach")
+    notice = adapter.feedback.notices[screen]
+    assert notice.dialog.open and notice.approach_refusal and notice.reason == screen.message == reason
+    assert screen.sounds == [False] and "action_feedback" not in vars(screen)
+    screen.handle_event(SimpleNamespace(type=1, key=2))
+    assert not notice.dialog.open and screen.message == reason
+    # Native instance overrides must also survive temporary observation.
+    override = lambda successful: screen.sounds.append(successful)
+    screen.action_feedback = override
+    screen.approach_result = True, "Approach started."
+    screen.handle_event("approach")
+    assert notice.reason is None and not notice.dialog.open and screen.sounds == [False, True]
+    assert screen.action_feedback is override
+    screen.approach_error = True
+    with pytest.raises(ValueError, match="Owned native approach error"):
         screen.handle_event("approach")
-        notice = adapter.feedback.notices[screen]
-        assert notice.dialog.open and notice.approach_refusal and notice.reason == screen.message == reason
-        assert screen.sounds == [False] and "action_feedback" not in vars(screen)
-        screen.handle_event(SimpleNamespace(type=1, key=2))
-        assert not notice.dialog.open and screen.message == reason
-        # Native instance overrides must also survive temporary observation.
-        override = lambda successful: screen.sounds.append(successful)
-        screen.action_feedback = override
-        screen.approach_result = True, "Approach started."
-        screen.handle_event("approach")
-        assert notice.reason is None and not notice.dialog.open and screen.sounds == [False, True]
-        assert screen.action_feedback is override
-        screen.approach_error = True
-        with pytest.raises(ValueError, match="Owned native approach error"):
-            screen.handle_event("approach")
-        assert screen.action_feedback is override and screen.sounds == [False, True, True]
-    finally:
-        adapter.stop()
+    assert screen.action_feedback is override and screen.sounds == [False, True, True]
 
 
 def test_driver_native_approach_popup_reports_one_error_and_restores_on_cleanup(monkeypatch, approach_setup):
@@ -153,13 +149,11 @@ def test_driver_native_approach_popup_reports_one_error_and_restores_on_cleanup(
     screen = screen_for(classes["driver"], adapter.approach.state, "driver")
     reason = "Nationality must match Audi (german)."
     escaped = screen._show_approach_failure
-    try:
-        assert escaped(reason, title="Approach rejected", note="No slot used.") is None
-        assert screen._approach_failure_open and screen.message == screen._approach_failure_reason == reason
-        assert (screen._approach_failure_title, screen._approach_failure_note) == ("Approach rejected", "No slot used.")
-        assert screen.sounds == [False]
-    finally:
-        adapter.stop()
+    assert escaped(reason, title="Approach rejected", note="No slot used.") is None
+    assert screen._approach_failure_open and screen.message == screen._approach_failure_reason == reason
+    assert (screen._approach_failure_title, screen._approach_failure_note) == ("Approach rejected", "No slot used.")
+    assert screen.sounds == [False]
+    adapter.stop()
     escaped(reason)
     assert screen.sounds == [False]  # Cached wrappers stop supplying feedback after cleanup.
 
@@ -172,9 +166,8 @@ def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatc
             negotiations.row["candidate_type"] = "staff"
         cls = classes[kind]
         originals = cls.handle_event, cls.draw
-        adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
-        screen = screen_for(cls, state, kind)
-        try:
+        with personnel_adapter(state, channel) as adapter:
+            screen = screen_for(cls, state, kind)
             cls.handle_event(self=screen, event="sign")
             notice = adapter.feedback.notices[screen]
             assert notice.reason == screen.message == "Owned refusal" and notice.dialog.open
@@ -194,8 +187,6 @@ def test_personnel_refusal_dialog_closes_without_losing_inline_reason(monkeypatc
                 resolve_player_contract_decision=lambda *args: (False, "Foreign"))), kind)
             foreign.handle_event("sign")
             assert foreign not in adapter.feedback.notices and foreign.message == "Foreign"
-        finally:
-            adapter.stop()
         assert (cls.handle_event, cls.draw) == originals
 
 
@@ -211,9 +202,8 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
 
     monkeypatch.setattr(feedback, "feedback_bindings", compatible)
     reports = []
-    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, submit_log=reports.append).install_prepared()
-    screen = screen_for(classes["staff"], state, "staff")
-    try:
+    with personnel_adapter(state, channel, submit_log=reports.append) as adapter:
+        screen = screen_for(classes["staff"], state, "staff")
         assert len(reports) == 1 and "UI COMPATIBILITY FAILED" in reports[0]["detail"]
         assert adapter.feedback.groups["personnel.ui.staff"]["state"] == "active"
         screen.handle_event("unrelated")
@@ -250,8 +240,6 @@ def test_ui_failure_leaves_signing_active_and_does_not_retry_native_draw(monkeyp
             assert adapter.owners == {"owned.rules": "ready"}
             monkeypatch.setattr(feedback, "NegotiationNotice", factory)
             adapter.feedback.stop()
-    finally:
-        adapter.stop()
 
 
 @pytest.mark.parametrize("kind", ["driver", "staff"])
@@ -260,8 +248,7 @@ def test_inbox_refusals_keep_approval_pending_and_fresh_failures_do_not_reuse_me
     negotiations.row["candidate_type"] = kind
     negotiations.pending["decision"]["candidate_name"] = "Candidate"
     screen = inbox_screen(monkeypatch, state)
-    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         screen.handle_event(SimpleNamespace(type=7))
         notice = adapter.feedback.notices[screen]
         assert notice.dialog.open and notice.reason == "Owned refusal" and notice.candidate == "Candidate"
@@ -282,16 +269,13 @@ def test_inbox_refusals_keep_approval_pending_and_fresh_failures_do_not_reuse_me
         assert person.contract is not None and screen.action["completed"] and screen.sounds == [False, False, False, True]
         assert notice.reason is None and not notice.dialog.open
         assert getattr(adapter._local, "personnel_screen", None) is None
-    finally:
-        adapter.stop()
     assert not adapter.feedback.notices
 
 
 def test_inbox_decline_exception_and_retired_wrapper_preserve_the_caller_scope(monkeypatch):
     state, _, negotiations, _, channel, _, _ = owned(monkeypatch)
     screen = inbox_screen(monkeypatch, state)
-    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}).install_prepared()
-    try:
+    with personnel_adapter(state, channel) as adapter:
         # A native decline may try another offer. Its denial is not an acceptance refusal.
         adapter._local.personnel_screen = screen
         assert screen._execute_action(dict(screen.action, choice="decline"))
@@ -311,16 +295,13 @@ def test_inbox_decline_exception_and_retired_wrapper_preserve_the_caller_scope(m
         adapter.feedback.stop()
         assert not retained(screen.action) and not adapter.feedback.notices
         assert adapter.owners == {"owned.rules": "ready"}
-    finally:
-        adapter.stop()
 
 
 def test_inbox_presentation_failure_keeps_validation_and_native_results(monkeypatch):
     state, _, _, _, channel, _, _ = owned(monkeypatch)
     screen = inbox_screen(monkeypatch, state)
     reports = []
-    adapter = RegulationPersonnelAdapter(state, channel, lambda *args: {"selected": "current"}, submit_log=reports.append).install_prepared()
-    try:
+    with personnel_adapter(state, channel, submit_log=reports.append) as adapter:
         screen.handle_event(SimpleNamespace(type=7))
         notice = adapter.feedback.notices[screen]
         def failed_draw(*args, **kwargs):
@@ -342,5 +323,3 @@ def test_inbox_presentation_failure_keeps_validation_and_native_results(monkeypa
         assert not screen._execute_action(screen.action)
         assert not adapter.feedback.notices and adapter.owners == {"owned.rules": "ready"}
         assert not state.writes and not screen.action["completed"]
-    finally:
-        adapter.stop()
