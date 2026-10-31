@@ -229,6 +229,21 @@ def test_manifest_changes_after_admission_are_rejected_before_compile(pack, sour
         assert records(messages, "SOURCE GROUP TIMING")[0]["phase_seconds"]["source_prepare"] >= 0
 
 
+def test_invalid_prerequisite_is_rejected_before_joining_the_shared_source_group(pack, source_mod, runner_bundle):
+    game, folder, record = pack
+    bad = source_mod(folder, "bad", capabilities=("main-menu",), code="raise AssertionError('must not import')")
+    manifest = bad / "mod.toml"
+    manifest.write_text(manifest.read_text() + '\n[prerequisites]\n"menu:tools" = ["career.ready"]\n')
+    source_mod(folder, "healthy")
+    messages = []
+    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle)) as scope:
+        scope.load(record)
+        finish(scope)
+        assert set(scope.mods) == {"healthy"} and scope.failed == 1
+        assert "Unknown prerequisite" in records(messages, "REJECTED")[0]["detail"]
+        assert scope.mods["healthy"].event("probe", {"ok": True}) == {"ok": True}
+
+
 @pytest.mark.parametrize("activation_failure", [False, True])
 def test_source_ui_settings_api_owns_storage_registration_and_failure_cleanup(
     pack, source_mod, runner_bundle, activation_failure,

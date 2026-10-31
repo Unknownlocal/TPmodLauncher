@@ -12,6 +12,7 @@ import tomllib
 from . import _source_files as disk
 from ._source_policy import MAX_SOURCE_BYTES, MAX_SOURCE_FILES, module_part
 from .contract import SOURCE_CAPABILITIES
+from .prerequisites import prerequisite_declarations
 
 MAX_TREE_ENTRIES = 512
 MAX_DEPTH = 16
@@ -45,6 +46,7 @@ class SourceManifest:
     api: str
     entry: str
     capabilities: frozenset[str]
+    prerequisites: tuple = ()
 
     @classmethod
     def parse(cls, content):
@@ -53,7 +55,8 @@ class SourceManifest:
             if type(content) is not bytes or len(content) > 16 * 1024:
                 raise SourceError("Expected at most 16 KiB of manifest bytes")
             data = tomllib.loads(content.decode("utf-8"))
-            if set(data) != _FIELDS or type(data["schema"]) is not int or data["schema"] != 2:
+            if (set(data) - {"prerequisites"} != _FIELDS
+                    or type(data["schema"]) is not int or data["schema"] != 2):
                 raise SourceError("Expected source manifest schema 2 and its documented fields")
             if type(data["id"]) is not str or not re.fullmatch(r"[a-z][a-z0-9_.:-]{0,127}", data["id"]):
                 raise SourceError("Expected a short named mod identifier")
@@ -73,11 +76,12 @@ class SourceManifest:
                 or any(type(name) is not str or name not in known for name in capabilities)
                 or len(capabilities) != len(set(capabilities))):
                 raise SourceError("Unknown or duplicate capability")
-            return cls(data["id"], data["version"], data["api"], entry, frozenset(capabilities))
+            return cls(data["id"], data["version"], data["api"], entry, frozenset(capabilities),
+                       prerequisite_declarations(data.get("prerequisites", {}), capabilities))
         except SourceError:
             raise
         except (ValueError, TypeError, RecursionError) as error:
-            raise SourceError("Cannot parse source manifest") from error
+            raise SourceError("Cannot parse source manifest: " + str(error)[:256]) from error
 
 
 @dataclass(frozen=True)

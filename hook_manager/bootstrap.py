@@ -43,6 +43,7 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
+            module.readiness = module.NativeReadiness()
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
             # Save metadata must survive even when no mod requests validation.
@@ -82,6 +83,11 @@ def pulse(sources, digest, instance, game_root, request_json):
                 if type(settings) is not dict or set(settings) != {"records", "result"}:
                     raise ValueError("Invalid settings request fields")
                 module.settings.update(settings["records"], settings["result"])
+            response = module.manager.request({"operation": "status"})
+        elif type(request) is dict and request.get("operation") == "prerequisites":
+            if set(request) != {"operation", "prerequisites"}:
+                raise ValueError("Invalid prerequisite request fields")
+            module.readiness.configure(request["prerequisites"])
             response = module.manager.request({"operation": "status"})
         elif request == {"operation": "adapters"}:
             module.adapters.load()
@@ -145,6 +151,7 @@ def pulse(sources, digest, instance, game_root, request_json):
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
+                module.readiness.stop()
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
@@ -167,6 +174,7 @@ def pulse(sources, digest, instance, game_root, request_json):
                 module.settings.refresh()
         response["themes"] = module.themes.poll()
         response["settings"] = module.settings.poll()
+        response["readiness"] = module.readiness.snapshot()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         return json.dumps({"event": "error", "detail": str(error)[:4096]})

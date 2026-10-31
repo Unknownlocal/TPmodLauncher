@@ -334,6 +334,8 @@ class Controller:
                 self.pack_mods[pid].themes_status(payload.get("status", {}))
             elif event == "career-preload" and pid in self.pack_mods:
                 self.pack_mods[pid].career_preload(payload.get("status", {}))
+            elif event == "readiness" and pid in self.pack_mods:
+                self.pack_mods[pid].readiness_status(payload.get("status", {}))
             elif event in ("waiting", "transport", "compatibility", "diagnostic"):
                 # The verified session owns the PID, regardless of report contents.
                 self.submit_log({**payload, "component": payload.get("component", "bridge"), "pid": pid,

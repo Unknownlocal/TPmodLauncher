@@ -6,3 +6,4 @@ api = "0.2.0"
 runtime = "python"
 entry = "mod"
 capabilities = ["diagnostics", "main-menu"]
+# The menu adapter handles native imports; this button needs no extra prerequisites.

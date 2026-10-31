@@ -16,6 +16,7 @@ from launcher.load_timing import measure
 from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod, _host_operations
 from launcher.pack_candidate import PackCandidate
+from launcher.prerequisites import Prerequisites
 from launcher.shared_source_mod import SharedSourceMod
 from launcher.ui_settings import SettingsRequests
 from hook_manager.menu import MenuRequests
@@ -98,6 +99,7 @@ class PackMods:
         self.regulations, self._regulation_status = None, None
         self._regulation_owners, self._regulation_wake = set(), wake
         self._bridge = bridge
+        self.prerequisites = Prerequisites()
 
     @property
     def _regulation_failed(self):
@@ -139,6 +141,27 @@ class PackMods:
         # after pack startup; cleanup removes a failed owner's declarations.
         # Career selection and retirement do not change pack-owned UI.
         return not self.closed and self._source_starting
+
+    def _visible_ui(self, area, records):
+        """Keep waiting registrations private without delaying their owner's code."""
+        if self._ui_waiting():
+            return []
+        if not self.prerequisites.declarations:
+            return records
+        self.prerequisites.update(
+            (owner for owner, mod in self.mods.items() if mod._active and not mod.sandbox.closed),
+            self.regulations is not None and self.regulations.ready)
+        return [record for record in records if self.prerequisites.allows(
+            record["owner"], "menu:" + record["id"] if area == "menu" else area)]
+
+    def readiness_status(self, status):
+        """Refresh dependent UI on native changes, outside a busy setup request."""
+        previous = self.prerequisites.native
+        self.prerequisites.receive(status)
+        if status.get("detail") and status.get("detail") != previous.get("detail"):
+            self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=status["detail"])
+        if previous != self.prerequisites.native and not self._regulation_dispatching:
+            self._publish_ui()
 
     def bind_regulations(self, *, scopes, native_categories=()):
         """Bind admitted handlers; native interception needs a separate acknowledgement."""
@@ -206,7 +229,7 @@ class PackMods:
         """Send staged declarations outside guest execution, without per-frame callbacks."""
         # Keep desired declarations staged, but revoke published UI if a required
         # owner fails. Startup holds must not block cleanup.
-        records = [] if self._ui_waiting() else self.menu.buttons
+        records = self._visible_ui("menu", self.menu.buttons)
         if self.set_menu is None or self.applied_menu == records:
             return
         # An uncertain acknowledgement must still cause a later rollback/cleanup request.
@@ -231,12 +254,12 @@ class PackMods:
             self.settings.remove(owner)
             self.themes.remove(owner)
         error = None
-        for applied, flush in ((self.applied_settings, self._flush_settings), (self.applied_menu, self._flush_menu),
-                               (self.applied_themes, self._flush_themes)):
+        for flush in (self._flush_settings, self._flush_menu, self._flush_themes):
             # Validation holds the native caller until its reply. A synchronous
             # UI bridge request here would wait on that same game thread.
-            if (not self.closed and not self._regulation_dispatching
-                    and (applied is None or any(item["owner"] in owners for item in applied))):
+            # Another owner's registration may depend on the removed mod.
+            # Each flush already skips unchanged registries.
+            if not self.closed and not self._regulation_dispatching:
                 try:
                     flush()
                 except Exception as failure:
@@ -306,7 +329,7 @@ class PackMods:
     def _flush_settings(self):
         """Publish copied declarations only after guest execution has returned."""
         waiting = self._ui_waiting()
-        records = [] if waiting else self.settings.records
+        records = self._visible_ui("settings", self.settings.records)
         if waiting:
             self.settings_result = None  # A revoked registry cannot accept a stale save acknowledgement.
         if self.set_settings is None or (self.applied_settings == records and self.settings_result is None):
@@ -321,7 +344,7 @@ class PackMods:
         self.settings_result = None
 
     def _flush_themes(self):
-        records = [] if self._ui_waiting() else self.themes.records
+        records = self._visible_ui("theme", self.themes.records)
         if self.set_themes is None or self.applied_themes == records:
             return
         self.applied_themes = None
@@ -489,8 +512,8 @@ class PackMods:
                 self._publish_ui()
                 self._progress("complete" if self.finished else "loading")
         if self.loading is None:
-            self._flush_settings()
-            self._flush_themes()
+            if not self._regulation_dispatching:
+                self._publish_ui()
             return
         try:
             next(self.loading)
@@ -586,6 +609,16 @@ class PackMods:
                                   if type(item.manifest) is SourceManifest
                                   and counts[item.manifest.id] == 1
                                   and "regulations" in item.manifest.capabilities}
+        self.prerequisites = Prerequisites(item for item in candidates_read if counts[item.manifest.id] == 1)
+        request = self.prerequisites.request
+        if request["career"] or request["modules"]:
+            try:
+                if self._bridge is None:
+                    raise ValueError("Native prerequisites need a game bridge")
+                self.readiness_status(self._bridge.request("prerequisites", prerequisites=request)["readiness"])
+            except Exception as error:
+                # Only registrations needing unavailable native data stay held.
+                self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=str(error)[:512], error=error)
         for candidate in candidates_read:
             manifest, timings = candidate.manifest, candidate.timings
             # Decide duplicate identity before initializing either copy; never pick a winner.

@@ -20,7 +20,7 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "career_preload", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "native_readiness", "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -96,11 +96,19 @@ class Bridge:
             timer.cancel()
 
     def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
-                regulations=None, _service=None):
+                regulations=None, prerequisites=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "adapters", "regulation-defaults",
+        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "prerequisites", "adapters", "regulation-defaults",
                              "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
+        if operation == "prerequisites":
+            if (type(prerequisites) is not dict or set(prerequisites) != {"career", "modules"}
+                    or type(prerequisites["career"]) is not bool or type(prerequisites["modules"]) is not list
+                    or len(prerequisites["modules"]) > 256
+                    or any(type(name) is not str or len(name) > 128 for name in prerequisites["modules"])):
+                raise BridgeError("Expected bounded native prerequisite names")
+        elif prerequisites is not None:
+            raise BridgeError("This operation accepts no prerequisites")
         if operation == "menu":
             if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
                 raise BridgeError("Expected bounded menu declarations")
@@ -176,6 +184,8 @@ class Bridge:
                 message["settings"] = settings
             if operation == "themes":
                 message["themes"] = themes
+            if operation == "prerequisites":
+                message["prerequisites"] = prerequisites
             if regulations is not None:
                 message["regulations"] = regulations
             self._post(message, timeout)

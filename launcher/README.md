@@ -144,7 +144,8 @@ protect career loading and validation. Loading protection must be armed before
 career selection opens. Validation needs confirmed game hooks and published rule
 data; career readiness also waits for the game's activation reply.
 Mod menu additions, settings tabs and palettes become available after source
-activation without waiting for a career. Failed owners lose their UI.
+activation without waiting for a career, unless their manifest declares extra
+prerequisites. Failed owners lose their UI.
 Returning to the menu or cancelling a load retires career hooks and data while
 retaining the pack's interpreter, handlers and connection. The next career needs
 fresh data and hook approval. The child package documents failure handling and
@@ -157,6 +158,13 @@ field selection and explicit duplicate policies. Document-specific adapters own
 schema conversion and admission; regulations is the first consumer.
 
 ## Settings and palette ownership
+
+`prerequisites.py` evaluates each registration's optional manifest conditions.
+It reuses decisions until active mods, native module availability or career and
+regulation readiness change. Held declarations stay private; unrelated UI is
+published normally. The native `NativeReadiness` adapter observes completed
+imports and shares navigation ownership with career loading. Status changes use
+the existing bridge pulses, without mod callbacks or extra worker threads.
 
 `ui_settings.py` validates labelled colour fields and binds each mod to its fixed
 `settings.json`. `_settings_files.py` pins ordinary directories and uses atomic

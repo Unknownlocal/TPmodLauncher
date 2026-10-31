@@ -6,3 +6,4 @@ api = "0.3.0"
 runtime = "python"
 entry = "mod"
 capabilities = ["ui-settings"]
+# The UI adapters handle native imports; the editor and palette need no career.

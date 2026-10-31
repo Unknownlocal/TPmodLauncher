@@ -12,6 +12,7 @@ from launcher.bundled_dependencies import local_path
 from launcher.load_timing import measure
 from launcher.mod_api import CAPABILITIES, EXPORTS
 from launcher.sandbox import Limits, Operation, Sandbox, SandboxError
+from mod_runtime.prerequisites import prerequisite_declarations
 
 # Fuel counts Wasm work, including the guest Python interpreter (see Limits).
 # Measured startup needs about 12 million units and more than 32 core instances.
@@ -42,6 +43,7 @@ class Manifest:
     runtime: str
     component: str
     capabilities: frozenset[str]
+    prerequisites: tuple = ()
 
     @classmethod
     def read(cls, folder):
@@ -72,7 +74,7 @@ class Manifest:
                 raise ValueError("Expected at most 16 KiB of manifest bytes")
             data = tomllib.loads(content.decode("utf-8"))
             if (
-                set(data) != _FIELDS
+                set(data) - {"prerequisites"} != _FIELDS
                 or type(data["schema"]) is not int
                 or data["schema"] != 1
             ):
@@ -112,6 +114,7 @@ class Manifest:
                 data["runtime"],
                 component,
                 frozenset(capabilities),
+                prerequisite_declarations(data.get("prerequisites", {}), capabilities),
             )
         except (OSError, ValueError, TypeError, RuntimeError) as error:
             raise ManifestError(str(error)[:512]) from None

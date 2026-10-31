@@ -110,7 +110,7 @@ class AdapterModules:
                     self.regulation_screen = screen.RegulationScreenAdapter(self.enqueue_log_record, self.categories)
                 elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
                     raise HookError("Expected prepared categories or voting protection")
-            self.preload = CareerPreload(self._career_left)
+            self.preload = CareerPreload(self._career_left, getattr(self.host, "readiness", None))
         except BaseException:
             self.stop_regulations()
             raise

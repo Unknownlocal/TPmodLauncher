@@ -18,8 +18,8 @@ During Python evaluation, the bridge lets other game threads pass its entry
 check. The busy guard keeps them from starting another operation. Holding the
 script lock while Python releases the GIL could otherwise deadlock a worker.
 
-`bootstrap.py` creates a private manager, pack discovery, menu, settings and theme
-adapters. A source digest and session token identify their owner and prevent
+`bootstrap.py` creates a private manager, readiness, pack discovery, menu, settings
+and theme adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
@@ -109,8 +109,9 @@ Cleanup restores owned helper copies. For a pack with admitted regulation
 declarations, the launcher arms this adapter before enabling career selection.
 Changes in loading status reach the controller once; it prepares and activates
 the captured attempt before the game completes loading.
-The same adapter observes `ScreenManager.switch_to` for return to the hub or a
-different career. It revokes approval locally and reports departure; cancelled
+`native_readiness.py` owns the shared `ScreenManager.switch_to` observer. Career
+loading subscribes to return to the hub or a different career. It revokes approval
+locally and reports departure; cancelled
 jobs also lose approval. The controller retires the old hooks once admitted work
 finishes, clears career rule data and prepares the next captured attempt. Mod
 instances, bound validators and their connection stay loaded between careers.
@@ -238,6 +239,50 @@ whitespace. A mod can own four buttons and a process can hold 32. Item IDs are
 unique within their owner; labels must also avoid registered and native menu
 items. The bridge bounds the encoded declaration list to 16 KiB. Failure or
 closure removes that mod's registrations.
+
+### Registration prerequisites
+
+Both Python source mods and mods with prebuilt Wasm components can add an optional
+`[prerequisites]` table to `mod.toml`. Each entry holds only the named registration;
+the mod still imports and activates normally. Adapter permissions, native imports
+and signature checks remain required.
+
+```toml
+schema = 2
+id = "example.tools"
+version = "0.1.0"
+api = "0.3.0"
+runtime = "python"
+entry = "mod"
+capabilities = ["main-menu", "ui-settings"]
+
+[prerequisites]
+"menu:career_tools" = ["career.loaded", "mod:example.data"]
+settings = ["module:ui.screens.calendar_screen"]
+```
+
+`menu:<id>` names a button registered by that mod; `settings` names its Options
+tab and `theme` its palette. Omitted entries have no extra wait. All conditions
+listed for an entry must be met:
+
+- `career.loaded`: a career has reached its game screens. Options overlays retain
+  it; returning to the main menu or entering another load removes it.
+- `regulations.active`: the current career's regulation integration is active.
+  This does not request regulation support or replace its validation checks.
+- `mod:<id>`: that enabled code mod has activated and its runner is still available.
+- `module:<name>`: the named game module has completed a normal import in this
+  process. The launcher never imports it to satisfy the requirement.
+
+Each mod can name eight different conditions, reused across up to six entries.
+Conditions do not pause game progress or delay other registrations. Career and
+regulation conditions are checked again on departure or replacement; dependent
+UI is removed until they are met again. A module condition records its completed
+import for the process. Missing conditions leave the affected registration hidden.
+
+Palettes retain their restart-only behaviour: they must be available at startup
+to apply. `theme` therefore cannot require `career.loaded` or `regulations.active`.
+An added module requirement must be satisfied during startup for a saved palette
+choice to apply. Existing declarations and Wasm interfaces are unchanged.
 
 ### UI settings and palettes
 

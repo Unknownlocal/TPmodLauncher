@@ -9,6 +9,7 @@ import weakref
 if __package__:
     from .callables import CallableTarget
     from .manager import HookError, Manager
+    from .native_readiness import NativeReadiness
 
 
 class CareerPreload(Manager):
@@ -23,10 +24,11 @@ class CareerPreload(Manager):
 
     _generations = count(1)  # Keep attempt numbers unique across stop/reinstall.
 
-    def __init__(self, leaving=lambda: None):
+    def __init__(self, leaving=lambda: None, navigation=None):
         super().__init__(lambda record: None)
         self.generation, self._pending, self._allowed = 0, None, False
         self._left, self._leaving = False, leaving
+        self._navigation, self._owns_navigation = navigation or NativeReadiness(), navigation is None
         try:
             helper = CallableTarget("career.preload.helper", "ui.session_preload", (),
                                     "advance_session_preload", "(screen, state)")
@@ -34,11 +36,8 @@ class CareerPreload(Manager):
             if resolved is None:
                 raise HookError("Career preloading needs the loaded native helper")
             self._native = resolved[2]
-            navigation = CallableTarget("career.preload.navigation", "ui.screen_manager", ("ScreenManager",),
-                                        "switch_to", "(self, screen)")
-            self.approve(navigation)
-            self.install(navigation.name, [{"target": navigation.name, "callback": "internal", "phase": "before"}])
-            if self.groups[navigation.name]["state"] != "active":
+            self._navigation.watch_career(self._navigation_changed)
+            if not self._navigation.navigation_intact:
                 raise HookError("Career preloading needs native navigation")
             for screen in ("hub_screen", "load_game_screen", "team_select_screen"):
                 target = CallableTarget("career.preload." + screen, "ui.screens." + screen, (),
@@ -57,7 +56,8 @@ class CareerPreload(Manager):
         """Reject a reply for an abandoned, replaced or cancelled loading job."""
         self._main()
         pending = self._pending
-        if pending is not None and not self._left and type(generation) is int and generation == self.generation:
+        if (pending is not None and not self._left and self._navigation.navigation_intact
+                and type(generation) is int and generation == self.generation):
             screen, state, job, _ = (reference() for reference in pending)
             manager = getattr(screen, "manager", None)
             if (screen is not None and state is not None and job is not None
@@ -73,6 +73,7 @@ class CareerPreload(Manager):
         """Release the same pending job only while all installed aliases remain owned."""
         self._main()
         if (self._pending is None or self.current(self.generation) is not career
+                or not self._navigation.navigation_intact
                 or any(row["state"] not in ("active", "pending") for row in self.groups.values())
                 or any(vars(owner).get(attribute) is not wrapper
                        for row in self.groups.values() for owner, attribute, _, wrapper, _ in row["changes"])):
@@ -96,7 +97,10 @@ class CareerPreload(Manager):
     def poll(self):
         """Finish normal imports on the main thread; a failed alias restores the set."""
         if not self.closed:
+            self._navigation.poll()
             super().poll()
+            if not self._navigation.navigation_intact:
+                self.store_error("Career navigation observation became unavailable")
             if self.errors:
                 self.stop()
             elif self._pending is not None and not self._allowed and not self._left:
@@ -106,25 +110,24 @@ class CareerPreload(Manager):
                     self._depart()
         return self.status()
 
+    def _navigation_changed(self, manager, screen):
+        """Retire approval when the captured manager leaves or replaces its career."""
+        if self._pending is not None and self._pending[3]() is manager and manager.current is screen:
+            hub = getattr(sys.modules.get("ui.screens.hub_screen"), "HubScreen", None)
+            game = getattr(sys.modules.get("game_state"), "GameState", None)
+            state = getattr(screen, "state", None)
+            if (screen is None or isinstance(hub, type) and isinstance(screen, hub)
+                    or isinstance(game, type) and isinstance(state, game) and state is not self._pending[1]()):
+                self._depart()
+
+    def stop(self):
+        """Remove preload hooks and its subscription; stop an observer owned here."""
+        self._navigation.unwatch_career(self._navigation_changed)
+        if self._owns_navigation:
+            self._navigation.stop()
+        super().stop()
+
     def _wrapper(self, name, binding, target, original, signature):
-        if name == "career.preload.navigation":
-            def navigate(manager, screen):
-                """Observe completed native navigation without changing its result."""
-                result = original(manager, screen)
-                if self.groups[name]["state"] == "active" and self._pending is not None:
-                    # The loading screen can be collected after approval, so
-                    # retain its manager weakly to recognise this session's exit.
-                    if self._pending[3]() is manager and manager.current is screen:
-                        hub = getattr(sys.modules.get("ui.screens.hub_screen"), "HubScreen", None)
-                        game = getattr(sys.modules.get("game_state"), "GameState", None)
-                        state = getattr(screen, "state", None)
-                        if (screen is None or isinstance(hub, type) and isinstance(screen, hub)
-                                or isinstance(game, type) and isinstance(state, game) and state is not self._pending[1]()):
-                            self._depart()
-                return result
-            update_wrapper(navigate, original)
-            navigate._tpm_hook_group = name
-            return navigate
         # Check copies against today's loaded helper, never a saved body hash.
         if original is not self._native:
             raise HookError("Native preload alias no longer uses the mapped helper")

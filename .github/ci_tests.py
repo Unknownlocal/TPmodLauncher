@@ -13,7 +13,7 @@ PORTABLE = "not embedded and not native and not frida_build and not legacy and n
 SUITES = {
     "launcher": dict(path="tests/launcher/", sources=("launcher",), runner=True),
     "hook_manager": dict(path="tests/hook_manager/", sources=("hook_manager",)),
-    "career_preload": dict(path="tests/hook_manager/career/", sources=("hook_manager/career_preload.py",), parent="hook_manager"),
+    "career_preload": dict(path="tests/hook_manager/career/", sources=("hook_manager/career_preload.py", "hook_manager/native_readiness.py"), parent="hook_manager"),
     "game_adapters": dict(path="tests/hook_manager/game_adapters/", sources=("hook_manager/game_adapters",), parent="hook_manager"),
     "personnel": dict(path="tests/hook_manager/game_adapters/personnel/", sources=("hook_manager/game_adapters/personnel",), parent="game_adapters"),
     "regulations": dict(path="tests/hook_manager/game_adapters/regulations/", sources=("hook_manager/game_adapters/regulations",), parent="game_adapters"),

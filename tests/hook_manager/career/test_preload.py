@@ -2,12 +2,14 @@
 """Check native preload progress and loading-attempt ownership without a game."""
 
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+from contextlib import ExitStack
 
 import pytest
 
 from hook_manager.career_preload import CareerPreload
 from hook_manager.manager import HookError
+from hook_manager.native_readiness import NativeReadiness
 
 
 @pytest.fixture
@@ -86,6 +88,43 @@ def test_native_progress_wait_once_release_and_new_job_rejects_old_permission(na
             replacement.current(preload.generation)
     finally:
         replacement.stop()
+
+
+def test_career_and_completed_modules_are_observed_without_regulation_loading(native, monkeypatch):
+    helper, hub, _, manager, Screen, _ = native
+    original = hub.advance_session_preload
+    navigation = Screen.switch_to
+    future = ModuleType("owned_future_screen")
+    future.__spec__ = SimpleNamespace(_initializing=True)
+    with ExitStack() as resources:
+        observer = NativeReadiness()
+        resources.callback(observer.stop)
+        observer.configure({"career": True, "modules": [future.__name__]})
+        assert observer.snapshot()["career"] is None and future.__name__ not in sys.modules
+        monkeypatch.setitem(sys.modules, future.__name__, future)
+        assert observer.snapshot()["modules"] == []
+        future.__spec__._initializing = False
+        assert observer.snapshot()["modules"] == [future.__name__]
+        dashboard = Screen()
+        manager.switch_to(dashboard)
+        generation = observer.snapshot()["career"]
+        assert generation is not None and hub.advance_session_preload is original
+        foreign = Screen()
+        foreign.switch_to(hub.HubScreen())
+        assert observer.snapshot()["career"] == generation
+        manager.switch_to(object())  # An Options-like overlay retains the career.
+        assert observer.snapshot()["career"] == generation
+        preload = CareerPreload(navigation=observer)
+        try:
+            assert observer.navigation_intact
+        finally:
+            preload.stop()
+        assert observer.navigation_intact  # Independent observers retain their ownership.
+        manager.switch_to(hub.HubScreen())
+        assert observer.snapshot()["career"] is None
+        manager.switch_to(Screen())
+        assert observer.snapshot()["career"] > generation
+    assert Screen.switch_to is navigation
 
 
 def test_fixed_late_import_aliases_share_logic_and_preserve_foreign_replacement(native, monkeypatch):

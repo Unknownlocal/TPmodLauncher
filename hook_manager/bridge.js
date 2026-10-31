@@ -19,6 +19,8 @@ let themesState = null;
 let preloadFailureReported = false;
 let preloadWatching = false;
 let preloadState = null;
+let readinessWatching = false;
+let readinessState = null;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -33,9 +35,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons, loading, settings, themes, regulations) {
+function enqueue(operation, id, buttons, loading, settings, themes, regulations, prerequisites) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -44,7 +46,7 @@ function enqueue(operation, id, buttons, loading, settings, themes, regulations)
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, resolve, reject }; });
+    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, prerequisites, resolve, reject }; });
 }
 
 send({ event: 'waiting', level: 'DEBUG', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
@@ -88,7 +90,7 @@ observer = Process.attachModuleObserver({
                 onEnter() {
                     // Before SaveThread executes, this thread still holds the GIL and its thread state.
                     // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending && !preloadWatching)) return;
+                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending && !preloadWatching && !readinessWatching)) return;
                     if (!initialized() || finalizing()) return;
                     const state = threadState();
                     if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
@@ -103,6 +105,7 @@ observer = Process.attachModuleObserver({
                         if (request.operation === 'loading') record.loading = request.loading;
                         if (request.operation === 'settings') record.settings = request.settings;
                         if (request.operation === 'themes') record.themes = request.themes;
+                        if (request.operation === 'prerequisites') record.prerequisites = request.prerequisites;
                         if (request.regulations !== undefined) record.regulations = request.regulations;
                         const requestJson = JSON.stringify(JSON.stringify(record));
                         const expression = ready
@@ -131,6 +134,14 @@ observer = Process.attachModuleObserver({
                         }
                         // Startup can finish after manager readiness; report its pack once per process.
                         const pack = response.status.pack;
+                        // Availability precedes career setup and saves queued
+                        // by a registry which may no longer be available.
+                        const readiness = response.status.readiness;
+                        readinessWatching = !!readiness && readiness.watching;
+                        if (readiness && JSON.stringify(readiness) !== readinessState) {
+                            readinessState = JSON.stringify(readiness);
+                            send({ event: 'readiness', status: readiness });
+                        }
                         const preload = response.status.adapters && response.status.adapters.career_preload;
                         // Deferred screen imports can fail compatibility after
                         // arming. Keep existing status pulses and report once.
@@ -200,7 +211,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations, message.prerequisites)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
             );

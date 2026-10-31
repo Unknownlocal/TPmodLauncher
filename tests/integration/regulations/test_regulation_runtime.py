@@ -183,13 +183,14 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
 
 
 def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
-    source_mod, runner_bundle, tmp_path, monkeypatch, native_settings,
+    source_mod, code_mod, runner_bundle, tmp_path, monkeypatch, native_settings,
 ):
     """Load UI and rule examples together; simulate the game-side bridge replies."""
     example = Path(__file__).resolve().parents[3] / "examples/rookie_contract_mod"
     folder = tmp_path / "data/owned"
     shutil.copytree(example, folder / example.name)
     shutil.copytree(example.parent / "theme_mod", folder / "theme_mod")
+    code_mod(folder, "provider", mod_id="owned.provider")
     document = json.loads((example / "regulations.json").read_text(encoding="utf-8"))
     owner = "example.rookie_contracts"
     category = owner + ".length"
@@ -203,9 +204,17 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
     path.write_text(json.dumps(document), encoding="utf-8")
     original = path.read_bytes()
     # Settings and menu additions remain available before a career is selected.
-    source_mod(folder, "ui", mod_id="owned.ui", capabilities=("main-menu",), code=(
-        "import wit_world\nclass WitWorld:\n def activate(self): wit_world.add_menu_button('owned','Owned','Message')\n"
+    ui = source_mod(folder, "ui", mod_id="owned.ui", api="0.3.0", capabilities=("main-menu", "ui-settings"), code=(
+        "import wit_world,json\nclass WitWorld:\n def activate(self):\n"
+        "  for key in ('plain','career','module','rule'): wit_world.add_menu_button(key,key,'Message')\n"
+        "  wit_world.register_settings(json.dumps({'schema':1,'label':'Career tools',"
+        "'fields':[{'id':'colour','label':'Colour','color':'#123456'}]}))\n"
         " def on_event(self,n,p): return p\n"))
+    manifest = ui / "mod.toml"
+    manifest.write_text(manifest.read_text() + '\n[prerequisites]\n'
+        '"menu:career" = ["career.loaded"]\n'
+        '"menu:module" = ["module:ui.screens.calendar_screen", "mod:owned.provider"]\n'
+        '"menu:rule" = ["regulations.active"]\nsettings = ["career.loaded"]\n')
     progress, menus, operations, channels, reports, palettes = [], [], [], [], [], []
     wake = threading.Event()
     client = control_bridge(monkeypatch, lambda operation: {})
@@ -222,13 +231,18 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
             def reply(status):
                 client._message({"type": "send", "payload": {
                     "event": "reply", "id": record["id"], "status": status}}, lambda *args: None)
-            if operation == "regulation-defaults":
+            if operation == "prerequisites":
+                assert record["prerequisites"] == {"career": True, "modules": ["ui.screens.calendar_screen"]}
+                reply({"readiness": {"career": None, "modules": [], "watching": True, "detail": ""}})
+            elif operation == "regulation-defaults":
                 reply({"regulation_defaults": {"pack": str(folder.resolve()),
                     "categories": [{"key": "native", "options": [{"key": "open"}]}]}})
             elif operation == "await-regulations":
                 # Career selection must still be blocked while protection arms.
                 assert progress[-1]["state"] == "loading" and menus[-1]
                 assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
+                assert ("code-mod:owned.ui", "Career tools") not in native_settings.OPTION_TABS
+                assert [row["id"] for row in menus[-1]] == ["plain"]
                 assert palettes[-1][0]["owner"] == "example.theme"
                 assert record["regulations"] == {"pack": str(folder.resolve()),
                     "categories": scope.regulations.definitions.custom_categories,
@@ -273,7 +287,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
             time.sleep(.002)
         scope.poll()  # The next controller tick binds and arms the loaded rules.
         mod = scope.mods[owner]
-        assert mod.manifest.api == "0.4.0" and set(scope.mods) == {owner, "example.theme", "owned.ui"}
+        assert mod.manifest.api == "0.4.0" and set(scope.mods) == {owner, "example.theme", "owned.ui", "owned.provider"}
         assert path.read_bytes() == original
         assert scope._regulation_armed and not scope.regulations.ready and menus[-1]
         assert progress[-1]["state"] == "complete"
@@ -286,9 +300,13 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
         scope.poll()  # Binding and arming happen once, without a status request loop.
         scope.career_preload({"state": "waiting", "generation": 7})
         assert scope.regulations.ready and menus[-1] and progress[-1]["state"] == "complete"
+        assert [row["id"] for row in menus[-1]] == ["plain", "rule"]
+        scope.readiness_status({"career": 1, "modules": ["ui.screens.calendar_screen"], "watching": True, "detail": ""})
+        assert [row["id"] for row in menus[-1]] == ["plain", "career", "module", "rule"]
+        assert ("code-mod:owned.ui", "Career tools") in native_settings.OPTION_TABS
         for generation in (7, 6):
             scope.career_preload({"state": "waiting", "generation": generation})
-        assert operations == ["regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
+        assert operations == ["prerequisites", "regulation-defaults", "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations"]
         ctx = context()
         ctx["proposal"] = {"native_checks": {"rookie_contract_length_applies": True},
                            "proposed": {"duration_weeks": 260}}
@@ -310,12 +328,22 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
         assert check() == {"decision": "allow"}  # The upcoming four-year option applies.
         handler = scope.regulations._handler
         runner = mod.runner
+        settings.queue_save("owned.ui", {"schema": 1, "values": {"colour": "#654321"}})
+        stale_save = settings.status()
+        scope.readiness_status({"career": None, "modules": ["ui.screens.calendar_screen"], "watching": True, "detail": ""})
+        scope.settings_status(stale_save)
+        assert not (ui / "settings.json").exists() and settings.pending is None
+        assert ("code-mod:owned.ui", "Career tools") not in native_settings.OPTION_TABS
         scope.career_preload({"state": "left", "generation": 7})
         assert not scope.regulations.ready and menus[-1] and not runner.closed
+        assert [row["id"] for row in menus[-1]] == ["plain", "module"]
         assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
         assert palettes[-1][0]["owner"] == "example.theme"
         scope.career_preload({"state": "waiting", "generation": 8})
         assert scope.regulations.ready and menus[-1] and channels[0].epoch == 2
+        scope.mods["owned.provider"].close()
+        assert [row["id"] for row in menus[-1]] == ["plain", "rule"]
+        assert not runner.closed  # An independent provider does not close source peers.
         # A quick replacement may overtake the intermediate menu notice.
         scope.career_preload({"state": "waiting", "generation": 9})
         assert scope.regulations.ready and channels[0].epoch == 3

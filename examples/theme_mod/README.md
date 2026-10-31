@@ -5,6 +5,10 @@ connect an Options editor to a restart-only Color Pack palette. The launcher
 loads its source through the shared trusted runner.
 Its Options tab and Color Pack choice register when the pack's code mods finish
 loading, without requiring an open career.
+The adapters handle their native UI imports and compatibility checks. The example
+therefore needs no extra `[prerequisites]` declaration or other code mod. The
+[registration prerequisites API](../../hook_manager/README.md#registration-prerequisites)
+describes additional conditions for features which need them.
 
 ## Registration and saved values
 
