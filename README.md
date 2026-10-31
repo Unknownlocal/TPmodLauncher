@@ -1,7 +1,5 @@
 # modLauncher
 
-Mainly a learning exercise in Frida, architecting a design and trying to optimise both code and repo management policies. Side effect is the below.
-
 ## Licence and attribution
 
 - [Licence](LICENCE)
@@ -29,6 +27,11 @@ Replace `<GAME_FOLDER>` with the full path from **Browse local files**, it's the
 Keep the quotes, `--` and `%command%` as shown, then start the game through Steam.
 Steam supplies the game executable and its arguments after `--`.
 
+Closing the launcher console or pressing Ctrl+C also asks the game to close,
+as if you had clicked its Close button.
+If the game has not exited after four seconds, the launcher force-closes its
+remaining game processes.
+
 For help with the path, double-click the release ZIP's optional
 `modLauncher/SteamLaunchOptions.cmd` helper. It generates your launch line and
 copies it to the clipboard; press **Ctrl+V** in Steam's Launch Options field.
@@ -49,10 +52,6 @@ on each launcher run. The native menu shows progress and blocks season actions
 until code loading and menu registration settle.
 
 ### Linux through Proton/Wine (experimental, untested)
-
-This is experimental, and untested. All Linux functionality is something I've tested
-with WSL, but I don't have an environment to actually run and check this against,
-so I haven't done that. Please raise any issues with as much detail as you can.
 
 Use the Windows release bundle to run bundled Windows Python and the game in the
 same Proton/Wine environment. This approach needs no native Linux Python, and none
@@ -80,12 +79,9 @@ and starts bundled Windows Python in that environment. Enable Proton for the gam
 in Steam. Fixture tests cover this launch route; actual Proton injection and mod
 loading remain untested. The helper does not configure plain Wine outside Steam.
 
-### MacOS
+### macOS
 
-I haven't explicitly supported MacOS in any form here. I don't have a MacOS environment,
-and testing against it was eating into my CI budget more than I thought. Please do still
-submit any errors you have here, with as much detail as possible. I will try and look into
-them, but I cannot guarantee anything for the reasons mentioned above.
+macOS is unsupported and untested.
 
 ### Package a Windows or Linux/Proton release
 
@@ -145,10 +141,10 @@ All seven fields are required; extra fields are rejected.
 | `schema` | Integer `2`. |
 | `id` | Unique ID, up to 128 characters. Start with a lowercase letter; use lowercase letters, digits, `.`, `_`, `:` or `-` after it. |
 | `version` | SemVer version, at most 64 characters. |
-| `api` | Exact source API version `0.2.0` or `0.3.0`. |
+| `api` | Exact source API version `0.2.0`, `0.3.0` or `0.4.0`. |
 | `runtime` | `python`. |
 | `entry` | Dotted module name under `src/`, up to 128 characters; `mod` loads `src/mod.py`. |
-| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, and (API `0.3.0` only) `ui-settings`. An empty list is valid. |
+| `capabilities` | Unique permissions: `diagnostics`, `main-menu`, `ui-settings` (API `0.3.0`/`0.4.0`) and `regulations` (API `0.4.0`). An empty list is valid. |
 
 Implement the `wit_world` API provided by the runner:
 
@@ -220,6 +216,157 @@ extensions are not bundled. The frozen guest standard library includes `json`,
 `math`, `os` and their runtime dependencies. A module's availability does not
 grant access to host files, networking or processes.
 
+All Python source mods in a selected pack share one interpreter and memory.
+Ordinary imports resolve within your own `src/`. To share another enabled mod's
+module, use `wit_world.import_mod("other.mod", "module_name")`; it returns that
+mod's existing module object. Mod authors are responsible for compatibility
+between shared Python objects. All source files are available before any entry
+imports, and activation runs in mod-ID order alongside prebuilt components.
+The group accepts at most 8 MiB of source across 4,096 files; the pack admits
+at most 32 code mods. A failed source member closes all Python source mods in
+that pack. Mods with prebuilt Wasm components keep separate runtime instances.
+
+#### Regulation validators (API `0.4.0`)
+
+API `0.4.0` keeps the earlier source operations and adds the `regulations`
+permission. Start with the [rookie-contract example](examples/rookie_contract_mod).
+Authors supply its `mod.toml`, Python under `src/` and regulation declarations;
+the launcher supplies the runner, game adapters and validation connection.
+
+Install the example's code folder beside other mods in the selected Formula
+pack. Merge its [`regulations.json`](examples/rookie_contract_mod/regulations.json)
+`mod_extensions` entries into the pack's existing **root** `regulations.json`.
+Keep the native fields and other mods' entries; do not replace the whole file.
+The copy inside the code folder is an example fragment, not a second loaded file.
+Each entry is keyed by the exact manifest ID and requires `schema: 1`.
+Sections whose code mod is absent or lacks the permission are ignored beyond
+JSON syntax and the whole-file size limit. Removing the code folder disables
+its section on the next game start.
+
+An owned category can change automatically without team voting. Add:
+
+```json
+"change_control": {
+  "mode": "automatic",
+  "base_chance": 0.25,
+  "announcement_week": 40
+}
+```
+
+The chance ranges from 0 to 1 and is checked once per season. The week is the
+game's stored index, from 0 to 51 (displayed as weeks 1 to 52). A selected
+alternative takes effect next season and is announced through the game's inbox.
+Existing scripted or approved changes take priority. No Python voting function
+is needed; validators still enforce the selected option.
+
+To replace teams' voting calculations, add a `voting` entry to the mod's section:
+
+```json
+"voting": [{"rule": "example.rules.policy", "handler": "rules.vote"}]
+```
+
+The owned Python function receives `(context, regulation)` and returns
+`{"choice": "current", "reason": "Keep the existing rule."}` or the same shape
+with `"choice": "proposed"`. It can target its own categories or explicitly named
+ordinary native categories. Calendar, technical-era and entry-limit categories
+are excluded. Two mods cannot replace calculations for the same category.
+
+`context` includes the controlling `team`, frozen voting `snapshot`, original
+`native` evaluation, decision/effective seasons, a repeatable `seed`, and IDs for
+the review and proposal. Compare these IDs without relying on their format.
+`regulation` contains `key`, `current` and `proposed`
+options; each option's `option_data` comes from that mod's declarations. A reason
+must be nonblank and at most 2,048 UTF-8 bytes. Calculations have a five-second
+batch limit, with one second and five million fuel per team. Failure prevents
+partial results from being recorded and makes the shared runner unavailable.
+
+The game still chooses voters, records player ballots, counts votes and saves
+reviews. The function supplies player analysis without casting the player's vote.
+Saved ballots are reused; missing ballots use the review's saved electorate.
+
+A `validators` entry names a rule, a supported scope and a Python function:
+
+```json
+{"id":"rookie_length","rule":"example.rookie_contracts.length","scope":"personnel.contract","handler":"mod.validate_contract"}
+```
+
+Contract validators can request annual payroll with `"inputs": ["employer_payroll"]`.
+The adapter then adds `context["proposal"]["employer"]["payroll"]` containing
+`as_of_week`, `staff_annual_salary_m` and `driver_annual_salary_m`. Amounts are in
+millions per year, after the proposed agreement replaces the person's old deal.
+The week is today for an immediate or backdated signing, or the future start week.
+Scheduled agreements and earlier hires in the same staffing operation are included.
+Bonuses, buyouts and academy fees are excluded. Academy and supplier proposals
+receive `null` for this input.
+
+One payroll input is shared through independent copies with the participating
+validators. Its totals are checked again before allowing a write. When nobody
+requests it, no payroll records are scanned. The added fields count towards the
+existing argument limits. The mod chooses its own caps
+and returns its validation decision; it does not receive the full roster or save.
+Unknown input names, duplicates and requests outside `personnel.contract` are rejected.
+
+Rules can use native categories or categories declared by that mod. Custom
+category keys must begin with the mod ID and `.`. Current scopes are
+`personnel.approach` (driver and staff approaches to Formula teams),
+`personnel.contract` (driver, staff, academy and staffing proposals) and
+`development.project` (aero and chassis proposals). The launcher chooses the game methods; declarations
+cannot name arbitrary functions or call the private callable adapter.
+
+Approach validators receive person and employer identities, the intended `role`,
+and `action: "approach"` in `context.proposal`. The common clock and effective
+season/start fields remain available; the end week is `null`. There are no
+salary or duration fields at this stage. Register a validator separately for
+each scope it supports. A refusal prevents the approach and uses the game's
+own failure feedback. Driver refusal dialogs also report the native error cue.
+Staff retain the native inline message and error sound, with a matching refusal dialog supplied
+by the UI adapter.
+
+Contract validators also check submitted offers with `operation: "preview"`.
+They receive the proposed contract terms before the game stores the offer or
+schedules its decision. Refusals use the game's normal submission errors. Final
+signing checks run again with `operation: "commit"`; an earlier allowance is not
+reused as permission to sign.
+
+Write a synchronous `validate_contract(context, regulation)` function in the
+named source module. It receives fresh dictionaries and lists, and returns a
+dictionary such as `{"decision": "allow"}` or
+`{"decision": "deny", "message": "Contract is too long"}`. A refusal needs
+1-160 printable characters without surrounding whitespace. This is separate
+from `WitWorld` lifecycle methods and `on_event()` JSON-string responses.
+
+`context` describes the proposed action, its initiator, career clock and effective
+season. `regulation` supplies `current`, optional `upcoming` and `selected`.
+Use `regulation[regulation["selected"]]` for the option applying to that proposal;
+its `parameters` contain the rule values and `option_data` contains the mod's
+extra data for that option. The example reads `max_years` from those parameters
+and uses `proposal.native_checks.rookie_contract_length_applies`, preserving the
+game's own definition of a rookie.
+
+The optional `native_rules` switches `rookie_contract_length_check` and
+`staff_prestige_check` keep their native checks when omitted or true; false
+requests a bypass. A switch can instead refer to a boolean parameter in an owned
+category, for example:
+
+```json
+{"rookie_contract_length_check":{"rule":"example.rookie_contracts.length","parameter":"native_check"}}
+```
+
+Every option must supply that boolean. The adopted option for the proposed
+contract's season chooses whether the native check runs. Only one enabled mod
+may declare each switch; conflicts reject preparation. The example offers no
+rookie length restriction, native limits, or a mod-enforced four-year limit.
+Other native refusals still apply. Saved accepted contracts take effect normally
+without another mod check.
+
+The pack file is limited to 1 MiB. Signing, approach and project arguments are
+limited to 4,096 UTF-8 bytes, 1,024 nodes and eight container levels; these checks
+share one 100 ms action deadline. Native rule choices stay in memory between checks.
+See the [declaration and execution limits](launcher/regulations/README.md) for
+category, validator and script bounds. Invalid declarations or unavailable
+required validators keep the pack's mod checks unready; loading failures are
+reported in the CLI and launcher log.
+
 ### Mods with prebuilt Wasm components
 
 Authors build and distribute the component; the launcher loads the binary
@@ -241,7 +388,7 @@ Component Model toolchain follows the same contract-based build steps:
    A core Wasm module alone will not work. If your compiler emits one, use your
    toolchain's component packaging stage. Omit or stub unused WASI dependencies
    at build time: the launcher supplies no WASI imports. Components must fit the
-   32 MiB file and 64 MiB guest-memory limits, and initialize within 5,000,000
+   32 MiB file and 64 MiB guest-memory limits, and initialise within 5,000,000
    fuel units and one second.
 5. Supply this `mod.toml`, matching `api` and `capabilities` to the contract and
    features used for the build:
@@ -256,8 +403,9 @@ component = "mod.wasm"
 capabilities = ["diagnostics", "main-menu"]
 ```
 
-All seven fields are required; extra fields are rejected. IDs, versions and
-capabilities follow the Python source mod rules. `component` replaces `entry`
+All seven fields are required; extra fields are rejected. IDs and versions follow
+the Python source mod rules; capabilities must match the chosen component
+contract. Prebuilt components cannot request `regulations`. `component` replaces `entry`
 with a relative `.wasm` path inside the mod folder. Use `runtime = "wasm"` for
 any implementation language. The launcher rejects unsupported imports and missing
 or mismatched lifecycle exports.
@@ -282,20 +430,24 @@ through the launcher and check the log for acceptance and activation.
 Several code mods can share a data pack. Valid mods activate in ascending mod-ID
 order; all mods with a duplicate ID are rejected. Discovery accepts up to 4,096
 direct pack entries and 32 candidate mod folders. Linked folders and files are
-rejected or skipped. Manifests can be up to 16 KiB. A source manifest or loading
-failure rejects that mod without falling back to `mod.wasm`.
+rejected or skipped. Manifests can be up to 16 KiB. Source loading never falls
+back to `mod.wasm`. Invalid manifests are rejected before grouping; a failure
+loading an admitted source member rejects its whole group.
 
 Check the launcher log for `CODE MOD ACTIVE`, `CODE MOD REPORT` and
 `CODE MOD MENU` records. Rejections name the affected mod. Each process gets fresh
 mod state; shutdown or process replacement releases its mod instances.
 
-Each mod has separate guest state and a 64 MiB guest linear-memory limit. Python
-initialization allows 20,000,000 fuel units and five seconds. Source transfer and
-import share 256,000,000 units and five seconds; activation and each event allow
-5,000,000 units and one second. Each phase allows up to 64 host calls. Standard
-Wasm components also use the smaller budget for initialization. Fuel measures
-Wasm work, including the guest Python interpreter. A budget overrun or trap closes
-the mod and removes its registrations. Guest components have no host WASI
+The source group shares Python state and one 64 MiB guest linear-memory limit.
+Each prebuilt component has its own state and 64 MiB limit. Python initialisation
+allows 20,000,000 fuel units and five seconds. Each owner's source transfer and
+entry import have separate allowances of 256,000,000 units and five seconds;
+sealing the complete source table has another allowance of that size. Activation
+and each event allow 5,000,000 units and one second. Each phase allows up to
+64 host calls. Prebuilt components use that smaller budget for initialisation.
+Fuel measures Wasm work, including the guest Python interpreter. A budget overrun
+or trap closes the affected runtime and removes all its registrations, including
+every source peer sharing it. Guest components have no host WASI
 filesystem, network or process environment.
 
 ### Use the theme example
@@ -322,7 +474,7 @@ a trusted bridge supplies the in-game adapters.
 | --- | --- |
 | [launcher](launcher/README.md) | Startup checks, game-process tracking, pack loading, compilation cache, mod lifetimes and release preparation. |
 | [hook_manager](hook_manager/README.md) | Main-thread game integration, owned hooks, pack discovery, native menu/settings/theme adapters and the current mod API. |
-| [mod_runtime](mod_runtime/README.md) | Prebuilt Python runner, source checks, worker preparation and per-mod execution state. |
+| [mod_runtime](mod_runtime/README.md) | Prebuilt Python runner, source checks, worker preparation and shared Python execution. |
 | [tests](tests/README.md) | Behaviour checks, real Wasm execution, owned native helper processes, bundled-runtime checks and CI coverage. |
 
 `launcher/entry.py` checks bundled Python, the dependency inventory and trusted
@@ -336,21 +488,28 @@ Status, loading, menu declarations, settings and palettes cross this boundary;
 mod authors' Python runs inside Wasmtime in the external launcher.
 
 The pack loader checks manifests and duplicate IDs before execution. A worker
-snapshots Python source and compiles verified runner bytes, or prepares an
-explicit Wasm component. The controller takes the result and creates fresh
-permissions, a Store and guest state. Wasmtime can reuse compiled code from
-`bin/wasmtime-cache`; every load still checks inputs and creates fresh instance
-ownership.
+copies all source mods and prepares one verified runner compilation request,
+or prepares an explicit Wasm component. The controller creates one shared
+Python interpreter per pack and a separate Store for each prebuilt component.
+Wasmtime can reuse compiled code from `bin/wasmtime-cache`; every load still
+checks inputs and creates fresh instance ownership.
 
-One prebuilt runner serves separate Python instances for each mod. It imports
-source from guest memory and provides diagnostics, menu declarations, UI settings
-and palettes through permitted host functions. The launcher saves settings and
-sends save notifications; native adapters handle the editor and apply palettes
+The shared runner imports source from guest memory and provides diagnostics,
+menu declarations, UI settings and palettes through permitted host functions.
+The launcher saves settings and sends save notifications; native adapters handle
+the editor and apply palettes
 on restart. The sandbox enforces signatures, fuel, deadlines, host-call counts
 and guest linear-memory limits. Loading progress and native registration
 acknowledgements control startup readiness. Closing a session cancels unfinished
-preparation, closes mods in reverse activation order, removes their native UI
-registrations and restores owned hooks.
+preparation, closes owned runtimes, removes their native UI registrations and
+restores owned hooks. Logical mod closure is reported in reverse activation order.
+
+For regulation mods, the launcher reads enabled declarations from the pack's
+`regulations.json` and keeps checked rule data in the shared runner. Fixed game
+adapters prepare proposed contracts or development projects and request mod
+validation. Python handlers receive copied proposals and the selected rule data;
+their decisions gate the action while the game's other checks remain in force.
+The native callable adapter stays private.
 
 Release tools build the fixed runner with the pinned developer componentizer,
 prepare bundled Python and dependencies, and keep trusted sources and upstream

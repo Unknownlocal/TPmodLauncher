@@ -22,8 +22,17 @@ HOST_OPERATIONS = MappingProxyType({
     "register-theme": HostOperation("ui-settings", ("string",)),
 })
 
+# Shared calls carry an admitted source ID. The ordinary author methods still
+# take the same arguments; their per-mod facade supplies this private field.
+RUNNER_HOST_OPERATIONS = MappingProxyType({
+    "source-" + name: HostOperation(spec.capability, ("string", *spec.parameters), spec.result)
+    for name, spec in HOST_OPERATIONS.items()
+})
+
 # Source manifests select an exact public version, independently of the runner ABI.
 SOURCE_CAPABILITIES = MappingProxyType({
     "0.2.0": frozenset({"diagnostics", "main-menu"}),
     "0.3.0": frozenset(spec.capability for spec in HOST_OPERATIONS.values()),
+    # Regulations use declared Python validators, not another host-call import.
+    "0.4.0": frozenset(spec.capability for spec in HOST_OPERATIONS.values()) | {"regulations"},
 })

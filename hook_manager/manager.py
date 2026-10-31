@@ -95,6 +95,11 @@ class Target:
         raw = inspect.getattr_static(owner, self.attribute)
         descriptor = type(raw) if isinstance(raw, (staticmethod, classmethod)) else None
         original = raw.__func__ if descriptor else raw
+        signature = self._check(original)
+        return owner, raw, original, descriptor, signature
+
+    def _check(self, original):
+        """Check callable compatibility and return its accepted signature."""
         if (
             not callable(original)
             or hasattr(original, "__wrapped__")
@@ -104,7 +109,7 @@ class Target:
         signature = inspect.signature(original)
         if str(signature) != self.signature:
             raise HookError(f"Target {self.name} signature changed: {signature}")
-        return owner, raw, original, descriptor, signature
+        return signature
 
 
 class _Loader:
@@ -183,7 +188,8 @@ class Manager:
         if self.closed:
             raise HookError("Hook manager is stopped")
 
-    def _report(self, error):
+    def store_error(self, error):
+        """Retain recent error text for status checks without writing a log."""
         # Bound retained diagnostics; errors must not grow indefinitely or expose raw objects.
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
@@ -194,6 +200,14 @@ class Manager:
         if not isinstance(target, Target) or target.name in self.targets:
             raise HookError("Invalid or duplicate target approval")
         self.targets[target.name] = target
+
+    def group_intact(self, name):
+        """Whether the group is active and its installed wrappers are unchanged."""
+        group = self.groups.get(name)
+        # Stored attributes retain descriptors for an exact object identity check.
+        return (not self.closed and group is not None and group["state"] == "active"
+                and all(vars(owner).get(attribute) is installed
+                        for owner, attribute, _, installed, _ in group["changes"]))
 
     def _watch(self):
         self.wanted = {
@@ -361,7 +375,7 @@ class Manager:
         group = self.groups[name]
         group["state"] = "failed" if error is not None else "removed"
         if error is not None:
-            self._report(error)
+            self.store_error(error)
         for owner, attribute, raw, installed, local in reversed(group["changes"]):
             try:
                 current = inspect.getattr_static(owner, attribute)
@@ -376,7 +390,7 @@ class Manager:
                 else:
                     delattr(owner, attribute)
             except Exception as failure:
-                self._report(failure)
+                self.store_error(failure)
         group["changes"].clear()
         self._watch()
 
@@ -405,7 +419,7 @@ class Manager:
                         self.observers.pop(name, None)
                 except Exception as error:
                     self.observers.pop(name, None)
-                    self._report(error)
+                    self.store_error(error)
         for name, group in list(self.groups.items()):
             if group["state"] == "pending":
                 try:

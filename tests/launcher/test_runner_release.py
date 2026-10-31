@@ -45,13 +45,16 @@ def test_entry_rejects_runner_damage_before_launch_or_cache(installed, monkeypat
     assert not any((root / name).exists() for name in ("bin", "logs", ".state", ".cache"))
 
 
-def test_entry_supplies_installed_runner_to_real_source_pack(installed, source_mod, monkeypatch):
+def test_entry_supplies_installed_runner_to_real_source_pack(installed, source_mod, monkeypatch, python_compilation_cache):
+    from launcher import compilation_cache
+    # Startup uses real compiled code; cache-policy tests own cold compilation.
+    monkeypatch.setattr(compilation_cache, "CompilationCache", lambda root: python_compilation_cache)
     root, executable = installed
     game = root.parent
     folder = game / "data/owned pack"
     source_mod(folder, "owned.source")
     messages, progress = [], []
-    bridge = SimpleNamespace(set_menu=lambda items: None, set_loading=progress.append,
+    bridge = SimpleNamespace(wake=lambda: None, set_menu=lambda items: None, set_loading=progress.append,
                              set_settings=lambda records, result=None: None, set_themes=lambda records: None)
     monkeypatch.setattr(game_bridge, "factory", lambda *args: object())
     def run(frida, command, *args, mods_factory, **kwargs):

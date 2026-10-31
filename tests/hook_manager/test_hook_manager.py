@@ -130,7 +130,9 @@ def test_methods_descriptors_and_inherited_restore(host):
         {"value": 5},
     ]
     assert manager.install("owned", bindings)["groups"] == {"owned": "active"}
+    assert manager.group_intact("owned")
     manager.remove("owned")
+    assert not manager.group_intact("owned")
     assert "method" not in vars(Child)
     assert all(
         inspect.getattr_static(Child, name) is original
@@ -175,6 +177,7 @@ def test_conflicts_and_external_replacements_are_not_overwritten(host):
         manager.install("other", [binding])
     external = lambda value: value + 10
     module.method = external
+    assert not manager.group_intact("owned")
     manager.remove("owned")
     assert module.method is external and manager.status()["errors"]
 

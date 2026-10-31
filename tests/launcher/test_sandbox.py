@@ -27,6 +27,8 @@ def test_instances_have_private_memory_and_copied_grants(guest):
     with Sandbox(guest, capabilities, limits=Limits(host_calls=1)) as first, Sandbox(
         guest, grants(lambda value: value + 2)
     ) as second:
+        engine = first._engine
+        assert second._engine is engine
         capabilities.clear()
         assert first.call("counter") == 1
         assert first.call("counter") == 2
@@ -38,6 +40,11 @@ def test_instances_have_private_memory_and_copied_grants(guest):
         assert second.call("counter") == 2
     with pytest.raises(SandboxError, match="closed"):
         first.call("counter")
+    with pytest.raises(ValueError, match="closed"):
+        engine.ptr()
+    with Sandbox(guest, grants()) as replacement:
+        assert replacement._engine is not engine
+        assert replacement.call("counter") == 1
 
 
 def test_import_signatures_and_resource_imports_are_checked_before_activation():
@@ -90,10 +97,38 @@ def test_failed_call_disables_only_its_instance_and_cleans_once(
 
 
 def test_epoch_deadline_interrupts_guest_even_with_plentiful_fuel(guest):
-    with Sandbox(guest, grants(), limits=Limits(fuel=2**62, seconds=0.2)) as sandbox:
+    with Sandbox(guest, grants(), limits=Limits(fuel=2**62, seconds=0.2)) as sandbox, Sandbox(guest, grants()) as healthy:
         with pytest.raises(SandboxError, match="interrupt|deadline"):
             sandbox.call("loop")
         assert sandbox.closed
+        assert healthy.call("counter") == 1
+
+
+def test_phase_call_budgets_refresh_without_restarting_the_action_watchdog(guest):
+    with Sandbox(guest, grants(), limits=Limits(host_calls=1)) as sandbox, Sandbox(guest, grants()) as healthy:
+        with pytest.raises(SandboxError, match="interrupt|deadline"):
+            with sandbox.phase(fuel=1000, seconds=.05):
+                assert sandbox.call("apply", 1, fuel=1000) == 7
+                assert sandbox.call("apply", 2, fuel=1000) == 8
+                # Fresh fuel/host-call counts cannot replace the phase deadline;
+                # epoch interruption still stops a loop with effectively ample fuel.
+                sandbox.call("loop", fuel=2**62)
+        assert sandbox.closed
+        assert healthy.call("counter") == 1
+
+
+def test_shared_code_excludes_other_stores_for_the_whole_phase(guest):
+    with Sandbox(guest, grants()) as first, Sandbox(guest, grants()) as second:
+        with first.phase(fuel=5000, seconds=1):
+            assert first.call("counter") == 1
+            with pytest.raises(SandboxError, match="Another sandbox owns"):
+                second.call("counter")
+            with pytest.raises(SandboxError, match="Another sandbox owns"):
+                with second.phase(fuel=5000, seconds=1):
+                    pytest.fail("Another owner's watchdog must not be armed")
+            assert first.failure is None and second.failure is None
+            assert first.call("counter") == 2
+        assert second.call("counter") == 1
 
 
 def test_other_threads_cannot_use_or_free_a_live_store(guest):

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test game adapters
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  personnel:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-game-adapters-personnel.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  projects:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-game-adapters-projects.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  regulations:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-game-adapters-regulations.yml
+    with:
+      ref: ${{ inputs.ref }}

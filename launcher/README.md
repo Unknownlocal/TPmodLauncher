@@ -25,6 +25,28 @@ and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
+`diagnostics.py` configures standard Python logging for the console and
+`logs/launcher.log`. Records name the part that produced them and, when known,
+the process, check and action. Compatibility problems use WARNING; failed operations
+use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
+by default. Framework reports retain their severity through reporting functions
+and the bridge.
+Error text and stack locations have length limits and contain no captured local values.
+Handlers are removed when the launch ends. Logging an error does not itself
+stop the game; the operation that failed controls its outcome.
+
+`submit_log` callbacks attach context and route records or messages to
+`write_log()`, which uses the standard logger. Game adapters construct their
+transport records with `hook_manager.diagnostics.build_log_record()`.
+
+On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
+Ctrl+Break. It sends normal window-close requests only to game processes owned
+by this controller, while the controller thread closes mods and removes hooks.
+Process handles and executable checks protect against targeting an unrelated
+process. The helper allows four seconds for normal game exit, then force-closes
+any owned game processes still running. The console callback can enforce this
+even if the controller is stuck in cleanup.
+
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,
 then exchanges bounded status, pack, loading, menu, settings and palette data.
@@ -37,11 +59,19 @@ bounds discovery, validates manifests and rejects every candidate sharing a
 duplicate ID before activating valid mods in ID order. Normal entry enables
 Python source mods and mods with prebuilt Wasm components.
 
-For Python mods, `mod_runtime.preparation` snapshots source, checks it against the
-admitted metadata and compiles verified runner bytes on a worker. Wasm components
-use `compiled_mod.py`. Preparation creates no Store or game registration; the
-controller adopts completed work. Closing a loading scope cancels queued work
-and disposes completed or late results.
+For Python mods, `SourcePreparation` copies every source member, checks its
+previously accepted manifest and limits the combined size before reading runner
+bytes once. Prebuilt Wasm components also read on a worker during normal startup.
+The controller then requests compiled code through
+`compiled_mod.py` and polls for completion without waiting on a compiler.
+
+`compilation_registry.py` keeps loaded code and pending compilations for each
+execution thread. Identical bytes and compiler settings reuse one entry before
+another Engine or Component is created. `compiled_component.py` performs the
+actual compilation on a worker. Preparation creates no Store or game registration.
+Each request can be cancelled independently; the last reference frees the code,
+or disposes an abandoned compiler result when it finishes.
+Closing one loading scope lets compilation still needed by another scope finish.
 
 `compilation_cache.py` configures Wasmtime's local cache under
 `bin/wasmtime-cache` after checking ownership and access. Failed cache checks fall
@@ -49,24 +79,78 @@ back to uncached compilation. Every admission still verifies current bytes and
 creates fresh instance state. `load_timing.py` measures loading phases; the pack
 loader logs those timings and cache status.
 
+`pack_candidate.py` holds checked metadata. The controller creates one
+`SharedPythonRunner` for all source candidates. All sources transfer before
+entry imports, so a member can import a peer immediately. Imports happen together
+at the first source candidate; source and prebuilt activation stays in ID order.
+Source UI declarations stay staged until pack startup finishes. A failed source
+member rejects the whole fixed group; the loader does not retry with fewer mods.
+
 ## Mod execution and native readiness
 
 `mod_api.py` records public API versions, permissions and lifecycle signatures;
 `mod_contract.py` supplies prebuilt Wasm component admission, bounded JSON events and host-owned
-diagnostic and UI resource identity. `source_mod.py` applies that lifecycle and
-event contract to the Python runner. `runner_host.py` binds the complete typed interface
-to per-mod providers or permission-denial callbacks.
+diagnostic and UI resource identity. `shared_source_mod.py` applies that lifecycle
+and event contract to each shared entry. `runner_host.py` checks each owner's
+permissions and fixes its host callbacks before shared routing is created.
 
-`sandbox.py` owns the compiled component, linker, Store and cleanup scope. It
-validates imports and exports, serializes guest entry on the owning thread, and
-enforces memory, fuel, deadline and host-call limits. Source initialization uses
-an aggregate loading phase; activation and events use ordinary call budgets.
-A failure closes the affected mod and revokes its owned registrations.
+`compiled_code.py` holds the shared Engine and compiled component after adoption.
+`PackMods` uses one Store for the source group and separate Stores for prebuilt
+components. A whole execution phase belongs to one Store at a time, so its
+timeout cannot interrupt another Store using the shared Engine.
 
-The loader publishes progress and menu declarations to the native adapter after
-activation. Startup readiness waits for both preparation outcomes and native
-menu acknowledgement. Session closure releases active mods in reverse order;
+`deadline_watchdog.py` reuses one waiting thread per shared Engine. It interrupts
+overdue guest execution and clears each finished call's deadline before another
+mod can run. The thread stops before that Engine is freed.
+
+`sandbox.py` owns a runner's linker, Store, shared-code reference and cleanup. It
+validates imports and exports, serialises guest entry on the owning thread, and
+enforces memory, fuel, deadline and host-call limits. Shared source loading gives
+each owner's transfer and entry import separate source allowances, plus one
+allowance for sealing the complete source table. Activation and events use
+ordinary call budgets.
+A failure closes the affected Store and runs its cleanup.
+
+`shared_runner_host.py` supplies the host-call routing for
+`mod_runtime.shared_runtime.SharedPythonRunner`. One shared Store serves several
+logical source mods. Each source module imports a `wit_world` API bound to
+its admitted mod ID; the host selects that ID's provider table for diagnostics,
+menus, settings and themes. Other source IDs and ownerless calls are rejected.
+These tables retain ordinary permission checks, while mods sharing Python can
+borrow one another's API modules. They provide routing, not mutual isolation.
+The group owns closure and cleanup. Closing a source entry closes the whole group,
+revokes every member's registrations before replacement UI is sent, and logs
+the affected IDs once. Unactivated peers are included in failure counts.
+
+Trusted calls may supply an absolute deadline to `Sandbox.phase`. It cannot
+extend the phase's normal allowance. Expired requests are rejected before guest
+entry; work that overruns after entry closes its Store. No background job or
+parallel source execution is involved.
+
+The loader publishes progress and staged UI declarations to the native adapter.
+Startup readiness waits for preparation outcomes, complete source activation and
+native acknowledgement. Immediate and deferred native rejection use the same
+cleanup. Session closure reports logical mods in reverse activation order;
 loading work, native UI ownership and bridge lifetime remain tied to that session.
+
+[`regulations/`](regulations/README.md) reads enabled source mods' definitions and
+binds their Python validators once in the pack's shared Wasm runner. Native fields
+are preserved; conditions stay in mod code. An authenticated connection carries
+checks to the controller thread under one absolute deadline.
+
+`RegulationRuntime` owns career preparation, installation, activation and
+retirement. The bridge sends fixed requests; `PackMods` derives readiness and UI
+holds from runtime status. Loading protection must be armed before career
+selection opens, and activation acknowledged before mod UI appears. Returning to
+the menu or cancelling a load retires career hooks and data while retaining the
+pack's interpreter, handlers and connection. The next career needs fresh data and
+hook approval. The child package documents failure handling and required owners.
+Source API `0.4.0` grants the `regulations` permission; native setup and the callable
+adapter remain private.
+
+[`json_ingest/`](json_ingest/README.md) provides bounded UTF-8 decoding, indexed
+field selection and explicit duplicate policies. Document-specific adapters own
+schema conversion and admission; regulations is the first consumer.
 
 ## Settings and palette ownership
 
@@ -127,10 +211,9 @@ Proton prefix and game arguments while substituting the bundled Windows Python.
 entry point, retaining its target validation. This route is tested with owned
 process fixtures; actual Proton mod loading remains untested.
 
-Maintainers run `Package-Release.ps1 -Version <version>` from the repository root.
-It coordinates developer setup and `release_workflow.py`: pinned Frida source
+`Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency
 preparation, and ZIP assembly. No pre-existing binary cache is required; the
 checkout's selected dependencies and active runtime are preserved.
-`-Platform linux` selects the Linux/Proton archive and a separate candidate
-record; `-PrepareOnly` and `-CheckOnly` apply to the selected platform.
+Its platform selection keeps the Windows and Linux/Proton archives and candidate
+records separate, including during preparation and verification.

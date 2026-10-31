@@ -2,37 +2,29 @@
 """Real Git source fixtures shared by launcher build and source-package tests."""
 
 from pathlib import Path
-import json
 import shutil
 
 import pytest
 
+from regulation_support import make_mods
+
 from launcher import build_frida as build
 from launcher import build_mod
 from wasmtime import wat2wasm
+from tests.source_support import write_source_mod
 
 
 @pytest.fixture
 def source_mod():
     """Create source-only Python inputs; stale author Wasm is deliberately unusable."""
     def create(pack, name, *, mod_id=None, code=None, capabilities=("diagnostics",), api="0.2.0"):
-        folder = pack / name
-        (folder / "src").mkdir(parents=True)
-        (folder / "mod.toml").write_text(f'''schema = 2
-id = "{mod_id or name}"
-version = "0.1.0"
-api = "{api}"
-runtime = "python"
-entry = "mod"
-capabilities = {json.dumps(capabilities)}
-''', encoding="utf-8")
         if code is None:
             code = '''import wit_world
 class WitWorld(wit_world.WitWorld):
     def activate(self): wit_world.report("source ready")
     def on_event(self, name, payload): return payload
 '''
-        (folder / "src/mod.py").write_text(code, encoding="utf-8")
+        folder = write_source_mod(pack / name, code, owner=mod_id or name, capabilities=capabilities, api=api)
         (folder / "mod.wasm").write_bytes(b"stale author component must not load")
         return folder
     return create

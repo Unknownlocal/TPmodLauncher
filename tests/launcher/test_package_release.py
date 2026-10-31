@@ -2,6 +2,7 @@
 """Exercise release selection, ZIP validation and the player copy helper."""
 
 import hashlib
+from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 import zipfile
@@ -31,6 +32,9 @@ def inputs(tmp_path):
     for directory in (*packaging.SOURCE_DIRECTORIES, "notices", "libs/mod-runners"):
         (root / directory).mkdir(parents=True)
         (root / directory / "owned.py").write_text("# owned fixture\n")
+    fragment = root / "examples/rookie_contract_mod/regulations.json"
+    fragment.parent.mkdir(parents=True)
+    fragment.write_bytes((Path(__file__).resolve().parents[2] / "examples/rookie_contract_mod/regulations.json").read_bytes())
     (root / "launcher/owned.sh").write_bytes(b"#!/bin/bash\ntrue\n")
     manifest = packaging.paths.read_manifest(root)
     runtime = root / manifest["runtime"]["directory"]
@@ -56,6 +60,7 @@ def test_archive_is_relocatable_selected_and_repeatable(inputs):
         assert (extracted / "bundled_packages.toml").is_file()
         assert (extracted / manifest["directory"]).is_dir()
         assert (extracted / "source/frida/fixture.txt").read_text() == "owned source fixture"
+        assert (extracted / "examples/rookie_contract_mod/regulations.json").read_bytes() == (root / "examples/rookie_contract_mod/regulations.json").read_bytes()
         assert b"must not ship" not in [file.read_bytes() for file in extracted.rglob("*") if file.is_file()]
         checks.append(extracted)
 

@@ -2,6 +2,7 @@
 """Test game-command validation, event ordering, restart gaps and controller cleanup."""
 
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -121,6 +122,114 @@ def rig(tmp_path):
     return device, controller, messages, now
 
 
+def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig):
+    device, controller, messages, _ = rig
+    controller.start()
+    try:
+        session = controller.sessions[10]
+        detail = "REGULATIONS COMPATIBILITY FAILED career.preload; continuing native game"
+        controller.events.put(("bridge", (10, session, {
+            "type": "send", "payload": {"event": "compatibility", "detail": detail}})))
+        controller.poll()
+        assert any(detail in message for message in messages)
+        assert controller.sessions[10] is session and not session.is_detached
+        assert not controller.stopping
+    finally:
+        controller.close()
+
+
+def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, capsys):
+    from hook_manager.game_adapters.regulations.guards import RegulationGuards
+
+    device, controller, _, _ = rig
+    notices = []
+    channel = lambda *a: {}
+    channel.bindings = lambda scope: {}
+    channel.validation_ready = True
+    channel._unavailable = set()
+    guard = RegulationGuards(channel, lambda *a: {}, "personnel.contract", submit_log=notices.append)
+    # An owned but unadmitted worker produces the actual native diagnostic.
+    thread = threading.Thread(target=lambda: guard._decision(lambda: {}, set()))
+    thread.start()
+    thread.join(2)
+    assert not thread.is_alive()
+    guard.stop()
+    payload = json.loads(json.dumps({"event": "compatibility", **notices[0]}))
+    path = tmp_path / "launcher.log"
+    with lifecycle.reporter(path) as logger:
+        controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
+        controller.start()
+        try:
+            session = controller.sessions[10]
+            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            controller.poll()
+            assert controller.sessions[10] is session and not controller.stopping
+        finally:
+            controller.close()
+    for output in (path.read_text(), capsys.readouterr().err):
+        assert " ERROR modLauncher.regulations " in output
+        assert "pid=10" in output and "REGULATIONS VALIDATION FAILED" in output
+        assert "Unscoped worker or reentrant regulation validation" in output
+
+
+def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(rig, tmp_path, capsys):
+    import logging
+
+    device, controller, _, _ = rig
+    game = Path(controller.game).parent
+    pack = game / "data/owned pack"
+    bad = pack / "broken"
+    bad.mkdir(parents=True)
+    (bad / "mod.toml").write_text("invalid TOML")
+    logger = logging.getLogger("modLauncher")
+    before = list(logger.handlers), logger.level, logger.propagate
+    first = tmp_path / "first.log"
+    with lifecycle.reporter(first) as logger:
+        controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
+        controller.mods_factory = lambda report, bridge: PackMods(game, report)
+        controller.start()
+        session = controller.sessions[10]
+        def send(payload):
+            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            controller.poll()
+        try:
+            send({"event": "pack", "pack": dict(state="ready", series="formula", id=pack.name, root=str(pack.resolve()))})
+            assert controller.pack_mods[10].failed == 1
+            # Malformed severity and guest control characters stay ordinary
+            # bounded diagnostics; neither changes the session's lifetime.
+            send({"event": "diagnostic", "level": [], "detail": "unsafe\n\x1bmessage" + "x" * 5000})
+            send({"event": "waiting", "level": "DEBUG", "detail": "hidden readiness detail"})
+            assert controller.sessions[10] is session and not controller.stopping
+        finally:
+            controller.close()
+    first_text = first.read_text()
+    console = capsys.readouterr().err
+    for output in (first_text, console):
+        assert "WARNING modLauncher.mods pid=10 CODE MOD REJECTED" in output
+        invalid = next(line for line in output.splitlines() if "Invalid diagnostic severity" in line)
+        assert "WARNING" in invalid and "\x1b" not in invalid and len(invalid) < 4400
+        assert "hidden readiness detail" not in output
+    assert (list(logger.handlers), logger.level, logger.propagate) == before
+    second = tmp_path / "second.log"
+    with lifecycle.reporter(second) as logger:
+        lifecycle.write_log(logger, "second session")
+    assert second.read_text().count("second session") == 1 and first.read_text() == first_text
+    assert (list(logger.handlers), logger.level, logger.propagate) == before
+
+
+def test_large_pack_error_keeps_cause_when_owner_list_is_truncated(tmp_path, capsys):
+    path = tmp_path / "launcher.log"
+    with lifecycle.reporter(path) as logger:
+        scope = PackMods(tmp_path, logger)
+        scope._log("SOURCE GROUP FAILED", level="ERROR",
+                   owners=["a" * 126 + f"{i:02}" for i in range(32)], detail="Owned root cause")
+        scope.close()
+    for output in (path.read_text(), capsys.readouterr().err):
+        assert output.count("SOURCE GROUP FAILED") == 1
+        assert "ERROR modLauncher.mods" in output and "Owned root cause" in output
+        assert "[truncated]" in output and len(output) < 4400
+
+
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):
     device, controller, _, _ = rig
     try:
@@ -152,6 +261,24 @@ def test_initial_setup_failure_resumes_game_and_removes_tracking(rig):
     assert ("resume", 10) in device.calls
     assert not device.handlers and not controller.sessions
     assert all(not session.gating for session in device.sessions.values())
+
+
+def test_console_close_during_setup_does_not_start_game(rig, monkeypatch):
+    device, controller, _, _ = rig
+    controller.shutdown = SimpleNamespace(requested=threading.Event())
+    enumerate_processes = device.enumerate_processes
+
+    def closing(**options):
+        controller.shutdown.requested.set()
+        return enumerate_processes(**options)
+
+    monkeypatch.setattr(device, "enumerate_processes", closing)
+    try:
+        controller.start()
+        assert not device.processes and not controller.sessions and not controller.held
+    finally:
+        controller.close()
+    assert not device.handlers and not controller.cleanup_failed
 
 
 def test_children_are_verified_and_helpers_and_late_children_are_released(
@@ -301,21 +428,21 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == 2
 
 
-def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch, disposable_source_compiler):
+def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsive(rig, source_mod, runner_bundle, monkeypatch):
     from mod_runtime import preparation
     device, controller, messages, _ = rig
     game = Path(controller.game).parent
     mod = source_mod(game / "data/owned pack", "owned.pending")
     entered, release = threading.Event(), threading.Event()
     results = []
-    original = preparation._prepare
+    original = preparation._prepare_group
     def blocked(*args):
         result = original(*args)
         results.append(result)
         entered.set()
         assert release.wait(10)
         return result
-    monkeypatch.setattr(preparation, "_prepare", blocked)
+    monkeypatch.setattr(preparation, "_prepare_group", blocked)
     controller.mods_factory = lambda report, bridge: PackMods(game, report, runner_bundle=runner_bundle)
     controller.start()
     scope = None
@@ -332,12 +459,12 @@ def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsi
         first.is_detached = True
         first.handlers["detached"]("process-terminated")
         controller.poll()
-        assert scope.closed and 10 not in controller.pack_mods and not results[0].compiled.closed
+        assert scope.closed and 10 not in controller.pack_mods and results[0].snapshots is not None
     finally:
         release.set()
         controller.close()
         if scope is not None:
             scope.executor.shutdown(wait=True)
-    assert results[0].snapshot is None and results[0].compiled.closed
+    assert results[0].snapshots is None and results[0].component is None and results[0].compiled is None
     assert not any("CODE MOD ACTIVE:" in line or "CODE MOD REPORT:" in line for line in messages)
     assert not controller.cleanup_failed

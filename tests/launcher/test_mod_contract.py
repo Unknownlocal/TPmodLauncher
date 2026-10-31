@@ -43,7 +43,7 @@ def test_component_imports_cannot_expand_manifest_permissions(author):
     with pytest.raises(SandboxError, match="approved host operation"):
         Mod(
             Manifest.read(author),
-            report=lambda *_: pytest.fail("No diagnostic grant"),
+            submit_log=lambda *_: pytest.fail("No diagnostic grant"),
             cleanup=lambda: cleaned.append(True),
         )
     assert cleaned == [True]
@@ -51,7 +51,7 @@ def test_component_imports_cannot_expand_manifest_permissions(author):
 
 def test_lifecycle_and_required_export_shape_are_enforced(author):
     manifest = tiny_component(author)
-    with Mod(manifest, report=lambda *_: None) as mod:
+    with Mod(manifest, submit_log=lambda *_: None) as mod:
         with pytest.raises(SandboxError, match="Activate"):
             mod.event("owned.event", {})
         mod.activate()
@@ -67,7 +67,7 @@ def test_lifecycle_and_required_export_shape_are_enforced(author):
     )
     (author / "mod.wasm").write_bytes(wat2wasm(source))
     with pytest.raises(SandboxError, match="required API"):
-        Mod(manifest, report=lambda *_: None)
+        Mod(manifest, submit_log=lambda *_: None)
 
 
 @pytest.mark.legacy
@@ -88,9 +88,9 @@ def test_python_build_and_real_guest_contract(built_python_mod, tmp_path, monkey
     monkeypatch.setenv("MODLAUNCHER_TEST_SECRET", "host-secret-not-for-guests")
     messages = []
     with Mod(
-        Manifest.read(folder), report=lambda *message: messages.append(message)
+        Manifest.read(folder), submit_log=lambda *message: messages.append(message)
     ) as first, Mod(
-        Manifest.read(other), report=lambda *message: messages.append(message)
+        Manifest.read(other), submit_log=lambda *message: messages.append(message)
     ) as second:
         first.activate()
         second.activate()
@@ -128,7 +128,7 @@ def test_python_build_and_real_guest_contract(built_python_mod, tmp_path, monkey
 @pytest.mark.parametrize("operation", ["socket", "subprocess", "ctypes"])
 @pytest.mark.legacy
 def test_python_guest_cannot_obtain_native_host_io(built_python_mod, operation):
-    with Mod(Manifest.read(built_python_mod), report=lambda *_: None) as mod:
+    with Mod(Manifest.read(built_python_mod), submit_log=lambda *_: None) as mod:
         mod.activate()
         try:
             result = mod.event(operation, None)
@@ -165,7 +165,7 @@ def test_current_api_build_can_request_diagnostics_without_menu_access(author):
     messages = []
     # No menu provider is supplied: accidentally enabling its import must fail admission.
     with Mod(
-        Manifest.read(author), report=lambda *message: messages.append(message)
+        Manifest.read(author), submit_log=lambda *message: messages.append(message)
     ) as mod:
         mod.activate()
         assert messages == [("example.diagnostics", "Diagnostic example activated")]

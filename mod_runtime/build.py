@@ -17,29 +17,30 @@ import sys
 import tempfile
 
 from .bundle import (
-    ABI_VERSION, COMPONENTIZE_VERSION, EXPORTS, FILES, MANIFEST, NOTICE_FILES,
+    ABI_VERSION, COMPONENTIZE_VERSION, EXPORTS, FILES, MANIFEST, NOTICE_FILES, SOURCES,
     RunnerBundle, BundleError, _checked, _read, MAX_COMPONENT_BYTES,
 )
-from .contract import HOST_OPERATIONS
+from .contract import RUNNER_HOST_OPERATIONS
 
 
 def check_interface(data):
     """Validate the private ABI without instantiating or executing the runner."""
     from wasmtime import Config, Engine
-    from wasmtime.component import Component, ComponentInstanceType, FuncType, String
+    from wasmtime.component import Component, ComponentInstanceType, FuncType, String, U32, U64
 
     def signature(function):
-        if type(function) is not FuncType or any(type(value) is not String for _, value in function.params):
+        kinds = {String: "string", U32: "u32", U64: "u64"}
+        if type(function) is not FuncType or any(type(value) not in kinds for _, value in function.params):
             raise BundleError("Unexpected runner function type")
         if function.result is not None and type(function.result) is not String:
             raise BundleError("Unexpected runner result type")
-        return tuple("string" for _ in function.params), "string" if function.result is not None else None
+        return tuple(kinds[type(value)] for _, value in function.params), "string" if function.result is not None else None
 
     with Config() as config:
         config.wasm_component_model = True
         config.cranelift_opt_level = "none"
         with Engine(config) as engine, Component(engine, data) as component, component.type as interface:
-            expected = {name: (spec.parameters, spec.result) for name, spec in HOST_OPERATIONS.items()}
+            expected = {name: (spec.parameters, spec.result) for name, spec in RUNNER_HOST_OPERATIONS.items()}
             imports = {name: signature(item.ty) for name, item in interface.imports(engine).items()}
             public = interface.exports(engine)
             # The pinned toolchain adds one private binding-metadata instance.
@@ -68,14 +69,25 @@ def build(output):
         source.mkdir()
         (stage / "notices").mkdir()
         (stage / "empty/lib/site-packages").mkdir(parents=True)
-        (source / "guest.py").write_bytes(_read(package / "guest.py", 1024 * 1024))
-        (source / "_source_policy.py").write_bytes(_read(package / "_source_policy.py", 64 * 1024))
-        (source / "runner.wit").write_bytes(_read(package / ABI_VERSION / "runner.wit", 64 * 1024))
-        # The application module name is fixed; no pack or author path enters this command.
+        # Preserve nested package paths in both the receipt and compiler input;
+        # flattening these names would detach modules from their __init__.py.
+        for name in SOURCES:
+            relative = Path(name).relative_to("source")
+            origin = package / ABI_VERSION / relative if relative == Path("runner.wit") else package / relative
+            target = source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(_read(origin, 1024 * 1024))
+        # Freeze only this fixed trusted inventory; no author input enters builds.
         build_source = stage / "input"
         build_source.mkdir()
-        shutil.copyfile(source / "guest.py", build_source / "runner_guest.py")
-        shutil.copyfile(source / "_source_policy.py", build_source / "_source_policy.py")
+        for name in SOURCES:
+            relative = Path(name).relative_to("source")
+            if relative != Path("runner.wit"):
+                # WIT is passed separately as the interface definition. Only the
+                # guest entry module is renamed to the compiler's selected name.
+                destination = build_source / ("runner_guest.py" if relative == Path("guest.py") else relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source / relative, destination)
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment["PYTHONNOUSERSITE"] = "1"
@@ -100,7 +112,7 @@ def build(output):
         output.mkdir()
         for name in sorted(FILES):
             target = output / name
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as destination:
                 destination.write(_read(stage / name, MAX_COMPONENT_BYTES))
         with (output / MANIFEST).open("xb") as destination:

@@ -12,14 +12,26 @@ PORTABLE = "not embedded and not native and not frida_build and not legacy and n
 SUITES = {
     "launcher": "tests/launcher/",
     "hook_manager": "tests/hook_manager/",
+    "career_preload": "tests/hook_manager/career/",
+    "personnel_payroll": "tests/hook_manager/game_adapters/personnel/",
+    "native_regulation_policy": "tests/hook_manager/game_adapters/regulations/",
+    "project_context": "tests/hook_manager/game_adapters/projects/",
+    # This package has its own test owner even though its source is under hook_manager.
+    "callables": "tests/callables/",
     "mod_runtime": "tests/mod_runtime/",
+    "mod_runtime_loading": "tests/mod_runtime/loading/",
     "ci": "tests/ci/",
 }
+# Parent suites exclude tests that run in their child workflows.
+EXCLUDES = {"mod_runtime": ("tests/mod_runtime/loading/",),
+            "hook_manager": ("tests/hook_manager/career/", "tests/hook_manager/game_adapters/"),}
 
 
 def suite_for(path, root):
     relative = Path(path).relative_to(root).as_posix()
-    matches = [suite for suite, prefix in SUITES.items() if relative.startswith(prefix)]
+    matches = [suite for suite, prefix in SUITES.items()
+               if relative.startswith(prefix)
+               and not relative.startswith(EXCLUDES.get(suite, ()))]
     if len(matches) != 1:
         raise pytest.UsageError(
             f"Portable test module {relative!r} must have exactly one CI suite; "
@@ -59,9 +71,35 @@ class SuiteSelection:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", choices=[*SUITES, "check"], required=True)
+    parser.add_argument("--coverage", action="store_true", help="Measure only this suite's production area")
     options, pytest_args = parser.parse_known_args(argv)
     if options.suite == "check":
         pytest_args.append("--collect-only")
+    elif options.coverage:
+        # Test-area names and import paths differ for the private package. Keep
+        # its measurements in its own artifact instead of the parent's report.
+        source = {"callables": "hook_manager.callables", "ci": ".github",
+                  "mod_runtime_loading": "mod_runtime",
+                  "career_preload": "hook_manager.career_preload",
+                  "personnel_payroll": "hook_manager.game_adapters.personnel.payroll",
+                  "project_context": "hook_manager.game_adapters.projects",
+                  "native_regulation_policy": "hook_manager.game_adapters.regulations.regulation_policy"}.get(options.suite, options.suite)
+        pytest_args.append(f"--cov={source}")
+        if options.suite == "native_regulation_policy":
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_category")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_scripts")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_change")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_voting")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_progress")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_changes")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_announcements")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_native_defaults")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_screen")
+            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_selection")
+        if options.suite == "hook_manager":
+            # Measure the directory, including unimported top-level files, while
+            # assigning the private subpackage to its separate coverage report.
+            pytest_args.append(f"--cov-config={ROOT / '.github/coverage-hook-manager.toml'}")
     return pytest.main(
         [str(ROOT / "tests"), *pytest_args, "-m", PORTABLE],
         plugins=[SuiteSelection(options.suite)],

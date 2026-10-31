@@ -15,8 +15,8 @@ def load(name, filename):
 
 
 frida = load("test_binding", "native_test_binding.py").load(root)
-lifecycle = load("lifecycle", "process_lifecycle.py")
-bridge = load("bridge", "game_bridge.py")
+load("dependencies", "bundled_dependencies.py").load_source_packages(root)
+from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 command = lifecycle.validate_command(sys.argv[1:], Path(sys.argv[1]))
 raise SystemExit(
     lifecycle.run_launcher(

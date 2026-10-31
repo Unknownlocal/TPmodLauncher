@@ -89,3 +89,38 @@ def test_real_bridge_initialises_hooks_and_restores_before_detach(
         }
     finally:
         probe.unlink(missing_ok=True)
+        # A regression can strand the helper in a native lock. Clean up only
+        # this test's unique executable, never a game process or a reused PID.
+        pid_file = output / "target.pid"
+        if pid_file.exists():
+            pid = int(pid_file.read_text(encoding="ascii"))
+            if os.name == "nt":
+                import ctypes as c
+                from ctypes import wintypes as w
+                kernel = c.WinDLL("kernel32")
+                kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = (w.DWORD, w.BOOL, w.DWORD), w.HANDLE
+                kernel.QueryFullProcessImageNameW.argtypes = (w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD))
+                kernel.TerminateProcess.argtypes, kernel.CloseHandle.argtypes = (w.HANDLE, w.UINT), (w.HANDLE,)
+                handle = kernel.OpenProcess(0x1000 | 1, False, pid)
+                if handle:
+                    try:
+                        path, size = c.create_unicode_buffer(32768), w.DWORD(32768)
+                        if kernel.QueryFullProcessImageNameW(handle, 0, path, c.byref(size)):
+                            if Path(path.value).resolve() == target.resolve():
+                                kernel.TerminateProcess(handle, 1)
+                    finally:
+                        kernel.CloseHandle(handle)
+            else:
+                import signal
+                try:
+                    descriptor = os.pidfd_open(pid)
+                except ProcessLookupError:
+                    pass
+                else:
+                    try:
+                        if Path(f"/proc/{pid}/exe").resolve(strict=True) == target.resolve():
+                            signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                    except (ProcessLookupError, FileNotFoundError):
+                        pass  # The pinned helper exited before cleanup.
+                    finally:
+                        os.close(descriptor)

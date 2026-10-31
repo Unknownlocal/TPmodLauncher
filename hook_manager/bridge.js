@@ -16,6 +16,9 @@ let settingsWatching = false;
 let settingsState = null;
 let themesPending = false;
 let themesState = null;
+let preloadFailureReported = false;
+let preloadWatching = false;
+let preloadState = null;
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
@@ -30,9 +33,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons, loading, settings, themes) {
+function enqueue(operation, id, buttons, loading, settings, themes, regulations) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw new Error(failed);
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -41,10 +44,10 @@ function enqueue(operation, id, buttons, loading, settings, themes) {
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, resolve, reject }; });
+    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, resolve, reject }; });
 }
 
-send({ event: 'waiting', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
+send({ event: 'waiting', level: 'DEBUG', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
 observer = Process.attachModuleObserver({
     onAdded(module) {
         if (!config.bootstrap) return; // The forked process still contains its parent's Python state.
@@ -60,9 +63,8 @@ observer = Process.attachModuleObserver({
                 : /^libpython3\.13\.so(?:\.\d+)*$/.test(name);
             if (!supported) throw new Error('Unsupported Python library: ' + name);
             if (Process.arch !== 'x64') throw new Error('Bridge requires x64 CPython 3.13');
-            const options = { scheduling: 'exclusive' };
-            function api(name, result, args) {
-                return new NativeFunction(module.getExportByName(name), result, args, options);
+            function api(name, result, args, scheduling = 'exclusive') {
+                return new NativeFunction(module.getExportByName(name), result, args, { scheduling });
             }
             const version = api('Py_GetVersion', 'pointer', []);
             if (!version().readUtf8String().startsWith('3.13.')) throw new Error('Unsupported Python version');
@@ -75,7 +77,10 @@ observer = Process.attachModuleObserver({
             const clearError = api('PyErr_Clear', 'void', []);
             const addModule = api('PyImport_AddModule', 'pointer', ['pointer']);
             const moduleDict = api('PyModule_GetDict', 'pointer', ['pointer']);
-            const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer']);
+            // Python execution may release the GIL. Let a worker's SaveThread
+            // hook enter JavaScript, see busy and return; holding the JS lock
+            // here could strand that worker with the GIL we need to reacquire.
+            const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer'], 'cooperative');
             const utf8 = api('PyUnicode_AsUTF8', 'pointer', ['pointer']);
             const decref = api('Py_DecRef', 'void', ['pointer']);
             const mainName = Memory.allocUtf8String('__main__');
@@ -83,7 +88,7 @@ observer = Process.attachModuleObserver({
                 onEnter() {
                     // Before SaveThread executes, this thread still holds the GIL and its thread state.
                     // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending)) return;
+                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending && !preloadWatching)) return;
                     if (!initialized() || finalizing()) return;
                     const state = threadState();
                     if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
@@ -98,7 +103,11 @@ observer = Process.attachModuleObserver({
                         if (request.operation === 'loading') record.loading = request.loading;
                         if (request.operation === 'settings') record.settings = request.settings;
                         if (request.operation === 'themes') record.themes = request.themes;
-                        const expression = config.prefix + JSON.stringify(JSON.stringify(record)) + config.suffix;
+                        if (request.regulations !== undefined) record.regulations = request.regulations;
+                        const requestJson = JSON.stringify(JSON.stringify(record));
+                        const expression = ready
+                            ? config.repeat_prefix + requestJson + ')'
+                            : config.prefix + requestJson + config.suffix;
                         const source = Memory.allocUtf8String(expression);
                         const main = addModule(mainName); // Borrowed: never decrement this reference.
                         if (main.isNull()) throw new Error('No Python main module');
@@ -122,6 +131,21 @@ observer = Process.attachModuleObserver({
                         }
                         // Startup can finish after manager readiness; report its pack once per process.
                         const pack = response.status.pack;
+                        const preload = response.status.adapters && response.status.adapters.career_preload;
+                        // Deferred screen imports can fail compatibility after
+                        // arming. Keep existing status pulses and report once.
+                        preloadWatching = !!preload && preload.state !== 'unavailable';
+                        if (preload && JSON.stringify(preload) !== preloadState) {
+                            preloadState = JSON.stringify(preload);
+                            send({ event: 'career-preload', status: preload });
+                        }
+                        if (!preloadFailureReported && preload && preload.state === 'unavailable') {
+                            preloadFailureReported = true;
+                            send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
+                        }
+                        for (const notice of response.status.regulation_notices || []) {
+                            send({ ...notice, event: 'diagnostic' });
+                        }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;
                             send({ event: 'pack', pack });
@@ -145,7 +169,10 @@ observer = Process.attachModuleObserver({
                             themesState = JSON.stringify(themes);
                             send({ event: 'themes', status: themes });
                         }
-                        if (pending) {
+                        // Cancellation may queue another request while Python
+                        // waits on publication. Its reply belongs to a later
+                        // entry, not to the operation captured above.
+                        if (pending === request) {
                             const completed = pending;
                             pending = null;
                             if (completed.operation === 'shutdown') {
@@ -165,7 +192,7 @@ observer = Process.attachModuleObserver({
                     }
                 }
             });
-            send({ event: 'transport', detail: 'Waiting for Python main-thread readiness' });
+            send({ event: 'transport', level: 'DEBUG', detail: 'Waiting for Python main-thread readiness' });
         } catch (failure) { fail(failure); }
     }
 });
@@ -173,7 +200,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
             );

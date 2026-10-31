@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test native regulation defaults, loading and policy
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/portable.yml
+    with:
+      ref: ${{ inputs.ref }}
+      suite: native_regulation_policy

@@ -45,7 +45,13 @@ jobs:
               for suite, label in (
                   ("launcher", "Launcher"),
                   ("hook_manager", "Hook manager"),
+                  ("career_preload", "Career loading"),
+                  ("personnel_payroll", "Personnel payroll"),
+                  ("native_regulation_policy", "Native regulation policy"),
+                  ("project_context", "Development projects"),
+                  ("callables", "Private callable adapters"),
                   ("mod_runtime", "Mod runtime"),
+                  ("mod_runtime_loading", "Source loading"),
                   ("ci", "CI helpers"),
               )
               for platform, platform_label in (("windows", "Windows x64"), ("linux", "Linux x64"))
