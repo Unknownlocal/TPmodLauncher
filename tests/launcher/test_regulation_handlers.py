@@ -11,7 +11,7 @@ from launcher.regulations.regulation_handler_bindings import RegulationHandlerBi
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.values import measure
 from launcher.regulations.validation.group import ValidationGroup
-from regulation_support import context, dispatch, make_mod, selection, validator
+from tests.regulation_support import context, dispatch, make_mod, selection, validator
 
 
 def session(mod, rows=None):

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-FIXTURES = Path(__file__).with_name("fixtures")
+FIXTURES = Path(__file__).resolve().parents[2] / "launcher/fixtures"
 
 
 @pytest.mark.native

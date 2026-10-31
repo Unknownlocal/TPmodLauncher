@@ -2,6 +2,7 @@
 """Run one portable CI suite and reject tests without an explicit suite owner."""
 
 import argparse
+import json
 from pathlib import Path
 
 import pytest
@@ -10,28 +11,36 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PORTABLE = "not embedded and not native and not frida_build and not legacy and not release"
 SUITES = {
-    "launcher": "tests/launcher/",
-    "hook_manager": "tests/hook_manager/",
-    "career_preload": "tests/hook_manager/career/",
-    "personnel_payroll": "tests/hook_manager/game_adapters/personnel/",
-    "native_regulation_policy": "tests/hook_manager/game_adapters/regulations/",
-    "project_context": "tests/hook_manager/game_adapters/projects/",
-    # This package has its own test owner even though its source is under hook_manager.
-    "callables": "tests/callables/",
-    "mod_runtime": "tests/mod_runtime/",
-    "mod_runtime_loading": "tests/mod_runtime/loading/",
-    "ci": "tests/ci/",
+    "launcher": dict(path="tests/launcher/", sources=("launcher",), runner=True),
+    "hook_manager": dict(path="tests/hook_manager/", sources=("hook_manager",)),
+    "career_preload": dict(path="tests/hook_manager/career/", sources=("hook_manager/career_preload.py",), parent="hook_manager"),
+    "game_adapters": dict(path="tests/hook_manager/game_adapters/", sources=("hook_manager/game_adapters",), parent="hook_manager"),
+    "personnel": dict(path="tests/hook_manager/game_adapters/personnel/", sources=("hook_manager/game_adapters/personnel",), parent="game_adapters"),
+    "regulations": dict(path="tests/hook_manager/game_adapters/regulations/", sources=("hook_manager/game_adapters/regulations",), parent="game_adapters"),
+    "projects": dict(path="tests/hook_manager/game_adapters/projects/", sources=("hook_manager/game_adapters/projects",), parent="game_adapters"),
+    "callables": dict(path="tests/callables/", sources=("hook_manager/callables",), parent="hook_manager", runner=True),
+    "mod_runtime": dict(path="tests/mod_runtime/", sources=("mod_runtime",), runner=True),
+    "mod_runtime_loading": dict(path="tests/mod_runtime/loading/", sources=("mod_runtime/_loading", "mod_runtime/shared_sources.py"), parent="mod_runtime", runner=True),
+    "ci": dict(path="tests/ci/", sources=(".github",)),
+    "integration_regulations": dict(path="tests/integration/regulations/", kind="integration", runner=True,
+        sources=("launcher/regulations", "launcher/pack_mods.py", "mod_runtime/_regulations", "hook_manager/game_adapters/regulations")),
+    "integration_source_loading": dict(path="tests/integration/source_loading/", kind="integration", runner=True,
+        sources=("launcher/pack_mods.py", "launcher/shared_source_mod.py", "mod_runtime/shared_runtime.py", "mod_runtime/shared_sources.py", "mod_runtime/_loading")),
+    "integration_session_lifetime": dict(path="tests/integration/session_lifetime/", kind="integration", runner=True,
+        sources=("launcher/game_bridge.py", "launcher/process_lifecycle.py", "hook_manager/adapter_modules.py", "hook_manager/career_preload.py")),
 }
-# Parent suites exclude tests that run in their child workflows.
-EXCLUDES = {"mod_runtime": ("tests/mod_runtime/loading/",),
-            "hook_manager": ("tests/hook_manager/career/", "tests/hook_manager/game_adapters/"),}
+
+
+def children(suite):
+    """Use the same declared children for test selection and coverage exclusion."""
+    return [row for row in SUITES.values() if row.get("parent") == suite]
 
 
 def suite_for(path, root):
     relative = Path(path).relative_to(root).as_posix()
-    matches = [suite for suite, prefix in SUITES.items()
-               if relative.startswith(prefix)
-               and not relative.startswith(EXCLUDES.get(suite, ()))]
+    matches = [suite for suite, row in SUITES.items()
+               if relative.startswith(row["path"])
+               and not relative.startswith(tuple(child["path"] for child in children(suite)))]
     if len(matches) != 1:
         raise pytest.UsageError(
             f"Portable test module {relative!r} must have exactly one CI suite; "
@@ -41,9 +50,9 @@ def suite_for(path, root):
 
 
 class SuiteSelection:
-    def __init__(self, suite, root=ROOT):
+    def __init__(self, suite, root=None):
         self.suite = suite
-        self.root = root
+        self.root = ROOT if root is None else root
 
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, config, items):
@@ -72,34 +81,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", choices=[*SUITES, "check"], required=True)
     parser.add_argument("--coverage", action="store_true", help="Measure only this suite's production area")
+    parser.add_argument("--needs-runner", action="store_true", help="Print whether CI must download the shared runner")
     options, pytest_args = parser.parse_known_args(argv)
+    if options.needs_runner:
+        print(str(SUITES.get(options.suite, {}).get("runner", False)).lower())
+        return 0
     if options.suite == "check":
         pytest_args.append("--collect-only")
     elif options.coverage:
-        # Test-area names and import paths differ for the private package. Keep
-        # its measurements in its own artifact instead of the parent's report.
-        source = {"callables": "hook_manager.callables", "ci": ".github",
-                  "mod_runtime_loading": "mod_runtime",
-                  "career_preload": "hook_manager.career_preload",
-                  "personnel_payroll": "hook_manager.game_adapters.personnel.payroll",
-                  "project_context": "hook_manager.game_adapters.projects",
-                  "native_regulation_policy": "hook_manager.game_adapters.regulations.regulation_policy"}.get(options.suite, options.suite)
-        pytest_args.append(f"--cov={source}")
-        if options.suite == "native_regulation_policy":
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_category")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_scripts")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_change")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_voting")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_progress")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_changes")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.automatic_announcements")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_native_defaults")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_screen")
-            pytest_args.append("--cov=hook_manager.game_adapters.regulations.regulation_selection")
-        if options.suite == "hook_manager":
-            # Measure the directory, including unimported top-level files, while
-            # assigning the private subpackage to its separate coverage report.
-            pytest_args.append(f"--cov-config={ROOT / '.github/coverage-hook-manager.toml'}")
+        suite = SUITES[options.suite]
+        sources = [source[:-3].replace("/", ".") if source.endswith(".py") else (ROOT / source).as_posix()
+                   for source in suite["sources"]]
+        # Integration measurements intentionally span components. Component
+        # reports omit their children's sources, including unexecuted files.
+        omit = ["*/" + source + ("" if source.endswith(".py") else "/*")
+                for child in children(options.suite) for source in child["sources"]]
+        config = ROOT / ".state/ci-coverage" / (options.suite + ".toml")
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("[tool.coverage.run]\nbranch = true\nrelative_files = true\n"
+                          + "source = " + json.dumps(sources) + "\nomit = " + json.dumps(omit) + "\n", encoding="utf-8")
+        pytest_args.extend(["--cov", f"--cov-config={config}"])
     return pytest.main(
         [str(ROOT / "tests"), *pytest_args, "-m", PORTABLE],
         plugins=[SuiteSelection(options.suite)],

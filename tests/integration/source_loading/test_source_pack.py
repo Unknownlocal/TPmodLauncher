@@ -282,7 +282,7 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
 ):
     game, folder, startup = pack
     theme = folder / "theme example"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "examples/theme_mod", theme)
+    shutil.copytree(Path(__file__).resolve().parents[3] / "examples/theme_mod", theme)
     # A saved document from the numbered-label editor keeps the same schema and IDs.
     palette = runpy.run_path(str(theme / "src/palette.py"))
     saved = {"schema": palette["PALETTE_SCHEMA"], "values": {
@@ -415,7 +415,7 @@ class WitWorld(wit_world.WitWorld):
 
 def test_source_menu_readiness_and_failure_rollback(pack, source_mod, runner_bundle, native_menu):
     game, folder, record = pack
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     source_mod(folder, "owned.menu", code=(root / "examples/menu_mod/src/mod.py").read_text(),
                capabilities=("diagnostics", "main-menu"))
     source_mod(folder, "owned.diagnostics")
@@ -464,7 +464,7 @@ class WitWorld:
 @pytest.mark.parametrize("fail", [False, True])
 def test_deferred_native_menu_keeps_readiness_blocked_until_result(pack, source_mod, runner_bundle, native_menu, monkeypatch, fail):
     game, folder, record = pack
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     source_mod(folder, "owned.menu", code=(root / "examples/menu_mod/src/mod.py").read_text(),
                capabilities=("diagnostics", "main-menu"))
     source_mod(folder, "owned.diagnostics")

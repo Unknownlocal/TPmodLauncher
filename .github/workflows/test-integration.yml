@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Test cross-package integrations
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  regulations:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-integration-regulations.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  source-loading:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-integration-source-loading.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  session-lifetime:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-integration-session-lifetime.yml
+    with:
+      ref: ${{ inputs.ref }}

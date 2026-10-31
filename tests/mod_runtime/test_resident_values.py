@@ -8,6 +8,8 @@ from types import FunctionType
 import pytest
 
 from mod_runtime._regulations import values
+from mod_runtime._regulations.contexts import RegulationContexts
+from tests.regulation_data import contract_context as context
 from mod_runtime._regulations.frozen import FrozenValue
 from mod_runtime._regulations.voting import voting_packet
 
@@ -71,3 +73,18 @@ def test_voting_part_measurements_match_complete_encoding():
               "contexts": [{"schema": 1, "review": "r", "proposal": "p", "decision_season": 1,
                             "effective_season": 2, "team": "team", "native": {"choice": "current", "reason": "Keep"}, "seed": "s"}]}
     assert voting_packet(packet) == values.measure(packet)
+
+
+def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
+    # Disable automatic GC so it cannot conceal where the first cache scan
+    # happens. This protects handler budgets, rather than timing a busy machine.
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        contexts = RegulationContexts(1, [context(points=25)])
+        cached, _, _, _ = contexts.get(0)
+        assert not gc.is_tracked(cached.tokens)
+        assert cached.copy() == context(points=25)
+    finally:
+        if enabled:
+            gc.enable()

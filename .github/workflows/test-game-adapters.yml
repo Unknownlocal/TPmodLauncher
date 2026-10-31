@@ -29,3 +29,10 @@ jobs:
     uses: ./.github/workflows/test-game-adapters-regulations.yml
     with:
       ref: ${{ inputs.ref }}
+
+  test:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/portable.yml
+    with:
+      ref: ${{ inputs.ref }}
+      suite: game_adapters

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Shared guest regulation storage; launcher dispatch owns end-to-end acceptance."""
 
-import gc
 import json
 from contextlib import contextmanager
 
@@ -14,7 +13,6 @@ from launcher.regulations.validation.catalog import CombinedCatalog
 from launcher.regulations.validation.install import PolicyInstall
 from launcher.sandbox import SandboxError
 from mod_runtime._regulations.policy import encode
-from mod_runtime._regulations.contexts import RegulationContexts
 from mod_runtime.shared_runtime import SharedPythonRunner
 from mod_runtime.source import SourceManifest
 from tests.source_support import source_snapshot
@@ -82,21 +80,6 @@ def publish(group, catalog):
                 assert value == {"epoch": 1, "generation": 1, "state": state}
         assert reply(group, "commit-regulation-policy", 1, 1)["state"] == "active"
     catalog.commit()
-
-
-def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
-    # Disable automatic GC so it cannot conceal where the first cache scan
-    # happens. This protects handler budgets, rather than timing a busy machine.
-    enabled = gc.isenabled()
-    gc.disable()
-    try:
-        contexts = RegulationContexts(1, [context(points=25)])
-        cached, _, _, _ = contexts.get(0)
-        assert not gc.is_tracked(cached.tokens)
-        assert cached.copy() == context(points=25)
-    finally:
-        if enabled:
-            gc.enable()
 
 
 def evaluate(group, catalog, action, ctx, *, count=1, fault=None):

@@ -25,7 +25,7 @@ def test_unassigned_module_fails(tmp_path):
 
 def test_overlapping_ownership_fails(tmp_path, monkeypatch):
     duplicate = "tests/mod_runtime/test_source.py"
-    monkeypatch.setitem(ci.SUITES, "launcher", "tests/")
+    monkeypatch.setitem(ci.SUITES["launcher"], "path", "tests/")
     with pytest.raises(pytest.UsageError, match="exactly one CI suite"):
         ci.suite_for(tmp_path / duplicate, tmp_path)
 
@@ -33,8 +33,8 @@ def test_overlapping_ownership_fails(tmp_path, monkeypatch):
 @pytest.mark.parametrize("suite", ["hook_manager", "mod_runtime", "check"])
 def test_selection_keeps_partition_and_reports_deselections(tmp_path, suite):
     original = [
-        SimpleNamespace(path=tmp_path / prefix / "test_fixture.py")
-        for prefix in ci.SUITES.values()
+        SimpleNamespace(path=tmp_path / row["path"] / "test_fixture.py")
+        for row in ci.SUITES.values()
     ]
     deselections = []
     config = SimpleNamespace(
@@ -58,7 +58,7 @@ def test_empty_suite_fails(tmp_path):
         ci.SuiteSelection("mod_runtime", tmp_path).pytest_collection_modifyitems(config, [])
 
 
-@pytest.mark.parametrize("suite", ["hook_manager", "callables", "check"])
+@pytest.mark.parametrize("suite", ["hook_manager", "game_adapters", "callables", "integration_regulations", "check"])
 def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suite):
     # Execute the CLI with a small owned tree: argument inspection alone cannot
     # prove that markers, collect-only mode or coverage exclusions take effect.
@@ -75,6 +75,22 @@ def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suit
             "from hook_manager import parent\nfrom hook_manager.callables import child\n"
             "def test_callable(): assert (parent.value(), child.value()) == ('parent', 'child')\n"
         ),
+        "hook_manager/game_adapters/__init__.py": "",
+        "hook_manager/game_adapters/common.py": "def value(): return 'adapter'\n",
+        "hook_manager/game_adapters/regulations/__init__.py": "",
+        "hook_manager/game_adapters/regulations/policy.py": "def value(): return 'policy'\n",
+        "tests/hook_manager/game_adapters/test_support.py": (
+            "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
+            "def test_support(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
+        ),
+        "tests/hook_manager/game_adapters/regulations/test_policy.py": (
+            "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
+            "def test_policy(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
+        ),
+        "tests/integration/regulations/test_integrated_policy.py": (
+            "from hook_manager.game_adapters import common\nfrom hook_manager.game_adapters.regulations import policy\n"
+            "def test_integration(): assert (common.value(), policy.value()) == ('adapter', 'policy')\n"
+        ),
         "tests/hook_manager/career/test_preload.py": "def test_child(): assert False\n",
         "tests/launcher/test_pack_mods.py": "def test_other_suite(): assert False\n",
         **{f"tests/test_{marker}_only.py": (
@@ -88,9 +104,6 @@ def test_real_selection_filters_acceptance_and_separates_coverage(tmp_path, suit
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    native: native acceptance\n    legacy: optional compatibility\n    release: optional release\n", encoding="utf-8"
     )
-    config = Path(spec.origin).parent / "coverage-hook-manager.toml"
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github/coverage-hook-manager.toml").write_bytes(config.read_bytes())
     script = """
 import importlib.util, pathlib, sys
 sys.path.insert(0, str(pathlib.Path.cwd()))
@@ -98,9 +111,6 @@ spec = importlib.util.spec_from_file_location('ci_tests', sys.argv[1])
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
 ci.ROOT = pathlib.Path.cwd()
-# The selector's default root is captured at import, so supply the owned tree.
-select = ci.SuiteSelection
-ci.SuiteSelection = lambda suite: select(suite, ci.ROOT)
 args = ['--suite', sys.argv[2], '-q']
 if sys.argv[2] != 'check':
     args += ['--coverage', '-p', 'pytest_cov', '--cov-report=xml:coverage.xml']
@@ -118,9 +128,11 @@ raise SystemExit(ci.main(args))
         assert all(name in result.stdout for name in ("test_host", "test_callable", "test_child", "test_other_suite"))
         assert not (tmp_path / "coverage.xml").exists()
     else:
-        assert "1 passed, 6 deselected" in result.stdout
+        assert "1 passed, 9 deselected" in result.stdout
         from xml.etree import ElementTree
         files = {row.attrib["filename"] for row in ElementTree.parse(tmp_path / "coverage.xml").iter("class")}
         # Both areas ran. Only the selected area's source belongs in its report.
         assert any(name.endswith("parent.py") for name in files) == (suite == "hook_manager")
         assert any(name.endswith("child.py") for name in files) == (suite == "callables")
+        assert any(name.endswith("common.py") for name in files) == (suite == "game_adapters")
+        assert any(name.endswith("policy.py") for name in files) == (suite in ("regulations", "integration_regulations"))

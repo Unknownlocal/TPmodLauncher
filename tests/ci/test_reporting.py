@@ -67,11 +67,11 @@ def test_reports_every_suite_and_platform_separately(reports):
 
 def test_missing_suite_report_fails_instead_of_publishing_partial_success(reports):
     directory, _ = reports
-    (directory / "python-coverage-native_regulation_policy-linux/coverage.xml").unlink()
-    with pytest.raises(SystemExit, match="Missing coverage report for Native regulation policy / Linux x64"):
+    (directory / "python-coverage-regulations-linux/coverage.xml").unlink()
+    with pytest.raises(SystemExit, match="Missing coverage report for Regulation adapters / Linux x64"):
         run_workflow_script("coverage.yml")
     summary = (directory / "summary.md").read_text(encoding="utf-8")
-    assert "| Native regulation policy | Linux x64 | Report unavailable |" in summary
+    assert "| Regulation adapters | Linux x64 | Report unavailable |" in summary
 
 
 @pytest.mark.parametrize("xml", [
@@ -108,7 +108,7 @@ def test_empty_coverage_denominators_are_reported_without_division_by_zero(repor
 ])
 def test_parent_completion_requires_preparation_and_every_suite_to_succeed(monkeypatch, suite, result):
     results = {name: {"result": "success"} for name in (
-        "dependencies", "runner", "launcher", "hook-manager", "callables", "mod-runtime", "ci", "windows-runtime"
+        "dependencies", "runner", "launcher", "hook-manager", "callables", "mod-runtime", "ci", "integration", "windows-runtime"
     )}
     results[suite]["result"] = result
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))

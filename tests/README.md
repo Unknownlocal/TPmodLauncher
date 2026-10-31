@@ -1,8 +1,9 @@
 # Test architecture
 
-The pytest suite follows the launcher, trusted game adapters and Python runner.
-It uses small Wasm components, Python source mods, owned native helper processes
-and relocated player bundles. Fixtures own their files and processes; they do
+Component tests follow the launcher, trusted game adapters and Python runner.
+Integration suites check features that need several of those packages together.
+The tests use small Wasm components, Python source mods, owned native helper
+processes and relocated player bundles. Fixtures own their files and processes; they do
 not use live game data or inject into a running game.
 
 ## Test areas
@@ -14,6 +15,9 @@ not use live game data or inject into a running game.
 | `callables/` | Private targets, refusal results, wrapper ownership, worker coordination, guest access restrictions and native bridge acceptance. |
 | `mod_runtime/` | Runner integrity, source snapshots and shared loading, permissions, budgets, cancellation and source-mod lifetime. |
 | `ci/` | Suite selection, CI claims and completion gates, coverage aggregation and reporting. |
+| `integration/regulations/` | Real mod execution, shared rule data, native guards and regulation transport working together. |
+| `integration/source_loading/` | Source-pack admission, runner execution, UI registration and startup readiness. |
+| `integration/session_lifetime/` | Controller sessions, private bridge loading and cleanup across game-process changes. |
 
 Small Wasm source fixtures (WAT) check signatures, permissions, traps and cleanup.
 Python source examples run through the trusted Wasm runner; author-built Python
@@ -27,7 +31,9 @@ frame-size checks do not promise that arbitrary workloads finish within 100 ms.
 
 The root `conftest.py` supplies temporary projects, synthetic dependency wheels,
 runtime copies, one session runner and owned native menu/settings interfaces.
-`launcher/conftest.py` adds local Git repositories and component fixtures.
+`source_fixtures.py` shares Python source and small Wasm component fixtures.
+`launcher/conftest.py` adds local Git repositories and author-component build fixtures.
+`regulation_support.py` supplies shared rule data and real source-group factories.
 Preparation tests use worker gates for cancellation races; stand-in compiler
 results avoid compilation where no guest runs. Real compilation and controller-thread
 adoption retain an integration check.
@@ -76,6 +82,11 @@ PR-code jobs have read-only tokens and no inherited secrets.
 Reusable workflows run portable areas on Windows/Linux and acceptance on Windows.
 [The selector](../.github/ci_tests.py) collects all portable modules, requires one
 directory-based owner per module and rejects unknown, overlapping or empty suites.
+One table defines test paths, coverage sources, parent suites and shared-runner
+requirements. Parent suites exclude their declared children. The game-adapter
+parent covers generic native support; personnel, regulations and projects have
+their own child suites. Integration features have a reusable parent workflow
+and one child workflow per populated feature folder.
 Shared fixtures and test imports still load across areas during collection.
 
 `dev-dependencies.yml` prepares one wheelhouse per platform. Jobs install those
@@ -97,10 +108,13 @@ The Windows gate requires bundle preparation, both acceptance jobs and all three
 coverage fragments. The parent gate requires the claim, dependencies, runner and
 all test workflows to succeed. A trusted job publishes that result as `manual-ci`.
 
-Jobs retain JUnit and raw coverage plus component XML/HTML reports. Callable
+Jobs retain JUnit and raw coverage plus suite XML/HTML reports. Callable
 coverage measures `hook_manager.callables`; the parent report excludes separately
-owned modules. Coverage measures the pytest process; embedded children remain
-uninstrumented. Windows aggregation rejects missing or corrupt fragments.
+owned modules, using exclusions derived from that same suite table. Integration
+reports span several components and can overlap their component reports;
+percentages stay separate and are never added or averaged.
+Coverage measures Python run by pytest. Wasm execution and embedded child
+processes remain uninstrumented. Windows aggregation rejects missing or corrupt fragments.
 
 After success, the reporting workflow parses only that run's XML without running
 PR code. It requires every portable suite/platform and Windows acceptance report,

@@ -23,6 +23,8 @@ from launcher import prepare_release as release
 from mod_runtime import RunnerBundle
 from mod_runtime.bundle import DIRECTORY
 
+pytest_plugins = ["tests.source_fixtures"]
+
 
 @pytest.fixture(scope="session")
 def runner_bundle(tmp_path_factory):

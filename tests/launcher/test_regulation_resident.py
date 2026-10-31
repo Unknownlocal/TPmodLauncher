@@ -11,7 +11,7 @@ from mod_runtime._regulations import values as values
 from mod_runtime._regulations.action import RegulationAction
 from mod_runtime._regulations.catalog import RegulationCatalog
 from mod_runtime._regulations.contexts import RegulationContexts
-from regulation_support import context, make_mod, validator
+from tests.regulation_support import context, make_mod, validator
 from resident_support import packet, policy
 
 

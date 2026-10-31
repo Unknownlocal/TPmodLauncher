@@ -15,7 +15,7 @@ from launcher.regulations.validation.catalog import CombinedCatalog
 from mod_runtime._regulations import values
 from mod_runtime.source import SourceManifest
 from tests.source_support import source_snapshot
-from regulation_support import context, definitions, dispatch, make_mod, selection, validator
+from tests.regulation_support import context, definitions, dispatch, make_mod, selection, validator
 
 
 def test_policy_pages_require_the_closed_membership_plan_before_publication():

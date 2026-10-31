@@ -23,7 +23,7 @@ from hook_manager.game_adapters.regulations.regulation_policy import RegulationP
 from launcher.pack_mods import PackMods
 from launcher.game_bridge import Bridge
 from launcher.sandbox import SandboxError
-from regulation_support import context, make_mod, selection, validator
+from tests.regulation_support import context, make_mod, selection, validator
 
 
 # Transport-only tests supply an explicit stand-in for complete installation.
@@ -183,7 +183,7 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
 
 def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(source_mod, runner_bundle, tmp_path, monkeypatch):
     """Load the example normally; simulate the game-side bridge replies."""
-    example = Path(__file__).resolve().parents[2] / "examples/rookie_contract_mod"
+    example = Path(__file__).resolve().parents[3] / "examples/rookie_contract_mod"
     folder = tmp_path / "data/owned"
     shutil.copytree(example, folder / example.name)
     document = json.loads((example / "regulations.json").read_text(encoding="utf-8"))
@@ -791,8 +791,8 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
 def test_owned_cpython_client_dispatches_to_real_wasm_with_one_clock_deadline(make_mods, tmp_path, native_project):
     mods = make_mods(dict.fromkeys(("a.rules", "b.rules", "c.rules"), "def validate(c,r): return {'decision':'allow'}\n"))
     scope, runtime, wake, _, _ = prepare_scope(tmp_path, mods)
-    helper = Path(__file__).with_name("fixtures") / "regulation_client_probe.py"
-    process = subprocess.Popen([str(native_project.client), "-I", "-S", "-B", str(helper), str(Path(__file__).resolve().parents[2])],
+    helper = Path(__file__).resolve().parents[2] / "launcher/fixtures" / "regulation_client_probe.py"
+    process = subprocess.Popen([str(native_project.client), "-I", "-S", "-B", str(helper), str(Path(__file__).resolve().parents[3])],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
     try:
         with closing(scope), ThreadPoolExecutor(max_workers=1) as reader, ExitStack() as cleanup:

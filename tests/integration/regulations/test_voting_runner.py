@@ -11,7 +11,7 @@ from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.voting_runner import VotingRunner
 from mod_runtime._regulations.policy import decode, encode
 from mod_runtime._regulations.voting import vote_reply
-from regulation_support import context, definitions, selection, validator
+from tests.regulation_support import context, definitions, selection, validator
 from tests.regulation_data import voting_inputs as inputs
 
 

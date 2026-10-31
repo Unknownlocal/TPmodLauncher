@@ -16,7 +16,7 @@ import pytest
 from launcher import process_lifecycle as lifecycle
 from launcher.pack_mods import PackMods
 
-FIXTURES = Path(__file__).with_name("fixtures")
+FIXTURES = Path(__file__).resolve().parents[2] / "launcher/fixtures"
 
 
 class Session:
@@ -370,7 +370,7 @@ def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tm
     probe = tmp_path / "lock_probe.py"
     shutil.copyfile(FIXTURES / "controller_lock_probe.py", probe)
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
     command = [sys.executable, str(probe), str(lock)]
     with lifecycle.controller_lock(lock):
         result = subprocess.run(

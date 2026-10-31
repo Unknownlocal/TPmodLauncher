@@ -1,6 +1,0 @@
-# SPDX-License-Identifier: MPL-2.0
-# The parent report includes unexecuted files but excludes the separately owned package.
-[tool.coverage.run]
-branch = true
-relative_files = true
-omit = ["*/hook_manager/callables/*", "*/hook_manager/career_preload.py", "*/hook_manager/game_adapters/personnel/payroll.py", "*/hook_manager/game_adapters/regulations/regulation_policy.py", "*/hook_manager/game_adapters/regulations/regulation_category.py", "*/hook_manager/game_adapters/regulations/regulation_scripts.py", "*/hook_manager/game_adapters/regulations/regulation_native_defaults.py", "*/hook_manager/game_adapters/projects/*"]

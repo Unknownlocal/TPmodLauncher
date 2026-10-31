@@ -9,7 +9,7 @@ import pytest
 from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation import group as group_module
 from launcher.regulations.validation.dispatch import ValidationDispatch
-from regulation_support import context, definitions, make_mods, selection, validator
+from tests.regulation_support import context, definitions, make_mods, selection, validator
 
 
 CODE = '''import wit_world
