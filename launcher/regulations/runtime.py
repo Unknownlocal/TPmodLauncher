@@ -162,8 +162,8 @@ class RegulationRuntime:
             return
         self._retired = False
         prepared = self._prepare(self._bridge, generation)
-        # Publish revoked UI only between replies, never while the same bridge
-        # is servicing native setup. The pack derives holds from runtime.ready.
+        # Refresh cleanup and progress between replies, so UI updates cannot
+        # compete with native setup for the same bridge.
         refresh()
         if prepared:
             self._activate(self._bridge, generation)
@@ -281,7 +281,7 @@ class RegulationRuntime:
         alone cannot cover personnel staffing operations. Other components in
         the report are irrelevant to this pack; policy publication still has
         its own readiness check. Source mods cannot call this acknowledgement.
-        With pending=True, coverage is approved but pack readiness stays held
+        With pending=True, coverage is approved but regulation readiness waits
         until the game replies that its installed hooks have been enabled.
         """
         self._owning_thread()
@@ -334,7 +334,7 @@ class RegulationRuntime:
             # publication may also be retired if loading is cancelled before
             # activation; actions still require acknowledged native ownership.
             # Coverage permits validation as soon as native guards enable it.
-            # Waiting for their activation reply holds UI, not these checks.
+            # Native guards may call before the activation reply reaches us.
             if (self._native is None and operation not in ("policy-begin", "policy-page", "policy-seal")
                     and not (operation == "reset" and self._publication is None and self._dispatch.ready)):
                 raise RuntimeError("Native regulation guards are not acknowledged")

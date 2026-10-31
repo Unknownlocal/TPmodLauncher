@@ -113,11 +113,7 @@ class PackMods:
         return self.regulations is not None and self.regulations.armed
 
     def _start_regulations(self):
-        """Bind once, then protect native loading before enabling career selection.
-
-        Menu readiness cannot wait for a career that the user has yet to select.
-        Mod UI still waits for that career's completed regulation activation.
-        """
+        """Bind once, then protect native loading before enabling career selection."""
         if (self._bridge is None or not self.finished or not self._regulation_owners
                 or self._regulations_prepared or self._regulation_failed):
             return
@@ -130,7 +126,7 @@ class PackMods:
         self._progress("complete")
 
     def career_preload(self, status):
-        """Refresh held UI between the runtime's completed native setup requests."""
+        """Refresh runtime status between completed native setup requests."""
         if not self.closed and self.regulations is not None:
             self.regulations.career_preload(status, self.poll)
 
@@ -140,8 +136,9 @@ class PackMods:
 
     def _ui_waiting(self):
         # Imports can register UI for members not yet activated. Publish only
-        # after pack startup, or revoke everything if their shared runner fails.
-        return (not self.closed and self._source_starting) or self._regulation_waiting()
+        # after pack startup; cleanup removes a failed owner's declarations.
+        # Career selection and retirement do not change pack-owned UI.
+        return not self.closed and self._source_starting
 
     def bind_regulations(self, *, scopes, native_categories=()):
         """Bind admitted handlers; native interception needs a separate acknowledgement."""
@@ -182,8 +179,8 @@ class PackMods:
     def prepare_regulations(self, *, scopes, native_categories=()):
         """Prepare once from admitted active source owners, without publishing rules.
 
-        Source API 0.4.0 owners request the regulations permission. Their rules
-        must bind and become ready before the pack publishes mod resources.
+        Source API 0.4.0 owners request the regulations permission. Game validation
+        needs bound rules, published data and confirmed native coverage.
         """
         from launcher.regulations import RegulationDefinitions
 
@@ -208,7 +205,7 @@ class PackMods:
     def _flush_menu(self):
         """Send staged declarations outside guest execution, without per-frame callbacks."""
         # Keep desired declarations staged, but revoke published UI if a required
-        # owner fails. Readiness must block additions without blocking cleanup.
+        # owner fails. Startup holds must not block cleanup.
         records = [] if self._ui_waiting() else self.menu.buttons
         if self.set_menu is None or self.applied_menu == records:
             return
@@ -436,7 +433,7 @@ class PackMods:
         if state in ("loading", "complete") and self._regulation_waiting():
             failed = self._regulation_failed
             # The native preload adapter protects the selected career after
-            # the menu opens. Required mod UI remains held by _ui_waiting().
+            # the menu opens, without holding pack-owned UI for career activation.
             state = "error" if failed else "complete" if self.finished and self._regulation_armed else "loading"
         if self.set_loading is not None:
             self.set_loading(

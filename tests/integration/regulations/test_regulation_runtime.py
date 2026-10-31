@@ -16,6 +16,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.manager import HookError
+from hook_manager.settings import SettingsAdapter
 from hook_manager.callables import CallBinding, CallableTarget, refuse_boolean
 from hook_manager.game_adapters.regulations import RegulationChannel
 from hook_manager.game_adapters.regulations.guards import RegulationGuards
@@ -42,11 +43,11 @@ def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract", inputs
         # Model pack adoption of these already-constructed fixture Stores,
         # including the same cleanup callback used by real source loading.
         mod.sandbox._resources.callback(scope._remove_mod, owner)
-    # A staged UI declaration must stay unpublished until native acknowledgement.
+    # Pack-owned UI is independent of career validation readiness.
     scope.menu.add(next(iter(mods)), "owned", "Owned", "Message")
     runtime = scope.bind_regulations(scopes={semantic_scope})
     scope.poll()
-    assert not runtime.ready and progress[-1]["state"] == "loading" and not menus
+    assert not runtime.ready and progress[-1]["state"] == "loading" and menus[-1]
     return scope, runtime, wake, progress, menus
 
 
@@ -138,7 +139,7 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
             pump(pack, wake, worker.submit(channel.publish))
             with pytest.raises(ValueError, match="regulation_voting"):
                 runtime.confirm_native({})
-            assert not runtime.ready and not menus
+            assert not runtime.ready and menus[-1]
             from tests.regulation_data import voting_inputs as inputs
             snapshot, regulation, contexts = inputs(category["key"])
             client = control_bridge(monkeypatch, lambda operation: {})
@@ -181,11 +182,14 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
             assert runtime.failed and mod.sandbox.closed
 
 
-def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(source_mod, runner_bundle, tmp_path, monkeypatch):
-    """Load the example normally; simulate the game-side bridge replies."""
+def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
+    source_mod, runner_bundle, tmp_path, monkeypatch, native_settings,
+):
+    """Load UI and rule examples together; simulate the game-side bridge replies."""
     example = Path(__file__).resolve().parents[3] / "examples/rookie_contract_mod"
     folder = tmp_path / "data/owned"
     shutil.copytree(example, folder / example.name)
+    shutil.copytree(example.parent / "theme_mod", folder / "theme_mod")
     document = json.loads((example / "regulations.json").read_text(encoding="utf-8"))
     owner = "example.rookie_contracts"
     category = owner + ".length"
@@ -198,17 +202,20 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
     path = folder / "regulations.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     original = path.read_bytes()
-    # Existing API mods share the runner and wait for the new rule's readiness.
+    # Settings and menu additions remain available before a career is selected.
     source_mod(folder, "ui", mod_id="owned.ui", capabilities=("main-menu",), code=(
         "import wit_world\nclass WitWorld:\n def activate(self): wit_world.add_menu_button('owned','Owned','Message')\n"
         " def on_event(self,n,p): return p\n"))
-    progress, menus, operations, channels, reports = [], [], [], [], []
+    progress, menus, operations, channels, reports, palettes = [], [], [], [], [], []
     wake = threading.Event()
     client = control_bridge(monkeypatch, lambda operation: {})
     with ExitStack() as resources:
         worker = resources.enter_context(ThreadPoolExecutor(max_workers=1))
+        settings = resources.enter_context(closing(SettingsAdapter()))
         scope = resources.enter_context(closing(PackMods(tmp_path, reports.append, bridge=client, runner_bundle=runner_bundle,
-            wake=wake.set, set_loading=progress.append, set_menu=menus.append)))
+            wake=wake.set, set_loading=progress.append, set_menu=menus.append,
+            set_settings=lambda rows, result=None: {"settings": settings.update(rows, result)},
+            set_themes=palettes.append)))
         def post(record, timeout):
             operation = record["operation"]
             operations.append(operation)
@@ -220,7 +227,9 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
                     "categories": [{"key": "native", "options": [{"key": "open"}]}]}})
             elif operation == "await-regulations":
                 # Career selection must still be blocked while protection arms.
-                assert progress[-1]["state"] == "loading" and not menus
+                assert progress[-1]["state"] == "loading" and menus[-1]
+                assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
+                assert palettes[-1][0]["owner"] == "example.theme"
                 assert record["regulations"] == {"pack": str(folder.resolve()),
                     "categories": scope.regulations.definitions.custom_categories,
                     "scripted_changes": scope.regulations.definitions.custom_scripts,
@@ -264,10 +273,16 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
             time.sleep(.002)
         scope.poll()  # The next controller tick binds and arms the loaded rules.
         mod = scope.mods[owner]
-        assert mod.manifest.api == "0.4.0" and set(scope.mods) == {owner, "owned.ui"}
+        assert mod.manifest.api == "0.4.0" and set(scope.mods) == {owner, "example.theme", "owned.ui"}
         assert path.read_bytes() == original
-        assert scope._regulation_armed and not scope.regulations.ready and not menus
+        assert scope._regulation_armed and not scope.regulations.ready and menus[-1]
         assert progress[-1]["state"] == "complete"
+        values = {field["id"]: field["value"] for field in settings.records[0]["fields"]}
+        values["colour_1"] = "#123456"
+        settings.queue_save("example.theme", {"schema": 1, "values": values})
+        scope.settings_status(settings.status())
+        assert palettes[-1][0]["colours"]["BACKGROUND"] == "#123456"
+        assert settings.pending is None and not scope.regulations.ready and menus[-1]
         scope.poll()  # Binding and arming happen once, without a status request loop.
         scope.career_preload({"state": "waiting", "generation": 7})
         assert scope.regulations.ready and menus[-1] and progress[-1]["state"] == "complete"
@@ -296,7 +311,9 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
         handler = scope.regulations._handler
         runner = mod.runner
         scope.career_preload({"state": "left", "generation": 7})
-        assert not scope.regulations.ready and menus[-1] == [] and not runner.closed
+        assert not scope.regulations.ready and menus[-1] and not runner.closed
+        assert ("code-mod:example.theme", "Theme") in native_settings.OPTION_TABS
+        assert palettes[-1][0]["owner"] == "example.theme"
         scope.career_preload({"state": "waiting", "generation": 8})
         assert scope.regulations.ready and menus[-1] and channels[0].epoch == 2
         # A quick replacement may overtake the intermediate menu notice.
@@ -308,6 +325,7 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(so
         scope.poll()
         assert operations[-1] == "restore-native-rules" and operations.count("restore-native-rules") == 1
         assert scope.regulations.closed and scope._regulation_failed
+        assert settings.records == [] and palettes[-1] == []
         scope.career_preload({"state": "waiting", "generation": 10})
         assert operations[-1] == "restore-native-rules"
 
@@ -401,7 +419,7 @@ def test_startup_needs_no_native_hooks_for_omitted_regulation_sections(make_mod,
         assert menus[-1] and progress[-1]["state"] == "complete"
 
 
-def test_startup_does_not_release_menu_without_confirmed_native_loading_protection(make_mod, tmp_path):
+def test_startup_keeps_career_selection_blocked_without_confirmed_loading_protection(make_mod, tmp_path):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
@@ -424,7 +442,7 @@ def test_startup_does_not_release_menu_without_confirmed_native_loading_protecti
     ("personnel.contract", PERSONNEL_COMPONENTS, "staffing"),
     ("personnel.approach", {"personnel_approaches": True}, "personnel_approaches"),
 ])
-def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness(make_mod, tmp_path, semantic_scope, components, required):
+def test_native_coverage_requires_the_whole_declared_scope_before_validation(make_mod, tmp_path, semantic_scope, components, required):
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     scope, runtime, wake, progress, menus = prepare_scope(tmp_path, {mod.manifest.id: mod}, semantic_scope=semantic_scope)
     with closing(scope):
@@ -437,23 +455,23 @@ def test_native_coverage_requires_the_whole_declared_scope_before_pack_readiness
             for value in (False, 1):
                 with pytest.raises(ValueError, match="coverage: " + required):
                     runtime.confirm_native(dict(components, **{required: value}))
-            assert not runtime.ready and not menus and progress[-1]["state"] == "loading"
+            assert not runtime.ready and menus[-1] and progress[-1]["state"] == "loading"
             assert not mod.sandbox.closed
             pump(scope, wake, worker.submit(channel.publish, native={"native": [{"key": "open"}]}))
-            assert runtime._dispatch.ready and not runtime.ready and not menus
+            assert runtime._dispatch.ready and not runtime.ready and menus[-1]
             runtime.confirm_native(components, pending=True)
             # Native guards can become enabled just before their activation reply
-            # arrives. Coverage already permits checks; UI must still stay held.
+            # arrives. Coverage permits checks without completing activation.
             action = worker.submit(channel, [dict(context(), scope=semantic_scope)], [selection()], {mod.manifest.id: [[0, 0, 0]]}, time.monotonic() + .1)
             assert pump(scope, wake, action) == {mod.manifest.id: [{"decision": "allow"}]}
-            assert not runtime.ready and not menus
+            assert not runtime.ready and menus[-1]
             runtime.finish_native_activation()
             scope.poll()
             assert runtime.ready and menus[-1] and progress[-1]["state"] == "complete"
             with pytest.raises(ValueError, match="coverage: " + required):
                 runtime.confirm_native({key: value for key, value in components.items() if key != required})
             scope.poll()
-            assert not runtime.ready and menus[-1] == [] and progress[-1]["state"] == "loading"
+            assert not runtime.ready and menus[-1] and progress[-1]["state"] == "loading"
             runtime.close()
             assert runtime.status["failed"] and runtime.status["owners"] == {mod.manifest.id: "active"}
 
@@ -487,12 +505,12 @@ def test_native_preparation_defers_cleanup_ui_until_bridge_reply(make_mod, tmp_p
     scope._source_runner = mod.runner
     mod.sandbox._resources.callback(scope._remove_sources)
     scope.applied_menu = [{"owner": owner}]
-    count = len(progress)
+    count, menu_count = len(progress), len(menus)
     def control(operation):
         assert runtime.busy
         if operation == "prepare-regulations":
             mod.close()
-            assert not menus and len(progress) == count
+            assert len(menus) == menu_count and len(progress) == count
             return {"adapters": {"regulations": {"state": "unavailable"}}}
         assert operation == "stop-regulations" and runtime.closed
         return {"regulation_control": True}
@@ -622,9 +640,9 @@ def test_failed_native_activation_closes_transport_and_requests_cleanup(make_mod
             runtime._activate(control_bridge(monkeypatch, control), 1)
         assert operations == (["install-regulations"] + (["activate-regulations"] if failure == "enable" else [])
                               + ["stop-regulations"])
-        assert not runtime.ready and not menus and not scope._regulation_dispatching
+        assert not runtime.ready and not scope._regulation_dispatching
         scope.poll()
-        assert progress[-1]["state"] == "error"
+        assert progress[-1]["state"] == "error" and menus[-1] and not mod.sandbox.closed
 
 
 @pytest.mark.parametrize("activation_fails", [False, True])
@@ -655,14 +673,15 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
             assert time.monotonic() < stop, messages
             scope.poll()
             time.sleep(.002)
-        assert scope.finished and not publications
+        assert scope.finished
         assert scope._regulation_owners == {"b.rules", "c.rules", "d.data"}
         if activation_fails:
-            assert not scope.mods and scope.failed == 4 and scope.menu.buttons == []
+            assert not scope.mods and scope.failed == 4 and scope.menu.buttons == [] and not publications
             assert progress[-1]["state"] == "error"
             with pytest.raises(ValueError, match="Required regulation owner"):
                 scope.bind_regulations(scopes={"personnel.contract"})
             return
+        assert publications[-1][0]["owner"] == "a.ui" and scope.regulations is None
         mods = dict(scope.mods)
         assert len({id(mod.sandbox) for mod in mods.values()}) == 1
         runtime = scope.bind_regulations(scopes={"personnel.contract"})
@@ -715,6 +734,7 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         monkeypatch.setattr("launcher.regulations.runtime.RegulationServer", unavailable)
     with closing(PackMods(tmp_path, lambda _: None, set_loading=progress.append, set_menu=menus.append)) as scope:
         scope.mods = {"owned.rules": mod}
+        mod.sandbox._resources.callback(scope._remove_mod, "owned.rules")
         scope.finished, scope._pack_root, scope._regulation_owners = True, tmp_path, {"owned.rules"}
         scope.menu.add("owned.rules", "owned", "Owned", "Message")
         with pytest.raises((ValueError, OSError)):

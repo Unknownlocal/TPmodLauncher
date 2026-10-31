@@ -202,14 +202,14 @@ Socket data cannot supply Python code or native function targets.
 
 `RegulationRuntime` owns the captured career number and its preparation,
 installation, activation and retirement. The bridge sends fixed requests and
-services regulation transport while awaiting a reply. `PackMods` derives its UI
-holds and failure display from runtime status, refreshing between completed
-requests so cleanup cannot start another request through a busy bridge.
+services regulation transport while awaiting a reply. `PackMods` refreshes failure
+messages and owned UI between completed requests, so cleanup cannot start another
+request through a busy bridge.
 
 Normal startup binds admitted handlers once and confirms that `CareerPreload`
 protects career selection. Each captured attempt publishes its rule data before
-hooks install. Coverage is checked with validation held off; readiness and mod
-UI are released only after the game confirms activation. Confirmed coverage
+hooks install. Coverage is checked with validation held off; readiness is
+confirmed only after the game acknowledges activation. Confirmed coverage
 already permits validation if native guards enable just before that reply; the
 game controls when guarded actions begin. A failed setup closes transport
 before requesting native restoration. An invalid acknowledgement cannot
@@ -250,7 +250,7 @@ team approaches for `personnel.approach`; driver, staff, academy and staffing fo
 `development.project`. Missing coverage blocks readiness; unrelated coverage does
 not. Unknown scopes are rejected before binding. Mods cannot approve coverage.
 
-UI stays staged while rules are unready and is cleared on failure. Cleanup removes
+Pack-owned UI does not wait for career or regulation activation. Cleanup removes
 all failed peers' declarations before publishing replacements. Native UI updates
 wait until validation replies have been released, so UI acknowledgement cannot
 block a decision. Shutdown stops transport before closing runtimes.

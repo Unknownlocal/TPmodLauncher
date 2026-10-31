@@ -139,12 +139,16 @@ are preserved; conditions stay in mod code. An authenticated connection carries
 checks to the controller thread under one absolute deadline.
 
 `RegulationRuntime` owns career preparation, installation, activation and
-retirement. The bridge sends fixed requests; `PackMods` derives readiness and UI
-holds from runtime status. Loading protection must be armed before career
-selection opens, and activation acknowledged before mod UI appears. Returning to
-the menu or cancelling a load retires career hooks and data while retaining the
-pack's interpreter, handlers and connection. The next career needs fresh data and
-hook approval. The child package documents failure handling and required owners.
+retirement. The bridge sends fixed requests; `PackMods` uses runtime status to
+protect career loading and validation. Loading protection must be armed before
+career selection opens. Validation needs confirmed game hooks and published rule
+data; career readiness also waits for the game's activation reply.
+Mod menu additions, settings tabs and palettes become available after source
+activation without waiting for a career. Failed owners lose their UI.
+Returning to the menu or cancelling a load retires career hooks and data while
+retaining the pack's interpreter, handlers and connection. The next career needs
+fresh data and hook approval. The child package documents failure handling and
+required owners.
 Source API `0.4.0` grants the `regulations` permission; native setup and the callable
 adapter remain private.
 
