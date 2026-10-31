@@ -11,7 +11,8 @@ from mod_runtime._regulations import values
 from mod_runtime._regulations.contexts import RegulationContexts
 from tests.regulation_data import contract_context as context
 from mod_runtime._regulations.frozen import FrozenValue
-from mod_runtime._regulations.voting import voting_packet
+from mod_runtime._regulations.policy import decode, encode
+from mod_runtime._regulations.voting import vote_reply, voting_packet
 
 
 def test_component_metrics_match_expanded_encoding_with_unicode_depth_and_big_integers():
@@ -88,3 +89,11 @@ def test_shared_context_cache_leaves_gc_tracking_before_handlers_run():
     finally:
         if enabled:
             gc.enable()
+
+
+def test_escaped_vote_reasons_have_their_own_reply_limit():
+    result = {"choice": "current", "reason": "x" + "\t" * 2047}
+    reply = encode({"action": 1, "slot": 0, "result": result})
+    assert vote_reply(reply, 1, 0) == result
+    with pytest.raises(ValueError, match="4096"):
+        decode(reply)

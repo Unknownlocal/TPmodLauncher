@@ -34,6 +34,8 @@ runtime copies, one session runner and owned native menu/settings interfaces.
 `source_fixtures.py` shares Python source and small Wasm component fixtures.
 `launcher/conftest.py` adds local Git repositories and author-component build fixtures.
 `regulation_support.py` supplies shared rule data and real source-group factories.
+`controller_device.py` and `controller_session.py` share the controller fixture
+and Frida event stand-ins between launcher and session-lifetime tests.
 Preparation tests use worker gates for cancellation races; stand-in compiler
 results avoid compilation where no guest runs. Real compilation and controller-thread
 adoption retain an integration check.

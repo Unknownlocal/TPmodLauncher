@@ -9,8 +9,7 @@ import pytest
 from launcher.regulations.regulation_handler_bindings import RegulationHandlerBindings
 from launcher.regulations.validation.dispatch import ValidationDispatch
 from launcher.regulations.voting_runner import VotingRunner
-from mod_runtime._regulations.policy import decode, encode
-from mod_runtime._regulations.voting import vote_reply
+from mod_runtime._regulations.policy import encode
 from tests.regulation_support import context, definitions, selection, validator
 from tests.regulation_data import voting_inputs as inputs
 
@@ -113,11 +112,3 @@ def test_guest_refuses_to_complete_a_batch_with_unconsumed_votes(make_mods):
             handler.runner.sandbox.call("begin-regulation-vote", 1, len(packet.encode()), packet)
             handler.runner.sandbox.call("finish-regulation-vote", 1)
     assert handler.runner.closed
-
-
-def test_escaped_vote_reasons_have_their_own_reply_limit():
-    result = {"choice": "current", "reason": "x" + "\t" * 2047}
-    reply = encode({"action": 1, "slot": 0, "result": result})
-    assert vote_reply(reply, 1, 0) == result
-    with pytest.raises(ValueError, match="4096"):
-        decode(reply)
