@@ -19,8 +19,9 @@ def load(name, filename):
 
 
 frida = load("callable_binding", "native_test_binding.py").load(root)
-lifecycle = load("callable_lifecycle", "process_lifecycle.py")
-bridge = load("callable_bridge", "game_bridge.py")
+# Isolated Python needs the trusted package locations before sibling imports.
+load("dependencies", "bundled_dependencies.py").load_source_packages(root)
+from launcher import process_lifecycle as lifecycle, game_bridge as bridge
 messages = []
 controller = lifecycle.Controller(
     frida.get_local_device(), [sys.argv[1], "-B", sys.argv[2], str(output)],
