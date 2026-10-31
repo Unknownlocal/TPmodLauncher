@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Identify native staff signing without gating unrelated executable contents."""
+"""Identify staff signing by its native path and call signature."""
 
 from ..native_methods import native_target
 from .native_methods import STAFF
-
-# Inspection provenance only; runtime compatibility checks the call signature.
-STAFF_INSPECTED_SHA256 = 'e1812f2fce94c16e02df8056f62ef976e6c8d3b877101d3019fb77005059f773'
 
 
 def staff_target():

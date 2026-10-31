@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Check helpers whose lazy initialization must stay private before signing."""
+"""Check native helpers before preparing private signing data."""
 
 from ...callables import method_group
 from ..native_methods import native_signatures

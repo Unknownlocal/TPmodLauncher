@@ -145,13 +145,13 @@ def _host_operations(manifest, submit_log, menu, settings=None, theme=None):
         if not callable(submit_log):
             raise ManifestError("Diagnostics requires a trusted report handler")
 
-        def report(message):
+        def submit_mod_log(message):
             submit_log(
                 manifest.id,
                 "".join(char if char.isprintable() else " " for char in message),
             )
 
-        operations["report"] = Operation(("string",), None, report)
+        operations["report"] = Operation(("string",), None, submit_mod_log)
     if "main-menu" in manifest.capabilities:
         if not callable(menu):
             raise ManifestError("Main menu requires a trusted menu provider")

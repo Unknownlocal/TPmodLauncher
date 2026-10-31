@@ -156,8 +156,8 @@ def test_builder_preserves_existing_output_and_rejects_non_source(author):
 
 
 @pytest.mark.legacy
-def test_current_api_build_can_request_diagnostics_without_menu_access(author):
-    # Build against the current contract with only one optional import enabled.
+def test_prebuilt_api_0_2_supports_diagnostics_without_menu_access(author):
+    # Request just diagnostics from the API 0.2.0 component contract.
     path = author / "mod.toml"
     path.write_text(path.read_text().replace('api = "0.1.0"', 'api = "0.2.0"'))
     shutil.copytree(EXAMPLE / "src", author / "src")

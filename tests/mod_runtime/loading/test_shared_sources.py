@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Exercise real shared imports and entry state without pack/provider cutover."""
+"""Check shared source imports and each mod's entry state inside Wasm."""
 
 import json
 from types import SimpleNamespace

@@ -11,7 +11,7 @@ class CallBinding:
 
     project(bound_arguments, native_result) runs only trusted launcher code and
     must be read-only. It may normalise arbitrary native areas; it is never mod
-    source. Scope-specific adapters later construct the public context/rule data.
+    source. Scope-specific adapters build context and rule data from the projection.
     Arguments may include self/cls; the adapter copies only the projection result
     for dispatch. The second argument is None because checks precede native code.
     """

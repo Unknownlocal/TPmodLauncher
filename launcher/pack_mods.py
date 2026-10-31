@@ -523,7 +523,7 @@ class PackMods:
                 for owner, candidate in self._sources.items():
                     if "ui-settings" in candidate.manifest.capabilities:
                         self.settings.bind(owner, candidate.root)
-                    operations = _host_operations(candidate.manifest, self._diagnostic,
+                    operations = _host_operations(candidate.manifest, self._submit_mod_log,
                                                   self.menu.add if self.set_menu is not None else None,
                                                   self.settings.call, self.themes.register)
                     providers[owner] = {name: operation.callback for name, operation in operations.items()}
@@ -627,7 +627,7 @@ class PackMods:
                 if type(manifest) is not SourceManifest:
                     if "ui-settings" in manifest.capabilities:
                         self.settings.bind(manifest.id, candidate.root)
-                    mod = Mod(manifest, submit_log=self._diagnostic,
+                    mod = Mod(manifest, submit_log=self._submit_mod_log,
                               menu=self.menu.add if self.set_menu is not None else None,
                               settings=self.settings.call, theme=self.themes.register,
                               cleanup=lambda owner=manifest.id: self._remove_mod(owner),
@@ -669,7 +669,7 @@ class PackMods:
             finally:
                 if prepared is not None:
                     prepared.close()  # An adopted result has already transferred its resources.
-                # Emit once per attempted mod, after guest execution and cleanup have returned.
+                # Log once per attempted mod, after execution and cleanup return.
                 self._log(
                     "TIMING", pack=folder.name, id=manifest.id, phase_seconds=timings
                 )
@@ -689,8 +689,8 @@ class PackMods:
             total_seconds=round(perf_counter() - started, 6),
         )
 
-    def _diagnostic(self, mod_id, message):
-        """Route the approved report operation to the launcher log with host-owned identity."""
+    def _submit_mod_log(self, mod_id, message):
+        """Submit a mod message with its host-owned identity."""
         self._log("REPORT", id=mod_id, message=message)
 
     def menu_status(self, status):

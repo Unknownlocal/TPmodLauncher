@@ -78,8 +78,8 @@ class StaffingPlanner:
             bound = self.signature.bind(manager, *args, **kwargs)
             bound.apply_defaults()
             values = bound.arguments
-            # Required-staff callers bypass ordinary prestige requirements. Do not
-            # run a newly introduced prestige path against borrowed live teams.
+            # Recovery must bypass prestige checks: evaluating them could
+            # change the borrowed team records during private preparation.
             if values["signer_kind"] != "team" or values["bypass_requirements"] is not True:
                 raise HookError("Staffing preparation requires native team recovery arguments")
             person = values["staff"]

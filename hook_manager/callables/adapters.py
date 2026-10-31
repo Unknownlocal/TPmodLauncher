@@ -28,8 +28,8 @@ class CallableAdapters(Manager):
     _validate = None
 
     def __init__(self, *, seconds=.1):
-        # The parent callback path is unused; our wrapper enters the subclass's
-        # validation before native execution instead of dispatching legacy hooks.
+        # The wrapper calls subclass validation directly; Manager's event
+        # callback is unused.
         super().__init__(lambda record: None)
         if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
             raise HookError("Expected a positive finite validation deadline")

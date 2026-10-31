@@ -140,21 +140,21 @@ failure closes all source peers, including members not yet activated. UI
 declarations remain staged until startup completes. Shared regulation storage
 uses its own private operations. The runner interface remains private.
 
-## Resident regulation validation
+## Regulation storage and validation
 
 The private runner interface binds and evaluates regulation handlers inside Wasm.
-Source API `0.4.0` admits their `regulations` permission alongside the earlier host
-operations. JSON declarations select ordinary Python functions; the resident
-exports remain private, add no host calls and bypass lifecycle event dispatch.
+Source API `0.4.0` grants the `regulations` permission alongside diagnostics and UI
+operations. JSON declarations select ordinary Python functions. The runner's
+regulation operations stay private and run separately from lifecycle events.
 A matching built bundle is required whenever its trusted guest sources change.
 
-Handler bindings become fixed when resident setup or the first voting batch begins.
+Handler bindings become fixed when regulation setup or the first voting batch begins.
 Each owner keeps checked
 regulation data in memory across actions. Each career's complete install is staged
 and checked before commit makes it active. Generations and action IDs reject
 stale requests.
 Reset drops career data and actions while retaining the owner's binding identity.
-Invalid operations disable the affected resident state.
+Invalid operations make the shared regulation group unavailable.
 
 | Module under `_regulations/` | Responsibility |
 | --- | --- |

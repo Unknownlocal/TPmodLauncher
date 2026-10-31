@@ -9,9 +9,8 @@ Never regroup records by their edited colours or renumber existing groups.
 
 PALETTE_SCHEMA = 1
 
-# Grouped by identical defaults in UITheme from the installed game inspected on
-# 2026-10-16. Initial numbering follows each colour's first declaration in UITheme.
-# This is a fixed mapping: normal mod loading must not regenerate it from the game.
+# Roles with equal UITheme defaults share a fixed group. Saved settings use
+# these group numbers, so mod loading must not regenerate the mapping.
 # OVERLAY includes alpha; all other defaults are RGB.
 COLOR_GROUPS = (
     (1, (5, 10, 19), ("BACKGROUND",)),

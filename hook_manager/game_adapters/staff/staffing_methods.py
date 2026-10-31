@@ -25,8 +25,7 @@ _STAFFING_METHODS = native_signatures(STAFF, (
 
 
 def staffing_methods(manager):
-    # As with the contract planner, incompatibility raises to the consuming
-    # coordinator, which owns the CLI/log diagnostic and skipped integration.
+    # The coordinator reports incompatibility and skips integration.
     module = sys.modules.get("managers.staff_manager")
     if module is None or getattr(getattr(module, "__spec__", None), "_initializing", False):
         raise HookError("Staffing preparation needs completed native imports")
