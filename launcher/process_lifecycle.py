@@ -8,7 +8,10 @@ import math
 import os
 from pathlib import Path
 import queue
+import threading
 import time
+
+from launcher.process_exit import ProcessExit
 
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
 from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, sync_log
@@ -81,6 +84,7 @@ class Controller:
         self.clock = clock
         self.events = queue.Queue()
         self.sessions = {}
+        self.exit_waits = {}
         self.bridges = {}
         self.bridge_factory = bridge_factory
         # A trusted factory creates external mod scopes; Frida callbacks never execute mod code.
@@ -91,11 +95,13 @@ class Controller:
         self.resumed = set()
         self.subscriptions = []
         self.idle_since = None
-        self.next_check = 0.0
+        self._restart_timer = self._restart_token = None
         self.stopping = False
         self.cleanup_failed = False
         self.native_failure = None
         self.shutdown = shutdown
+        if shutdown is not None:
+            shutdown.wake = lambda: self.events.put(("shutdown", None))
 
     def _subscribe(self, signal, callback):
         # Retain the exact callback so close() can remove only our subscription.
@@ -129,24 +135,32 @@ class Controller:
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
             self._drain_activity(pid)
-            self._close_mods(pid)
-            self._discard_bridge(pid)
-            del self.sessions[pid]
+            self._discard_session(pid)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
         self.activity.attach(pid)
         if self.shutdown is not None:
             self.shutdown.track(pid)
-        session = self.device.attach(pid)
+        # Pin before attachment and verify it is still alive afterwards. This
+        # prevents a reused PID from borrowing the old process's exit wait.
+        waiter = ProcessExit(pid, self.game, lambda error: self.events.put(
+            ("exit", (pid, session, waiter, error))))
+        try:
+            session = self.device.attach(pid)
+        except BaseException:
+            waiter.close()
+            raise
         self.parents.add(pid)
         # Store the session before enabling gating so partial setup is still cleaned up.
         self.sessions[pid] = session
+        self.exit_waits[pid] = waiter
         session.on(
             "detached",
             lambda reason, crash=None: self.events.put(
                 ("detached", (pid, session, reason))
             ),
         )
+        waiter.start()
         session.enable_child_gating()
         if self.bridge_factory is not None:
             # Script messages are queued just like process events; this thread owns session state.
@@ -158,7 +172,7 @@ class Controller:
             )
             self.bridges[pid] = bridge
             bridge.start()
-        self.idle_since = None
+        self._cancel_restart()
         self.submit_log(
             f"ATTACHED pid={pid}; child tracking active; awaiting manager bootstrap"
         )
@@ -185,6 +199,16 @@ class Controller:
             except Exception as error:
                 self.cleanup_failed = True
                 self.submit_log("CLEANUP ERROR", level="ERROR", error=error, pid=pid)
+
+    def _discard_session(self, pid):
+        """Release owned resources before forgetting a retired session."""
+        self._close_mods(pid)
+        self._discard_bridge(pid)
+        waiter = self.exit_waits.get(pid)
+        if waiter is not None:
+            waiter.close()
+            self.exit_waits.pop(pid)
+        self.sessions.pop(pid, None)
 
     def _drain_activity(self, pid):
         bridge, session = self.bridges.get(pid), self.sessions.get(pid)
@@ -242,7 +266,8 @@ class Controller:
             # Preserve complete errors before a change triggers mod preparation
             # or a main-thread request, either of which may itself fail or wait.
             for message in changes:
-                self._event("bridge", (pid, session, message))
+                if not session.is_detached and not getattr(bridge, "exited", False):
+                    self._event("bridge", (pid, session, message))
             if journal_error is not None:
                 raise journal_error
 
@@ -318,21 +343,26 @@ class Controller:
                     self.shutdown.track(child.pid)
             if not self.stopping:
                 # Unrelated helpers are resumed without attachment; only the game gets a session.
-                if self._matches(child.pid):
+                matches = self._matches(child.pid)
+                if matches:
                     # A journal failure can abort replacement attachment. Own
                     # this verified child before draining its predecessor.
                     if self.shutdown is not None:
                         self.shutdown.track(child.pid)
-                    # Unix exec can replace the process image while retaining its PID.
-                    if getattr(child, "origin", None) == "exec":
-                        self._drain_activity(child.pid)
-                        previous = self.sessions.get(child.pid)
-                        self._close_mods(child.pid)
-                        self._discard_bridge(child.pid)
-                        self.sessions.pop(child.pid, None)
-                        self.resumed.discard(child.pid)
-                        if previous is not None and not previous.is_detached:
-                            previous.detach()
+                # Exec ends the old image even when the new image is a helper.
+                # Retire it before draining data: a delayed detach must not let
+                # old UI/service records enter a script whose image is gone.
+                if getattr(child, "origin", None) == "exec":
+                    if (bridge := self.bridges.get(child.pid)) is not None:
+                        bridge.exited = True
+                    self._drain_activity(child.pid)
+                    previous = self.sessions.get(child.pid)
+                    self._discard_session(child.pid)
+                    self.activity.retire(child.pid)
+                    self.resumed.discard(child.pid)
+                    if previous is not None and not previous.is_detached:
+                        previous.detach()
+                if matches:
                     self._attach(
                         child.pid, bootstrap=getattr(child, "origin", None) != "fork"
                     )
@@ -343,7 +373,7 @@ class Controller:
             self._resume(child.pid)
 
     def _event(self, kind, value):
-        if kind in ("bridge", "detached"):
+        if kind in ("bridge", "detached", "exit"):
             pid, session = value[:2]
             if self.sessions.get(pid) is session:
                 event = value[2].get("payload", {}).get("event") if kind == "bridge" else None
@@ -351,13 +381,47 @@ class Controller:
                     return self._process_event(kind, value)
         return self._process_event(kind, value)
 
+    def _has_exited(self, pid):
+        waiter = self.exit_waits.get(pid)
+        return waiter is not None and waiter.has_exited()
+
     def _process_event(self, kind, value):
         # Each detached event carries its session identity; an old event cannot remove a new session.
         if kind == "child":
             self._child(value)
+        elif kind == "mods-ready":
+            pid, session = value
+            if (self.sessions.get(pid) is session and pid in self.pack_mods
+                    and not self.stopping and not self._has_exited(pid)):
+                with self.activity.focus(pid):
+                    self.pack_mods[pid].poll()
+        elif kind == "exit":
+            pid, session, waiter, error = value
+            if self.sessions.get(pid) is not session or self.exit_waits.get(pid) is not waiter:
+                return
+            if error is not None:
+                raise LaunchError(f"Process exit wait failed for pid={pid}: {error}") from error
+            # Detach before closing external resources: no live native UI needs
+            # restoration after the pinned process has actually exited.
+            if (bridge := self.bridges.get(pid)) is not None:
+                bridge.exited = True
+            if not session.is_detached:
+                try:
+                    session.detach()
+                except Exception:
+                    pass  # The pinned OS handle has already certified exit.
+            self._process_event("detached", (pid, session, "process-terminated"))
+            self.submit_log(f"EXITED pid={pid}")
+        elif kind == "restart-expired":
+            if value is not self._restart_token:
+                return
+        elif kind == "shutdown":
+            return  # The close owner already set its request flag.
         elif kind == "detached":
             pid, session, reason = value
             if self.sessions.get(pid) is session:
+                if reason in ("process-terminated", "process-replaced") and (bridge := self.bridges.get(pid)) is not None:
+                    bridge.exited = True
                 self._drain_activity(pid)
                 self.submit_log(f"DETACHED pid={pid}: {reason}")
                 if not self.stopping and reason not in (
@@ -368,9 +432,7 @@ class Controller:
                     raise LaunchError(
                         f"Game tracking ended unexpectedly for pid={pid}: {reason}"
                     )
-                self._close_mods(pid)
-                self._discard_bridge(pid)
-                del self.sessions[pid]
+                self._discard_session(pid)
                 self.activity.retire(pid)
         elif kind == "bridge":
             pid, session, message = value
@@ -378,6 +440,15 @@ class Controller:
                 return  # A delayed message cannot describe a replacement's manager.
             payload = message.get("payload", {})
             event = payload.get("event")
+            bridge = self.bridges.get(pid)
+            # Socket data and completion events may precede the exit callback.
+            # Check the pinned owner, never a possible new occupant of its PID.
+            if self._has_exited(pid):
+                if bridge is not None:
+                    bridge.exited = True
+                if event in ("native-service", "mods-ready", "manager", "pack", "menu", "settings",
+                             "themes", "career-preload", "readiness"):
+                    return
             if self.stopping and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed"):
                 return
             if message.get("type") == "error":
@@ -385,7 +456,6 @@ class Controller:
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
             sequence = payload.get("event_sequence")
-            bridge = self.bridges.get(pid)
             if sequence is not None:
                 if type(sequence) is not int or sequence <= 0:
                     journal = getattr(bridge, "journal", None)
@@ -399,6 +469,9 @@ class Controller:
             if event == "native-service":
                 bridge.request("changes")
                 return
+            if event == "mods-ready" and pid in self.pack_mods:
+                self.pack_mods[pid].poll()
+                return
             if event in ("journal-ready", "reporting-closed"):
                 if event == "reporting-closed":
                     journal = getattr(self.bridges.get(pid), "journal", None)
@@ -407,7 +480,7 @@ class Controller:
                 self._drain_activity(pid)
                 if event == "reporting-closed":
                     detail = payload.get("detail", "Native reporting stopped unexpectedly")
-                    if not self.stopping and not session.is_detached and self._processes([pid]):
+                    if not self.stopping and not getattr(bridge, "exited", False) and not session.is_detached:
                         raise LaunchError("Native reporting failed for pid=" + str(pid) + ": " + detail)
                     self.submit_log("NATIVE REPORTING CLOSED: " + detail, level="WARNING", pid=pid)
                 return
@@ -447,6 +520,11 @@ class Controller:
                             partial(self.submit_log, pid=pid, component="mods"),
                             self.bridges.get(pid),
                         )
+                        scope = self.pack_mods[pid]
+                        if callable(set_wake := getattr(scope, "set_wake", None)):
+                            bridge = self.bridges.get(pid)
+                            set_wake(bridge.wake if bridge is not None else
+                                lambda: self.events.put(("mods-ready", (pid, session))))
                     self.pack_mods[pid].load(pack)
             elif event == "menu" and pid in self.pack_mods:
                 self.pack_mods[pid].menu_status(payload.get("status", {}))
@@ -470,7 +548,7 @@ class Controller:
             raise LaunchError("The local Frida device was lost.")
 
     def poll(self, timeout=0):
-        """Process queued events and return True after all game processes leave the grace window."""
+        """Process queued work; timeout=None blocks until an event or owned deadline."""
         try:
             self._event(*self.events.get(timeout=timeout))
         except queue.Empty:
@@ -480,49 +558,32 @@ class Controller:
         if self.native_failure is not None and not self.stopping:
             failure, self.native_failure = self.native_failure, None
             raise self.build_native_error(failure)
-        # Compilation futures do not hold up exit/exec handling; stores stay on this thread.
-        for pid, scope in list(self.pack_mods.items()):
-            with self.activity.focus(pid):
-                scope.poll()
         now = self.clock()
-        # Confirm process exits even if a detached notification is delayed or missing.
-        if self.sessions and now >= self.next_check:
-            live = {process.pid: process for process in self._processes(self.sessions)}
-            for pid, session in list(self.sessions.items()):
-                if pid not in live:
-                    self._drain_activity(pid)
-                    self._close_mods(pid)
-                    self._discard_bridge(pid)
-                    del self.sessions[pid]
-                    # Drop the local handle without relying on a pending callback for shutdown.
-                    try:
-                        session.detach()
-                    except Exception:
-                        pass  # The process is gone; the handle may already be detached.
-                    self.submit_log(f"EXITED pid={pid}")
-                    self.activity.retire(pid)
-                elif (
-                    not live[pid].parameters.get("path")
-                    or canonical(live[pid].parameters["path"]) != self.game
-                ):
-                    raise LaunchError(
-                        f"Tracked process identity changed for pid={pid}."
-                    )
-            self.next_check = now + 0.5
         if self.sessions or self.held:
-            self.idle_since = None
+            self._cancel_restart()
             return False
         # Wait for queued/gated replacements instead of treating the first parent exit as game exit.
         if self.idle_since is None:
             self.idle_since = now
+            token = self._restart_token = object()
+            self._restart_timer = threading.Timer(self.restart_grace,
+                lambda: self.events.put(("restart-expired", token)))
+            self._restart_timer.daemon = True
+            self._restart_timer.start()
             self.submit_log(
                 f"WAITING FOR RESTART; no game processes remain; grace={self.restart_grace:g}s"
             )
         return now - self.idle_since >= self.restart_grace
 
+    def _cancel_restart(self):
+        if self._restart_timer is not None:
+            self._restart_timer.cancel()
+        self._restart_timer = self._restart_token = self.idle_since = None
+
     def close(self):
         """Release owned children, disable child gating and detach every remaining session."""
         self.stopping = True
+        self._cancel_restart()
         self.resumed.clear()
 
         # Keep event subscriptions until gating is disabled and late children have been released.
@@ -536,8 +597,8 @@ class Controller:
                     if not gone and pid is not None:
                         try:
                             # Frida's detached flag can lag actual process exit.
-                            # No native restoration is needed once the PID is gone.
-                            gone = not self._processes([pid])
+                            # No native restoration is needed once the pinned owner exits.
+                            gone = self._has_exited(pid)
                         except Exception:
                             pass  # Unconfirmed exit keeps the original cleanup error.
                     if gone:
@@ -588,6 +649,11 @@ class Controller:
             self.activity.retire(pid)
         self.sessions.clear()
         self.bridges.clear()
+        for waiter in self.exit_waits.values():
+            attempt(waiter.close)
+        self.exit_waits.clear()
+        if self.shutdown is not None:
+            self.shutdown.wake = None
         if self.cleanup_failed:
             self.submit_log("CONTROLLER STOPPED; cleanup incomplete; see errors above", level="ERROR")
         else:
@@ -627,7 +693,7 @@ def run_launcher(
                 with activity_scope(logger, "game_loading"):
                     controller.start()
                 stage = "controller"
-                while not shutdown.requested.is_set() and not controller.poll(timeout=0.25):
+                while not shutdown.requested.is_set() and not controller.poll(timeout=None):
                     pass
                 if shutdown.requested.is_set():
                     logger.info("CONSOLE CLOSE requested; closing owned game windows")

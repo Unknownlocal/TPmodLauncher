@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -273,7 +274,11 @@ def test_restart_gap_and_stale_detached_event_do_not_end_session(rig):
     # A delayed event with the same PID but an old session must not remove the replacement.
     controller.events.put(("detached", (20, first, "process-terminated")))
     assert not controller.poll() and controller.sessions[20] is current
-    device.processes.clear()
+    for pid in list(device.processes):
+        if pid in controller.sessions:
+            device.exit(pid)
+        else:
+            device.processes.pop(pid)
     now[0] = 5.0
     assert not controller.poll()
     now[0] = 9.9
@@ -289,10 +294,12 @@ def test_reused_game_pid_attaches_again_before_delayed_old_detach(rig):
     device.child(20, controller.game)
     controller.poll()
     old = controller.sessions[20]
+    old_waiter = device.exit_waits[20]
     # Native state has changed, but the controller has not consumed the old notification yet.
     old.is_detached = True
     device.child(20, controller.game)
     old.handlers["detached"]("process-terminated")
+    old_waiter.completed(None)
     try:
         assert not controller.poll()
         replacement = controller.sessions[20]
@@ -307,6 +314,39 @@ def test_reused_game_pid_attaches_again_before_delayed_old_detach(rig):
         now[0] = 10.0
         assert not controller.poll() and controller.sessions[20] is replacement
     finally:
+        controller.close()
+
+
+def test_idle_controller_blocks_until_owned_exit_and_restart_deadline(rig, monkeypatch):
+    device, controller, _, _ = rig
+    controller.clock = time.monotonic
+    controller.restart_grace = .03
+    controller.start()
+    entered, released = threading.Event(), threading.Event()
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Idle controller inspected processes or polled mods")
+    monkeypatch.setattr(device, "enumerate_processes", unexpected)
+    controller.pack_mods[10] = SimpleNamespace(poll=unexpected, close=released.set)
+    get, waits = controller.events.get, []
+    def receive(*args, **kwargs):
+        waits.append(kwargs.get("timeout"))
+        entered.set()
+        return get(*args, **kwargs)
+    monkeypatch.setattr(controller.events, "get", receive)
+    def exit_without_frida_notification():
+        assert entered.wait(2)
+        device.exit(10)
+    worker = threading.Thread(target=exit_without_frida_notification)
+    try:
+        assert not controller.poll()
+        entered.clear()
+        worker.start()
+        assert not controller.poll(timeout=None)
+        assert released.is_set() and not controller.sessions
+        assert controller.poll(timeout=None)
+        assert waits[-1] is None
+    finally:
+        worker.join(2)
         controller.close()
 
 
@@ -328,7 +368,7 @@ def test_cleanup_accepts_confirmed_exit_before_frida_detached_notification(rig):
     controller.start()
     session = controller.sessions[10]
     def exit_during_gating_cleanup():
-        device.processes.pop(10)
+        device.exit(10)
         raise RuntimeError("The process transport has closed")
     session.disable_child_gating = exit_during_gating_cleanup
     controller.close()

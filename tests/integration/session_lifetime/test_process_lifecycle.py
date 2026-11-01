@@ -58,8 +58,7 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
         deadline = time.monotonic() + 30
         while scope.loading is not None:
             assert time.monotonic() < deadline
-            controller.poll()
-            threading.Event().wait(0.002)
+            controller.poll(timeout=max(0, deadline - time.monotonic()))
     controller.start()
     try:
         first = controller.sessions[10]

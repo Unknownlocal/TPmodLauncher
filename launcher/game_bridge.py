@@ -56,6 +56,7 @@ class Bridge:
         self.frida, self.session = frida, session
         self.script = session.create_script(source, name="modLauncher-hook-bridge")
         self.loaded = False
+        self.exited = False
         self.waiters = {}
         self._on_message = on_message
         self.lock = threading.Lock()
@@ -81,7 +82,7 @@ class Bridge:
         ):
             with self.lock:
                 waiter = self.waiters.get(payload.get("id"))
-                if waiter is not None and waiter.empty():
+                if waiter is not None:
                     waiter.put_nowait(payload)
         else:
             on_message(message)
@@ -104,7 +105,7 @@ class Bridge:
         """Only arm native entry; the receiver never executes Python or controller work."""
         with self.lock:
             live = request in self.waiters
-        if live and not self.session.is_detached and not self.script.is_destroyed:
+        if live and not self.exited and not self.session.is_detached and not self.script.is_destroyed:
             self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
 
     def _control_failed(self, detail):
@@ -142,8 +143,14 @@ class Bridge:
                     self.journal.retained = True
 
     def wake(self):
-        """Wake the controller queue without native RPC or guest execution."""
-        self._on_message({"type": "send", "payload": {"event": "regulation-wake"}})
+        """Queue owner-thread work without native RPC or guest execution."""
+        self._on_message({"type": "send", "payload": {"event": "mods-ready"}})
+
+    def wake_service(self):
+        """Wake only the regulation service inside a synchronous control wait."""
+        with self.lock:
+            for waiter in self.waiters.values():
+                waiter.put_nowait({"wake": True})
 
     def _post(self, message, timeout):
         # Frida's native send supports cancellation; its synchronous script RPC wait does not.
@@ -229,7 +236,7 @@ class Bridge:
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
-        waiter = queue.Queue(maxsize=1)
+        waiter = queue.Queue()
         deadline = time.monotonic() + timeout
         answered = False
         with self.lock:
@@ -251,18 +258,23 @@ class Bridge:
             if regulations is not None:
                 message["regulations"] = regulations
             self._post(message, timeout)
+            if _service is not None:
+                # Handle work published before subscription. Later socket
+                # requests wake this waiter directly, without a timed tick.
+                _service()
             while True:
                 remaining = max(0, deadline - time.monotonic())
-                try:
-                    response = waiter.get(timeout=min(.005, remaining) if _service else remaining)
-                    break
-                except queue.Empty:
-                    if _service is None or time.monotonic() >= deadline:
-                        raise
+                if remaining == 0:
+                    raise queue.Empty
+                response = waiter.get(timeout=remaining)
+                if response.get("wake"):
                     # The game waits for policy acknowledgements before replying
                     # here. Service only regulation transport/guest work: PackMods
                     # polling could send nested UI requests to this busy bridge.
-                    _service()
+                    if _service is not None:
+                        _service()
+                    continue
+                break
             answered = True
             if "error" in response:
                 raise exception_from_record(response["error"], response, BridgeError)
@@ -301,13 +313,13 @@ class Bridge:
 
     def set_menu(self, buttons):
         """Apply a complete declarative registry; an exited game needs no native restoration."""
-        if self.session.is_detached:
+        if self.exited or self.session.is_detached:
             return None
         return self.request("menu", buttons=buttons)
 
     def set_settings(self, records, result=None):
         """Publish owned tabs and optionally acknowledge one native save request."""
-        if self.session.is_detached:
+        if self.exited or self.session.is_detached:
             return None
         return self.request("settings", settings={"records": records, "result": result})
 
@@ -331,7 +343,7 @@ class Bridge:
 
     def _close_native(self):
         """Stop the manager on its thread before unloading our native transport."""
-        if self.session.is_detached or not self.loaded:
+        if self.exited or self.session.is_detached or not self.loaded:
             return  # No live script remains here, or loading failed before the manager could start.
         if self.script.is_destroyed:
             raise BridgeError(
@@ -345,13 +357,13 @@ class Bridge:
                 self.script.unload()
 
     def set_themes(self, records):
-        if self.session.is_detached:
+        if self.exited or self.session.is_detached:
             return None
         return self.request("themes", themes=records)
 
     def set_loading(self, loading):
         """Send trusted startup progress on the same serialized request channel as menu updates."""
-        if self.session.is_detached:
+        if self.exited or self.session.is_detached:
             return None
         result = self.request("loading", loading=loading)
         if result["menu"]["state"] == "failed":

@@ -28,6 +28,14 @@ and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
+The controller waits on its event queue when idle. `process_exit.py` pins each
+verified process with a Windows handle or a Linux pidfd, then waits for exit or
+cancellation. This also detects exits when Frida's notification is late. The
+executable is checked before and after attachment; old exit events cannot retire
+a replacement session. Process enumeration is used at ownership boundaries,
+not on a timer. Restart grace uses a cancellable one-shot deadline. Closing the
+console wakes the queue directly.
+
 [`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations
@@ -104,7 +112,10 @@ For Python mods, `SourcePreparation` copies every source member, checks its
 previously accepted manifest and limits the combined size before reading runner
 bytes once. Prebuilt Wasm components also read on a worker during normal startup.
 The controller then requests compiled code through
-`compiled_mod.py` and polls for completion without waiting on a compiler.
+`compiled_mod.py`. Read and compilation completion callbacks queue the next
+preparation step, including when completion preceded callback registration.
+The controller creates Stores and activates mods on its own thread. It does not
+repeatedly check unfinished preparation while idle.
 
 `compilation_registry.py` keeps loaded code and pending compilations for each
 execution thread. Identical bytes and compiler settings reuse one entry before
@@ -184,6 +195,9 @@ retirement. The bridge sends fixed requests; `PackMods` uses runtime status to
 protect career loading and validation. Loading protection must be armed before
 career selection opens. Validation needs confirmed game hooks and published rule
 data; career readiness also waits for the game's activation reply.
+Socket arrivals wake the controller and any bridge control waiting for that
+request. Only regulation work runs inside that control's wait, on the owning
+thread. There is no periodic service callback while waiting.
 Mod menu additions, settings tabs and palettes become available after source
 activation without waiting for a career, unless their manifest declares extra
 prerequisites. Failed owners lose their UI.

@@ -22,6 +22,7 @@ class ConsoleShutdown:
         self._handler, self._deadline = None, None
         self._forced = False
         self.result = "not_requested"
+        self.wake = None
 
     def __enter__(self):
         if os.name != "nt":
@@ -101,6 +102,9 @@ class ConsoleShutdown:
                 # Leave time for the callback to return after bounded cleanup.
                 self._deadline = time.monotonic() + 4.0
                 self.requested.set()
+                wake = self.wake
+                if wake is not None:
+                    wake()
             if os.name == "nt":
                 self._post_close()
 

@@ -85,7 +85,7 @@ class RegulationRuntime:
 
     def _restore(self, bridge, control, *, rules_only=False):
         # Release native socket waits first. Busy native operations still use
-        # the bridge's bounded WAIT/retry path before restoring owned wrappers.
+        # the bridge's bounded completion wait before restoring owned wrappers.
         try:
             self.close()
         finally:
@@ -174,6 +174,13 @@ class RegulationRuntime:
         if threading.get_ident() != self._thread:
             raise RuntimeError("Use regulation runtime on its owning controller thread")
 
+    def _queue_work(self):
+        """Wake the owner queue and any control waiting for a socket request."""
+        if self._wake is not None:
+            self._wake()
+        if self._bridge is not None:
+            self._bridge.wake_service()
+
     def bind(self):
         self._owning_thread()
         if self.closed or self._attempted:
@@ -229,7 +236,7 @@ class RegulationRuntime:
             for owner, rows in voting.items():
                 row = metadata["owners"].setdefault(owner, {"revision": revisions[owner], "rules": [], "bindings": []})
                 row["voting"] = [entry["rule"] for entry in rows]
-            self._server = RegulationServer(metadata, self._wake)
+            self._server = RegulationServer(metadata, self._queue_work)
         self._bound = True
 
     @property

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
 
@@ -92,6 +93,16 @@ else:
     if sys.argv[1] == "fatal":
         poll = Controller.poll
         def failing_poll(self, *args, **kwargs):
+            if not hasattr(self, "_failure_watcher"):
+                def fail_when_requested():
+                    # Test-only file coordination wakes the production queue;
+                    # failure injection must not depend on a controller tick.
+                    deadline = time.monotonic() + 10
+                    while not (root / "fail-request").exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.events.put(("owned-failure", None))
+                self._failure_watcher = threading.Thread(target=fail_when_requested, daemon=True)
+                self._failure_watcher.start()
             result = poll(self, *args, **kwargs)
             if (root / "fail-request").exists():
                 raise RuntimeError("Owned launcher failure")

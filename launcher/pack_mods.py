@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from time import perf_counter
 import tomllib
+import weakref
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
@@ -98,6 +99,12 @@ class PackMods:
         self._regulation_error = False
         self.regulations, self._regulation_status = None, None
         self._regulation_owners, self._regulation_wake = set(), wake
+        owner = weakref.ref(self)
+        def ready(_=None):
+            scope = owner()
+            if scope is not None and not scope.closed and scope._regulation_wake is not None:
+                scope._regulation_wake()
+        self._ready = ready
         self._bridge = bridge
         self.prerequisites = Prerequisites()
 
@@ -105,6 +112,10 @@ class PackMods:
     def _regulation_failed(self):
         return (self._regulation_error or bool(self._regulation_owners and self._source_unavailable)
                 or self.regulations is not None and self.regulations.failed)
+
+    def set_wake(self, wake):
+        """Connect completion before load; callbacks only queue owner-thread work."""
+        self._regulation_wake = wake
 
     @property
     def _regulation_dispatching(self):
@@ -181,7 +192,7 @@ class PackMods:
             # Capability requests with no selected declaration contribute no resources.
             # Keep declared/unavailable owners required; cleanup is not disabling.
             self._regulation_owners = set(definitions.owner_ids)
-            self.regulations = RegulationRuntime(definitions, self.mods, self._regulation_wake)
+            self.regulations = RegulationRuntime(definitions, self.mods, self._ready)
             self.regulations.bind()
         except Exception as error:
             # Preparation can fail before there is a runtime, and listener startup
@@ -491,7 +502,7 @@ class PackMods:
         return self.executor
 
     def load(self, pack):
-        """Start one immutable pack; normal launches advance preparations through poll()."""
+        """Start one immutable pack; completion events resume its preparation."""
         if self.started or self.closed:
             return
         self.started = True
@@ -523,6 +534,7 @@ class PackMods:
         except BaseException:
             self._progress("error")
             raise
+        self._start_regulations()
 
     def _load_sources(self):
         """Prepare one fixed source group; only this controller creates its Store."""
@@ -530,7 +542,8 @@ class PackMods:
             timings = {}
             try:
                 members = tuple((item.root, item.manifest) for item in self._sources.values())
-                with SourcePreparation(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
+                with SourcePreparation(self._executor(), self.runner_bundle, members,
+                                       cache=self.cache, wake=self._ready) as job:
                     result = None
                     with measure(timings, "source_prepare"):
                         while result is None:
@@ -647,11 +660,13 @@ class PackMods:
                         mod = self._source_entries[manifest.id]
                     elif self.background:
                         self.pending = self._executor().submit(_read_component, manifest, timings)
+                        self.pending.add_done_callback(self._ready)
                         while not self.pending.done():
                             yield
                         future = self.pending
                         self.pending = None
                         prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
+                        prepared.when_ready(self._ready)
                         while not prepared.poll():
                             yield
                     elif self.cache is not None:

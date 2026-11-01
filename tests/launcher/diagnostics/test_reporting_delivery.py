@@ -79,6 +79,42 @@ def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
     assert not controller.stopping and receiver.confirmed
 
 
+@pytest.mark.parametrize("replacement", ["game", "helper"])
+def test_exec_drains_old_errors_without_servicing_replaced_image(delivery, replacement, tmp_path):
+    controller, bridge, receiver, path, _ = delivery
+    previous = controller.sessions[10]
+    controller.pack_mods[10] = SimpleNamespace(close=lambda: bridge.set_menu([]))
+    bridge.journal.append_record({"event": "native-service"})
+    bridge.journal.append_record({"event": "diagnostic", "level": "ERROR",
+                                  "detail": "Old native error", "traceback": "x" * 5000 + " FULL EXEC END"})
+    controller.device.processes[10] = controller.game if replacement == "game" else str(tmp_path / "helper.exe")
+    controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
+    controller.poll()
+    assert bridge.exited and 10 not in controller.bridges and 10 not in controller.pack_mods
+    assert previous.is_detached and receiver.finished.is_set() and not controller.cleanup_failed
+    assert (10 in controller.sessions) == (replacement == "game")
+    if replacement == "game":
+        assert controller.sessions[10] is not previous
+    assert "x" * 5000 + " FULL EXEC END" in path.read_text()
+
+
+def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery, tmp_path, monkeypatch):
+    controller, bridge, _, path, _ = delivery
+    session = controller.sessions[10]
+    bridge.journal.append_record({"event": "native-service"})
+    bridge.journal.append_record({"event": "diagnostic", "level": "ERROR", "detail": "Final owned error"})
+    controller.events.put(("bridge", (10, session, {"type": "send",
+        "payload": {"event": "reporting-closed", "detail": "EOF"}})))
+    controller.device.exit(10)
+    controller.device.processes[10] = str(tmp_path / "foreign.exe")
+    def no_pid_lookup(**kwargs):
+        raise AssertionError("Exit recovery inspected a reused PID")
+    monkeypatch.setattr(controller.device, "enumerate_processes", no_pid_lookup)
+    controller.poll()
+    assert bridge.exited and not controller.sessions and not controller.cleanup_failed
+    assert bridge.journal.retained and "Final owned error" in path.read_text()
+
+
 def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
     _, bridge, receiver, _, _ = delivery
     entered, release, completed = threading.Event(), threading.Event(), threading.Event()

@@ -372,3 +372,33 @@ def test_preparation_wait_services_only_controller_transport_and_cancels_on_fail
     with pytest.raises(RuntimeError, match="Controller service failed"):
         client.request("prepare-regulations", regulations=control, _service=fail)
     assert client.waiters == {} and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
+
+
+def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):
+    client, sent, calls, failures = bridge(), [], [], []
+    initial = threading.Event()
+    monkeypatch.setattr(client, "_post", lambda record, timeout: sent.append(record))
+    def service():
+        calls.append(threading.get_ident())
+        initial.set()
+        if len(calls) == 2:
+            client._message({"type": "send", "payload": {"event": "reply", "id": sent[0]["id"],
+                            "status": {"prepared": True}}}, lambda _: None)
+    def native_work():
+        try:
+            assert initial.wait(2)
+            time.sleep(.04)
+            assert len(calls) == 1, "Regulation service ran without an event"
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            client.wake_service()
+    worker = threading.Thread(target=native_work)
+    worker.start()
+    try:
+        result = client.request("prepare-regulations", regulations={"generation": 1,
+            "endpoint": {"port": 1, "token": "0" * 64}}, _service=service)
+        assert result == {"prepared": True} and calls == [threading.get_ident()] * 2
+    finally:
+        worker.join(2)
+    assert not failures and not worker.is_alive(), failures

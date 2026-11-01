@@ -5,6 +5,7 @@ from contextlib import closing
 import json
 import os
 import subprocess
+import queue
 
 import pytest
 
@@ -53,6 +54,24 @@ def test_only_direct_declared_mods_load_once_in_id_order(pack, code_mod):
     scope.close()
     scope.load(record)
     assert not scope.mods and messages == before
+
+
+def test_background_components_resume_on_read_and_compile_completion(pack, code_mod):
+    game, folder, record = pack
+    broken = code_mod(folder, "owned.broken")
+    (broken / "mod.wasm").unlink()
+    code_mod(folder, "owned.healthy")
+    completed, messages = queue.Queue(), []
+    with closing(PackMods(game, messages.append, background=True,
+                          wake=lambda: completed.put(None))) as scope:
+        scope.load(record)
+        while scope.loading is not None:
+            completed.get(timeout=5)
+            scope.poll()
+        assert scope.finished and scope.failed == 1
+        assert list(scope.mods) == ["owned.healthy"]
+        assert scope.mods["owned.healthy"].event("owned.event", None) == {}
+        assert any("REJECTED" in line and "owned.broken" in line for line in messages)
 
 
 def test_duplicate_invalid_missing_and_trapping_mods_do_not_stop_neighbours(
