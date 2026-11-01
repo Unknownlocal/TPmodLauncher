@@ -99,3 +99,30 @@ any survivors forcibly. Its process handles protect unrelated game instances.
 
 The shared plain-text record format comes from `hook_manager.diagnostics`, which
 also runs inside the game. No dialog participates in writing or completing logs.
+
+For normal console entry, `entry.py` presents fatal outcomes after game cleanup
+and after closing the log. It retains the log lock while the notice is open, so a
+second launch cannot replace the file being displayed. Code calling `main`
+directly can handle the returned outcome itself. Dependency-check commands
+print the summary without waiting for input.
+
+`failure_session.py` contains `FailureSession`. It always prints the failed
+activity, short reason and log path before starting presentation work. It waits
+for a real key or dialog dismissal. Failure to start or display UI leaves the
+console available. Presentation errors are appended to the completed log without
+replacing the original failure. A launch that never owned the log cannot append
+to it or describe another launch's file as its completed log.
+
+`console_input.py` contains `ConsoleInput`. It waits for a Windows console key or
+a Linux terminal byte without requiring Enter. Cancellation wakes the wait and
+restores terminal settings. Missing input and EOF leave the notice open without
+repeated input checks.
+
+`presentation_child.py` contains `PresentationChild`. It starts an isolated
+helper asynchronously, with a deadline for dialog startup. That deadline cannot
+end the user's console-reading time. Dismissal closes only the owned helper,
+including one that starts late. `presentation_helper.py` watches the owner's
+input pipe before starting UI; losing the owner ends the helper and its windows.
+Dialog and log-opening functions run independently. The current default helper
+reports unavailable presentation functions, leaving the printed console notice
+in place. An independently opened editor does not belong to the dismissal session.

@@ -43,6 +43,7 @@ def test_embedded_entry_reports_runner_damage_without_repair(embedded_project):
         )
         assert result.returncode == 1 and "Python runner verification failed" in result.stderr
         assert "Restore the complete launcher release" in result.stderr and "Traceback" in result.stderr
+        assert "Mod Launcher could not continue" in result.stderr and "Full details:" in result.stderr
         assert payload.read_bytes() == b"damaged runner"
         assert {path.name for path in set(root.iterdir()) - before} <= {"logs", ".state"}
         log = (root / "logs/launcher.log").read_text(encoding="utf-8")
@@ -307,12 +308,6 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
         ([], 2, "supply Steam's original"),
         (["--check-only", "--", str(executable)], 2, "cannot be combined"),
         (["--restart-grace", "nan", "--", str(executable)], 2, "finite number"),
-        # Report the sibling game path, even when launched from another working directory.
-        (
-            ["--", str(executable)],
-            1,
-            f"installed game: {root.parent / 'TeamPrincipal.exe'}",
-        ),
     ):
         result = subprocess.run(
             [str(executable), "-B", str(entry), *arguments],
@@ -321,4 +316,11 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
             timeout=20,
         )
         assert result.returncode == code and message in result.stderr, result.stderr
+    # A fatal CLI launch now retains its notice until dismissal. Programmatic
+    # main deliberately leaves presentation to its caller, so validate this
+    # rejected executable without opening a waiting failure session.
+    script = "import runpy,sys; entry=runpy.run_path(sys.argv[1]); raise SystemExit(entry['main'](['--',sys.executable]))"
+    result = subprocess.run([str(executable), "-B", "-c", script, str(entry)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1 and f"installed game: {root.parent / 'TeamPrincipal.exe'}" in result.stderr
     assert "installed game:" in (root / "logs/launcher.log").read_text(encoding="utf-8")

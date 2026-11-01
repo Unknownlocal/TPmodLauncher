@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Launcher logging, fatal outcomes and owned-game shutdown support."""
+"""Launcher logging, fatal outcomes, console notices and owned-game shutdown."""
 
 from .core import (
     activity_scope,

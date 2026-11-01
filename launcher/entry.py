@@ -28,7 +28,11 @@ _dependencies = _load_helper("bundled_dependencies")
 _diagnostics = _load_helper("diagnostics/core")
 
 
-def main(argv=None, *, outcome=None) -> int:
+def main(argv=None, *, outcome=None, presentation=None) -> int:
+    """Finish logging and cleanup before optional presentation under the log lock.
+
+    Programmatic callers receive their exit code without presentation by default.
+    """
     # Arguments before -- configure the launcher; arguments after it belong to the game.
     parser = argparse.ArgumentParser(
         description="Check dependencies or launch and track the game."
@@ -71,16 +75,21 @@ def main(argv=None, *, outcome=None) -> int:
         log_path = _dependencies.local_path(root, "logs/launcher.log")
         # Claim the log before verification can fail, and retain ownership until
         # all controller/game cleanup and final filesystem synchronisation finish.
-        with _diagnostics.log_ownership(lock_path), _diagnostics.reporter(log_path, outcome=outcome) as logger:
-            try:
-                code = _run(root, arguments, command, logger, lock_path, log_path)
-            except KeyboardInterrupt:
-                logger.info("INTERRUPTED during launcher setup")
-                code = 130
-            except Exception as error:
-                _diagnostics.handle_error(logger, error, message="Launcher failed",
-                                          stage="launcher_setup", component="startup")
-                code = 1
+        with _diagnostics.log_ownership(lock_path):
+            with _diagnostics.reporter(log_path, outcome=outcome) as logger:
+                try:
+                    code = _run(root, arguments, command, logger, lock_path, log_path)
+                except KeyboardInterrupt:
+                    logger.info("INTERRUPTED during launcher setup")
+                    code = 130
+                except Exception as error:
+                    _diagnostics.handle_error(logger, error, message="Launcher failed",
+                                              stage="launcher_setup", component="startup")
+                    code = 1
+            # All game resources and file handlers have finished. Retain just
+            # log ownership so another launch cannot replace the displayed log.
+            if presentation is not None and outcome["failure"] is not None and code != 130:
+                _show_failure(presentation, outcome, owned_log=True, wait=not arguments.check_only)
     except KeyboardInterrupt:
         return 130
     except Exception as error:
@@ -88,8 +97,33 @@ def main(argv=None, *, outcome=None) -> int:
         # Do not append to another launch's file or describe it as our own log.
         _diagnostics.handle_error(lambda text: print(text, file=sys.stderr, flush=True), error,
                                   message="Launcher failed", stage="log_ownership", outcome=outcome)
+        if presentation is not None:
+            _show_failure(presentation, outcome, owned_log=False, wait=not arguments.check_only)
         return 1
     return 1 if outcome["log_error"] is not None else code
+
+
+def _show_failure(presentation, outcome, **options):
+    """Keep UI failure separate from the completed primary failure and exit code."""
+    try:
+        presentation(outcome, **options)
+    except KeyboardInterrupt:
+        pass
+    except Exception as error:
+        try:
+            print("Could not retain the failure notice:\n" + _diagnostics.error_text(error), file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            pass  # Console loss must not replace the completed log or failure code.
+
+
+def _present_failure(outcome, *, owned_log, wait):
+    module = _load_helper("diagnostics/failure_session")
+    module.FailureSession(outcome, owned_log=owned_log).run(wait=wait)
+
+
+def run(argv=None):
+    """Normal console entry; programmatic main callers may handle the outcome themselves."""
+    return main(argv, presentation=_present_failure)
 
 
 def _run(root, arguments, command, logger, lock_path, log_path):
@@ -155,4 +189,4 @@ def _run(root, arguments, command, logger, lock_path, log_path):
 
 # Run only when this file is started directly; return its success or error code.
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
