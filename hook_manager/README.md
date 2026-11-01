@@ -42,17 +42,20 @@ careers do not inherit that activity. Errors keep their original context when
 the game re-raises them. Game callbacks enqueue context and captured traceback
 metadata without source-file lookup. A dedicated writer formats the traceback
 and writes the controller-owned journal; gameplay and status reads never wait
-for its file I/O. Journal failures queue warnings for the launcher console.
-The controller reads the journal during normal
-polls and before retiring a process, so an immediate exit needs no further game
-pulse. Unhandled observed exceptions retain the original exception hook and
+for its file I/O. A second worker notifies the launcher through an authenticated
+local connection. The launcher reads the journal on notification and before
+retiring a process, so an immediate exit needs no further game pulse. Journal
+write failures send their warning and complete original record over that same
+connection. Socket waits cannot delay durable appends. Unhandled observed
+exceptions retain the original exception hook and
 produce a fatal launcher outcome; caught native errors remain diagnostic records.
 Observation works without regulation mods and leaves native results and files
 under the game's control.
 
 Shutdown signals the writer and returns to the game. The launcher waits for
 completion outside the game thread. Only final process termination can wait for
-queued records, using a shared one-second limit; a blocked disk cannot extend it.
+queued records, using one shared second for storage and delivery; a blocked
+backend cannot extend it. Unconfirmed delivery retains the journal.
 
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager

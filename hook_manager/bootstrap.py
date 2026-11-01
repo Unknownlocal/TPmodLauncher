@@ -2,7 +2,7 @@
 """Initialise the trusted manager only after Python's main thread is identifiable."""
 
 
-def pulse(sources, digest, instance, game_root, request_json, journal_path=None):
+def pulse(sources, digest, instance, game_root, request_json, journal_path=None, reporting_endpoint=None):
     # sources contains our trusted Python files; digest/instance identify their owner.
     # game_root is the installation folder; request_json contains data only.
     import sys
@@ -14,6 +14,11 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None)
         return "WAIT: threading is not ready"
     if threads.current_thread() is not threads.main_thread():
         return "WAIT: other thread"
+    # The new background transport must not re-enter a standard-library module
+    # whose import we interrupted. Later control/status sources reuse this scope.
+    for dependency in ("socket", "_socket", "select", "selectors", "struct", "_struct"):
+        if getattr(getattr(sys.modules.get(dependency), "__spec__", None), "_initializing", False):
+            return "WAIT: reporting dependency is importing"
     import json
     from types import ModuleType
 
@@ -53,7 +58,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None)
             module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             journal = module.ActivityJournal(journal_path) if journal_path is not None else None
-            module.activity = module.NativeActivity(module.readiness, journal)
+            module.activity = module.NativeActivity(module.readiness, journal, reporting_endpoint)
             activity_provider = module.activity.current_activity
             module.activity_provider = activity_provider
             module.discovery = module.PackDiscovery(game_root)

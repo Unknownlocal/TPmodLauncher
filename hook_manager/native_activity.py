@@ -14,6 +14,7 @@ if __package__:
     from .manager import Manager
     from launcher.diagnostics.journal_writer import JournalWriter
     from launcher.diagnostics.exception_snapshot import ExceptionSnapshot
+    from launcher.diagnostics.reporting_sender import ReportingSender
 
 
 class NativeActivity(Manager):
@@ -32,14 +33,16 @@ class NativeActivity(Manager):
         ("finish", "ui.week_advance_transition", "WeekAdvanceTransitionMixin", "_finish_background_week_advance", "(self, *, show_review=True)"),
     )
 
-    def __init__(self, readiness, journal=None):
+    def __init__(self, readiness, journal=None, reporting_endpoint=None):
         super().__init__(lambda record: None)
         self.readiness, self.records = readiness, deque()
         self.journal = journal
         self._ids, self._sequences = count(1), count(1)
         self._lock, self._operations = threading.RLock(), {}
         self._status, self._key = None, None
-        self.writer = JournalWriter(self.records.append)
+        notifications = ReportingSender(reporting_endpoint) if reporting_endpoint is not None else None
+        self.writer = JournalWriter(notifications.enqueue_log_record if notifications is not None else self.records.append,
+                                    notifications)
         self._exception_hook = sys.excepthook
         def unhandled(kind, error, traceback):
             try:

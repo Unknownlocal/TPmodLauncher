@@ -129,9 +129,9 @@ class Controller:
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
             self._drain_activity(pid)
-            del self.sessions[pid]
             self._close_mods(pid)
             self._discard_bridge(pid)
+            del self.sessions[pid]
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
         self.activity.attach(pid)
@@ -189,14 +189,33 @@ class Controller:
     def _drain_activity(self, pid):
         bridge, session = self.bridges.get(pid), self.sessions.get(pid)
         if session is not None and callable(drain := getattr(bridge, "drain_activity", None)):
-            for record in drain():
+            journal_error = None
+            try:
+                records = drain()
+            except Exception as error:
+                # A torn append must not hide a complete socket-only error.
+                journal_error = error
+                fallback = getattr(bridge, "drain_fallback", None)
+                records = fallback() if callable(fallback) else []
+            for record in records:
                 self._event("bridge", (pid, session, {"type": "send", "payload": {**record, "event": "native-activity"}}))
             if self.native_failure is not None and not self.stopping:
+                if journal_error is not None:
+                    self.submit_log("NATIVE JOURNAL READ FAILED", level="ERROR", error=journal_error, pid=pid)
                 failure, self.native_failure = self.native_failure, None
                 raise self.build_native_error(failure)
+            if journal_error is not None:
+                raise journal_error
 
     def _discard_bridge(self, pid):
-        bridge = self.bridges.pop(pid, None)
+        bridge = self.bridges.get(pid)
+        finish = getattr(bridge, "finish_reporting", None)
+        if callable(finish):
+            finish()
+            # The receiver may have queued a final fallback while stopping.
+            # Consume it while this exact session still owns the process.
+            self._drain_activity(pid)
+        self.bridges.pop(pid, None)
         journal = getattr(bridge, "journal", None)
         if journal is not None:
             journal.remove()
@@ -268,9 +287,10 @@ class Controller:
                     # Unix exec can replace the process image while retaining its PID.
                     if getattr(child, "origin", None) == "exec":
                         self._drain_activity(child.pid)
-                        previous = self.sessions.pop(child.pid, None)
+                        previous = self.sessions.get(child.pid)
                         self._close_mods(child.pid)
                         self._discard_bridge(child.pid)
+                        self.sessions.pop(child.pid, None)
                         self.resumed.discard(child.pid)
                         if previous is not None and not previous.is_detached:
                             previous.detach()
@@ -309,9 +329,9 @@ class Controller:
                     raise LaunchError(
                         f"Game tracking ended unexpectedly for pid={pid}: {reason}"
                     )
-                del self.sessions[pid]
                 self._close_mods(pid)
                 self._discard_bridge(pid)
+                del self.sessions[pid]
                 self.activity.retire(pid)
         elif kind == "bridge":
             pid, session, message = value
@@ -319,12 +339,24 @@ class Controller:
                 return  # A delayed message cannot describe a replacement's manager.
             payload = message.get("payload", {})
             event = payload.get("event")
-            if self.stopping and event != "native-activity":
+            if self.stopping and event not in ("native-activity", "journal-ready", "reporting-closed"):
                 return
             if message.get("type") == "error":
                 raise exception_from_record(
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
+            if event in ("journal-ready", "reporting-closed"):
+                if event == "reporting-closed":
+                    journal = getattr(self.bridges.get(pid), "journal", None)
+                    if journal is not None:
+                        journal.retained = True
+                self._drain_activity(pid)
+                if event == "reporting-closed":
+                    detail = payload.get("detail", "Native reporting stopped unexpectedly")
+                    if not self.stopping and not session.is_detached and self._processes([pid]):
+                        raise LaunchError("Native reporting failed for pid=" + str(pid) + ": " + detail)
+                    self.submit_log("NATIVE REPORTING CLOSED: " + detail, level="WARNING", pid=pid)
+                return
             if event == "native-activity":
                 activity = self.activity.native_context(pid, payload.get("activity"))
                 if payload.get("transition"):
@@ -385,8 +417,6 @@ class Controller:
 
     def poll(self, timeout=0):
         """Process queued events and return True after all game processes leave the grace window."""
-        for pid in list(self.bridges):
-            self._drain_activity(pid)
         try:
             self._event(*self.events.get(timeout=timeout))
         except queue.Empty:
@@ -407,9 +437,9 @@ class Controller:
             for pid, session in list(self.sessions.items()):
                 if pid not in live:
                     self._drain_activity(pid)
-                    del self.sessions[pid]
                     self._close_mods(pid)
                     self._discard_bridge(pid)
+                    del self.sessions[pid]
                     # Drop the local handle without relying on a pending callback for shutdown.
                     try:
                         session.detach()

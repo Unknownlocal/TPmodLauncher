@@ -10,8 +10,9 @@ from time import monotonic
 class JournalWriter:
     """Consume handed-off records without sharing a lock with storage operations."""
 
-    def __init__(self, enqueue_fallback):
+    def __init__(self, enqueue_fallback, notifications=None):
         self.enqueue_fallback = enqueue_fallback
+        self.notifications = notifications
         self._queue, self._state_lock = SimpleQueue(), threading.Lock()
         self._closed, self.finished = False, threading.Event()
         self._exit_deadline = None
@@ -68,6 +69,8 @@ class JournalWriter:
                         record["traceback"] = "".join(c if c.isprintable() or c in "\n\t" else " " for c in text)
                     if journal is not None:
                         journal.append_record(record)
+                        if self.notifications is not None:
+                            self.notifications.enqueue_journal_notice()
                     else:
                         self.enqueue_fallback(record)
                 except Exception as error:
@@ -76,4 +79,10 @@ class JournalWriter:
                                            "activity": record.get("activity")})
                     self.enqueue_fallback(record)
         finally:
+            if self.notifications is not None:
+                # The sender has its own thread: network waits cannot delay any
+                # append. Completion includes its final delivery, but only fatal
+                # interpreter exit may wait on this event, within the shared budget.
+                self.notifications.close()
+                self.notifications.finished.wait()
             self.finished.set()

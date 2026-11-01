@@ -64,6 +64,11 @@ Game callbacks enqueue journal records in memory. A separate diagnostics worker
 handles traceback formatting, encoding and file I/O without holding activity
 locks. The game does not wait for the worker during normal play or status reads.
 Final process termination has a shared one-second drain allowance.
+An independent sender notifies a waiting launcher receiver when journal data is
+available. The controller reads it on events and final process cleanup, without
+periodic file checks. Journal failures carry their complete records over the
+same authenticated local connection. Socket waits cannot hold up journal writes;
+unconfirmed delivery keeps the journal available for diagnosis.
 
 `diagnostics/log_file_handler.py` retains file-write failures even when Python logging would
 normally suppress them. An unavailable log produces a console warning and a

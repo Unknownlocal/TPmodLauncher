@@ -30,18 +30,34 @@ file. `journal_writer.py` contains `JournalWriter`, which formats captured error
 encodes records and performs file writes, flushes and synchronisation on its own
 thread. Game callbacks only capture context and enqueue; the writer holds no
 activity lock while doing storage work. The controller reads completed records
-without entering the game, including before discarding an exited process.
+when notified and before discarding an exited process, without entering the game
+or scanning the journal periodically.
 It then removes only its own journal. If an interrupted write corrupts
 a record, the error includes its raw contents and the journal stays available.
 The normal logger still owns
 `launcher.log`; an unhandled native exception follows the same fatal outcome and
 cleanup path even if no further game pulse can run.
 
+`reporting_sender.py` contains `ReportingSender`. Its own worker sends journal
+notifications over an authenticated local connection, so a blocked socket does
+not delay journal appends. If a journal write fails, this connection carries the
+warning and complete original record instead. `reporting_wire.py` splits long
+messages into numbered frames without truncating their error details.
+
+`reporting_receiver.py` contains `ReportingReceiver`. It waits for socket data,
+checks the process/session identity and message order, and queues controller
+events. It performs no file logging or game/mod calls. Idle reception has no
+periodic timeout; startup and incomplete transfers have their own deadlines.
+The controller reads the journal and any fallback records on those events.
+Connection failure triggers recovery and retains the journal; an acknowledged
+stop consumes final records before the owned session is discarded.
+
 Stopping observation signals the writer without waiting on the game thread. The
 launcher waits for its acknowledgement through repeated short bridge requests.
 An unconfirmed shutdown keeps the journal. Fatal handling and final interpreter
-termination share one one-second drain budget; ordinary gameplay never waits
-for that drain. A stalled backend may leave queued records unwritten at the limit.
+termination share one one-second drain budget across the writer and sender.
+Ordinary gameplay never waits for that drain. A stalled backend may leave queued
+records unwritten at the limit.
 
 `exception_snapshot.py` contains `ExceptionSnapshot`. Game threads copy only
 messages, notes, exception relationships and frame locations from memory. This

@@ -3,6 +3,7 @@
 
 import builtins
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -16,10 +17,18 @@ from launcher.game_bridge import BridgeError, factory
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@pytest.fixture
 def bridge():
-    session = SimpleNamespace(create_script=lambda source, **kw: SimpleNamespace(
-        source=source, on=lambda *args: None, is_destroyed=False), is_detached=False)
-    return factory(ROOT, None)(session, 0, lambda *args: None)
+    clients = []
+    def create():
+        session = SimpleNamespace(create_script=lambda source, **kw: SimpleNamespace(
+            source=source, on=lambda *args: None, is_destroyed=False), is_detached=False)
+        client = factory(ROOT, None)(session, os.getpid(), lambda *args: None)
+        clients.append(client)
+        return client
+    yield create
+    for client in clients:
+        client.finish_reporting()
 
 
 def test_foreign_manager_keeps_its_original_ownership_error(monkeypatch):
@@ -35,8 +44,9 @@ def test_foreign_manager_keeps_its_original_ownership_error(monkeypatch):
     assert result["activity"] is None and sys.modules[foreign.__name__] is foreign
 
 
-def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path):
+def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path, bridge):
     client = bridge()
+    client.reporting.start()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]
     # Only emulate bootstrap's supported-version check on the portable host.
     # Imports still use the real interpreter, registry and module machinery.
@@ -289,7 +299,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             del sys.modules[name]
 
 
-def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypatch):
+def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypatch, bridge):
     client, sent = bridge(), []
     def post(record, timeout):
         sent.append(record)
@@ -327,7 +337,7 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
         client.request("adapters", buttons=[])
 
 
-def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch):
+def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch, bridge):
     client, sent, threads = bridge(), [], []
     def post(record, timeout):
         sent.append(record)
