@@ -92,6 +92,76 @@ def test_large_pack_error_keeps_cause_when_owner_list_is_truncated(tmp_path, cap
         assert "[truncated]" in output and len(output) < 4400
 
 
+def test_fatal_preload_status_keeps_complete_remote_error_and_closes_controller(rig, tmp_path, capsys, monkeypatch):
+    import json
+    from hook_manager.manager import Manager
+    from launcher.regulations.runtime import RegulationRuntime
+
+    device, _, _, _ = rig
+    manager = Manager()
+    secret_local = "LOCAL VALUES MUST NOT APPEAR"
+    cause = "Original native cause " + "x" * 5000 + " END OF CAUSE"
+
+    def native_load(depth):
+        if depth:
+            return native_load(depth - 1)
+        raise ValueError(cause)
+
+    try:
+        try:
+            native_load(6)
+        except ValueError as error:
+            raise RuntimeError("Save loading failed") from error
+    except RuntimeError as error:
+        error.add_note("Native loading note")
+        manager.store_error(error)
+    # This single status must be enough even if no later diagnostic is delivered.
+    status = json.loads(json.dumps({"state": "unavailable", **manager.error_record}))
+    runtime = RegulationRuntime(SimpleNamespace(owner_ids=()), {})
+    runtime._bridge = object()
+    scope = PackMods(tmp_path, lambda message: None)
+    scope.regulations = runtime
+
+    class Shutdown:
+        def __init__(self, *args):
+            self.requested = threading.Event()
+        def __enter__(self):
+            return self
+        def track(self, pid):
+            pass
+        def request(self):
+            self.requested.set()
+        def __exit__(self, *args):
+            assert self.requested.is_set() and scope.closed
+
+    class Bridge:
+        def __init__(self, session, pid, on_message):
+            self.on_message = on_message
+        def start(self):
+            self.on_message({"type": "send", "payload": {"event": "career-preload", "status": status}})
+        def close(self):
+            pass
+
+    # Assign the real pack scope when the owned session is attached.
+    original = lifecycle.Controller._attach
+    def attach(controller, pid, **options):
+        result = original(controller, pid, **options)
+        controller.pack_mods[pid] = scope
+        return result
+    monkeypatch.setattr(lifecycle.Controller, "_attach", attach)
+    monkeypatch.setattr(lifecycle, "ConsoleShutdown", Shutdown)
+    path = tmp_path / "launcher.log"
+    assert lifecycle.run_launcher(SimpleNamespace(get_local_device=lambda: device), [device.game],
+                                  tmp_path / "lock", path, bridge_factory=Bridge) == 1
+    assert not device.handlers and all(session.is_detached for session in device.sessions.values())
+    for output in (path.read_text(encoding="utf-8"), capsys.readouterr().err):
+        assert "Native regulation loading protection became unavailable" in output
+        assert cause in output and "ValueError:" in output and "in native_load" in output
+        assert "direct cause" in output and "Native loading note" in output
+        assert "CONTROLLER STOPPED; cleanup complete" in output
+        assert secret_local not in output
+
+
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):
     device, controller, _, _ = rig
     try:

@@ -29,16 +29,16 @@ function detachTransport() {
 }
 
 function fail(error) {
-    failed = String(error).slice(0, 4096);
-    send({ event: 'error', detail: failed });
-    if (pending) { pending.reject(new Error(failed)); pending = null; }
+    failed = error;
+    send({ event: 'error', detail: String(error), traceback: error.traceback || error.stack });
+    if (pending) { pending.reject(error); pending = null; }
     setImmediate(detachTransport);
 }
 
 function enqueue(operation, id, buttons, loading, settings, themes, regulations, prerequisites) {
     // The RPC thread only queues data; it must never call Python's API itself.
     if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
-    if (failed) throw new Error(failed);
+    if (failed) throw failed;
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
     if (!ready && operation === 'shutdown') {
@@ -127,7 +127,11 @@ observer = Process.attachModuleObserver({
                             return;
                         }
                         const response = JSON.parse(value);
-                        if (response.event !== 'manager') throw new Error(response.detail || 'Invalid manager response');
+                        if (response.event !== 'manager') {
+                            const error = new Error(response.detail || 'Invalid manager response');
+                            error.traceback = response.traceback;
+                            throw error;
+                        }
                         if (!ready) {
                             ready = true;
                             send(response);
@@ -152,7 +156,7 @@ observer = Process.attachModuleObserver({
                         }
                         if (!preloadFailureReported && preload && preload.state === 'unavailable') {
                             preloadFailureReported = true;
-                            send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game' });
+                            send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game', traceback: preload.traceback });
                         }
                         for (const notice of response.status.regulation_notices || []) {
                             send({ ...notice, event: 'diagnostic' });
@@ -213,10 +217,10 @@ function receiveRequests() {
         try {
             Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations, message.prerequisites)).then(
                 status => send({ event: 'reply', id: message.id, status }),
-                error => send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) })
+                error => send({ event: 'reply', id: message.id, error: String(error), traceback: error.traceback || error.stack })
             );
         } catch (error) {
-            send({ event: 'reply', id: message.id, error: String(error).slice(0, 4096) });
+            send({ event: 'reply', id: message.id, error: String(error), traceback: error.traceback || error.stack });
         }
         receiveRequests();
     });

@@ -83,7 +83,10 @@ class CareerPreload(Manager):
     def loading_status(self):
         """Return one attempt number, never its screen, job or career objects."""
         if self.errors:
-            return {"state": "unavailable", "detail": self.errors[-1]}
+            # Navigation owns its own failures; preserve that cause rather than
+            # only our later observation that its wrapper became unavailable.
+            record = self._navigation.error_record or self.error_record
+            return {"state": "unavailable", **record}
         if self._pending is None:
             return {"state": "armed"}
         return {"state": "left" if self._left else "released" if self._allowed else "waiting", "generation": self.generation}

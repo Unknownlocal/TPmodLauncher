@@ -62,7 +62,7 @@ class AdapterModules:
         if self.preload is not None:
             result["career_preload"] = self.preload.loading_status()
             if self.categories is not None and self.categories.errors:
-                result["career_preload"] = {"state": "unavailable", "detail": self.categories.errors[-1]}
+                result["career_preload"] = {"state": "unavailable", **self.categories.error_record}
         if self.channel is not None or self.regulation_error:
             # Installing all required native hooks does not yet activate checks.
             state = ("cleanup_pending" if self.channel is not None else "unavailable") if self.regulation_error else (

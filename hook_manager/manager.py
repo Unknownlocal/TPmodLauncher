@@ -10,6 +10,9 @@ import sys
 import threading
 from types import ModuleType
 
+if __package__:
+    from .diagnostics import build_log_record
+
 
 class HookError(RuntimeError):
     """Raised when a target, registration or callback fails its checks."""
@@ -179,6 +182,7 @@ class Manager:
         self.observers = {}
         self.finder = _Finder(self)
         self.errors = []
+        self.error_record = None
         self.closed = False
 
     def _main(self):
@@ -189,8 +193,9 @@ class Manager:
             raise HookError("Hook manager is stopped")
 
     def store_error(self, error):
-        """Retain recent error text for status checks without writing a log."""
-        # Bound retained diagnostics; errors must not grow indefinitely or expose raw objects.
+        """Retain short history and the latest complete failure without writing a log."""
+        # Store text only: retaining exceptions would keep game objects in frames alive.
+        self.error_record = build_log_record("ERROR", str(error), error=error)
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
 

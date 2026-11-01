@@ -42,7 +42,7 @@ def test_embedded_entry_reports_runner_damage_without_repair(embedded_project):
             capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 1 and "Python runner verification failed" in result.stderr
-        assert "Restore the complete launcher release" in result.stderr and "Traceback" not in result.stderr
+        assert "Restore the complete launcher release" in result.stderr and "Traceback" in result.stderr
         assert payload.read_bytes() == b"damaged runner" and set(root.iterdir()) == before
     finally:
         payload.write_bytes(original)
@@ -224,7 +224,7 @@ def test_entry_reports_package_damage_without_repair(embedded_project, name):
             result.returncode == 1
             and "Restore the complete launcher release" in result.stderr
         )
-        assert "Traceback" not in result.stderr
+        assert "Traceback" in result.stderr
         assert payload.read_bytes() == b"damaged package"
         assert not (root / ".state").exists() and not (root / ".cache").exists()
     finally:

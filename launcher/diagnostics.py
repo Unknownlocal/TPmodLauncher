@@ -5,7 +5,44 @@ from contextlib import contextmanager
 from functools import partial
 import logging
 
-from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, single_line
+from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text
+
+
+def exception_from_record(message, record, exception_type=RuntimeError):
+    """Keep diagnostics from a reply, including nested status and notice records.
+
+    Only diagnostic text becomes notes; other response data stays out of logs.
+    This must happen before unwinding can discard separately queued messages.
+    """
+    error = exception_type(message)
+    pending, seen = [record], set()
+    while pending:
+        value = pending.pop()
+        if type(value) is dict:
+            detail = value.get("traceback") or value.get("detail")
+            if detail:
+                text = error_text(detail)
+                if text not in seen:
+                    error.add_note(text)
+                    seen.add(text)
+            pending.extend(reversed([item for item in value.values() if type(item) in (dict, list)]))
+        elif type(value) is list:
+            pending.extend(reversed(value))
+    return error
+
+
+def handle_error(sink, error, *, message="LAUNCHER ERROR", level="ERROR", shutdown=None, **context):
+    """Write a complete failure and, at a fatal boundary, request owned game exit.
+
+    Callers still release their own resources and choose their exit code. Logging
+    ordinary ERROR records alone never closes the game.
+    """
+    try:
+        write_log(sink, message + ": " + str(error), level=level, error=error, **context)
+    finally:
+        # Even a failed output destination must not leave the owned game running.
+        if shutdown is not None:
+            shutdown.request()
 
 
 def bind_reporter(sink, **context):
@@ -33,9 +70,9 @@ def write_log(sink, value, *, level="INFO", error=None, **context):
     record = build_log_record(level, detail, error=error, **context)
     message = record["detail"]
     if type(value) is dict and "traceback" in value:
-        record["traceback"] = single_line(value["traceback"], 2048)
+        record["traceback"] = error_text(value["traceback"])
     if "traceback" in record:
-        message += " traceback=" + record["traceback"]
+        message += "\n" + record["traceback"]
     # Components use standard child loggers. Other context stays visible in
     # both destinations, including callbacks that do not consume LogRecords.
     fields = " ".join(f"{key}={record[key]}" for key in CONTEXT if key not in ("component",) and key in record)

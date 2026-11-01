@@ -177,4 +177,9 @@ def pulse(sources, digest, instance, game_root, request_json):
         response["readiness"] = module.readiness.snapshot()
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
-        return json.dumps({"event": "error", "detail": str(error)[:4096]})
+        # Bootstrap may fail before the shared diagnostics source has loaded.
+        import traceback
+
+        return json.dumps({"event": "error", "detail": str(error),
+                           "traceback": "".join(traceback.TracebackException.from_exception(
+                               error, max_group_width=float("inf"), max_group_depth=float("inf")).format())})

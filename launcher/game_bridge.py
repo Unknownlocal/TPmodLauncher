@@ -11,6 +11,7 @@ import time
 import uuid
 
 from .regulations.bridge_converter import convert_bridges
+from .diagnostics import exception_from_record
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -203,7 +204,7 @@ class Bridge:
                     _service()
             answered = True
             if "error" in response:
-                raise BridgeError(response["error"])
+                raise exception_from_record(response["error"], response, BridgeError)
             return response["status"]
         except queue.Empty as error:
             raise BridgeError(
@@ -227,13 +228,14 @@ class Bridge:
         """Accept plain defaults only for this scope's already selected pack."""
         # The game chooses the folder from startup discovery. This argument only
         # verifies the reply; it cannot request another folder or native target.
-        defaults = self.request("regulation-defaults", timeout=10).get("regulation_defaults")
+        status = self.request("regulation-defaults", timeout=10)
+        defaults = status.get("regulation_defaults")
         if (type(defaults) is not dict or set(defaults) != {"pack", "categories"}
                 or defaults["pack"] != str(pack) or type(defaults["categories"]) is not list
                 or len(defaults["categories"]) > 128
                 or len(json.dumps(defaults["categories"], ensure_ascii=False, allow_nan=False,
                                   separators=(",", ":")).encode("utf-8")) > 1024 * 1024):
-            raise BridgeError("Native regulation defaults were not confirmed for the selected pack")
+            raise exception_from_record("Native regulation defaults were not confirmed for the selected pack", status, BridgeError)
         return defaults["categories"]
 
     def set_menu(self, buttons):

@@ -40,7 +40,8 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     output = capsys.readouterr().err
     assert "REGULATIONS COMPATIBILITY FAILED" in output
     assert "helpers changed: aero" in output and "continuing native game" in output
-    assert path.read_text(encoding="utf-8") == output and len(output.splitlines()) == 1
+    assert path.read_text(encoding="utf-8") == output
+    assert output.count("WARNING modLauncher.regulations") == 1 and "in incompatible" in output
 
 
 def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_managers(monkeypatch):

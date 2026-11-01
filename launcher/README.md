@@ -31,16 +31,22 @@ the process, check and action. Compatibility problems use WARNING; failed operat
 use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
 by default. Framework reports retain their severity through reporting functions
 and the bridge.
-Error text and stack locations have length limits and contain no captured local values.
-Handlers are removed when the launch ends. Logging an error does not itself
-stop the game; the operation that failed controls its outcome.
+Routine summaries have length limits. Supplied exceptions keep their complete
+messages, stack traces, causes and notes in both destinations, without captured
+local values. Game failures travel as text, so loading failures retain their
+original details even when the controller stops before another message arrives.
+Handlers are removed when the launch ends.
 
 `submit_log` callbacks attach context and route records or messages to
 `write_log()`, which uses the standard logger. Game adapters construct their
 transport records with `hook_manager.diagnostics.build_log_record()`.
+`handle_error()` records failures at the controller's outer error handlers and
+requests game shutdown. Other ERROR records leave the decision to their caller.
+Errors before controller logging starts use Python's standard traceback output
+on the console.
 
-On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
-Ctrl+Break. It sends normal window-close requests only to game processes owned
+On Windows, `console_shutdown.py` handles launcher failures, closing the console,
+Ctrl+C and Ctrl+Break. It sends normal window-close requests only to game processes owned
 by this controller, while the controller thread closes mods and removes hooks.
 Process handles and executable checks protect against targeting an unrelated
 process. The helper allows four seconds for normal game exit, then force-closes

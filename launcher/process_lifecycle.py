@@ -11,7 +11,7 @@ import queue
 import time
 
 from launcher.console_shutdown import ConsoleShutdown
-from launcher.diagnostics import bind_reporter, write_log, reporter
+from launcher.diagnostics import bind_reporter, exception_from_record, handle_error, write_log, reporter
 
 
 class LaunchError(RuntimeError):
@@ -298,15 +298,15 @@ class Controller:
             if self.sessions.get(pid) is not session:
                 return  # A delayed message cannot describe a replacement's manager.
             if message.get("type") == "error":
-                raise LaunchError(
-                    f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}"
-                )
+                raise exception_from_record(
+                    f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
+                    {"traceback": message.get("stack")}, LaunchError)
             payload = message.get("payload", {})
             event = payload.get("event")
             if event == "error":
-                raise LaunchError(
-                    f"Hook manager failed for pid={pid}: {payload.get('detail', 'unknown error')}"
-                )
+                raise exception_from_record(
+                    f"Hook manager failed for pid={pid}: {payload.get('detail', 'unknown error')}",
+                    payload, LaunchError)
             if event == "manager":
                 status = payload.get("status", {})
                 if status.get("state") != "ready":
@@ -484,7 +484,7 @@ def run_launcher(
                     logger.info("INTERRUPTED; closing owned game windows")
                     code = 130
                 except Exception as error:
-                    write_log(logger, "LAUNCHER ERROR: " + str(error), level="ERROR", error=error, component="controller")
+                    handle_error(logger, error, shutdown=shutdown, component="controller")
                     code = 1
                 finally:
                     controller.close()
@@ -493,5 +493,5 @@ def run_launcher(
                 logger.info("INTERRUPTED during controller setup")
                 return 130
             except Exception as error:
-                write_log(logger, "LAUNCHER SETUP ERROR: " + str(error), level="CRITICAL", error=error, component="controller")
+                handle_error(logger, error, message="LAUNCHER SETUP ERROR", level="CRITICAL", shutdown=shutdown, component="controller")
                 return 1

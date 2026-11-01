@@ -10,6 +10,7 @@ from importlib.metadata import version
 import math
 from pathlib import Path
 import sys
+import traceback
 
 # Do not create compiled Python files when loading our code or packages.
 sys.dont_write_bytecode = True
@@ -18,6 +19,12 @@ _source = Path(__file__).resolve().with_name("bundled_dependencies.py")
 _spec = importlib.util.spec_from_file_location("_tpm_bundled_dependencies", _source)
 _dependencies = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_dependencies)
+
+
+def print_startup_error(error):
+    """Show complete failures when verified launcher logging is not yet available."""
+    traceback.TracebackException.from_exception(
+        error, max_group_width=float("inf"), max_group_depth=float("inf")).print(file=sys.stderr)
 
 
 def main(argv=None) -> int:
@@ -59,6 +66,7 @@ def main(argv=None) -> int:
         frida = _dependencies.import_dependencies(root)
     except _dependencies.DependencyError as error:
         print(f"Dependency verification failed: {error}", file=sys.stderr)
+        print_startup_error(error)
         return 1
     try:
         # Source locations are trusted only after the dependency setup is verified.
@@ -72,6 +80,7 @@ def main(argv=None) -> int:
             f"Python runner verification failed: {error}. Restore the complete launcher release.",
             file=sys.stderr,
         )
+        print_startup_error(error)
         return 1
     if arguments.check_only:
         print(
@@ -113,6 +122,7 @@ def main(argv=None) -> int:
     # Frida setup errors must produce a failed launch, even before the controller loop starts.
     except Exception as error:
         print(f"Launcher failed: {error}", file=sys.stderr)
+        print_startup_error(error)
         return 1
 
 

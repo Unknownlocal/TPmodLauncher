@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Small log records that can cross the game/launcher boundary as plain data."""
-
-from collections import deque
+"""Plain log records shared by the game adapters and launcher."""
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 CONTEXT = ("component", "pid", "scope", "operation", "mod")
@@ -15,16 +13,33 @@ def single_line(value, limit=4096):
     return " ".join("".join(c if c.isprintable() else " " for c in text).split()) + suffix
 
 
+def error_text(error):
+    """Keep complete exception chains and notes, without capturing local values.
+
+    Injected game modules may have no source file. Python still supplies their
+    filenames, line numbers and function names. Preserve line breaks for readable
+    stacks, but remove terminal control characters from exception messages.
+    """
+    import traceback
+
+    if isinstance(error, BaseException):
+        # Python normally abbreviates wide/deep exception groups. Every member
+        # can explain a different failed mod, so retain them all here.
+        value = "".join(traceback.TracebackException.from_exception(
+            error, max_group_width=float("inf"), max_group_depth=float("inf")).format())
+    else:
+        value = str(error)
+    return "".join(c if c.isprintable() or c in "\n\t" else " " for c in value)
+
+
 def build_log_record(level, detail, *, error=None, **context):
-    """Create bounded transport data; severity never decides operation outcomes."""
+    """Bound routine summaries; keep supplied errors complete as plain text.
+
+    Severity never decides operation outcomes. Exception text has no length or
+    frame limit, so the original cause survives transport and file logging.
+    """
     record = {"level": level, "detail": single_line(detail)}
     record.update((key, single_line(context[key], 128)) for key in CONTEXT if key in context)
-    if isinstance(error, BaseException):
-        # Keep stack locations and the cause, without capturing local variables.
-        # Source lines may belong to injected modules without a filesystem loader.
-        import traceback
-        frames = deque(traceback.walk_tb(error.__traceback__), maxlen=4)
-        locations = " | ".join(f"{frame.f_code.co_filename}:{line} in {frame.f_code.co_name}" for frame, line in frames)
-        cause = "".join(traceback.format_exception(error, limit=0))
-        record["traceback"] = single_line((locations + ": " + cause)[-2048:], 2048)
+    if error is not None:
+        record["traceback"] = error_text(error)
     return record

@@ -448,21 +448,31 @@ def test_startup_needs_no_native_hooks_for_omitted_regulation_sections(make_mod,
 
 
 def test_startup_keeps_career_selection_blocked_without_confirmed_loading_protection(make_mod, tmp_path):
+    from hook_manager.diagnostics import build_log_record
+
     mod = make_mod("def validate(c,r): return {'decision':'allow'}\n")
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [
         {"key": "native", "options": [{"key": "open"}]}], "mod_extensions": {
             mod.manifest.id: {"schema": 1, "validators": [validator()]}}}), encoding="utf-8")
     progress, menus = [], []
+    errors = ExceptionGroup("Native setup failures", [ValueError(f"Owner failure {index}") for index in range(18)])
+    for _ in range(11):
+        errors = ExceptionGroup("Nested setup", [errors])
+    notice = build_log_record("ERROR", "Native setup failed", error=errors)
     client = SimpleNamespace(regulation_defaults=lambda pack: (),
-        request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable"}}})
+        request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable", "detail": "Preload unavailable"}},
+                              "regulation_notices": [notice]})
     with closing(PackMods(tmp_path, lambda _: None, bridge=client,
                           set_loading=progress.append, set_menu=menus.append)) as scope:
         scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1
         scope._regulation_owners = {mod.manifest.id}
         scope.menu.add(mod.manifest.id, "owned", "Owned", "Message")
         scope._progress("complete")
-        with pytest.raises(RuntimeError, match="loading protection was not confirmed"):
+        with pytest.raises(RuntimeError, match="loading protection was not confirmed") as rejected:
             scope.poll()
+        details = "\n".join(rejected.value.__notes__)
+        assert "Preload unavailable" in details and "Owner failure 17" in details
+        assert "and 3 more exceptions" not in details and "max_group_depth" not in details
         assert not scope._regulation_armed and not menus and progress[-1]["state"] == "loading"
 
 

@@ -5,6 +5,7 @@ import threading
 from contextlib import contextmanager
 
 from launcher.shared_source_mod import SharedSourceMod
+from launcher.diagnostics import exception_from_record
 from mod_runtime._regulations.values import integer
 from .regulation_handler_bindings import RegulationHandlerBindings
 from .voting_runner import VotingRunner
@@ -63,7 +64,7 @@ class RegulationRuntime:
             data["regulations"]["automatic_changes"] = automatic
         status = bridge.request("await-regulations", **data)
         if status.get("adapters", {}).get("career_preload", {}).get("state") != "armed":
-            raise RuntimeError("Native regulation loading protection was not confirmed")
+            raise exception_from_record("Native regulation loading protection was not confirmed", status)
         self._bridge = bridge
 
     @contextmanager
@@ -90,13 +91,13 @@ class RegulationRuntime:
         finally:
             status = bridge.request("restore-native-rules" if rules_only else "stop-regulations", regulations=control)
         if status.get("regulation_control") is not True:
-            raise RuntimeError("Native regulation cleanup was not confirmed")
+            raise exception_from_record("Native regulation cleanup was not confirmed", status)
 
     def _retire(self, bridge, control):
         status = bridge.request("retire-regulations", timeout=3 + 5 * len(self.definitions.owner_ids),
                                 regulations=control, _service=self.poll)
         if status.get("regulation_control") is not True:
-            raise RuntimeError("Native regulation retirement was not confirmed")
+            raise exception_from_record("Native regulation retirement was not confirmed", status)
         self._retired = True
 
     def _prepare(self, bridge, generation):
@@ -108,7 +109,7 @@ class RegulationRuntime:
             preload = status.get("adapters", {}).get("career_preload", {})
             if preload.get("state") == "left" or preload.get("state") == "waiting" and preload.get("generation") != generation:
                 return False  # A healthy cancelled/replaced native job is not a failed pack.
-            raise RuntimeError("Native regulation preparation was not confirmed")
+            raise exception_from_record("Native regulation preparation was not confirmed", status)
 
     def _activate(self, bridge, generation):
         with self._control(bridge, generation) as control:
@@ -128,7 +129,7 @@ class RegulationRuntime:
                 native = status.get("adapters", {}).get("regulations", {})
                 if (status.get("regulation_control") is not True or native.get("state") != expected
                         or native.get("career_generation") != generation):
-                    raise RuntimeError("Native regulation " + phase + " was not confirmed")
+                    raise exception_from_record("Native regulation " + phase + " was not confirmed", status)
                 if expected == "installed":
                     self.confirm_native(native.get("components"), pending=True)
                 else:
@@ -142,7 +143,7 @@ class RegulationRuntime:
         if self.busy:
             raise RuntimeError("Native regulation setup is already in progress")
         if status.get("state") == "unavailable":
-            raise RuntimeError("Native regulation loading protection became unavailable")
+            raise exception_from_record("Native regulation loading protection became unavailable", status)
         if status.get("state") not in ("waiting", "left"):
             return
         generation = status.get("generation")

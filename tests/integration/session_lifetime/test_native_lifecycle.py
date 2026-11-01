@@ -100,12 +100,13 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
 
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Windows console close")
-@pytest.mark.parametrize("blocked", [False, True], ids=["normal", "blocked-cleanup"])
-def test_closing_console_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path, blocked):
+@pytest.mark.parametrize("mode", ["controller", "blocked", "fatal"], ids=["normal", "blocked-cleanup", "launcher-error"])
+def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path, mode):
     import ctypes as c
     from ctypes import wintypes as w
 
     root, client = native_project.root, native_project.client
+    blocked = mode == "blocked"
     runtime = tmp_path / "owned gui runtime"
     shutil.copytree(client.parent, runtime)
     target = runtime / "pythonw.exe"
@@ -121,7 +122,7 @@ def test_closing_console_closes_owned_game_window_and_leaves_other_instance(nati
     user.PostMessageW.argtypes, user.PostMessageW.restype = (w.HWND, w.UINT, w.WPARAM, w.LPARAM), w.BOOL
     startup = subprocess.STARTUPINFO()
     startup.dwFlags, startup.wShowWindow = subprocess.STARTF_USESHOWWINDOW, subprocess.SW_HIDE
-    command = [str(client), "-B", str(probe), "blocked" if blocked else "controller", str(target), "-B",
+    command = [str(client), "-B", str(probe), mode, str(target), "-B",
                str(probe), "window", str(owned)]
     if blocked:
         command.append("ignore-close")
@@ -146,15 +147,23 @@ def test_closing_console_closes_owned_game_window_and_leaves_other_instance(nati
         # reject pre-existing games. This same-executable window is not owned.
         other = subprocess.Popen([str(target), "-B", str(probe), "window", str(unrelated)])
         ready(unrelated.with_suffix(".json"))
-        console = ready(root / "console.json")["hwnd"]
-        assert console and user.PostMessageW(console, 0x0010, 0, 0)
+        if mode == "fatal":
+            (root / "fail-request").touch()
+        else:
+            console = ready(root / "console.json")["hwnd"]
+            assert console and user.PostMessageW(console, 0x0010, 0, 0)
         stdout, stderr = process.communicate(timeout=12)
         assert owned.with_suffix(".closed").exists(), stdout + stderr
         assert owned.with_suffix(".exited").exists() == (not blocked), stdout + stderr
         assert kernel.WaitForSingleObject(owned_handle, 2000) == 0
         assert other.poll() is None and not unrelated.with_suffix(".closed").exists()
         log = (root / "logs/console-test.log").read_text(encoding="utf-8")
-        assert "CONSOLE CLOSE requested" in log and "CLEANUP ERROR" not in log
+        assert "CLEANUP ERROR" not in log
+        if mode == "fatal":
+            assert process.returncode == 1 and "LAUNCHER ERROR: Owned launcher failure" in log
+            assert "in failing_poll" in log
+        else:
+            assert "CONSOLE CLOSE requested" in log
         if blocked:
             assert (root / "cleanup-started").exists()
         else:

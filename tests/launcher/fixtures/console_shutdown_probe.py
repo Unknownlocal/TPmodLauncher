@@ -89,6 +89,15 @@ else:
             time.sleep(15)
         Controller.close = blocked_cleanup
 
+    if sys.argv[1] == "fatal":
+        poll = Controller.poll
+        def failing_poll(self, *args, **kwargs):
+            result = poll(self, *args, **kwargs)
+            if (root / "fail-request").exists():
+                raise RuntimeError("Owned launcher failure")
+            return result
+        Controller.poll = failing_poll
+
     kernel = c.WinDLL("kernel32")
     kernel.GetConsoleWindow.restype = w.HWND
     publish_ready(root / "console.json", {"hwnd": kernel.GetConsoleWindow()})
