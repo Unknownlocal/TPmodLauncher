@@ -12,6 +12,7 @@ import uuid
 
 from .regulations.bridge_converter import convert_bridges
 from .diagnostics import exception_from_record
+from .diagnostics.activity_journal import ActivityJournal
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -21,7 +22,7 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "career_preload", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "native_readiness", "native_activity", "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -48,7 +49,7 @@ class BridgeError(RuntimeError):
 class Bridge:
     """Own a Frida script carrying fixed control operations and declarative UI data."""
 
-    def __init__(self, frida, session, source, on_message):
+    def __init__(self, frida, session, source, on_message, journal=None):
         # session is already path-verified; source is our fixed script; callback queues diagnostic events.
         self.frida, self.session = frida, session
         self.script = session.create_script(source, name="modLauncher-hook-bridge")
@@ -56,6 +57,7 @@ class Bridge:
         self.waiters = {}
         self._on_message = on_message
         self.lock = threading.Lock()
+        self.journal = journal
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
         )
@@ -77,8 +79,14 @@ class Bridge:
 
     def start(self):
         # Loading observes the interpreter; Python runs later at a main-thread GIL boundary.
+        if self.journal is not None:
+            self.journal.create()
         self.script.load()
         self.loaded = True
+
+    def drain_activity(self):
+        """Read records even after native Python and its script have exited."""
+        return self.journal.read_available() if self.journal is not None else []
 
     def wake(self):
         """Wake the controller queue without native RPC or guest execution."""
@@ -260,6 +268,10 @@ class Bridge:
             )
         try:
             self.request("shutdown")
+        except BaseException:
+            if self.journal is not None:
+                self.journal.retained = True  # The writer has not acknowledged its final drain.
+            raise
         finally:
             # Unload also detaches the interceptor even if the bounded shutdown failed.
             if not self.session.is_detached and not self.script.is_destroyed:
@@ -310,12 +322,16 @@ def factory(root, frida):
     # only by the trusted 'adapters' operation, after normal bootstrap is ready.
     sources["modLauncher/hook_manager/adapter_modules.py"] += "\nADAPTER_SOURCES = " + repr(adapters) + "\n"
     bootstrap_source = read("hook_manager/bootstrap.py")
+    sources["modLauncher/launcher/diagnostics/activity_journal.py"] = read("launcher/diagnostics/activity_journal.py")
+    sources["modLauncher/launcher/diagnostics/journal_writer.py"] = read("launcher/diagnostics/journal_writer.py")
+    sources["modLauncher/launcher/diagnostics/exception_snapshot.py"] = read("launcher/diagnostics/exception_snapshot.py")
     script = read("hook_manager/bridge.js")
     digest = hashlib.sha256(json.dumps(sources).encode("utf-8")).hexdigest()
 
     def create(session, pid, on_message, *, bootstrap=True):
         # Each process gets a distinct owner token; only the trusted controller constructs this source.
         instance = uuid.uuid4().hex
+        journal = ActivityJournal(root / "logs" / ("activity-" + instance + ".jsonl"))
         arguments = ",".join(
             json.dumps(value)
             for value in (sources, digest, instance, str(root.parent))
@@ -328,7 +344,7 @@ def factory(root, frida):
             + arguments
             + ","
         )
-        suffix = '))[1])({"__builtins__": __builtins__})'
+        suffix = "," + json.dumps(str(journal.path)) + '))[1])({"__builtins__": __builtins__})'
         # Once the private owner exists, source strings are unnecessary. Keep
         # the same digest/instance checks in pulse, with an empty source argument.
         repeat_prefix = "__import__('sys').modules['_tpm_hook_manager_host'].pulse(" + ",".join(
@@ -338,7 +354,7 @@ def factory(root, frida):
             {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap}
         )
         return Bridge(
-            frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message
+            frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message, journal
         )
 
     return create

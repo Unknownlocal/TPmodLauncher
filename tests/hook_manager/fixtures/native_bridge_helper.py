@@ -72,7 +72,16 @@ def advance_session_preload(screen, state):
 preload_module.advance_session_preload = hub.advance_session_preload = advance_session_preload
 sys.modules[preload_module.__name__] = preload_module
 game = ModuleType("game_state")
-game.GameState = type("GameState", (), {})
+class GameState:
+    def advance_week(self, off_week=False, *, persist=True):
+        return True
+    def save_season(self, *, manual=False):
+        if getattr(self, "fail_save", False):
+            raise OSError("Owned native save failed " + "x" * 5000 + " FULL SAVE END")
+        return "owned save"
+    def finalize_and_rollover_season(self):
+        return None
+game.GameState = GameState
 sys.modules[game.__name__] = game
 loading_screen = HubScreen()
 navigation = ModuleType("ui.screen_manager")
@@ -132,6 +141,18 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if ((output / "activity-request").exists() and not (output / "activity-done").exists()
+            and host.activity.group_intact("activity.save")):
+        loading_screen.state.fail_save = True
+        journal = host.activity.journal
+        host.activity.journal = host.ActivityJournal(output / "missing-native-journal.jsonl")
+        try:
+            loading_screen.state.save_season(manual=True)
+        except OSError as error:
+            assert error.launcher_activity["kind"] == "saving"
+            (output / "activity-done").touch()
+        finally:
+            host.activity.journal = journal
     if (output / "leave-request").exists() and loading_screen.manager.current is loading_screen:
         loading_screen.manager.switch_to(HubScreen())
     if host.adapters.preload is not None and loading_screen.manager.current is loading_screen:

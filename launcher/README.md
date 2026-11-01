@@ -56,7 +56,14 @@ Activity context identifies launcher/game startup, an individual mod or shared
 loading group, save loading, and being inside a save. It follows actual host
 operations and native navigation/loading observations. Failures keep their
 original context through cleanup; old process or career updates cannot overwrite
-newer activity. This observation also runs for packs without code mods.
+newer activity. Complete week progression and saving have nested native activity,
+including autosave and the game's week worker. This observation also runs for
+packs without code mods.
+
+Game callbacks enqueue journal records in memory. A separate diagnostics worker
+handles traceback formatting, encoding and file I/O without holding activity
+locks. The game does not wait for the worker during normal play or status reads.
+Final process termination has a shared one-second drain allowance.
 
 `diagnostics/log_file_handler.py` retains file-write failures even when Python logging would
 normally suppress them. An unavailable log produces a console warning and a

@@ -323,6 +323,19 @@ def test_unexpected_tracking_loss_fails_and_cleans_up(rig):
     assert all(not session.gating for session in device.sessions.values())
 
 
+def test_cleanup_accepts_confirmed_exit_before_frida_detached_notification(rig):
+    device, controller, messages, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    def exit_during_gating_cleanup():
+        device.processes.pop(10)
+        raise RuntimeError("The process transport has closed")
+    session.disable_child_gating = exit_during_gating_cleanup
+    controller.close()
+    assert not controller.cleanup_failed and not device.handlers and not controller.sessions
+    assert not any("CLEANUP ERROR" in message for message in messages)
+
+
 def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tmp_path, monkeypatch):
     from launcher import entry
 

@@ -47,6 +47,13 @@ try:
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages.getvalue().splitlines()), messages
     current = next(iter(controller.bridges.values()))
+    # Activity diagnostics must cross the real bridge before regulation setup.
+    (output / "activity-request").touch()
+    while not any("FULL SAVE END" in line for line in messages.getvalue().splitlines()) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    activity_error = next(line for line in messages.getvalue().splitlines() if "40 " in line and "NATIVE OPERATION FAILED" in line)
+    assert json.loads(activity_error.partition(" activity=")[2])["kind"] == "saving", activity_error
+    assert "FULL SAVE END" in messages.getvalue()
     # The helper waits for a worker that crosses another SaveThread hook.
     # This must finish without locking that worker out of JavaScript with the GIL.
     assert current.set_loading(dict(state="loading", loaded=0, failed=0, total=31))["menu"]["loading"]["total"] == 31
@@ -168,7 +175,7 @@ try:
     controller.poll()
     assert sum("PACK DISCOVERY" in message for message in messages.getvalue().splitlines()) == 1, messages
     errors = [line for line in messages.getvalue().splitlines() if line.startswith("40 ")]
-    assert len(errors) == 1 and errors[0].endswith("Owned bridge validation failure"), messages.getvalue()
+    assert len(errors) == 2 and any(line.endswith("Owned bridge validation failure") for line in errors), messages.getvalue()
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")

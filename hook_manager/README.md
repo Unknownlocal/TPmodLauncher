@@ -34,6 +34,26 @@ Diagnostic records also carry cached career activity. This plain snapshot can be
 read by workers without inspecting game objects; later navigation cannot rewrite
 the context of an already-built record.
 
+`native_activity.py` observes complete week progression, season rollover and
+career saves, including autosaves. The game's week-transition start and finish
+methods keep an activity open across its own worker and delayed exception.
+Nested saving restores week progression on return. Unrelated workers and newer
+careers do not inherit that activity. Errors keep their original context when
+the game re-raises them. Game callbacks enqueue context and captured traceback
+metadata without source-file lookup. A dedicated writer formats the traceback
+and writes the controller-owned journal; gameplay and status reads never wait
+for its file I/O. Journal failures queue warnings for the launcher console.
+The controller reads the journal during normal
+polls and before retiring a process, so an immediate exit needs no further game
+pulse. Unhandled observed exceptions retain the original exception hook and
+produce a fatal launcher outcome; caught native errors remain diagnostic records.
+Observation works without regulation mods and leaves native results and files
+under the game's control.
+
+Shutdown signals the writer and returns to the game. The launcher waits for
+completion outside the game thread. Only final process termination can wait for
+queued records, using a shared one-second limit; a blocked disk cannot extend it.
+
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
 and callable classes. Regulation transport loads only in this private bundle;

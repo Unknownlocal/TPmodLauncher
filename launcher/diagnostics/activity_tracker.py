@@ -20,6 +20,7 @@ class ActivityTracker:
     WORDING = {"launcher_startup": "while starting the launcher", "game_loading": "while loading the game",
                "mod_loading": "while loading code mods", "save_loading": "while loading your save",
                "in_save": "while in a save", "menu": "while in the game menus",
+               "week_progression": "while progressing forward a week in game", "saving": "while saving",
                "shutdown": "while closing the game", "unknown": "during an unknown game activity"}
 
     def __init__(self, submit_log=lambda message: None):
@@ -59,9 +60,15 @@ class ActivityTracker:
             if not self._processes:
                 self._default = self._record("unknown")
 
+    @staticmethod
+    def _native_operations(status):
+        """Keep native operation identity distinct from this controller's records."""
+        return {"native_" + key: status[key] for key in ("operation", "parent", "thread")
+                if type(status.get(key)) is int and status[key] > 0}
+
     def observe(self, pid, status):
         """Accept only newer native activity from an already verified session."""
-        if type(status) is not dict or status.get("kind") not in ("game_loading", "save_loading", "in_save", "menu", "unknown"):
+        if type(status) is not dict or status.get("kind") not in ("game_loading", "save_loading", "in_save", "menu", "unknown", "week_progression", "saving"):
             return
         sequence, generation = status.get("sequence"), status.get("generation")
         if type(sequence) is not int or sequence < 0 or type(generation) is not int or generation < 0:
@@ -73,14 +80,14 @@ class ActivityTracker:
             if generation < previous.get("generation", 0):
                 return
             record = self._record(status["kind"], pid=pid, process_session=previous["process_session"],
-                                  generation=generation, sequence=sequence)
+                                  generation=generation, sequence=sequence, **self._native_operations(status))
             self._processes[pid] = record
             self._foreground = pid
         self._submit_activity(record)
 
     def native_context(self, pid, status):
         """Keep an older diagnostic's career context without rewinding live state."""
-        if (type(status) is not dict or status.get("kind") not in ("game_loading", "save_loading", "in_save", "menu", "unknown")
+        if (type(status) is not dict or status.get("kind") not in ("game_loading", "save_loading", "in_save", "menu", "unknown", "week_progression", "saving")
                 or type(status.get("sequence")) is not int or status["sequence"] < 0
                 or type(status.get("generation")) is not int or status["generation"] < 0):
             return None
@@ -88,7 +95,7 @@ class ActivityTracker:
             process = self._processes.get(pid)
             if process is not None:
                 return self._record(status["kind"], pid=pid, process_session=process["process_session"],
-                                    generation=status["generation"], sequence=status["sequence"])
+                                    generation=status["generation"], sequence=status["sequence"], **self._native_operations(status))
 
     def snapshot(self, pid=None, *, native=False):
         with self._lock:

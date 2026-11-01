@@ -2,7 +2,7 @@
 """Initialise the trusted manager only after Python's main thread is identifiable."""
 
 
-def pulse(sources, digest, instance, game_root, request_json):
+def pulse(sources, digest, instance, game_root, request_json, journal_path=None):
     # sources contains our trusted Python files; digest/instance identify their owner.
     # game_root is the installation folder; request_json contains data only.
     import sys
@@ -36,7 +36,7 @@ def pulse(sources, digest, instance, game_root, request_json):
             if module.instance != instance and not module.manager.closed:
                 raise RuntimeError("Another bridge owns the active manager")
             if module.instance == instance:
-                activity_provider = module.readiness.current_activity
+                activity_provider = module.activity_provider
         if module is None or module.instance != instance:
             module = ModuleType(name)
             for filename, source in sources.items():
@@ -52,6 +52,10 @@ def pulse(sources, digest, instance, game_root, request_json):
             module.activity_provider = activity_provider
             module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
+            journal = module.ActivityJournal(journal_path) if journal_path is not None else None
+            module.activity = module.NativeActivity(module.readiness, journal)
+            activity_provider = module.activity.current_activity
+            module.activity_provider = activity_provider
             module.discovery = module.PackDiscovery(game_root)
             # Save metadata must survive even when no mod requests validation.
             module.manager.observe("managers.formula_regulation_governance",
@@ -158,6 +162,8 @@ def pulse(sources, digest, instance, game_root, request_json):
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
+                if not module.activity.stop():
+                    return "WAIT: native activity records are draining"
                 module.readiness.stop()
             response = module.manager.request(request)
         if module.manager.closed:
@@ -182,12 +188,16 @@ def pulse(sources, digest, instance, game_root, request_json):
         response["themes"] = module.themes.poll()
         response["settings"] = module.settings.poll()
         response["readiness"] = module.readiness.snapshot()
+        response["readiness"]["activity"] = module.activity.snapshot()
+        activity_notices = response["activity_notices"] = []
+        while module.activity.records:
+            activity_notices.append(module.activity.records.popleft())
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         # Bootstrap may fail before the shared diagnostics source has loaded.
         import traceback
 
         return json.dumps({"event": "error", "detail": str(error),
-                           "activity": activity_provider() if activity_provider is not None else None,
+                           "activity": getattr(error, "launcher_activity", None) or (activity_provider() if activity_provider is not None else None),
                            "traceback": "".join(traceback.TracebackException.from_exception(
                                error, max_group_width=float("inf"), max_group_depth=float("inf")).format())})

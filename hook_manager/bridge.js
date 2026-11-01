@@ -162,6 +162,9 @@ observer = Process.attachModuleObserver({
                         for (const notice of response.status.regulation_notices || []) {
                             send({ ...notice, event: 'diagnostic' });
                         }
+                        for (const notice of response.status.activity_notices || []) {
+                            send({ ...notice, event: 'native-activity' });
+                        }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;
                             send({ event: 'pack', pack });

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -51,7 +52,12 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         request = json.dumps(json.dumps({"operation": operation, **data}))
         expression = (config["repeat_prefix"] + request + ")" if started
                       else config["prefix"] + request + config["suffix"])
-        result = json.loads(eval(expression, namespace))
+        value = eval(expression, namespace)
+        deadline = time.monotonic() + 2
+        while value.startswith("WAIT:") and time.monotonic() < deadline:
+            time.sleep(.001)
+            value = eval(expression, namespace)
+        result = json.loads(value)
         assert result["event"] == "manager", result
         started = True
         return result["status"]
@@ -80,7 +86,14 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert host.adapters.modules == loaded
         closed = []
         game = ModuleType("game_state")
-        game.GameState = type("GameState", (), {})
+        class GameState:
+            def advance_week(self, off_week=False, *, persist=True):
+                return True
+            def save_season(self, *, manual=False):
+                return "owned save"
+            def finalize_and_rollover_season(self):
+                return None
+        game.GameState = GameState
         monkeypatch.setitem(sys.modules, "game_state", game)
         channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))

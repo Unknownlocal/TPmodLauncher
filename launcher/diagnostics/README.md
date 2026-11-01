@@ -21,6 +21,34 @@ bridge status messages, including packs with no code mods. Game diagnostics use
 a cached plain snapshot, so workers do not inspect live screens to build a log
 record. Logs describe confirmed activity rather than inferring it from error text.
 
+Whole week progression and saving arrive from the game's operation observer.
+Native operation and parent identities remain separate from controller records,
+so a delayed worker error keeps its saving/week context after navigation changes.
+
+`activity_journal.py` contains `ActivityJournal`. Each bridge owns a new journal
+file. `journal_writer.py` contains `JournalWriter`, which formats captured errors,
+encodes records and performs file writes, flushes and synchronisation on its own
+thread. Game callbacks only capture context and enqueue; the writer holds no
+activity lock while doing storage work. The controller reads completed records
+without entering the game, including before discarding an exited process.
+It then removes only its own journal. If an interrupted write corrupts
+a record, the error includes its raw contents and the journal stays available.
+The normal logger still owns
+`launcher.log`; an unhandled native exception follows the same fatal outcome and
+cleanup path even if no further game pulse can run.
+
+Stopping observation signals the writer without waiting on the game thread. The
+launcher waits for its acknowledgement through repeated short bridge requests.
+An unconfirmed shutdown keeps the journal. Fatal handling and final interpreter
+termination share one one-second drain budget; ordinary gameplay never waits
+for that drain. A stalled backend may leave queued records unwritten at the limit.
+
+`exception_snapshot.py` contains `ExceptionSnapshot`. Game threads copy only
+messages, notes, exception relationships and frame locations from memory. This
+avoids Python's usual traceback source-cache checks, which can read the filesystem
+even when line lookup is disabled. The writer resolves source lines and applies
+standard traceback formatting later, without keeping live frames or local values.
+
 `log_file_handler.py` contains `LogFileHandler`. It retains file-write failures
 that standard Python logging could otherwise suppress. The console can still
 show the original error when the log cannot be written.

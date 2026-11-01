@@ -94,6 +94,7 @@ class Controller:
         self.next_check = 0.0
         self.stopping = False
         self.cleanup_failed = False
+        self.native_failure = None
         self.shutdown = shutdown
 
     def _subscribe(self, signal, callback):
@@ -127,9 +128,10 @@ class Controller:
                 return
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
+            self._drain_activity(pid)
             del self.sessions[pid]
             self._close_mods(pid)
-            self.bridges.pop(pid, None)
+            self._discard_bridge(pid)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
         self.activity.attach(pid)
@@ -183,6 +185,27 @@ class Controller:
             except Exception as error:
                 self.cleanup_failed = True
                 self.submit_log("CLEANUP ERROR", level="ERROR", error=error, pid=pid)
+
+    def _drain_activity(self, pid):
+        bridge, session = self.bridges.get(pid), self.sessions.get(pid)
+        if session is not None and callable(drain := getattr(bridge, "drain_activity", None)):
+            for record in drain():
+                self._event("bridge", (pid, session, {"type": "send", "payload": {**record, "event": "native-activity"}}))
+            if self.native_failure is not None and not self.stopping:
+                failure, self.native_failure = self.native_failure, None
+                raise self.build_native_error(failure)
+
+    def _discard_bridge(self, pid):
+        bridge = self.bridges.pop(pid, None)
+        journal = getattr(bridge, "journal", None)
+        if journal is not None:
+            journal.remove()
+
+    @staticmethod
+    def build_native_error(record):
+        error = exception_from_record("Game operation failed: " + record.get("reason", record["detail"]), record, LaunchError)
+        error.launcher_activity = record["activity"]
+        return error
 
     def start(self):
         """Spawn, attach and enable child tracking before allowing the game to run."""
@@ -238,11 +261,16 @@ class Controller:
             if not self.stopping:
                 # Unrelated helpers are resumed without attachment; only the game gets a session.
                 if self._matches(child.pid):
+                    # A journal failure can abort replacement attachment. Own
+                    # this verified child before draining its predecessor.
+                    if self.shutdown is not None:
+                        self.shutdown.track(child.pid)
                     # Unix exec can replace the process image while retaining its PID.
                     if getattr(child, "origin", None) == "exec":
+                        self._drain_activity(child.pid)
                         previous = self.sessions.pop(child.pid, None)
                         self._close_mods(child.pid)
-                        self.bridges.pop(child.pid, None)
+                        self._discard_bridge(child.pid)
                         self.resumed.discard(child.pid)
                         if previous is not None and not previous.is_detached:
                             previous.detach()
@@ -271,6 +299,7 @@ class Controller:
         elif kind == "detached":
             pid, session, reason = value
             if self.sessions.get(pid) is session:
+                self._drain_activity(pid)
                 self.submit_log(f"DETACHED pid={pid}: {reason}")
                 if not self.stopping and reason not in (
                     "process-terminated",
@@ -282,18 +311,30 @@ class Controller:
                     )
                 del self.sessions[pid]
                 self._close_mods(pid)
-                self.bridges.pop(pid, None)
+                self._discard_bridge(pid)
                 self.activity.retire(pid)
-        elif kind == "bridge" and not self.stopping:
+        elif kind == "bridge":
             pid, session, message = value
             if self.sessions.get(pid) is not session:
                 return  # A delayed message cannot describe a replacement's manager.
+            payload = message.get("payload", {})
+            event = payload.get("event")
+            if self.stopping and event != "native-activity":
+                return
             if message.get("type") == "error":
                 raise exception_from_record(
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
-            payload = message.get("payload", {})
-            event = payload.get("event")
+            if event == "native-activity":
+                activity = self.activity.native_context(pid, payload.get("activity"))
+                if payload.get("transition"):
+                    self.activity.observe(pid, payload.get("activity"))
+                record = {**payload, "activity": activity, "pid": pid}
+                self.submit_log(record)
+                if payload.get("fatal"):
+                    if self.native_failure is None:
+                        self.native_failure = record
+                return
             if event == "error":
                 error = exception_from_record(
                     f"Hook manager failed for pid={pid}: {payload.get('detail', 'unknown error')}",
@@ -344,12 +385,17 @@ class Controller:
 
     def poll(self, timeout=0):
         """Process queued events and return True after all game processes leave the grace window."""
+        for pid in list(self.bridges):
+            self._drain_activity(pid)
         try:
             self._event(*self.events.get(timeout=timeout))
         except queue.Empty:
             pass
         while not self.events.empty():
             self._event(*self.events.get_nowait())
+        if self.native_failure is not None and not self.stopping:
+            failure, self.native_failure = self.native_failure, None
+            raise self.build_native_error(failure)
         # Compilation futures do not hold up exit/exec handling; stores stay on this thread.
         for pid, scope in list(self.pack_mods.items()):
             with self.activity.focus(pid):
@@ -360,9 +406,10 @@ class Controller:
             live = {process.pid: process for process in self._processes(self.sessions)}
             for pid, session in list(self.sessions.items()):
                 if pid not in live:
+                    self._drain_activity(pid)
                     del self.sessions[pid]
                     self._close_mods(pid)
-                    self.bridges.pop(pid, None)
+                    self._discard_bridge(pid)
                     # Drop the local handle without relying on a pending callback for shutdown.
                     try:
                         session.detach()
@@ -395,13 +442,22 @@ class Controller:
         self.resumed.clear()
 
         # Keep event subscriptions until gating is disabled and late children have been released.
-        def attempt(action, session=None):
+        def attempt(action, session=None, pid=None):
             try:
                 action()
             except Exception as error:
                 # Exiting processes can detach between the check and the cleanup call.
-                if session is not None and session.is_detached:
-                    return
+                if session is not None:
+                    gone = session.is_detached
+                    if not gone and pid is not None:
+                        try:
+                            # Frida's detached flag can lag actual process exit.
+                            # No native restoration is needed once the PID is gone.
+                            gone = not self._processes([pid])
+                        except Exception:
+                            pass  # Unconfirmed exit keeps the original cleanup error.
+                    if gone:
+                        return
                 self.cleanup_failed = True
                 self.submit_log("CLEANUP ERROR", level="ERROR", error=error)
 
@@ -409,6 +465,10 @@ class Controller:
             for child in self.device.enumerate_pending_children():
                 if child.parent_pid in self.parents:
                     self.held.add(child.pid)
+                    if self.shutdown is not None and self.shutdown.requested.is_set():
+                        # Enumeration may release this child before its queued
+                        # notification runs; own verified game handles first.
+                        attempt(lambda child=child: self.shutdown.track(child.pid) if self._matches(child.pid) else None)
                     # The pending list confirms it is currently gated, even if its PID was reused.
                     self.resumed.discard(child.pid)
                     attempt(lambda child=child: self._resume(child.pid))
@@ -419,14 +479,16 @@ class Controller:
         for pid, session in list(self.sessions.items()):
             # Revoke external mod grants while the live game's bridge is still available.
             self._close_mods(pid)
-            bridge = self.bridges.pop(pid, None)
+            bridge = self.bridges.get(pid)
             if bridge is not None:
                 # Restore Python wrappers before detaching the script/session from a live process.
-                attempt(bridge.close, session)
+                attempt(bridge.close, session, pid)
+                attempt(lambda pid=pid: self._drain_activity(pid))
+                attempt(lambda pid=pid: self._discard_bridge(pid))
             if not session.is_detached:
-                attempt(session.disable_child_gating, session)
+                attempt(session.disable_child_gating, session, pid)
             if not session.is_detached:
-                attempt(session.detach, session)
+                attempt(session.detach, session, pid)
         # Reconcile notifications arriving while the sessions were being detached.
         attempt(release_pending)
         for pid in list(self.held):
@@ -501,6 +563,10 @@ def run_launcher(
                     try:
                         controller.close()
                         outcome["cleanup"] = "failed" if controller.cleanup_failed else "complete"
+                        if controller.native_failure is not None and outcome["failure"] is None:
+                            handle_error(logger, controller.build_native_error(controller.native_failure), stage="controller",
+                                         shutdown=shutdown, component="controller")
+                            code = 1
                     except BaseException:
                         outcome["cleanup"] = "failed"
                         shutdown.request()

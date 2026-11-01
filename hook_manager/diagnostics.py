@@ -43,7 +43,9 @@ def build_log_record(level, detail, *, error=None, **context):
     """
     record = {"level": level, "detail": single_line(detail)}
     record.update((key, single_line(context[key], 128)) for key in CONTEXT if key in context)
-    if activity_provider is not None:
+    if error is not None and hasattr(error, "launcher_activity"):
+        record["activity"] = dict(error.launcher_activity)
+    elif activity_provider is not None:
         record["activity"] = activity_provider()
     if error is not None:
         record["traceback"] = error_text(error)
