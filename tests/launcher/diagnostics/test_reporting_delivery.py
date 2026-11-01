@@ -118,12 +118,12 @@ def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery,
 def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
     _, bridge, receiver, _, _ = delivery
     entered, release, completed = threading.Event(), threading.Event(), threading.Event()
-    append = bridge.journal.append_record
-    def stalled(record):
+    append = bridge.journal.append_records
+    def stalled(records):
         entered.set()
         assert release.wait(3)
-        append(record)
-    monkeypatch.setattr(bridge.journal, "append_record", stalled)
+        append(records)
+    monkeypatch.setattr(bridge.journal, "append_records", stalled)
     received = []
     def control_ready(request, dependency):
         received.append((request, dependency))
@@ -157,24 +157,28 @@ def test_failed_journal_delivers_full_multiframe_error_over_socket(delivery, tmp
 
 def test_torn_append_cannot_hide_socket_only_fatal_details(delivery, monkeypatch):
     controller, bridge, receiver, path, _ = delivery
-    append = bridge.journal.append_record
-    def interrupted(record):
-        if record["level"] == "ERROR":
+    append = bridge.journal.append_records
+    def interrupted(records):
+        if any(record["level"] == "ERROR" for record in records):
             with bridge.journal.path.open("ab") as stream:
                 stream.write(b'{"partial":')
             raise OSError("Owned partial-write failure")
-        append(record)
-    monkeypatch.setattr(bridge.journal, "append_record", interrupted)
+        append(records)
+    monkeypatch.setattr(bridge.journal, "append_records", interrupted)
     writer = writer_for(receiver)
+    first, first_failure = error_record("First durable native failure FULL END")
+    first.update(level="CRITICAL", fatal=True, reason="First durable native failure FULL END")
+    writer.enqueue_log_record(first, bridge.journal, first_failure)
     record, failure = error_record("Original socket-only native failure FULL END")
     record.update(fatal=True, reason="Original socket-only native failure FULL END")
     writer.enqueue_log_record(record, bridge.journal, failure)
     writer.enqueue_log_record({"level": "INFO", "detail": "later complete append"}, bridge.journal)
     assert writer.finish(2) and receiver.finished.wait(2)
-    with pytest.raises(LaunchError, match="Original socket-only native failure FULL END"):
+    with pytest.raises(LaunchError, match="First durable native failure FULL END"):
         controller.poll()
     text = path.read_text()
     assert "Original save diagnostic note" in text and "Native activity journal failed" in text
+    assert "Original socket-only native failure FULL END" in text and "First durable native failure FULL END" in text
     assert "NATIVE JOURNAL READ FAILED" in text and "later complete append" in text
     assert bridge.journal.read_failed and bridge.journal.path.exists()
 

@@ -25,14 +25,18 @@ class ActivityJournal:
 
     def append_record(self, record):
         """Append a complete line and synchronise failures before returning."""
-        data = (json.dumps(record, ensure_ascii=True) + "\n").encode("utf-8")
+        self.append_records([record])
+
+    def append_records(self, records):
+        """Append one ready batch with one open/write/flush and at most one sync."""
+        data = "".join(json.dumps(record, ensure_ascii=True) + "\n" for record in records).encode("utf-8")
         with self._lock:
             # Never recreate a journal after its controller has removed it.
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0))
             with os.fdopen(fd, "ab") as stream:
                 stream.write(data)
                 stream.flush()
-                if record.get("level") in ("ERROR", "CRITICAL"):
+                if any(record.get("fatal") or record.get("level") in ("ERROR", "CRITICAL") for record in records):
                     os.fsync(stream.fileno())
 
     def read_available(self):
@@ -53,7 +57,11 @@ class ActivityJournal:
                     # launcher's complete error rather than deleting its cause.
                     stream.seek(0)
                     raw = stream.read().decode("utf-8", errors="replace")
-                    raise ValueError("Cannot decode native activity journal " + str(self.path) + ":\n" + raw) from error
+                    failure = ValueError("Cannot decode native activity journal " + str(self.path) + ":\n" + raw)
+                    # The prefix is already consumed. Preserve its order ahead
+                    # of socket fallbacks, including the original fatal reason.
+                    failure.decoded_records = records
+                    raise failure from error
                 self.offset = stream.tell()
         return records
 

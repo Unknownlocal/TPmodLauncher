@@ -33,11 +33,16 @@ the game's own crash recording still run.
 file. `journal_writer.py` contains `JournalWriter`, which formats captured errors,
 encodes records and performs file writes, flushes and synchronisation on its own
 thread. Game callbacks only capture context and enqueue; the writer holds no
-activity lock while doing storage work. The controller reads completed records
+activity lock while doing storage work. It batches work already queued, without
+waiting for a timer. Each batch uses one open, write and flush. An error or fatal
+record ends its batch and synchronises it before later records are formatted.
+The controller reads completed records
 when notified and before discarding an exited process, without entering the game
 or scanning the journal periodically.
 It then removes only its own journal. If an interrupted write corrupts
 a record, the error includes its raw contents and the journal stays available.
+Already decoded records keep their place before socket fallbacks, so a later
+damaged append cannot replace the first fatal reason.
 The normal logger still owns
 `launcher.log`; an unhandled native exception follows the same fatal outcome and
 cleanup path even if no further game pulse can run.
@@ -48,12 +53,22 @@ not delay journal appends. If a journal write fails, this connection carries the
 warning and complete original record instead. `reporting_wire.py` splits long
 messages into numbered frames without truncating their error details.
 
+`reporting_queue.py` shares the backlog policy across the writer, socket sender
+and receiver. Each queue holds at most 256 pending ordinary informational
+records. When full, it removes the oldest ordinary record and produces a WARNING
+with the exact drop count. Failures, warnings, save requests, loading attempts
+and control events remain protected. Healthy readiness, menu and theme hints
+keep only their latest pending value. Complete errors and protected events have
+no fixed memory limit; the queue limit is not a total memory guarantee.
+
 `reporting_receiver.py` contains `ReportingReceiver`. It waits for socket data,
 checks the process/session identity and message order, and queues controller
 events. Control completion messages arm entry for their matching request, even
 while the controller is waiting for its reply. The receiver performs no file
 logging or game/mod calls. Idle reception has no periodic timeout; startup and
 incomplete transfers have their own deadlines.
+Repeated journal notices share one pending controller wake. The receiver rearms
+that wake before reading, so a concurrent arrival cannot be missed.
 The controller reads the journal and any fallback records on those events.
 Connection failure triggers recovery and retains the journal; an acknowledged
 stop consumes final records before the owned session is discarded.
@@ -71,6 +86,8 @@ messages, notes, exception relationships and frame locations from memory. This
 avoids Python's usual traceback source-cache checks, which can read the filesystem
 even when line lookup is disabled. The writer resolves source lines and applies
 standard traceback formatting later, without keeping live frames or local values.
+If source lookup or formatting fails, the log retains the complete captured
+messages, notes, relationships and frame locations as plain snapshot data.
 
 `log_file_handler.py` contains `LogFileHandler`. It retains file-write failures
 that standard Python logging could otherwise suppress. The console can still

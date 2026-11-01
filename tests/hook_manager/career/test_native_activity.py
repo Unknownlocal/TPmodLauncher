@@ -230,13 +230,13 @@ def test_blocked_journal_does_not_delay_gameplay_status_or_stop(observed, tmp_pa
     journal.create()
     activity.journal = journal
     entered, release = threading.Event(), threading.Event()
-    append = journal.append_record
-    def delayed_error(record):
-        if record["level"] == "ERROR":
+    append = journal.append_records
+    def delayed_error(records):
+        if any(record["level"] == "ERROR" for record in records):
             entered.set()
             assert release.wait(2)
-        append(record)
-    monkeypatch.setattr(journal, "append_record", delayed_error)
+        append(records)
+    monkeypatch.setattr(journal, "append_records", delayed_error)
     state, error = State(), OSError("Owned save failure during stop")
     state.fail_save = error
     errors = []

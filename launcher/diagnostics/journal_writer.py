@@ -2,9 +2,12 @@
 """Keep journal encoding and storage off game execution threads."""
 
 import atexit
-from queue import SimpleQueue
+import json
 import threading
 from time import monotonic
+
+if __package__:
+    from .reporting_queue import ReportingQueue, log_delivery, build_overflow_record
 
 
 class JournalWriter:
@@ -13,7 +16,8 @@ class JournalWriter:
     def __init__(self, enqueue_fallback, notifications=None):
         self.enqueue_fallback = enqueue_fallback
         self.notifications = notifications
-        self._queue, self._state_lock = SimpleQueue(), threading.Lock()
+        self._queue, self._state_lock = ReportingQueue(), threading.Lock()
+        self._last_journal = None
         self._closed, self.finished = False, threading.Event()
         self._exit_deadline = None
         self._thread = threading.Thread(target=self._run, name="mod-launcher-journal", daemon=True)
@@ -25,13 +29,15 @@ class JournalWriter:
     def enqueue_log_record(self, record, journal, failure=None):
         with self._state_lock:
             if not self._closed:
-                self._queue.put((record, journal, failure, None))
+                key, ordinary = log_delivery(record) if failure is None else (None, False)
+                self._last_journal = journal
+                self._queue.put((record, journal, failure, None), key=key, ordinary=ordinary)
 
     def close(self):
         with self._state_lock:
             if not self._closed:
                 self._closed = True
-                self._queue.put(None)
+                self._queue.close()
 
     def finish(self, timeout):
         """Bounded termination drain; never call this from gameplay callbacks."""
@@ -56,28 +62,37 @@ class JournalWriter:
 
     def _run(self):
         try:
-            while (job := self._queue.get()) is not None:
-                record, journal, failure, checkpoint = job
-                if checkpoint is not None:
-                    checkpoint.set()
-                    continue
-                try:
+            while True:
+                jobs, dropped, done = self._queue.take()
+                if dropped:
+                    jobs.insert(0, (build_overflow_record(dropped, "Native journal queue"), self._last_journal, None, None))
+                records, destination = [], None
+                for record, journal, failure, checkpoint in jobs:
+                    if records and (checkpoint is not None or journal is not destination):
+                        self._write_batch(records, destination)
+                        records = []
+                    if checkpoint is not None:
+                        checkpoint.set()
+                        continue
                     if failure is not None:
-                        # The captured traceback contains no live frames/locals.
-                        # Source lookup and formatting stay off gameplay threads.
-                        text = "".join(failure.format())
-                        record["traceback"] = "".join(c if c.isprintable() or c in "\n\t" else " " for c in text)
-                    if journal is not None:
-                        journal.append_record(record)
-                        if self.notifications is not None:
-                            self.notifications.enqueue_journal_notice()
-                    else:
-                        self.enqueue_fallback(record)
-                except Exception as error:
-                    self.enqueue_fallback({"level": "WARNING", "component": "activity",
-                                           "detail": "Native activity journal failed: " + str(error),
-                                           "activity": record.get("activity")})
-                    self.enqueue_fallback(record)
+                        # Source lookup/formatting stay on this worker; snapshots
+                        # contain no live frames or local game values.
+                        try:
+                            text = "".join(failure.format())
+                            record["traceback"] = "".join(c if c.isprintable() or c in "\n\t" else " " for c in text)
+                        except Exception as error:
+                            record["traceback"] = ("Deferred error formatting failed: " + str(error) + "\n"
+                                + json.dumps({"root": failure.root, "nodes": failure.nodes}, ensure_ascii=True))
+                    destination = journal
+                    records.append(record)
+                    # Do not postpone a failure's sync to format a later batch.
+                    if record.get("fatal") or record.get("level") in ("ERROR", "CRITICAL"):
+                        self._write_batch(records, destination)
+                        records = []
+                if records:
+                    self._write_batch(records, destination)
+                if done:
+                    break
         finally:
             if self.notifications is not None:
                 # The sender has its own thread: network waits cannot delay any
@@ -86,3 +101,19 @@ class JournalWriter:
                 self.notifications.close()
                 self.notifications.finished.wait()
             self.finished.set()
+
+    def _write_batch(self, records, journal):
+        """Write one destination's batch, retaining all records on storage failure."""
+        try:
+            if journal is None:
+                for record in records:
+                    self.enqueue_fallback(record)
+            else:
+                journal.append_records(records)
+                if self.notifications is not None:
+                    self.notifications.enqueue_journal_notice()
+        except Exception as error:
+            self.enqueue_fallback({"level": "WARNING", "component": "activity",
+                                   "detail": "Native activity journal failed: " + str(error)})
+            for record in records:
+                self.enqueue_fallback(record)

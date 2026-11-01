@@ -161,6 +161,28 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if (output / "idle-race-request").exists() and not (output / "idle-race.json").exists():
+        observed = {"operation_entries": 0, "snapshot_reads": 0}
+        begin, snapshot = host.activity._begin, host.activity.snapshot
+        def observed_begin(*args, **kwargs):
+            observed["operation_entries"] += 1
+            return begin(*args, **kwargs)
+        def observed_snapshot():
+            observed["snapshot_reads"] += 1
+            return snapshot()
+        host.activity._begin, host.activity.snapshot = observed_begin, observed_snapshot
+        started, value = time.perf_counter_ns(), 1
+        try:
+            for step in range(20000):
+                value = (value * 1664525 + 1013904223) & 0xFFFFFFFF
+                if step % 20 == 0:
+                    time.sleep(0)  # Real GIL boundaries, without reporting events.
+        finally:
+            host.activity._begin, host.activity.snapshot = begin, snapshot
+        assert observed == {"operation_entries": 0, "snapshot_reads": 0}, observed
+        (output / "idle-race.json").write_text(json.dumps({"steps": 20000,
+            "gil_releases": 1000, "elapsed_ns": time.perf_counter_ns() - started,
+            "value": value, "observers": observed}))
     if (output / "early-request").exists() and not (output / "early-ready").exists():
         early_guards = host.CallableAdapters()
         host.adapters.regulations.append(early_guards)

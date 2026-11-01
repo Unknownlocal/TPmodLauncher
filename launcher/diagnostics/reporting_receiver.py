@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Receive native reporting events without periodic file or socket checks."""
 
-from collections import deque
 import secrets
 import select
 import socket
@@ -9,6 +8,7 @@ import threading
 from time import monotonic
 
 from .reporting_wire import reporting_read, REPORTING_TRANSFER_SECONDS
+from .reporting_queue import ReportingQueue, log_delivery
 
 
 class ReportingReceiver:
@@ -16,7 +16,8 @@ class ReportingReceiver:
 
     def __init__(self, pid, session, enqueue_event):
         self.pid, self.session, self.enqueue_event = pid, session, enqueue_event
-        self.records = deque()
+        self.records = ReportingQueue()
+        self._notice_lock, self._notice_pending = threading.Lock(), False
         self.connected, self.finished = threading.Event(), threading.Event()
         self.confirmed = False
         self.control_ready = None
@@ -39,6 +40,18 @@ class ReportingReceiver:
     def start(self):
         self._thread = threading.Thread(target=self._run, name="native-reporting-receiver", daemon=True)
         self._thread.start()
+
+    def acknowledge_notice(self):
+        """Rearm before reading data so a concurrent arrival always queues a wake."""
+        with self._notice_lock:
+            self._notice_pending = False
+
+    def _journal_ready(self):
+        with self._notice_lock:
+            first = not self._notice_pending
+            self._notice_pending = True
+        if first:
+            self.enqueue_event("journal-ready", None)
 
     def expect_connection(self):
         """Start a single deadline only after Python actually created its observer."""
@@ -99,10 +112,11 @@ class ReportingReceiver:
                                     self.control_ready(message["request"], message["dependency"])
                                 continue
                             if kind == "fallback" and set(message) == {"kind", "record"} and type(message["record"]) is dict:
-                                self.records.append(message["record"])
+                                key, ordinary = log_delivery(message["record"])
+                                self.records.put(message["record"], key=key, ordinary=ordinary)
                             elif kind != "journal-ready" or set(message) != {"kind"}:
                                 raise ValueError("Unknown native reporting message")
-                            self.enqueue_event("journal-ready", None)
+                            self._journal_ready()
                     except (EOFError, ValueError, OSError):
                         if authenticated:
                             raise

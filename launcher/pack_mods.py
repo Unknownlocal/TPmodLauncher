@@ -168,7 +168,13 @@ class PackMods:
     def readiness_status(self, status):
         """Refresh dependent UI on native changes, outside a busy setup request."""
         previous = self.prerequisites.native
-        self.prerequisites.receive(status)
+        # Activity belongs to diagnostics. Keep all other fields so the strict
+        # prerequisite validator still rejects malformed availability records.
+        availability = (
+            {key: value for key, value in status.items() if key != "activity"}
+            if type(status) is dict else status
+        )
+        self.prerequisites.receive(availability)
         if status.get("detail") and status.get("detail") != previous.get("detail"):
             self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=status["detail"])
         if previous != self.prerequisites.native and not self._regulation_dispatching:

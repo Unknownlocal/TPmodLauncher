@@ -220,7 +220,7 @@ class Controller:
                 # A torn append must not hide a complete socket-only error.
                 journal_error = error
                 fallback = getattr(bridge, "drain_fallback", None)
-                records = fallback() if callable(fallback) else []
+                records = getattr(error, "decoded_records", []) + (fallback() if callable(fallback) else [])
             changes, protocol_errors = [], []
             def invalid_record(record, detail):
                 journal = getattr(bridge, "journal", None)

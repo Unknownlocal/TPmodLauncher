@@ -6,9 +6,13 @@ from pathlib import Path
 import threading
 import time
 
+import pytest
+
 from launcher import process_lifecycle as lifecycle
 from launcher.pack_mods import PackMods
 from tests.controller_device import rig
+from tests.hook_manager.test_native_events import native_events
+from tests.launcher.diagnostics.test_reporting_delivery import delivery, writer_for
 
 
 def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, capsys):
@@ -43,6 +47,29 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
         assert " ERROR modLauncher.regulations " in output
         assert "pid=10" in output and "REGULATIONS VALIDATION FAILED" in output
         assert "Unscoped worker or reentrant regulation validation" in output
+
+
+def test_empty_pack_accepts_native_menu_readiness_with_activity(native_events, delivery, tmp_path):
+    host, _, _, _, _ = native_events
+    controller, bridge, receiver, _, _ = delivery
+    folder = tmp_path / "data/diagnosticsTest"
+    folder.mkdir(parents=True)
+    controller.mods_factory = lambda submit_log, bridge: PackMods(tmp_path, submit_log)
+    status = host.events.status()["readiness"]
+    assert status["activity"]["kind"] == "menu"
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "pack", "pack": {"state": "ready", "series": "formula",
+        "id": folder.name, "root": str(folder.resolve())}}, bridge.journal)
+    writer.enqueue_log_record({"event": "readiness", "status": status}, bridge.journal)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    scope = controller.pack_mods[10]
+    assert scope.finished and not scope.mods and not controller.stopping
+    assert controller.activity.snapshot(10)["kind"] == "menu"
+    assert scope.prerequisites.native == {key: value for key, value in status.items() if key != "activity"}
+    assert status["activity"]["kind"] == "menu"  # Diagnostic context was not removed from the shared event.
+    with pytest.raises(ValueError, match="Invalid native prerequisite availability"):
+        scope.readiness_status({**status, "unexpected_availability": True})
 
 
 def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_bundle):

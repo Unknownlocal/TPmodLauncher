@@ -6,7 +6,6 @@ import io
 import logging
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 root = Path(__file__).resolve().parent.parent
 
@@ -21,6 +20,7 @@ def load(name, filename):
 frida = load("test_binding", "native_test_binding.py").load(root)
 load("dependencies", "bundled_dependencies.py").load_source_packages(root)
 from launcher import process_lifecycle as lifecycle, game_bridge as bridge
+from launcher.pack_mods import PackMods
 output = Path(sys.argv[3])
 messages = io.StringIO()
 logger = logging.getLogger("owned.bridge_probe")
@@ -63,8 +63,14 @@ try:
     current = next(iter(controller.bridges.values()))
     counts = current.script.exports_sync.entry_state()
     assert not counts["armed"] and counts["waiting"] is None, counts
-    time.sleep(.12)  # The helper continues crossing GIL boundaries without any controls.
-    assert current.script.exports_sync.entry_state() == counts, "Idle gameplay entered the bridge"
+    (output / "idle-race-request").touch()
+    deadline = time.monotonic() + 4
+    while not (output / "idle-race.json").exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert (output / "idle-race.json").exists()
+    assert current.script.exports_sync.entry_state() == counts, "Inactive synthetic race entered the bridge"
+    (output / "idle-entry-counts.json").write_text(json.dumps({"before": counts,
+        "after": current.script.exports_sync.entry_state()}))
 
     (output / "import-request").touch()
     deadline = time.monotonic() + 4
@@ -189,9 +195,12 @@ try:
     assert (output / "settings-again-acknowledged").exists(), messages
     attempts = []
     pid = next(iter(controller.sessions))
-    controller.pack_mods[pid] = SimpleNamespace(career_preload=attempts.append, poll=lambda: None, close=lambda: None,
-        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None,
-        readiness_status=lambda status: None)
+    # Exercise readiness validation while collecting preload notices below;
+    # diagnostic activity travels in the same native status record.
+    scope = PackMods(root.parent, logger)
+    scope.load({"state": "ready", "series": "formula", "id": pack.name, "root": str(pack.resolve())})
+    scope.career_preload = attempts.append
+    controller.pack_mods[pid] = scope
     current.request("await-regulations")
     deadline = time.monotonic() + 3
     while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:

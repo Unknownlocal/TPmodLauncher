@@ -14,6 +14,7 @@ from .regulations.bridge_converter import convert_bridges
 from .diagnostics import exception_from_record
 from .diagnostics.activity_journal import ActivityJournal
 from .diagnostics.reporting_receiver import ReportingReceiver
+from .diagnostics.reporting_queue import build_overflow_record
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -121,6 +122,8 @@ class Bridge:
 
     def drain_activity(self):
         """Read records even after native Python and its script have exited."""
+        if self.reporting is not None:
+            self.reporting.acknowledge_notice()
         records = self.journal.read_available() if self.journal is not None else []
         return records + self.drain_fallback()
 
@@ -128,8 +131,9 @@ class Bridge:
         """Consume socket-only errors even when a torn journal cannot be decoded."""
         records = []
         if self.reporting is not None:
-            while self.reporting.records:
-                records.append(self.reporting.records.popleft())
+            records, dropped, _ = self.reporting.records.take(None, block=False)
+            if dropped:
+                records.insert(0, build_overflow_record(dropped, "Launcher socket queue"))
         return records
 
     def finish_reporting(self):
@@ -403,6 +407,7 @@ def factory(root, frida):
     bootstrap_source = read("hook_manager/bootstrap.py")
     sources["modLauncher/launcher/diagnostics/activity_journal.py"] = read("launcher/diagnostics/activity_journal.py")
     sources["modLauncher/launcher/diagnostics/reporting_wire.py"] = read("launcher/diagnostics/reporting_wire.py")
+    sources["modLauncher/launcher/diagnostics/reporting_queue.py"] = read("launcher/diagnostics/reporting_queue.py")
     sources["modLauncher/launcher/diagnostics/reporting_sender.py"] = read("launcher/diagnostics/reporting_sender.py")
     sources["modLauncher/launcher/diagnostics/journal_writer.py"] = read("launcher/diagnostics/journal_writer.py")
     sources["modLauncher/launcher/diagnostics/exception_snapshot.py"] = read("launcher/diagnostics/exception_snapshot.py")
