@@ -2,6 +2,7 @@
 """Launcher logging, fatal outcomes and owned-game shutdown support."""
 
 from .core import (
+    activity_scope,
     bind_reporter,
     build_launch_outcome,
     exception_from_record,

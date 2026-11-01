@@ -39,6 +39,23 @@ def test_final_log_failure_does_not_claim_its_own_success(tmp_path, monkeypatch,
     assert "Original launcher failure" in console and "Launcher log could not be completed" in console
 
 
+def test_log_close_failure_alone_keeps_its_activity(tmp_path, monkeypatch):
+    from launcher.diagnostics import core as diagnostics
+
+    close = diagnostics.LogFileHandler.close
+    def failed_close(handler):
+        close(handler)
+        raise OSError("Log close failed after normal operation")
+    monkeypatch.setattr(diagnostics.LogFileHandler, "close", failed_close)
+    outcome = {}
+    with diagnostics.reporter(tmp_path / "launcher.log", outcome=outcome) as logger:
+        logger.launch_activity.attach(41)
+        logger.launch_activity.observe(41, {"kind": "in_save", "sequence": 1, "generation": 1})
+    assert not outcome["log_written"] and "Log close failed" in outcome["log_error"]
+    assert outcome["failure"]["stage"] == "logging"
+    assert outcome["failure"]["activity"]["kind"] == "in_save"
+
+
 @pytest.mark.parametrize("file_failure", [None, "open", "write", "sync"])
 def test_dependency_failure_is_complete_without_packages_or_presentation(tmp_path, monkeypatch, capsys, file_failure):
     import logging
@@ -73,6 +90,7 @@ def test_dependency_failure_is_complete_without_packages_or_presentation(tmp_pat
     assert cause in console and "direct cause" in console and "Dependencies could not load" in console
     assert outcome["failure"]["reason"] == "Dependencies could not load"
     assert outcome["failure"]["stage"] == "dependency_verification"
+    assert outcome["failure"]["activity"]["kind"] == "launcher_startup"
     text = (root / "logs/launcher.log").read_text(encoding="utf-8") if file_failure != "open" else ""
     if file_failure:
         assert not outcome["log_written"] and outcome["log_error"]

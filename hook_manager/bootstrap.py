@@ -17,6 +17,8 @@ def pulse(sources, digest, instance, game_root, request_json):
     import json
     from types import ModuleType
 
+    # Error metadata must never read readiness from an unverified foreign owner.
+    module, activity_provider = None, None
     try:
         if (
             sys.version_info[:2] != (3, 13)
@@ -33,6 +35,8 @@ def pulse(sources, digest, instance, game_root, request_json):
                 )
             if module.instance != instance and not module.manager.closed:
                 raise RuntimeError("Another bridge owns the active manager")
+            if module.instance == instance:
+                activity_provider = module.readiness.current_activity
         if module is None or module.instance != instance:
             module = ModuleType(name)
             for filename, source in sources.items():
@@ -44,12 +48,15 @@ def pulse(sources, digest, instance, game_root, request_json):
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
             module.readiness = module.NativeReadiness()
+            activity_provider = module.readiness.current_activity
+            module.activity_provider = activity_provider
+            module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             module.discovery = module.PackDiscovery(game_root)
             # Save metadata must survive even when no mod requests validation.
             module.manager.observe("managers.formula_regulation_governance",
                                    lambda imported: module.adapters.start_regulation_changes())
-            module.menu = module.MenuAdapter()
+            module.menu = module.MenuAdapter(observe_screen=module.readiness.observe_screen)
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)
             module.menu.set_loading(dict(state="loading", loaded=0, failed=0, total=0))
@@ -181,5 +188,6 @@ def pulse(sources, digest, instance, game_root, request_json):
         import traceback
 
         return json.dumps({"event": "error", "detail": str(error),
+                           "activity": activity_provider() if activity_provider is not None else None,
                            "traceback": "".join(traceback.TracebackException.from_exception(
                                error, max_group_width=float("inf"), max_group_depth=float("inf")).format())})

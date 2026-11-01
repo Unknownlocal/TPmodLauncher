@@ -120,7 +120,8 @@ try:
     attempts = []
     pid = next(iter(controller.sessions))
     controller.pack_mods[pid] = SimpleNamespace(career_preload=attempts.append, poll=lambda: None, close=lambda: None,
-        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None)
+        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None,
+        readiness_status=lambda status: None)
     current.request("await-regulations")
     deadline = time.monotonic() + 3
     while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:

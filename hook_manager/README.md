@@ -23,12 +23,16 @@ and theme adapters. A source digest and session token identify their owner and p
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
-`diagnostics.py` provides `build_log_record()` for short log records containing
-severity and relevant check or action details. Adapters hand them to
+`diagnostics.py` provides `build_log_record()` with short summaries, complete
+exception text, severity and relevant check or action details. Adapters hand them to
 `submit_log`; the bridge's `enqueue_log_record` callback holds them for delivery
 to the launcher's standard logger. `Manager.store_error()` separately retains
 recent error text for status checks. Mod `report` messages continue through their
 existing host operation and use INFO severity.
+
+Diagnostic records also carry cached career activity. This plain snapshot can be
+read by workers without inspecting game objects; later navigation cannot rewrite
+the context of an already-built record.
 
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
@@ -103,8 +107,8 @@ unfinished until that loading job's regulation activation succeeds. Input,
 drawing and screen transitions remain native. The existing loading message shows
 when regulation preparation is pending. Each attempt gets a new setup
 number, so a cancelled job's reply cannot release a retry of the same career.
-This adapter alone tracks which screen, career and loading job belong to the
-attempt. Setup checks those captured objects without searching the game's stack.
+This adapter owns loading approval for the captured screen, career and loading
+job. Setup checks those objects without searching the game's stack.
 Cleanup restores owned helper copies. For a pack with admitted regulation
 declarations, the launcher arms this adapter before enabling career selection.
 Changes in loading status reach the controller once; it prepares and activates
@@ -115,6 +119,10 @@ locally and reports departure; cancelled
 jobs also lose approval. The controller retires the old hooks once admitted work
 finishes, clears career rule data and prepares the next captured attempt. Mod
 instances, bound validators and their connection stay loaded between careers.
+
+The navigation observer also records menu, save-loading and loaded-career
+activity for diagnostics, even with no code mods. The menu adapter supplies the
+initial screen. This observation does not hold up loading or wrap its helper.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence

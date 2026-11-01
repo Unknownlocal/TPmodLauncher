@@ -11,7 +11,8 @@ import queue
 import time
 
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
-from launcher.diagnostics import bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, sync_log
+from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, sync_log
+from launcher.diagnostics.activity_tracker import ActivityTracker
 
 
 class LaunchError(RuntimeError):
@@ -75,6 +76,7 @@ class Controller:
         self.command = list(command)
         self.game = canonical(command[0])
         self.submit_log = bind_reporter(submit_log, component="controller")
+        self.activity = getattr(submit_log, "launch_activity", None) or ActivityTracker()
         self.restart_grace = restart_grace
         self.clock = clock
         self.events = queue.Queue()
@@ -130,6 +132,7 @@ class Controller:
             self.bridges.pop(pid, None)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
+        self.activity.attach(pid)
         if self.shutdown is not None:
             self.shutdown.track(pid)
         session = self.device.attach(pid)
@@ -253,6 +256,15 @@ class Controller:
             self._resume(child.pid)
 
     def _event(self, kind, value):
+        if kind in ("bridge", "detached"):
+            pid, session = value[:2]
+            if self.sessions.get(pid) is session:
+                event = value[2].get("payload", {}).get("event") if kind == "bridge" else None
+                with self.activity.focus(pid, native=event != "pack"):
+                    return self._process_event(kind, value)
+        return self._process_event(kind, value)
+
+    def _process_event(self, kind, value):
         # Each detached event carries its session identity; an old event cannot remove a new session.
         if kind == "child":
             self._child(value)
@@ -271,6 +283,7 @@ class Controller:
                 del self.sessions[pid]
                 self._close_mods(pid)
                 self.bridges.pop(pid, None)
+                self.activity.retire(pid)
         elif kind == "bridge" and not self.stopping:
             pid, session, message = value
             if self.sessions.get(pid) is not session:
@@ -282,9 +295,13 @@ class Controller:
             payload = message.get("payload", {})
             event = payload.get("event")
             if event == "error":
-                raise exception_from_record(
+                error = exception_from_record(
                     f"Hook manager failed for pid={pid}: {payload.get('detail', 'unknown error')}",
                     payload, LaunchError)
+                activity = self.activity.native_context(pid, payload.get("activity"))
+                if activity is not None:
+                    error.launcher_activity = activity
+                raise error
             if event == "manager":
                 status = payload.get("status", {})
                 if status.get("state") != "ready":
@@ -312,11 +329,15 @@ class Controller:
                 self.pack_mods[pid].themes_status(payload.get("status", {}))
             elif event == "career-preload" and pid in self.pack_mods:
                 self.pack_mods[pid].career_preload(payload.get("status", {}))
-            elif event == "readiness" and pid in self.pack_mods:
-                self.pack_mods[pid].readiness_status(payload.get("status", {}))
+            elif event == "readiness":
+                status = payload.get("status", {})
+                self.activity.observe(pid, status.get("activity"))
+                if pid in self.pack_mods:
+                    self.pack_mods[pid].readiness_status(status)
             elif event in ("waiting", "transport", "compatibility", "diagnostic"):
                 # The verified session owns the PID, regardless of report contents.
-                self.submit_log({**payload, "component": payload.get("component", "bridge"), "pid": pid,
+                self.submit_log({**payload, "activity": self.activity.native_context(pid, payload.get("activity")),
+                             "component": payload.get("component", "bridge"), "pid": pid,
                              "level": payload.get("level", "DEBUG" if event == "waiting" else "WARNING")})
         elif kind == "lost" and not self.stopping:
             raise LaunchError("The local Frida device was lost.")
@@ -330,8 +351,9 @@ class Controller:
         while not self.events.empty():
             self._event(*self.events.get_nowait())
         # Compilation futures do not hold up exit/exec handling; stores stay on this thread.
-        for scope in list(self.pack_mods.values()):
-            scope.poll()
+        for pid, scope in list(self.pack_mods.items()):
+            with self.activity.focus(pid):
+                scope.poll()
         now = self.clock()
         # Confirm process exits even if a detached notification is delayed or missing.
         if self.sessions and now >= self.next_check:
@@ -347,6 +369,7 @@ class Controller:
                     except Exception:
                         pass  # The process is gone; the handle may already be detached.
                     self.submit_log(f"EXITED pid={pid}")
+                    self.activity.retire(pid)
                 elif (
                     not live[pid].parameters.get("path")
                     or canonical(live[pid].parameters["path"]) != self.game
@@ -415,6 +438,8 @@ class Controller:
                 )
             )
         self.subscriptions.clear()
+        for pid in self.sessions:
+            self.activity.retire(pid)
         self.sessions.clear()
         self.bridges.clear()
         if self.cleanup_failed:
@@ -453,7 +478,8 @@ def run_launcher(
                                     restart_grace=restart_grace, bridge_factory=bridge_factory,
                                     mods_factory=mods_factory, shutdown=shutdown)
             try:
-                controller.start()
+                with activity_scope(logger, "game_loading"):
+                    controller.start()
                 stage = "controller"
                 while not shutdown.requested.is_set() and not controller.poll(timeout=0.25):
                     pass
@@ -471,18 +497,19 @@ def run_launcher(
                 code = 1
             finally:
                 stage = "cleanup"
-                try:
-                    controller.close()
-                    outcome["cleanup"] = "failed" if controller.cleanup_failed else "complete"
-                except BaseException:
-                    outcome["cleanup"] = "failed"
-                    shutdown.request()
-                    raise
-                if controller.cleanup_failed:
-                    if outcome["failure"] is None:
-                        handle_error(logger, RuntimeError("Controller cleanup did not complete; see errors above"),
-                                     stage="cleanup", shutdown=shutdown, component="controller")
-                    code = 1
+                with activity_scope(logger, "shutdown", pid=None):
+                    try:
+                        controller.close()
+                        outcome["cleanup"] = "failed" if controller.cleanup_failed else "complete"
+                    except BaseException:
+                        outcome["cleanup"] = "failed"
+                        shutdown.request()
+                        raise
+                    if controller.cleanup_failed:
+                        if outcome["failure"] is None:
+                            handle_error(logger, RuntimeError("Controller cleanup did not complete; see errors above"),
+                                         stage="cleanup", shutdown=shutdown, component="controller")
+                        code = 1
     except KeyboardInterrupt:
         logger.info("INTERRUPTED during controller setup or cleanup")
         code = 130
@@ -497,7 +524,8 @@ def run_launcher(
         if outcome["game_close"] == "pending":
             outcome["cleanup"] = "failed"
             if outcome["failure"] is None:
-                handle_error(logger, RuntimeError("Owned game exit could not be confirmed"), stage="cleanup", component="controller")
+                with activity_scope(logger, "shutdown", pid=None):
+                    handle_error(logger, RuntimeError("Owned game exit could not be confirmed"), stage="cleanup", component="controller")
             code = 1
         sync_log(logger)
     return code

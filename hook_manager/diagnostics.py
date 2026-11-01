@@ -3,6 +3,9 @@
 
 LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 CONTEXT = ("component", "pid", "scope", "operation", "mod")
+# The injected host supplies a cached plain-data reader. Workers never inspect
+# live game objects merely to construct a diagnostic record.
+activity_provider = None
 
 
 def single_line(value, limit=4096):
@@ -40,6 +43,8 @@ def build_log_record(level, detail, *, error=None, **context):
     """
     record = {"level": level, "detail": single_line(detail)}
     record.update((key, single_line(context[key], 128)) for key in CONTEXT if key in context)
+    if activity_provider is not None:
+        record["activity"] = activity_provider()
     if error is not None:
         record["traceback"] = error_text(error)
     return record

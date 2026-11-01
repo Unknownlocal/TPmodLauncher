@@ -52,7 +52,9 @@ def finish(scope, messages=()):
 
 
 def records(messages, event):
-    return [json.loads(line.split(": ", 1)[1]) for line in messages if line.startswith(f"CODE MOD {event}:")]
+    # Activity context and complete trace text can follow the event's JSON data.
+    return [json.JSONDecoder().raw_decode(line.split(": ", 1)[1])[0]
+            for line in messages if line.startswith(f"CODE MOD {event}:")]
 
 
 def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source_mod, code_mod, runner_bundle):
@@ -488,3 +490,36 @@ class WitWorld:
         assert list(scope.mods) == ["owned.b"] and scope.failed == 2
         assert scope._source_runner.closed and scope.menu.buttons == []
         assert progress[-1] == dict(state="complete", loaded=1, failed=2, total=3)
+
+
+@pytest.mark.parametrize("phase", ["manifest", "import", "activate"])
+def test_mod_failure_logs_the_actual_owner_or_shared_preparation(pack, source_mod, code_mod, runner_bundle, phase):
+    from launcher.diagnostics import reporter
+
+    game, folder, record = pack
+    code = ("raise RuntimeError('Owned import failure')\n" if phase == "import" else
+            "import wit_world\nclass WitWorld(wit_world.WitWorld):\n def activate(self): raise RuntimeError('Owned activation failure')\n")
+    failing = source_mod(folder, "a-failing", mod_id="owned.a", code=code)
+    if phase == "manifest":
+        (failing / "mod.toml").write_text("invalid = [", encoding="utf-8")
+    source_mod(folder, "b-peer", mod_id="owned.b")
+    code_mod(folder, "c-survivor", mod_id="owned.c")
+    path = game / "diagnostics.log"
+    with reporter(path) as logger, closing(PackMods(game, logger, runner_bundle=runner_bundle, background=True)) as scope:
+        scope.load(record)
+        finish(scope)
+        assert list(scope.mods) == (["owned.b", "owned.c"] if phase == "manifest" else ["owned.c"])
+        assert scope.failed == (1 if phase == "manifest" else 2)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    failed = next(line for line in lines if ("CODE MOD REJECTED:" if phase == "manifest" else "CODE MOD SOURCE GROUP FAILED:") in line)
+    context = json.loads(failed.partition(" activity=")[2])
+    assert context["kind"] == "mod_loading"
+    if phase == "manifest":
+        assert context["folder"] == "a-failing" and "mod" not in context
+        assert "Traceback (most recent call last)" in "\n".join(lines)
+    elif phase == "import":
+        assert context["owners"] == ["owned.a", "owned.b"] and "mod" not in context
+    else:
+        assert context["mod"] == "owned.a"
+    survived = next(line for line in lines if "CODE MOD ACTIVE:" in line and "owned.c" in line)
+    assert json.loads(survived.partition(" activity=")[2])["mod"] == "owned.c"

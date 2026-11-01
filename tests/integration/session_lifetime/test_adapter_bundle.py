@@ -21,6 +21,19 @@ def bridge():
     return factory(ROOT, None)(session, 0, lambda *args: None)
 
 
+def test_foreign_manager_keeps_its_original_ownership_error(monkeypatch):
+    from hook_manager.bootstrap import pulse
+
+    foreign = ModuleType("_tpm_hook_manager_host")
+    foreign.source_digest, foreign.readiness = "older sources", object()
+    monkeypatch.setitem(sys.modules, foreign.__name__, foreign)
+    monkeypatch.setattr(sys, "version_info", (3, 13))
+    result = json.loads(pulse({}, "owned sources", "owned session", "", '{"operation":"status"}'))
+    assert result["event"] == "error" and "different manager" in result["detail"]
+    assert "RuntimeError: A different manager" in result["traceback"]
+    assert result["activity"] is None and sys.modules[foreign.__name__] is foreign
+
+
 def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path):
     client = bridge()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]

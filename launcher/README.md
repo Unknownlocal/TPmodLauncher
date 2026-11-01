@@ -52,6 +52,12 @@ the cleanup results. The caller receives the final write result after the file
 has been synchronised and closed; the saved record cannot claim that its own
 write succeeded. No dialog is involved in logging.
 
+Activity context identifies launcher/game startup, an individual mod or shared
+loading group, save loading, and being inside a save. It follows actual host
+operations and native navigation/loading observations. Failures keep their
+original context through cleanup; old process or career updates cannot overwrite
+newer activity. This observation also runs for packs without code mods.
+
 `diagnostics/log_file_handler.py` retains file-write failures even when Python logging would
 normally suppress them. An unavailable log produces a console warning and a
 failed launch result. A duplicate launcher leaves the active log untouched and

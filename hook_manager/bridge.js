@@ -30,7 +30,7 @@ function detachTransport() {
 
 function fail(error) {
     failed = error;
-    send({ event: 'error', detail: String(error), traceback: error.traceback || error.stack });
+    send({ event: 'error', detail: String(error), traceback: error.traceback || error.stack, activity: error.activity });
     if (pending) { pending.reject(error); pending = null; }
     setImmediate(detachTransport);
 }
@@ -130,6 +130,7 @@ observer = Process.attachModuleObserver({
                         if (response.event !== 'manager') {
                             const error = new Error(response.detail || 'Invalid manager response');
                             error.traceback = response.traceback;
+                            error.activity = response.activity;
                             throw error;
                         }
                         if (!ready) {

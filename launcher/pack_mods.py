@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Discover and own sandboxed code mods for one process's selected Formula pack."""
 
-from launcher.diagnostics import bind_reporter
+from launcher.diagnostics import activity_scope, bind_reporter
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -275,8 +275,9 @@ class PackMods:
             return
         self._source_reported = True
         self.failed += len(self._sources)
-        detail = str(detail)[:512]
-        self._log("SOURCE GROUP FAILED", level="ERROR", owners=list(self._sources), detail=detail)
+        error, detail = detail, str(detail)[:512]
+        self._log("SOURCE GROUP FAILED", level="ERROR", owners=list(self._sources), detail=detail,
+                  error=error)
         # The group error identifies its owners; individual details use DEBUG.
         for owner, candidate in self._sources.items():
             self._log("REJECTED", level="DEBUG", id=owner, folder=candidate.root.name, detail=detail)
@@ -525,38 +526,39 @@ class PackMods:
 
     def _load_sources(self):
         """Prepare one fixed source group; only this controller creates its Store."""
-        timings = {}
-        try:
-            members = tuple((item.root, item.manifest) for item in self._sources.values())
-            with SourcePreparation(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
-                result = None
-                with measure(timings, "source_prepare"):
-                    while result is None:
-                        result = job.take()
-                        if result is None:
-                            yield
-            with result:
-                timings.update(result.timings)
-                if result.compiled.cache_status is not None:
-                    self._log("CACHE", owners=list(self._sources), **result.compiled.cache_status)
-                providers = {}
-                for owner, candidate in self._sources.items():
-                    if "ui-settings" in candidate.manifest.capabilities:
-                        self.settings.bind(owner, candidate.root)
-                    operations = _host_operations(candidate.manifest, self._submit_mod_log,
-                                                  self.menu.add if self.set_menu is not None else None,
-                                                  self.settings.call, self.themes.register)
-                    providers[owner] = {name: operation.callback for name, operation in operations.items()}
-                # Every peer's files are available before the first import. Entry
-                # imports happen together; activation below keeps pack ID order.
-                with measure(timings, "source_load"):
-                    self._source_runner = SharedPythonRunner(self.runner_bundle, result.snapshots, providers,
-                                                             cleanup=self._remove_sources,
-                                                             prepared=result.compiled, timings=timings)
-                self._source_entries = {snapshot.manifest.id: SharedSourceMod(self._source_runner, snapshot)
-                                        for snapshot in result.snapshots}
-        finally:
-            self._log("SOURCE GROUP TIMING", owners=list(self._sources), phase_seconds=timings)
+        with activity_scope(self.submit_log, "mod_loading", owners=sorted(self._sources)):
+            timings = {}
+            try:
+                members = tuple((item.root, item.manifest) for item in self._sources.values())
+                with SourcePreparation(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
+                    result = None
+                    with measure(timings, "source_prepare"):
+                        while result is None:
+                            result = job.take()
+                            if result is None:
+                                yield
+                with result:
+                    timings.update(result.timings)
+                    if result.compiled.cache_status is not None:
+                        self._log("CACHE", owners=list(self._sources), **result.compiled.cache_status)
+                    providers = {}
+                    for owner, candidate in self._sources.items():
+                        if "ui-settings" in candidate.manifest.capabilities:
+                            self.settings.bind(owner, candidate.root)
+                        operations = _host_operations(candidate.manifest, self._submit_mod_log,
+                                                      self.menu.add if self.set_menu is not None else None,
+                                                      self.settings.call, self.themes.register)
+                        providers[owner] = {name: operation.callback for name, operation in operations.items()}
+                    # Every peer's files are available before the first import. Entry
+                    # imports happen together; activation below keeps pack ID order.
+                    with measure(timings, "source_load"):
+                        self._source_runner = SharedPythonRunner(self.runner_bundle, result.snapshots, providers,
+                                                                 cleanup=self._remove_sources,
+                                                                 prepared=result.compiled, timings=timings)
+                    self._source_entries = {snapshot.manifest.id: SharedSourceMod(self._source_runner, snapshot)
+                                            for snapshot in result.snapshots}
+            finally:
+                self._log("SOURCE GROUP TIMING", owners=list(self._sources), phase_seconds=timings)
 
     def _load(self, pack):
         """Keep guest calls serial while yielding during worker preparation."""
@@ -582,7 +584,7 @@ class PackMods:
         for path in candidates:
             timings = {}
             try:
-                with measure(timings, "manifest"):
+                with measure(timings, "manifest"), activity_scope(self.submit_log, "mod_loading", folder=path.name):
                     root, manifest = self._manifest(path)
                     # Recheck after resolution in case a parent changed during discovery.
                     if root.parent != folder:
@@ -596,6 +598,7 @@ class PackMods:
                     "REJECTED", level="WARNING",
                     folder=path.name,
                     detail=str(error)[:512],
+                    error=error,
                     phase_seconds=timings,
                 )
         counts = Counter(item.manifest.id for item in candidates_read)
@@ -637,41 +640,43 @@ class PackMods:
                 continue  # The fixed group's failure already counted and logged every member.
             prepared = None
             try:
-                if type(manifest) is SourceManifest:
-                    if self._source_runner is None:
-                        yield from self._load_sources()
-                    mod = self._source_entries[manifest.id]
-                elif self.background:
-                    self.pending = self._executor().submit(_read_component, manifest, timings)
-                    while not self.pending.done():
-                        yield
-                    future = self.pending
-                    self.pending = None
-                    prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
-                    while not prepared.poll():
-                        yield
-                elif self.cache is not None:
-                    prepared = CompiledMod(_read_component(manifest, timings), timings, cache=self.cache)
-                if prepared is not None and prepared.cache_status is not None:
-                    self._log("CACHE", id=manifest.id, **prepared.cache_status)
-                if type(manifest) is not SourceManifest:
+                with activity_scope(self.submit_log, "mod_loading", mod=manifest.id):
+                    if type(manifest) is SourceManifest:
+                        if self._source_runner is None:
+                            yield from self._load_sources()
+                        mod = self._source_entries[manifest.id]
+                    elif self.background:
+                        self.pending = self._executor().submit(_read_component, manifest, timings)
+                        while not self.pending.done():
+                            yield
+                        future = self.pending
+                        self.pending = None
+                        prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
+                        while not prepared.poll():
+                            yield
+                    elif self.cache is not None:
+                        prepared = CompiledMod(_read_component(manifest, timings), timings, cache=self.cache)
+                    if prepared is not None and prepared.cache_status is not None:
+                        self._log("CACHE", id=manifest.id, **prepared.cache_status)
+                    if type(manifest) is not SourceManifest:
+                        if "ui-settings" in manifest.capabilities:
+                            self.settings.bind(manifest.id, candidate.root)
+                        mod = Mod(manifest, submit_log=self._submit_mod_log,
+                                  menu=self.menu.add if self.set_menu is not None else None,
+                                  settings=self.settings.call, theme=self.themes.register,
+                                  cleanup=lambda owner=manifest.id: self._remove_mod(owner),
+                                  timings=timings, prepared=prepared)
+                    # Retain ownership before activation so interruption can still close this instance.
+                    self.mods[manifest.id] = mod
+                    with measure(timings, "activate"):
+                        mod.activate()
+                    if "main-menu" in manifest.capabilities:
+                        with measure(timings, "registration"):
+                            self._flush_menu()
                     if "ui-settings" in manifest.capabilities:
-                        self.settings.bind(manifest.id, candidate.root)
-                    mod = Mod(manifest, submit_log=self._submit_mod_log,
-                              menu=self.menu.add if self.set_menu is not None else None,
-                              settings=self.settings.call, theme=self.themes.register,
-                              cleanup=lambda owner=manifest.id: self._remove_mod(owner),
-                              timings=timings, prepared=prepared)
-                # Retain ownership before activation so interruption can still close this instance.
-                self.mods[manifest.id] = mod
-                with measure(timings, "activate"):
-                    mod.activate()
-                if "main-menu" in manifest.capabilities:
-                    with measure(timings, "registration"):
-                        self._flush_menu()
-                if "ui-settings" in manifest.capabilities:
-                    self._flush_settings()
-                    self._flush_themes()
+                        self._flush_settings()
+                        self._flush_themes()
+                    self._log("ACTIVE", id=manifest.id, version=manifest.version)
             except Exception as error:
                 if type(manifest) is SourceManifest:
                     self._reject_sources(error)
@@ -694,8 +699,6 @@ class PackMods:
                             flush()
                         except Exception as cleanup_error:
                             self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, detail=str(cleanup_error)[:512], error=cleanup_error)
-            else:
-                self._log("ACTIVE", id=manifest.id, version=manifest.version)
             finally:
                 if prepared is not None:
                     prepared.close()  # An adopted result has already transferred its resources.

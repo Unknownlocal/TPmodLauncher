@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Write runtime diagnostics through one standard console/file configuration."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 from functools import partial
 import importlib.util
 import json
@@ -14,6 +15,7 @@ import uuid
 if __package__:
     from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text
     from .log_file_handler import LogFileHandler
+    from .activity_tracker import ActivityTracker
 else:
     # Entry needs only these standard-library sources before dependency/package
     # setup. Fixed paths avoid adding the game or an unverified package to sys.path.
@@ -28,6 +30,17 @@ else:
     CONTEXT, LEVELS = _records.CONTEXT, _records.LEVELS
     build_log_record, error_text = _records.build_log_record, _records.error_text
     LogFileHandler = _load_source(_folder / "log_file_handler.py").LogFileHandler
+    ActivityTracker = _load_source(_folder / "activity_tracker.py").ActivityTracker
+
+
+def activity_scope(sink, kind, **context):
+    """Use the logger's tracker without requiring text-only observers to own one."""
+    if isinstance(sink, partial) and sink.func is write_log:
+        context = {**sink.keywords, **context}
+        sink = sink.args[0]
+    context = {key: value for key, value in context.items() if key in ("pid", "mod", "owners", "folder")}
+    tracker = getattr(sink, "launch_activity", None)
+    return tracker.scope(kind, **context) if tracker is not None else nullcontext()
 
 
 @contextmanager
@@ -61,11 +74,19 @@ def _store_log_error(logger, error):
     outcome["log_written"] = False
     if outcome["log_error"] is None:
         outcome["log_error"] = error_text(error)
+        tracker = getattr(logger, "launch_activity", None)
+        outcome["log_activity"] = tracker.snapshot() if tracker is not None else None
         try:
             print("Launcher log could not be completed: " + str(outcome["log_path"])
                   + "\n" + outcome["log_error"], file=sys.stderr, flush=True)
         except (OSError, ValueError):
             pass  # A closed console cannot report this; retain the write result.
+
+
+def _build_logging_failure(outcome):
+    """Describe file failure only after the primary operation has had its say."""
+    return {"reason": "Launcher log could not be completed", "stage": "logging", "level": "ERROR",
+            "activity": deepcopy(outcome.get("log_activity"))}
 
 
 def sync_log(logger):
@@ -116,7 +137,10 @@ def handle_error(sink, error, *, message="LAUNCHER ERROR", level="ERROR", stage=
     if outcome is not None and outcome["failure"] is None:
         # Store plain values only. Keeping an exception would retain its frames
         # and game objects, and cleanup must not replace the original failure.
-        outcome["failure"] = {"reason": str(error), "stage": stage, "level": level}
+        tracker = getattr(sink, "launch_activity", None)
+        activity = getattr(error, "launcher_activity", None) or (tracker.snapshot() if tracker is not None else
+                    {"kind": "launcher_startup", "description": "while starting the launcher"})
+        outcome["failure"] = {"reason": str(error), "stage": stage, "level": level, "activity": deepcopy(activity)}
     try:
         write_log(sink, message + ": " + str(error), level=level, error=error, **context)
     finally:
@@ -151,7 +175,12 @@ def write_log(sink, value, *, level="INFO", error=None, **context):
     if type(level) is not str or level not in LEVELS:
         level, detail = "WARNING", f"Invalid diagnostic severity; {detail}"
     record = build_log_record(level, detail, error=error, **context)
+    tracker = getattr(sink, "launch_activity", None)
+    supplied = value.get("activity") if type(value) is dict else None
+    activity = getattr(error, "launcher_activity", None) or supplied or (tracker.snapshot(context.get("pid")) if tracker is not None else None)
     message = record["detail"]
+    if activity is not None:
+        message += " activity=" + json.dumps(activity, ensure_ascii=True)
     if type(value) is dict and "traceback" in value:
         record["traceback"] = error_text(value["traceback"])
     if "traceback" in record:
@@ -178,11 +207,13 @@ def reporter(path, *, outcome=None):
     logger = logging.getLogger("modLauncher")
     previous = logger.level, logger.propagate
     previous_outcome = getattr(logger, "launch_outcome", None)
+    previous_activity = getattr(logger, "launch_activity", None)
     if outcome is None:
         outcome = {}
     if not outcome:
         outcome.update(build_launch_outcome(path))
     logger.launch_outcome = outcome
+    logger.launch_activity = ActivityTracker(lambda message: logger.info("%s", message))
     logger.setLevel(logging.INFO)
     logger.propagate = False
     handlers = []
@@ -202,7 +233,7 @@ def reporter(path, *, outcome=None):
         try:
             sync_log(logger)
             if outcome["failure"] is None and outcome["log_error"] is not None:
-                outcome["failure"] = {"reason": "Launcher log could not be completed", "stage": "logging", "level": "ERROR"}
+                outcome["failure"] = _build_logging_failure(outcome)
             if outcome["failure"] is not None:
                 # A file cannot certify its own final sync/close. Persist failure
                 # and cleanup details; only the returned outcome records the final
@@ -217,12 +248,18 @@ def reporter(path, *, outcome=None):
                     handler.close()
                 except (OSError, ValueError) as error:
                     _store_log_error(logger, error)
+            if outcome["failure"] is None and outcome["log_error"] is not None:
+                outcome["failure"] = _build_logging_failure(outcome)
             logger.setLevel(previous[0])
             logger.propagate = previous[1]
             if previous_outcome is None:
                 del logger.launch_outcome
             else:
                 logger.launch_outcome = previous_outcome
+            if previous_activity is None:
+                del logger.launch_activity
+            else:
+                logger.launch_activity = previous_activity
 
 
 def build_launch_outcome(path):

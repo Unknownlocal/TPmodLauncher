@@ -95,18 +95,20 @@ def main(argv=None, *, outcome=None) -> int:
 def _run(root, arguments, command, logger, lock_path, log_path):
     """Verify and run within the already-owned log; presentation is independent."""
     try:
-        frida = _dependencies.import_dependencies(root)
+        with _diagnostics.activity_scope(logger, "launcher_startup"):
+            frida = _dependencies.import_dependencies(root)
     except Exception as error:
         _diagnostics.handle_error(logger, error, message="Dependency verification failed",
                                   stage="dependency_verification", component="startup")
         return 1
     try:
         # Source locations are trusted only after the dependency setup is verified.
-        _dependencies.load_source_packages(root)
-        from mod_runtime import ABI_VERSION, RunnerBundle
-        from mod_runtime.bundle import DIRECTORY
+        with _diagnostics.activity_scope(logger, "launcher_startup"):
+            _dependencies.load_source_packages(root)
+            from mod_runtime import ABI_VERSION, RunnerBundle
+            from mod_runtime.bundle import DIRECTORY
 
-        runner_bundle = RunnerBundle(root / DIRECTORY)
+            runner_bundle = RunnerBundle(root / DIRECTORY)
     except Exception as error:
         _diagnostics.handle_error(logger, error, message="Python runner verification failed",
                                   stage="runner_verification", component="startup")
