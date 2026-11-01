@@ -109,6 +109,7 @@ class MenuAdapter:
         self.loading = None
         self.deadline = 0
         self.timed_out = False
+        self.changed = None
 
     def _main(self):
         if threading.current_thread() is not threading.main_thread():
@@ -129,8 +130,10 @@ class MenuAdapter:
         if self.loading is None:
             return False
         pending = self.loading["state"] == "loading" or self.state != "ready"
-        if pending and time.monotonic() > self.deadline:
+        if pending and not self.timed_out and time.monotonic() > self.deadline:
             self.timed_out = True
+            if self.changed is not None:
+                self.changed()
         return pending or self.timed_out
 
     def _season_blocked(self, item):

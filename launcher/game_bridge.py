@@ -23,7 +23,8 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "native_activity", "career_preload", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "import_handover", "native_events",
+    "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -60,6 +61,7 @@ class Bridge:
         self.lock = threading.Lock()
         self.journal = journal
         self.reporting = reporting
+        self.event_sequences = {}
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
         )
@@ -137,7 +139,7 @@ class Bridge:
     def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
                 regulations=None, prerequisites=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "prerequisites", "adapters", "regulation-defaults",
+        if operation not in ("status", "changes", "shutdown", "menu", "loading", "settings", "themes", "prerequisites", "adapters", "regulation-defaults",
                              "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
         if operation == "prerequisites":

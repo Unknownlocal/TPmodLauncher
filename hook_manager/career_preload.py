@@ -28,6 +28,7 @@ class CareerPreload(Manager):
         super().__init__(lambda record: None)
         self.generation, self._pending, self._allowed = 0, None, False
         self._left, self._leaving = False, leaving
+        self.changed = None
         self._navigation, self._owns_navigation = navigation or NativeReadiness(), navigation is None
         try:
             helper = CallableTarget("career.preload.helper", "ui.session_preload", (),
@@ -79,6 +80,8 @@ class CareerPreload(Manager):
                        for row in self.groups.values() for owner, attribute, _, wrapper, _ in row["changes"])):
             raise HookError("Career preloading no longer owns the loading attempt")
         self._allowed = True
+        if self.changed is not None:
+            self.changed()
 
     def loading_status(self):
         """Return one attempt number, never its screen, job or career objects."""
@@ -96,6 +99,8 @@ class CareerPreload(Manager):
         if self._pending is not None and not self._left:
             self._left, self._allowed = True, False
             self._leaving()  # Trusted adapter callback; no IPC or mod execution.
+            if self.changed is not None:
+                self.changed()
 
     def poll(self):
         """Finish normal imports on the main thread; a failed alias restores the set."""
@@ -103,7 +108,7 @@ class CareerPreload(Manager):
             self._navigation.poll()
             super().poll()
             if not self._navigation.navigation_intact:
-                self.store_error("Career navigation observation became unavailable")
+                self._store_and_submit_error("Career navigation observation became unavailable")
             if self.errors:
                 self.stop()
             elif self._pending is not None and not self._allowed and not self._left:
@@ -157,6 +162,8 @@ class CareerPreload(Manager):
                     self._pending = tuple(weakref.ref(value) for value in (screen, state, job, manager))
                     self._left = False
                     self._allowed = False
+                    if self.changed is not None:
+                        self.changed()
                     try:
                         screen._on_loading_status("Preparing regulation checks...", 0, 1)
                     except Exception:

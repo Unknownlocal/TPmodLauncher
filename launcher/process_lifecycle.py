@@ -197,13 +197,52 @@ class Controller:
                 journal_error = error
                 fallback = getattr(bridge, "drain_fallback", None)
                 records = fallback() if callable(fallback) else []
+            changes, protocol_errors = [], []
+            def invalid_record(record, detail):
+                journal = getattr(bridge, "journal", None)
+                if journal is not None:
+                    journal.retained = True
+                protocol_errors.append(LaunchError(detail + ": " + json.dumps(record, ensure_ascii=True)))
             for record in records:
-                self._event("bridge", (pid, session, {"type": "send", "payload": {**record, "event": "native-activity"}}))
+                if type(record) is not dict:
+                    invalid_record(record, "Expected a native journal record")
+                    continue
+                event = record.get("event", "native-activity")
+                if event not in ("native-activity", "diagnostic", "readiness", "pack", "menu", "settings", "themes", "career-preload", "native-service"):
+                    invalid_record(record, "Unknown native journal event")
+                    continue
+                sequence = record.get("event_sequence")
+                if sequence is not None and (type(sequence) is not int or sequence <= 0):
+                    invalid_record(record, "Invalid native change sequence")
+                    continue
+                if (event in ("readiness", "menu", "settings", "themes", "career-preload") and type(record.get("status")) is not dict
+                        or event == "pack" and type(record.get("pack")) is not dict):
+                    invalid_record(record, "Invalid native change data")
+                    continue
+                if event in ("native-activity", "diagnostic") and (
+                        type(record.get("detail")) is not str
+                        or "fatal" in record and type(record["fatal"]) is not bool
+                        or "reason" in record and type(record["reason"]) is not str):
+                    invalid_record(record, "Invalid native diagnostic data")
+                    continue
+                message = {"type": "send", "payload": {**record, "event": event}}
+                if event in ("native-activity", "diagnostic"):
+                    self._event("bridge", (pid, session, message))
+                else:
+                    changes.append(message)
+            for error in protocol_errors:
+                self.submit_log("NATIVE JOURNAL EVENT FAILED", level="ERROR", error=error, pid=pid)
+            if journal_error is not None and (protocol_errors or self.native_failure is not None and not self.stopping):
+                self.submit_log("NATIVE JOURNAL READ FAILED", level="ERROR", error=journal_error, pid=pid)
             if self.native_failure is not None and not self.stopping:
-                if journal_error is not None:
-                    self.submit_log("NATIVE JOURNAL READ FAILED", level="ERROR", error=journal_error, pid=pid)
                 failure, self.native_failure = self.native_failure, None
                 raise self.build_native_error(failure)
+            if protocol_errors:
+                raise protocol_errors[0]
+            # Preserve complete errors before a change triggers mod preparation
+            # or a main-thread request, either of which may itself fail or wait.
+            for message in changes:
+                self._event("bridge", (pid, session, message))
             if journal_error is not None:
                 raise journal_error
 
@@ -222,7 +261,7 @@ class Controller:
 
     @staticmethod
     def build_native_error(record):
-        error = exception_from_record("Game operation failed: " + record.get("reason", record["detail"]), record, LaunchError)
+        error = exception_from_record("Game operation failed: " + record.get("reason", record.get("detail", "Unknown native error")), record, LaunchError)
         error.launcher_activity = record["activity"]
         return error
 
@@ -339,12 +378,27 @@ class Controller:
                 return  # A delayed message cannot describe a replacement's manager.
             payload = message.get("payload", {})
             event = payload.get("event")
-            if self.stopping and event not in ("native-activity", "journal-ready", "reporting-closed"):
+            if self.stopping and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed"):
                 return
             if message.get("type") == "error":
                 raise exception_from_record(
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
+            sequence = payload.get("event_sequence")
+            bridge = self.bridges.get(pid)
+            if sequence is not None:
+                if type(sequence) is not int or sequence <= 0:
+                    journal = getattr(bridge, "journal", None)
+                    if journal is not None:
+                        journal.retained = True
+                    raise LaunchError("Invalid native change sequence: " + json.dumps(payload, ensure_ascii=True))
+                previous = bridge.event_sequences.get(event, 0)
+                if sequence <= previous:
+                    return
+                bridge.event_sequences[event] = sequence
+            if event == "native-service":
+                bridge.request("changes")
+                return
             if event in ("journal-ready", "reporting-closed"):
                 if event == "reporting-closed":
                     journal = getattr(self.bridges.get(pid), "journal", None)

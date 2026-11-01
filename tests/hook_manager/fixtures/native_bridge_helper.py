@@ -53,6 +53,11 @@ utils.active_data_pack = active_data_pack
 utils._ACTIVE_PACK_CACHE = {"owned-default": "owned pack"}
 sys.modules["utils"] = utils
 _CONSTANTS_LOADED = True
+# The real entry script imports the hub after setting this marker. Its import
+# completion, rather than a later status pulse, discovers the fixed startup pack.
+sys.path.insert(0, str(Path(__file__).parent))
+hub = importlib.import_module("ui.screens.hub_screen")
+HubScreen = hub.HubScreen
 while host.discovery.snapshot is None and time.monotonic() < deadline:
     time.sleep(0.02)
 assert host.discovery.snapshot is not None, "Bridge did not discover the startup pack"
@@ -61,9 +66,6 @@ utils._ACTIVE_PACK_CACHE.clear()
 
 
 # Normal import exercises the readiness observer before this first menu consumer.
-sys.path.insert(0, str(Path(__file__).parent))
-hub = importlib.import_module("ui.screens.hub_screen")
-HubScreen = hub.HubScreen
 # A disposable loading job lets the client check status-change delivery through
 # the real JavaScript bridge. It performs no actual game or asset work.
 preload_module = ModuleType("ui.session_preload")
@@ -99,6 +101,7 @@ theme, packs = modules(Path(__file__).with_name("palette.py"), theme_path)
 sys.modules[theme.__name__], sys.modules[packs.__name__] = theme, packs
 options.COLOR_PACKS = packs.COLOR_PACKS
 host.themes.poll()  # Native post-import arm precedes background mod registration.
+host.events.imported(host.manager)  # Model completed imports for the synthetic modules above.
 assert host.themes.placeholder is not None
 original_palette_getitem = packs.ChromePalette.__getitem__
 original_menu = hub.ORIGINAL_METHODS["_activate"]

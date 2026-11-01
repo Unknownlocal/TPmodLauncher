@@ -64,6 +64,10 @@ Game callbacks enqueue journal records in memory. A separate diagnostics worker
 handles traceback formatting, encoding and file I/O without holding activity
 locks. The game does not wait for the worker during normal play or status reads.
 Final process termination has a shared one-second drain allowance.
+`hook_manager.native_events.NativeEvents` publishes actual import, navigation,
+loading, settings and compatibility changes through the same queue. The bridge's
+ordinary status replies use cached values. Worker imports and completed guarded
+operations request one main-thread entry when deferred hooks need installation.
 An independent sender notifies a waiting launcher receiver when journal data is
 available. The controller reads it on events and final process cleanup, without
 periodic file checks. Journal failures carry their complete records over the
@@ -200,8 +204,9 @@ schema conversion and admission; regulations is the first consumer.
 It reuses decisions until active mods, native module availability or career and
 regulation readiness change. Held declarations stay private; unrelated UI is
 published normally. The native `NativeReadiness` adapter observes completed
-imports and shares navigation ownership with career loading. Status changes use
-the existing bridge pulses, without mod callbacks or extra worker threads.
+imports and shares navigation ownership with career loading. Native changes
+arrive through journal events without mod callbacks. Imports already running
+when observation starts use a background import-lock wait for completion.
 
 `ui_settings.py` validates labelled colour fields and binds each mod to its fixed
 `settings.json`. `_settings_files.py` pins ordinary directories and uses atomic

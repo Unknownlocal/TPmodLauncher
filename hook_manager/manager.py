@@ -133,6 +133,8 @@ class _Loader:
         # Worker imports wait for the next main-thread poll rather than installing from that worker.
         if threading.current_thread() is threading.main_thread():
             self.manager.poll()
+        elif self.manager.events is not None:
+            self.manager.events.imported(self.manager)
 
     def __getattr__(self, name):
         return getattr(self.original, name)
@@ -171,6 +173,8 @@ class _Finder:
 class Manager:
     """Register approved targets and restore the wrappers owned by each hook group."""
 
+    event_sink = None  # Set only by this trusted private bootstrap scope.
+
     def __init__(self, dispatch=None):
         # dispatch is a trusted host adapter used by synthetic tests; no mod loader supplies it.
         self.dispatch = dispatch
@@ -184,6 +188,9 @@ class Manager:
         self.errors = []
         self.error_record = None
         self.closed = False
+        self.events = self.event_sink
+        if self.events is not None:
+            self.events.bind(self)
 
     def _main(self):
         # Registration and restoration must happen on the game's Python main thread.
@@ -198,6 +205,13 @@ class Manager:
         self.error_record = build_log_record("ERROR", str(error), error=error)
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
+
+    def _store_and_submit_error(self, error):
+        self.store_error(error)
+        # Overrides with their own submission retain their chosen severity and
+        # detail. Publishing the base record too would duplicate compatibility errors.
+        if self.events is not None and type(self).store_error is Manager.store_error:
+            self.events.submit_log(self.error_record)
 
     def approve(self, target):
         """Add a host-owned target descriptor without importing or changing its module."""
@@ -227,6 +241,8 @@ class Manager:
             sys.meta_path.insert(0, self.finder)
         elif not self.wanted and self.finder in sys.meta_path:
             sys.meta_path.remove(self.finder)
+        if self.events is not None:
+            self.events.watch_imports(self.wanted)
 
     def observe(self, module, callback):
         """Run a trusted one-shot adapter after a normal module import, before its consumer."""
@@ -380,7 +396,7 @@ class Manager:
         group = self.groups[name]
         group["state"] = "failed" if error is not None else "removed"
         if error is not None:
-            self.store_error(error)
+            self._store_and_submit_error(error)
         for owner, attribute, raw, installed, local in reversed(group["changes"]):
             try:
                 current = inspect.getattr_static(owner, attribute)
@@ -395,7 +411,7 @@ class Manager:
                 else:
                     delattr(owner, attribute)
             except Exception as failure:
-                self.store_error(failure)
+                self._store_and_submit_error(failure)
         group["changes"].clear()
         self._watch()
 
@@ -410,6 +426,7 @@ class Manager:
     def poll(self):
         """Install ready pending groups while preserving normal import failures and game behavior."""
         self._main()
+        before = (tuple(self.observers), tuple(group["state"] for group in self.groups.values()), len(self.errors))
         for module in tuple(self.rejected):
             self._reject_pending(module)
         self.rejected.clear()
@@ -424,7 +441,7 @@ class Manager:
                         self.observers.pop(name, None)
                 except Exception as error:
                     self.observers.pop(name, None)
-                    self.store_error(error)
+                    self._store_and_submit_error(error)
         for name, group in list(self.groups.items()):
             if group["state"] == "pending":
                 try:
@@ -432,11 +449,15 @@ class Manager:
                 except Exception as error:
                     self._disable(name, error)
         self._watch()
+        if self.events is not None and before != (tuple(self.observers), tuple(group["state"] for group in self.groups.values()), len(self.errors)):
+            self.events.manager_changed(self)
         return self.status()
 
     def reject_module(self, module):
         # A worker's loader can report failure, but only the main thread may restore hooks.
         self.rejected.add(module)
+        if self.events is not None and threading.current_thread() is not threading.main_thread():
+            self.events.imported(self)
         if threading.current_thread() is threading.main_thread():
             self._reject_pending(module)
             self.rejected.discard(module)

@@ -46,10 +46,8 @@ class NativeActivity(Manager):
         self._exception_hook = sys.excepthook
         def unhandled(kind, error, traceback):
             try:
-                if hasattr(error, "launcher_activity"):
-                    record = build_log_record("CRITICAL", str(error), component="activity")
-                    record["activity"] = dict(error.launcher_activity)
-                    self.submit_log({**record, "reason": str(error), "fatal": True}, error=error)
+                if not isinstance(error, (SystemExit, KeyboardInterrupt)):
+                    self.store_exception(error, fatal=True)
                     self.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
             except Exception:
                 pass  # Diagnostic formatting must not replace the native exception hook.
@@ -57,6 +55,16 @@ class NativeActivity(Manager):
                 self._exception_hook(kind, error, traceback)
         self._unhandled = unhandled
         sys.excepthook = unhandled
+        self._thread_hook = threading.excepthook
+        def worker_unhandled(args):
+            try:
+                self.store_exception(args.exc_value)
+            except Exception:
+                pass
+            finally:
+                self._thread_hook(args)
+        self._worker_unhandled = worker_unhandled
+        threading.excepthook = worker_unhandled
         for name, module, owner, method, signature in self.TARGETS:
             target = CallableTarget("activity." + name, module, (owner,), method, signature)
             self.approve(target)
@@ -79,6 +87,21 @@ class NativeActivity(Manager):
             if self.closed:
                 return
             self.writer.enqueue_log_record(record, self.journal, failure)
+
+    def store_exception(self, error, *, fatal=False):
+        """Keep generic failures and frozen context; a worker failure alone is not fatal."""
+        if error is None or isinstance(error, (SystemExit, KeyboardInterrupt)):
+            return
+        if fatal and getattr(error, "_launcher_fatal_logged", False):
+            return
+        if not hasattr(error, "launcher_activity"):
+            error.launcher_activity = self.current_activity()
+        record = build_log_record("CRITICAL" if fatal else "ERROR", str(error), component="activity")
+        record["activity"] = dict(error.launcher_activity)
+        if fatal:
+            record.update(reason=str(error), fatal=True)
+            error._launcher_fatal_logged = True
+        self.submit_log(record, error=error)
 
     def group_intact(self, name):
         """Accept later native decorators that still call our installed observer."""
@@ -201,6 +224,8 @@ class NativeActivity(Manager):
         super().stop()
         if sys.excepthook is self._unhandled:
             sys.excepthook = self._exception_hook
+        if threading.excepthook is self._worker_unhandled:
+            threading.excepthook = self._thread_hook
         with self._lock:
             self._operations.clear()
             self.writer.close()

@@ -77,5 +77,4 @@ class ProjectCallers:
             return original(*bound.args, **bound.kwargs)
         finally:
             guards._local.project_caller = previous
-            with guards._lock:
-                guards._active -= 1
+            guards._operation_finished()

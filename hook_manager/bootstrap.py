@@ -16,7 +16,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         return "WAIT: other thread"
     # The new background transport must not re-enter a standard-library module
     # whose import we interrupted. Later control/status sources reuse this scope.
-    for dependency in ("socket", "_socket", "select", "selectors", "struct", "_struct"):
+    for dependency in ("socket", "_socket", "select", "selectors", "struct", "_struct", "copy"):
         if getattr(getattr(sys.modules.get(dependency), "__spec__", None), "_initializing", False):
             return "WAIT: reporting dependency is importing"
     import json
@@ -56,9 +56,11 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             activity_provider = module.readiness.current_activity
             module.activity_provider = activity_provider
             module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
-            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
             journal = module.ActivityJournal(journal_path) if journal_path is not None else None
             module.activity = module.NativeActivity(module.readiness, journal, reporting_endpoint)
+            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES,
+                lambda record: module.events.submit_log(record) if hasattr(module, "events")
+                else module.activity.submit_log({**record, "event": "diagnostic"}))
             activity_provider = module.activity.current_activity
             module.activity_provider = activity_provider
             module.discovery = module.PackDiscovery(game_root)
@@ -69,21 +71,30 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)
             module.menu.set_loading(dict(state="loading", loaded=0, failed=0, total=0))
+            module.events = module.NativeEvents(module)
             module.manager.observe(
                 "ui.screens.hub_screen",
-                lambda imported: module.menu.poll(imported)["state"] != "pending",
+                module.events.ready_ui,
             )
             module.manager.observe(
                 "ui.screens.options_screen",
-                lambda imported: all(status["state"] != "pending" for status in (
-                    module.themes.poll(imported), module.settings.poll(imported),
-                )),
+                module.events.ready_ui,
             )
             for target in ("ui.color_packs", "ui.theme"):
-                module.manager.observe(target, lambda imported: module.themes.poll(imported)["state"] != "pending")
+                module.manager.observe(target, module.events.ready_ui)
+            module.manager.observe("ui.screen_manager", module.events.ready_ui)
             sys.modules[name] = module
+            module.events.start()
         request = json.loads(request_json)
-        if type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
+        if request == {"operation": "status"}:
+            # A periodic bridge entry may read this cache, but never discovers
+            # native changes or services imports. Explicit events own that work.
+            response = module.manager.status()
+            response.update(module.events.status())
+            return json.dumps({"event": "manager", "status": response}, allow_nan=False)
+        if request == {"operation": "changes"}:
+            response = None  # The shared finalisation below services this request once.
+        elif type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
             field = {"menu": "buttons", "loading": "loading", "settings": "settings", "themes": "themes"}[request["operation"]]
             if set(request) != {"operation", field}:
                 raise ValueError("Invalid native UI request fields")
@@ -164,6 +175,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
                     # Keep guard modules and their channel until every
                     # admitted operation finishes; retry without blocking here.
                     return "WAIT: native regulation operation is active"
+                module.events.close()
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
@@ -173,9 +185,10 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             response = module.manager.request(request)
         if module.manager.closed:
             module.discovery.stop()
-        if module.adapters.preload is not None:
-            module.adapters.preload.poll()
-        response["adapters"] = module.adapters.status()
+        if not module.manager.closed:
+            module.events.service()
+        if response is None:
+            response = module.manager.status()
         # UI imports and validation can fail between control requests. Drain
         # pack-owned notices through the existing CLI/log transport once.
         notices = response.setdefault("regulation_notices", [])
@@ -183,17 +196,11 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         # between statements, so extending then clearing could lose a new error.
         while module.adapters.regulation_notices:
             notices.append(module.adapters.regulation_notices.popleft())
-        response["pack"] = module.discovery.poll()
-        response["menu"] = module.menu.poll()
-        loading = response["menu"].get("loading", {})
-        if (loading.get("state") in ("complete", "error") or loading.get("timed_out")
-                or response["pack"].get("state") == "unavailable"):
-            if module.themes.finish_loading():
-                module.settings.refresh()
-        response["themes"] = module.themes.poll()
-        response["settings"] = module.settings.poll()
-        response["readiness"] = module.readiness.snapshot()
-        response["readiness"]["activity"] = module.activity.snapshot()
+        response.update(module.events.status())
+        response["adapters"] = module.adapters.status()
+        if module.manager.closed:
+            response.update(pack=module.discovery.poll(), menu=module.menu.status(), themes=module.themes.status(),
+                            settings=module.settings.status(), readiness=module.readiness.snapshot())
         activity_notices = response["activity_notices"] = []
         while module.activity.records:
             activity_notices.append(module.activity.records.popleft())

@@ -326,6 +326,7 @@ class SettingsAdapter:
         self.state, self.detail, self.generation = "idle", "", 0
         self.pending = None
         self.sequence = 0
+        self.changed = None
 
     def _main(self):
         if threading.current_thread() is not threading.main_thread():
@@ -381,6 +382,8 @@ class SettingsAdapter:
         if self.pending is None:
             self.sequence += 1
             self.pending = {"id": self.sequence, "owner": owner, "schema": values["schema"], "values": dict(values["values"])}
+            if self.changed is not None:
+                self.changed()
 
     def _restore(self):
         conflict = False

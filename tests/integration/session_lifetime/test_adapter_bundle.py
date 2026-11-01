@@ -46,6 +46,7 @@ def test_foreign_manager_keeps_its_original_ownership_error(monkeypatch):
 
 def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path, bridge):
     client = bridge()
+    client.journal.create()
     client.reporting.start()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]
     # Only emulate bootstrap's supported-version check on the portable host.
@@ -155,7 +156,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         regulation_changes.option_neighbours = lambda spec, current_key: [row["key"] for row in spec["options"]]
         regulation_changes.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
         monkeypatch.setitem(sys.modules, regulation_changes.__name__, regulation_changes)
-        pulse("status")
+        pulse("changes")
         inactive = regulation_changes.FormulaRegulationGovernanceManager(SimpleNamespace(
             regulation_manager=SimpleNamespace(regulation_defs={})))
         progress = {"schema": 1, "categories": {}}
@@ -189,18 +190,23 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
                 "mode": "automatic", "base_chance": 1, "announcement_week": 5}}})["adapters"]["career_preload"] == {"state": "armed"}
         loader = host.adapters.categories
         # Screen compatibility can fail much later than pack setup. It must
-        # report on the next ordinary response without blocking career loading.
+        # report through the journal without waiting for another status reply.
         catalogue = ModuleType("ui.screens.regulations_screen")
         catalogue.RegulationsScreen = type("RegulationsScreen", (), {
             "_draw_sections": lambda self, surface, left_rect, changed: 40,
             "_draw_regulation_card": lambda self, surface, entry, rect: None})
         original_sections = catalogue.RegulationsScreen._draw_sections
         monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
-        late = pulse("status")
-        assert len(late["regulation_notices"]) == 1 and "UI COMPATIBILITY FAILED" in late["regulation_notices"][0]["detail"]
+        late = pulse("changes")
+        assert host.activity.writer.wait_idle(2)
+        delivered = client.drain_activity()
+        warnings = [record for record in delivered if "UI COMPATIBILITY FAILED" in record.get("detail", "")]
+        assert len(warnings) == 1 and warnings[0]["level"] == "WARNING"
+        assert not any(record.get("level") == "ERROR" and record.get("detail") == host.adapters.regulation_screen.error_record["detail"]
+                       for record in delivered)
         assert late["adapters"]["career_preload"] == {"state": "armed"}
         assert catalogue.RegulationsScreen._draw_sections is original_sections
-        assert pulse("status")["regulation_notices"] == []
+        assert pulse("status").get("regulation_notices", []) == []
         career.regulation_manager = native.RegulationManager()
         career.regulation_manager.state = career
         career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
@@ -286,6 +292,13 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert pulse("stop-regulations", regulations=control)["regulation_control"] is False
         assert host.adapters.preload is replacement and not replacement.closed
         assert pulse("stop-regulations", regulations=dict(control, generation=replacement.generation))["regulation_control"] is True
+        with monkeypatch.context() as idle:
+            def unexpected_collection(*args, **kwargs):
+                raise AssertionError("A status reply collected native state")
+            for owner, method in ((host.discovery, "poll"), (host.readiness, "snapshot"),
+                                  (host.menu, "poll"), (host.themes, "poll"), (host.settings, "poll")):
+                idle.setattr(owner, method, unexpected_collection)
+            assert pulse("status")["state"] == "ready"
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert host.adapters.regulation_screen is None
         assert guard.closed and closed == [True]
@@ -297,6 +310,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         if name in sys.modules:
             pulse("shutdown")
             del sys.modules[name]
+        client.drain_activity()
+        client.journal.remove()
 
 
 def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypatch, bridge):

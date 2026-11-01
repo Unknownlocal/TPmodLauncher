@@ -27,7 +27,7 @@ class AdapterModules:
     Loading definitions installs no game hooks and grants no policy readiness.
     """
 
-    def __init__(self, host, sources):
+    def __init__(self, host, sources, submit_log=None):
         self.host, self.sources = host, sources
         self.prefix = host.__name__ + ".adapter_code"
         self.modules = {}
@@ -46,7 +46,8 @@ class AdapterModules:
         # UI imports and game-worker validation can fail after setup returned.
         # Keep a bounded pack-owned outbox for the next ordinary bridge response.
         self.regulation_notices = deque(maxlen=16)
-        self.enqueue_log_record = self.regulation_notices.append
+        self.enqueue_log_record = submit_log or self.regulation_notices.append
+        self.changed = None
 
     def status(self):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
@@ -111,6 +112,7 @@ class AdapterModules:
                 elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
                     raise HookError("Expected prepared categories or voting protection")
             self.preload = CareerPreload(self._career_left, getattr(self.host, "readiness", None))
+            self.preload.changed = self.changed
         except BaseException:
             self.stop_regulations()
             raise

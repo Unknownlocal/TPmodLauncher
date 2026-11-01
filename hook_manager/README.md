@@ -34,6 +34,27 @@ Diagnostic records also carry cached career activity. This plain snapshot can be
 read by workers without inspecting game objects; later navigation cannot rewrite
 the context of an already-built record.
 
+`native_events.py` publishes changed startup, navigation, loading, menu, settings
+and theme values through the shared journal outbox. Status replies read its cache;
+they do not discover changes. Normal import completion installs ready hooks on
+the main thread. Worker imports queue a `changes` request instead. If a validation
+operation is still active, its completion wakes deferred installation.
+`import_handover.py` waits on existing import locks for modules already loading
+when an observer registers, then queues the same completion event. It does no
+periodic checking and never waits on a game caller.
+
+`native_loading.py` observes entry before save reads and native worker creation,
+plus the existing preload constructor, progress and cancellation callbacks.
+Attempt numbers keep abandoned jobs from clearing a replacement. Failed native
+loads preserve their full error text and restore menu context even if no preload
+job starts. This adds no race-frame or simulation-step callback.
+
+`native_failures.py` observes the game's existing crash recorder. Unhandled
+main-thread exceptions also use the current cached activity through the Python
+exception hook, without recording the same fatal exception twice. Worker failures
+are reported without declaring the game fatal. Original hooks and crash files
+remain owned by the game.
+
 `native_activity.py` observes complete week progression, season rollover and
 career saves, including autosaves. The game's week-transition start and finish
 methods keep an activity open across its own worker and delayed exception.
@@ -106,8 +127,9 @@ unchecked actions. Only the main thread changes registrations, while no operatio
 is active. Trusted native wrappers use an `operation()` block to grant a worker
 access only while that operation runs. Direct worker calls outside such a block
 cannot run required validation.
-Existing decorators are checked and called intact. The bootstrap polls pending
-work and retries shutdown while operations finish. These registration and native
+Existing decorators are checked and called intact. Import and operation completion
+request service for pending hooks. Shutdown retries while operations finish.
+These registration and native
 call facilities are private; no mod permission or bridge request exposes them.
 
 [`game_adapters/`](game_adapters/README.md) separates native contract/project

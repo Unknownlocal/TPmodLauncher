@@ -37,7 +37,7 @@ function fail(error) {
 
 function enqueue(operation, id, buttons, loading, settings, themes, regulations, prerequisites) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'changes', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw failed;
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -143,7 +143,7 @@ observer = Process.attachModuleObserver({
                         // by a registry which may no longer be available.
                         const readiness = response.status.readiness;
                         readinessWatching = !!readiness && readiness.watching;
-                        if (readiness && JSON.stringify(readiness) !== readinessState) {
+                        if (!response.status.events_enabled && readiness && JSON.stringify(readiness) !== readinessState) {
                             readinessState = JSON.stringify(readiness);
                             send({ event: 'readiness', status: readiness });
                         }
@@ -151,11 +151,11 @@ observer = Process.attachModuleObserver({
                         // Deferred screen imports can fail compatibility after
                         // arming. Keep existing status pulses and report once.
                         preloadWatching = !!preload && preload.state !== 'unavailable';
-                        if (preload && JSON.stringify(preload) !== preloadState) {
+                        if (!response.status.events_enabled && preload && JSON.stringify(preload) !== preloadState) {
                             preloadState = JSON.stringify(preload);
                             send({ event: 'career-preload', status: preload });
                         }
-                        if (!preloadFailureReported && preload && preload.state === 'unavailable') {
+                        if (!response.status.events_enabled && !preloadFailureReported && preload && preload.state === 'unavailable') {
                             preloadFailureReported = true;
                             send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game', traceback: preload.traceback });
                         }
@@ -167,24 +167,24 @@ observer = Process.attachModuleObserver({
                         }
                         if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
                             packReported = true;
-                            send({ event: 'pack', pack });
+                            if (!response.status.events_enabled) send({ event: 'pack', pack });
                         }
                         // Keep checking until UI import and startup loading finish (or the watchdog fires).
                         const menu = response.status.menu;
                         menuPending = menu.state === 'pending' || (menu.loading && menu.loading.blocked && !menu.loading.timed_out);
-                        if (JSON.stringify(menu) !== menuState) {
+                        if (!response.status.events_enabled && JSON.stringify(menu) !== menuState) {
                             menuState = JSON.stringify(menu);
                             send({ event: 'menu', status: menu });
                         }
                         const settings = response.status.settings;
                         settingsWatching = settings && settings.state !== 'idle' && settings.state !== 'failed';
-                        if (settings && JSON.stringify(settings) !== settingsState) {
+                        if (!response.status.events_enabled && settings && JSON.stringify(settings) !== settingsState) {
                             settingsState = JSON.stringify(settings);
                             send({ event: 'settings', status: settings });
                         }
                         const themes = response.status.themes;
                         themesPending = themes && themes.state === 'pending';
-                        if (themes && JSON.stringify(themes) !== themesState) {
+                        if (!response.status.events_enabled && themes && JSON.stringify(themes) !== themesState) {
                             themesState = JSON.stringify(themes);
                             send({ event: 'themes', status: themes });
                         }

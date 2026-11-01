@@ -205,3 +205,48 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
     controller.poll()
     assert "Durable failure with lost notice FULL END" in path.read_text()
     assert not bridge.journal.path.exists()
+
+
+def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "native-service"}, bridge.journal)
+    record, failure = error_record("Owned fatal before import service FULL END")
+    record.update(fatal=True, reason="Owned fatal before import service FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="Owned fatal before import service FULL END"):
+        controller.poll()
+    assert "Original save diagnostic note" in path.read_text()
+
+
+def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
+    controller, bridge, receiver, _, _ = delivery
+    accepted = []
+    controller.pack_mods[10] = SimpleNamespace(settings_status=accepted.append, poll=lambda: None, close=lambda: None)
+    writer = writer_for(receiver)
+    current = {"save": None, "generation": 2}
+    writer.enqueue_log_record({"event": "settings", "event_sequence": 2, "status": current}, bridge.journal)
+    writer.enqueue_log_record({"event": "settings", "event_sequence": 1, "status": {"save": {"id": 1}, "generation": 1}},
+                              ActivityJournal(tmp_path / "missing" / "journal"))
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    assert accepted == [current]
+
+
+def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "unsupported-native-change", "detail": "UNKNOWN DATA END"}, bridge.journal)
+    writer.enqueue_log_record({"event": "settings", "event_sequence": "invalid", "status": {"detail": "SEQUENCE DATA END"}}, bridge.journal)
+    record, failure = error_record("Original native fatal after invalid change FULL END")
+    record.update(fatal=True, reason="Original native fatal after invalid change FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="Original native fatal after invalid change FULL END"):
+        controller.poll()
+    text = path.read_text()
+    assert "Original save diagnostic note" in text
+    assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text
+    controller.close()
+    assert bridge.journal.path.exists() and bridge.journal.retained

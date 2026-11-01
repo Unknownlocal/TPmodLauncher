@@ -16,14 +16,18 @@ where it arose, even after that work ends or cleanup starts. Mod identities use
 their manifest IDs; shared preparation names the group rather than guessing an
 owner. Late activity updates cannot replace a newer career or process session.
 
-The game's navigation and loading-job observations arrive through the existing
-bridge status messages, including packs with no code mods. Game diagnostics use
-a cached plain snapshot, so workers do not inspect live screens to build a log
-record. Logs describe confirmed activity rather than inferring it from error text.
+The game's navigation, loading and UI changes arrive as journal events, including
+packs with no code mods. Each status kind has ordered updates, so a delayed
+fallback cannot replace newer settings or readiness. Ordinary bridge status
+replies read cached values. Game diagnostics use a cached plain snapshot to build
+log records, and describe confirmed activity rather than guessing from error text.
 
 Whole week progression and saving arrive from the game's operation observer.
 Native operation and parent identities remain separate from controller records,
 so a delayed worker error keeps its saving/week context after navigation changes.
+Generic unhandled main-thread failures use that same context. Worker exceptions
+remain diagnostics unless the game also terminates; original exception hooks and
+the game's own crash recording still run.
 
 `activity_journal.py` contains `ActivityJournal`. Each bridge owns a new journal
 file. `journal_writer.py` contains `JournalWriter`, which formats captured errors,
