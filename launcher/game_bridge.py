@@ -23,7 +23,7 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "import_handover", "native_events",
+    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "import_handover", "control_locks", "native_events",
     "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
@@ -61,6 +61,9 @@ class Bridge:
         self.lock = threading.Lock()
         self.journal = journal
         self.reporting = reporting
+        if reporting is not None:
+            reporting.control_ready = self._control_ready
+            reporting.control_failed = self._control_failed
         self.event_sequences = {}
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
@@ -96,6 +99,24 @@ class Bridge:
             if self.journal is not None:
                 self.journal.retained = True  # A partial load cannot certify native shutdown.
             raise
+
+    def _control_ready(self, request, dependency):
+        """Only arm native entry; the receiver never executes Python or controller work."""
+        with self.lock:
+            live = request in self.waiters
+        if live and not self.session.is_detached and not self.script.is_destroyed:
+            self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
+
+    def _control_failed(self, detail):
+        """Cancel parked entry promptly; cleanup may still request native shutdown."""
+        with self.lock:
+            tokens = tuple(self.waiters)
+        for token in tokens:
+            try:
+                self._post({"type": "manager-cancel", "id": token,
+                            "detail": "Native reporting connection failed: " + detail}, .25)
+            except Exception:
+                pass  # The request deadline and final script unload still apply.
 
     def drain_activity(self):
         """Read records even after native Python and its script have exited."""

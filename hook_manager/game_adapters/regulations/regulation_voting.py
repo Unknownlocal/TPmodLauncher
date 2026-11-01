@@ -98,8 +98,7 @@ class RegulationVotingAdapter(Manager):
                 return None
             finally:
                 self._local.scope = None
-                with self._lock:
-                    self._active -= 1
+                self._operation_finished()
 
         update_wrapper(wrapped, original)
         wrapped._tpm_hook_group = name

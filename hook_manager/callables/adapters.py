@@ -73,11 +73,12 @@ class CallableAdapters(Manager):
             self._operation_finished()
 
     def _operation_finished(self):
+        """Release admitted work and also request any deferred hook installation."""
         with self._lock:
-            self._active -= 1
-            events = self.events if self._active == 0 and self._deferred_poll else None
-            if self._active == 0:
+            events = self.events if self._active == 1 and self._deferred_poll else None
+            if self._active == 1:
                 self._deferred_poll = False
+            super()._operation_finished()
         if events is not None:
             events.imported(self)  # Installation still belongs to the main thread.
 
@@ -216,8 +217,8 @@ class CallableAdapters(Manager):
     def try_stop(self):
         """Defer main-thread shutdown until native operations finish, without waiting.
 
-        The bridge retries WAIT responses with its existing bounded request
-        deadline. Check and stop under one lock so a worker cannot enter between.
+        Busy work keeps its hooks until completion wakes the parked control.
+        Check and stop under one lock so a worker cannot enter between.
         """
         with self._lock:
             if self.closed:

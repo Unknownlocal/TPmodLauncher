@@ -14,9 +14,18 @@ enters Python on its main thread with the GIL held. Requests run one at a time
 with deadlines, covering status, shutdown, native UI registration, loading
 progress, private adapter-definition loading and regulation preparation.
 
-During Python evaluation, the bridge lets other game threads pass its entry
-check. The busy guard keeps them from starting another operation. Holding the
-script lock while Python releases the GIL could otherwise deadlock a worker.
+After bootstrap, the bridge installs its entry listener only for an actual
+control request. It removes the listener before evaluating Python, so idle
+gameplay and nested worker waits have no bridge callback. Python may release
+the GIL without holding the script lock, allowing cancellation to arrive.
+
+A request waiting for an import or regulation work already running leaves no
+listener installed. Completion sends that request's token over the reporting
+connection and arms another main-thread entry. Cancellation, deadlines and
+shutdown remove the listener. No native callback address is queued in Python.
+`control_locks.py` waits outside the game thread when cleanup encounters a
+lock still held by a regulation worker. It shares one waiter per lock and wakes
+the latest request after release; closing the scope never waits for a stuck lock.
 
 `bootstrap.py` creates a private manager, readiness, pack discovery, menu, settings
 and theme adapters. A source digest and session token identify their owner and prevent
@@ -128,7 +137,7 @@ is active. Trusted native wrappers use an `operation()` block to grant a worker
 access only while that operation runs. Direct worker calls outside such a block
 cannot run required validation.
 Existing decorators are checked and called intact. Import and operation completion
-request service for pending hooks. Shutdown retries while operations finish.
+request service for pending hooks. Shutdown resumes when those operations finish.
 These registration and native
 call facilities are private; no mod permission or bridge request exposes them.
 

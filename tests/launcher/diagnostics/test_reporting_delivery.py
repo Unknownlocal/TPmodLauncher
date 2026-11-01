@@ -79,6 +79,32 @@ def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
     assert not controller.stopping and receiver.confirmed
 
 
+def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
+    _, bridge, receiver, _, _ = delivery
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    append = bridge.journal.append_record
+    def stalled(record):
+        entered.set()
+        assert release.wait(3)
+        append(record)
+    monkeypatch.setattr(bridge.journal, "append_record", stalled)
+    received = []
+    def control_ready(request, dependency):
+        received.append((request, dependency))
+        completed.set()
+    receiver.control_ready = control_ready
+    writer = writer_for(receiver)
+    try:
+        writer.enqueue_log_record({"level": "INFO", "detail": "delayed storage"}, bridge.journal)
+        assert entered.wait(2)
+        writer.notifications.enqueue_control_ready("a" * 32, "operations")
+        assert completed.wait(2) and received == [("a" * 32, "operations")]
+        assert not writer.wait_idle(.01)
+    finally:
+        release.set()
+        assert writer.finish(2) and receiver.finished.wait(2)
+
+
 def test_failed_journal_delivers_full_multiframe_error_over_socket(delivery, tmp_path):
     controller, bridge, receiver, path, _ = delivery
     writer = writer_for(receiver)

@@ -143,7 +143,9 @@ class AdapterModules:
         if self.state != "loaded":
             raise HookError(self.error or "Adapter modules are not loaded")
         reader = self.host.adapter_code.game_adapters.regulations.regulation_native_defaults
-        categories = reader.read_regulation_defaults(pack["root"])
+        events = getattr(self.host, "events", None)
+        categories = reader.read_regulation_defaults(pack["root"],
+            wait_for_imports=events.watch_control_imports if events is not None else None)
         return {"pack": pack["root"], "categories": categories} if categories is not None else None
 
     def _career_left(self):
@@ -413,6 +415,22 @@ class AdapterModules:
                 raise HookError("Voting needs this pack's native loading protection")
             self.regulation_changes.check()
 
+    def _lock_idle(self, hook, locks):
+        """Reserve an idle registry or subscribe to its actual completion."""
+        lock = getattr(hook, "_lock", None)
+        if lock is None:
+            return True
+        events = getattr(self.host, "events", None)
+        if not lock.acquire(blocking=False):
+            if events is not None:
+                events.watch_control_lock(lock)
+            return False
+        locks.callback(lock.release)
+        # Counter checks and subscriptions share the registry lock. If its
+        # final owner is still releasing it, the lock observer above wakes us.
+        hook._control_waiter = events.control_id if hook._active and events is not None else None
+        return not hook._active
+
     def stop_regulations(self, *, retain=False):
         """Restore owned hooks only when no admitted operation still needs them.
 
@@ -437,13 +455,8 @@ class AdapterModules:
             for hook in [*hooks, *([self.categories] if retain and self.categories is not None
                                    and self.categories.automatic is not None else []),
                          *([self.regulation_changes] if self.regulation_changes is not None else [])]:
-                lock = getattr(hook, "_lock", None)
-                if lock is not None:
-                    if not lock.acquire(blocking=False):
-                        return False
-                    locks.callback(lock.release)
-                    if hook._active:
-                        return False
+                if not self._lock_idle(hook, locks):
+                    return False
             for hook in reversed(hooks):
                 hook.stop()
             if not retain:
@@ -540,10 +553,7 @@ class AdapterModules:
         self.host.manager._main()
         with ExitStack() as locks:
             if self.regulation_changes is not None:
-                if not self.regulation_changes._lock.acquire(blocking=False):
-                    return False
-                locks.callback(self.regulation_changes._lock.release)
-                if self.regulation_changes._active:
+                if not self._lock_idle(self.regulation_changes, locks):
                     return False
             if not self.stop_regulations():
                 return False

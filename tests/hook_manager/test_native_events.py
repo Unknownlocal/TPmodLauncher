@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from hook_manager.adapter_modules import AdapterModules
+from hook_manager.callables import CallableAdapters
 from hook_manager.manager import Manager
 from hook_manager.menu import MenuAdapter
 from hook_manager.native_activity import NativeActivity
@@ -225,8 +226,8 @@ def test_inflight_import_gets_completion_without_a_wrapped_loader(native_events,
     worker.start()
     completed = threading.Event()
     imported = host.events.imported
-    def wake(manager):
-        imported(manager)
+    def wake(manager, name=None):
+        imported(manager, name)
         completed.set()
     monkeypatch.setattr(host.events, "imported", wake)
     try:
@@ -283,6 +284,41 @@ def test_active_validation_completion_resumes_deferred_import(native_events, tmp
         worker.join(2)
         guards.stop()
         sys.modules.pop("owned_busy", None)
+
+
+def test_cleanup_waits_for_lock_release_after_last_operation_finished(native_events, monkeypatch):
+    host, _, _, _, _ = native_events
+    guards = CallableAdapters()
+    host.adapters.regulations.append(guards)
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    received = []
+    def control_ready(request, dependency):
+        received.append((request, dependency))
+        completed.set()
+    monkeypatch.setattr(host.events, "control_ready", control_ready)
+    def finishing_worker():
+        # Match nested registry use: the operation has ended but its final
+        # lock owner has not yet left. There is no future counter decrement.
+        with guards._lock:
+            with guards.operation():
+                pass
+            entered.set()
+            assert release.wait(3)
+    worker = threading.Thread(target=finishing_worker)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        host.events.control_id = "a" * 32
+        assert not host.adapters.close()
+        host.events.control_id = "b" * 32  # Replace a cancelled request on the same lock.
+        assert not host.adapters.close() and not completed.is_set()
+        release.set()
+        worker.join(2)
+        assert completed.wait(2) and received == [("b" * 32, "operations")]
+        assert host.adapters.close() and guards.closed
+    finally:
+        release.set()
+        worker.join(2)
 
 
 def test_generic_worker_error_stays_diagnostic_and_original_hook_runs(monkeypatch):

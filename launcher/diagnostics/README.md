@@ -18,7 +18,7 @@ owner. Late activity updates cannot replace a newer career or process session.
 
 The game's navigation, loading and UI changes arrive as journal events, including
 packs with no code mods. Each status kind has ordered updates, so a delayed
-fallback cannot replace newer settings or readiness. Ordinary bridge status
+fallback cannot replace newer settings or readiness. Requested bridge status
 replies read cached values. Game diagnostics use a cached plain snapshot to build
 log records, and describe confirmed activity rather than guessing from error text.
 
@@ -50,14 +50,17 @@ messages into numbered frames without truncating their error details.
 
 `reporting_receiver.py` contains `ReportingReceiver`. It waits for socket data,
 checks the process/session identity and message order, and queues controller
-events. It performs no file logging or game/mod calls. Idle reception has no
-periodic timeout; startup and incomplete transfers have their own deadlines.
+events. Control completion messages arm entry for their matching request, even
+while the controller is waiting for its reply. The receiver performs no file
+logging or game/mod calls. Idle reception has no periodic timeout; startup and
+incomplete transfers have their own deadlines.
 The controller reads the journal and any fallback records on those events.
 Connection failure triggers recovery and retains the journal; an acknowledged
 stop consumes final records before the owned session is discarded.
 
 Stopping observation signals the writer without waiting on the game thread. The
-launcher waits for its acknowledgement through repeated short bridge requests.
+launcher waits for final delivery on its reporting connection after native
+hooks have been removed, without another game-thread request.
 An unconfirmed shutdown keeps the journal. Fatal handling and final interpreter
 termination share one one-second drain budget across the writer and sender.
 Ordinary gameplay never waits for that drain. A stalled backend may leave queued

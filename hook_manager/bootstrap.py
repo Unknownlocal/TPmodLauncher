@@ -47,8 +47,8 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             for filename, source in sources.items():
                 exec(compile(source, filename, "exec"), module.__dict__)
             module.source_digest, module.instance = digest, instance
-            # Later pulses reuse this callable; do not resend/compile the full
-            # infrastructure and adapter source literals for every status poll.
+            # Later controls reuse this callable without resending/compiling
+            # the full infrastructure and adapter source literals.
             module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
@@ -86,9 +86,9 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             sys.modules[name] = module
             module.events.start()
         request = json.loads(request_json)
+        module.events.control_id = request.pop("_control_id", None)
         if request == {"operation": "status"}:
-            # A periodic bridge entry may read this cache, but never discovers
-            # native changes or services imports. Explicit events own that work.
+            # Explicit inspection reads the cache; native events own collection.
             response = module.manager.status()
             response.update(module.events.status())
             return json.dumps({"event": "manager", "status": response}, allow_nan=False)
@@ -125,9 +125,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             try:
                 defaults = module.adapters.regulation_defaults()
                 if defaults is None:
-                    # Keep this same bounded request pending while native imports
-                    # continue. No callback or worker is added to the game.
-                    return "WAIT: native regulation definitions are loading"
+                    return json.dumps({"event": "waiting", "dependency": "imports"})
             except Exception as error:
                 notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED defaults: "
                                + str(error) + "; default integration skipped", error=error, component="regulations"))
@@ -161,7 +159,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
                 completed = module.adapters.control_regulations(request["operation"], request["regulations"],
                                                                submit_log=notices.append)
                 if not completed:
-                    return "WAIT: native regulation operation is active"
+                    return json.dumps({"event": "waiting", "dependency": "operations"})
             except Exception as error:
                 completed = False
                 notices.append(module.build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED control: "
@@ -172,15 +170,15 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         else:
             if request == {"operation": "shutdown"}:
                 if not module.adapters.close():
-                    # Keep guard modules and their channel until every
-                    # admitted operation finishes; retry without blocking here.
-                    return "WAIT: native regulation operation is active"
+                    # Completion wakes this request; no repeated GIL entries.
+                    return json.dumps({"event": "waiting", "dependency": "operations"})
                 module.events.close()
                 module.menu.close()
                 module.themes.close()
                 module.settings.close()
-                if not module.activity.stop():
-                    return "WAIT: native activity records are draining"
+                module.activity.stop()
+                # Python workers own their queues after Frida unload. The
+                # launcher awaits final socket delivery outside the game GIL.
                 module.readiness.stop()
             response = module.manager.request(request)
         if module.manager.closed:

@@ -37,9 +37,26 @@ def set_loading(record):
         loading_start.set()
         loading_thread.join(timeout=2)
         assert not loading_thread.is_alive(), "Bridge blocked a worker holding the GIL"
+    if record["total"] == 32:
+        (output / "evaluation-ready").touch()
+        time.sleep(.2)  # Allow the client to cancel while Python has released the GIL.
     return original_loading(record)
 
 host.menu.set_loading = set_loading
+
+original_control = host.adapters.control_regulations
+def control_regulations(*args, **kwargs):
+    result = original_control(*args, **kwargs)
+    if result is False and (output / "early-ready").exists() and not (output / "early-completed").exists():
+        # Force completion to reach JavaScript before this WAIT reply. The
+        # admitted worker is real; only the reply is deliberately delayed.
+        (output / "early-release").touch()
+        early_thread.join(2)
+        assert not early_thread.is_alive()
+        time.sleep(.1)
+        (output / "early-completed").touch()
+    return result
+host.adapters.control_regulations = control_regulations
 
 
 # Finish an owned Formula-like startup after the bridge has already become ready.
@@ -144,6 +161,34 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if (output / "early-request").exists() and not (output / "early-ready").exists():
+        early_guards = host.CallableAdapters()
+        host.adapters.regulations.append(early_guards)
+        def early_work():
+            with early_guards.operation():
+                (output / "early-ready").touch()
+                limit = time.monotonic() + 8
+                while not (output / "early-release").exists() and time.monotonic() < limit:
+                    time.sleep(.01)
+        early_thread = threading.Thread(target=early_work, daemon=True)
+        early_thread.start()
+        while not (output / "early-ready").exists():
+            time.sleep(.001)
+    if (output / "import-request").exists() and "constants" not in sys.modules:
+        threading.Thread(target=lambda: importlib.import_module("constants"), daemon=True).start()
+    if (output / "busy-request").exists() and not (output / "busy-ready").exists():
+        guards = host.CallableAdapters()
+        host.adapters.regulations.append(guards)
+        def admitted_work():
+            with guards.operation():
+                (output / "busy-ready").touch()
+                limit = time.monotonic() + 8
+                while not (output / "busy-release").exists() and time.monotonic() < limit:
+                    time.sleep(.01)
+        threading.Thread(target=admitted_work, daemon=True).start()
+        # Do not admit another worker while this one reaches its operation scope.
+        while not (output / "busy-ready").exists():
+            time.sleep(.001)
     if ((output / "activity-request").exists() and not (output / "activity-done").exists()
             and host.activity.group_intact("activity.save")):
         loading_screen.state.fail_save = True

@@ -64,12 +64,15 @@ def test_waits_for_unfinished_imports_before_loading_fixed_native_definitions(na
         monkeypatch.setitem(sys.modules, name, module)
         return module
     monkeypatch.setattr(importlib, "import_module", importing)
-    assert read_regulation_defaults(tmp_path) is None and not imports and not calls
+    dependencies = []
+    assert read_regulation_defaults(tmp_path, wait_for_imports=dependencies.append) is None and not imports and not calls
+    assert dependencies[-1] == {"constants"}
     constants.__spec__._initializing = False
     dependency = ModuleType("managers.tyre_model")
     dependency.__spec__ = SimpleNamespace(_initializing=True)
     monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
-    assert read_regulation_defaults(tmp_path) is None and not imports and not calls
+    assert read_regulation_defaults(tmp_path, wait_for_imports=dependencies.append) is None and not imports and not calls
+    assert dependencies[-1] == {dependency.__name__}
     dependency.__spec__._initializing = False
     assert read_regulation_defaults(tmp_path)[0]["key"] == "entry"
     assert imports == [module.__name__] and len(calls) == 1

@@ -130,11 +130,11 @@ class _Loader:
         if self.manager.closed:
             return
         self.manager.completed[self.name] = module
-        # Worker imports wait for the next main-thread poll rather than installing from that worker.
+        # Worker imports request main-thread service; they never install hooks themselves.
         if threading.current_thread() is threading.main_thread():
             self.manager.poll()
         elif self.manager.events is not None:
-            self.manager.events.imported(self.manager)
+            self.manager.events.imported(self.manager, self.name)
 
     def __getattr__(self, name):
         return getattr(self.original, name)
@@ -188,6 +188,7 @@ class Manager:
         self.errors = []
         self.error_record = None
         self.closed = False
+        self._control_waiter = None
         self.events = self.event_sink
         if self.events is not None:
             self.events.bind(self)
@@ -198,6 +199,16 @@ class Manager:
             raise HookError("Hook registration requires the Python main thread")
         if self.closed:
             raise HookError("Hook manager is stopped")
+
+    def _operation_finished(self):
+        """Release an admitted operation and wake cleanup only when it was waiting."""
+        with self._lock:
+            self._active -= 1
+            request = self._control_waiter if self._active == 0 else None
+            if request is not None:
+                self._control_waiter = None
+        if request is not None and self.events is not None:
+            self.events.control_ready(request, "operations")
 
     def store_error(self, error):
         """Retain short history and the latest complete failure without writing a log."""

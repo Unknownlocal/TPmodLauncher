@@ -191,8 +191,7 @@ class RegulationChangeAdapter(Manager):
                         categories.store_error(error)
                 return result
             finally:
-                with self._lock:
-                    self._active -= 1
+                self._operation_finished()
 
         update_wrapper(wrapped, original)
         wrapped._tpm_hook_group = name

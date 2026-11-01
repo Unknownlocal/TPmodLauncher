@@ -5,26 +5,19 @@ let observer = null;
 let listener = null;
 let busy = false;
 let ready = false;
-let packReported = false;
 let stopped = false;
 let failed = null;
 let pending = null;
-let lastAttempt = 0;
-let menuPending = false;
-let menuState = null;
-let settingsWatching = false;
-let settingsState = null;
-let themesPending = false;
-let themesState = null;
-let preloadFailureReported = false;
-let preloadWatching = false;
-let preloadState = null;
-let readinessWatching = false;
-let readinessState = null;
+let armEntry = null;
+let mainThread = null;
+
+function detachEntry() {
+    if (listener) { listener.detach(); listener = null; }
+}
 
 function detachTransport() {
     // No callback pointers are queued in Python, so these hooks can be detached on unload.
-    if (listener) { listener.detach(); listener = null; }
+    detachEntry();
     if (observer) { observer.detach(); observer = null; }
 }
 
@@ -41,12 +34,16 @@ function enqueue(operation, id, buttons, loading, settings, themes, regulations,
     if (failed) throw failed;
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
-    if (!ready && operation === 'shutdown') {
+    if (!ready && !busy && operation === 'shutdown') {
         stopped = true;
         detachTransport();
         return { state: 'not-started' };
     }
-    return new Promise((resolve, reject) => { pending = { operation, id, buttons, loading, settings, themes, regulations, prerequisites, resolve, reject }; });
+    return new Promise((resolve, reject) => {
+        pending = { operation, id, buttons, loading, settings, themes, regulations, prerequisites,
+                    resolve, reject, waiting: null, signals: new Set() };
+        if (armEntry) armEntry();
+    });
 }
 
 send({ event: 'waiting', level: 'DEBUG', detail: config.bootstrap ? 'Waiting for the CPython 3.13 library' : 'Waiting for exec before manager bootstrap' });
@@ -58,7 +55,7 @@ observer = Process.attachModuleObserver({
         const python = Process.platform === 'windows'
             ? /^python3\d+[td]?\.dll$/.test(name)
             : Process.platform === 'linux' && /^libpython3\.\d+[td]?\.so(?:\.\d+)*$/.test(name);
-        if (!python || listener || failed || stopped) return;
+        if (!python || armEntry || failed || stopped) return;
         try {
             const supported = Process.platform === 'windows'
                 ? name === 'python313.dll'
@@ -79,138 +76,119 @@ observer = Process.attachModuleObserver({
             const clearError = api('PyErr_Clear', 'void', []);
             const addModule = api('PyImport_AddModule', 'pointer', ['pointer']);
             const moduleDict = api('PyModule_GetDict', 'pointer', ['pointer']);
-            // Python execution may release the GIL. Let a worker's SaveThread
-            // hook enter JavaScript, see busy and return; holding the JS lock
-            // here could strand that worker with the GIL we need to reacquire.
+            // Python may join workers/release the GIL. Cooperative execution
+            // leaves JavaScript available for cancellation and completion data.
             const evaluate = api('PyRun_StringFlags', 'pointer', ['pointer', 'int', 'pointer', 'pointer', 'pointer'], 'cooperative');
             const utf8 = api('PyUnicode_AsUTF8', 'pointer', ['pointer']);
             const decref = api('Py_DecRef', 'void', ['pointer']);
             const mainName = Memory.allocUtf8String('__main__');
-            listener = Interceptor.attach(module.getExportByName('PyEval_SaveThread'), {
-                onEnter() {
-                    // Before SaveThread executes, this thread still holds the GIL and its thread state.
-                    // Skip nested calls, dormant ready sessions, finalization and pre-existing exceptions.
-                    if (busy || stopped || failed || (ready && packReported && !pending && !menuPending && !settingsWatching && !themesPending && !preloadWatching && !readinessWatching)) return;
-                    if (!initialized() || finalizing()) return;
-                    const state = threadState();
-                    if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
-                    if (!pending && Date.now() - lastAttempt < 250) return;
-                    lastAttempt = Date.now();
-                    busy = true;
-                    let result = ptr(0);
-                    try {
-                        const request = pending || { operation: 'status' };
-                        const record = { operation: request.operation };
-                        if (request.operation === 'menu') record.buttons = request.buttons;
-                        if (request.operation === 'loading') record.loading = request.loading;
-                        if (request.operation === 'settings') record.settings = request.settings;
-                        if (request.operation === 'themes') record.themes = request.themes;
-                        if (request.operation === 'prerequisites') record.prerequisites = request.prerequisites;
-                        if (request.regulations !== undefined) record.regulations = request.regulations;
-                        const requestJson = JSON.stringify(JSON.stringify(record));
-                        const expression = ready
-                            ? config.repeat_prefix + requestJson + ')'
-                            : config.prefix + requestJson + config.suffix;
-                        const source = Memory.allocUtf8String(expression);
-                        const main = addModule(mainName); // Borrowed: never decrement this reference.
-                        if (main.isNull()) throw new Error('No Python main module');
-                        const globals = moduleDict(main); // Borrowed dictionary, unchanged by our transient namespace.
-                        if (globals.isNull()) throw new Error('No Python main dictionary');
-                        result = evaluate(source, 258, globals, globals, ptr(0)); // 258 means a Python expression.
-                        if (result.isNull()) throw new Error('Manager bootstrap evaluation failed');
-                        const text = utf8(result);
-                        if (text.isNull()) throw new Error('Manager returned a non-string response');
-                        const value = text.readUtf8String();
-                        if (value.startsWith('WAIT:')) {
-                            // A busy worker must not prevent a nearby main-thread attempt.
-                            lastAttempt = 0;
-                            return;
-                        }
-                        const response = JSON.parse(value);
-                        if (response.event !== 'manager') {
-                            const error = new Error(response.detail || 'Invalid manager response');
-                            error.traceback = response.traceback;
-                            error.activity = response.activity;
-                            throw error;
-                        }
-                        if (!ready) {
-                            ready = true;
-                            send(response);
-                        }
-                        // Startup can finish after manager readiness; report its pack once per process.
-                        const pack = response.status.pack;
-                        // Availability precedes career setup and saves queued
-                        // by a registry which may no longer be available.
-                        const readiness = response.status.readiness;
-                        readinessWatching = !!readiness && readiness.watching;
-                        if (!response.status.events_enabled && readiness && JSON.stringify(readiness) !== readinessState) {
-                            readinessState = JSON.stringify(readiness);
-                            send({ event: 'readiness', status: readiness });
-                        }
-                        const preload = response.status.adapters && response.status.adapters.career_preload;
-                        // Deferred screen imports can fail compatibility after
-                        // arming. Keep existing status pulses and report once.
-                        preloadWatching = !!preload && preload.state !== 'unavailable';
-                        if (!response.status.events_enabled && preload && JSON.stringify(preload) !== preloadState) {
-                            preloadState = JSON.stringify(preload);
-                            send({ event: 'career-preload', status: preload });
-                        }
-                        if (!response.status.events_enabled && !preloadFailureReported && preload && preload.state === 'unavailable') {
-                            preloadFailureReported = true;
-                            send({ event: 'diagnostic', level: 'WARNING', component: 'regulations', detail: 'REGULATIONS COMPATIBILITY FAILED career.preload: ' + preload.detail + '; continuing native game', traceback: preload.traceback });
-                        }
-                        for (const notice of response.status.regulation_notices || []) {
-                            send({ ...notice, event: 'diagnostic' });
-                        }
-                        for (const notice of response.status.activity_notices || []) {
-                            send({ ...notice, event: 'native-activity' });
-                        }
-                        if (!packReported && pack && (pack.state === 'ready' || pack.state === 'unavailable')) {
-                            packReported = true;
-                            if (!response.status.events_enabled) send({ event: 'pack', pack });
-                        }
-                        // Keep checking until UI import and startup loading finish (or the watchdog fires).
-                        const menu = response.status.menu;
-                        menuPending = menu.state === 'pending' || (menu.loading && menu.loading.blocked && !menu.loading.timed_out);
-                        if (!response.status.events_enabled && JSON.stringify(menu) !== menuState) {
-                            menuState = JSON.stringify(menu);
-                            send({ event: 'menu', status: menu });
-                        }
-                        const settings = response.status.settings;
-                        settingsWatching = settings && settings.state !== 'idle' && settings.state !== 'failed';
-                        if (!response.status.events_enabled && settings && JSON.stringify(settings) !== settingsState) {
-                            settingsState = JSON.stringify(settings);
-                            send({ event: 'settings', status: settings });
-                        }
-                        const themes = response.status.themes;
-                        themesPending = themes && themes.state === 'pending';
-                        if (!response.status.events_enabled && themes && JSON.stringify(themes) !== themesState) {
-                            themesState = JSON.stringify(themes);
-                            send({ event: 'themes', status: themes });
-                        }
-                        // Cancellation may queue another request while Python
-                        // waits on publication. Its reply belongs to a later
-                        // entry, not to the operation captured above.
-                        if (pending === request) {
-                            const completed = pending;
-                            pending = null;
-                            if (completed.operation === 'shutdown') {
-                                stopped = true;
-                                setImmediate(detachTransport);
+            armEntry = function () {
+                if (listener || busy || stopped || failed || (ready && (!pending || pending.waiting))) return;
+                listener = Interceptor.attach(module.getExportByName('PyEval_SaveThread'), {
+                    onEnter() {
+                        // Before SaveThread executes, this thread still holds the GIL and its thread state.
+                        // Once bootstrap identifies it, only the main thread may enter Python.
+                        if (busy || stopped || failed || (mainThread !== null && this.threadId !== mainThread)) return;
+                        if (!initialized() || finalizing()) return;
+                        const state = threadState();
+                        if (state.isNull() || !interpreter(state).equals(mainInterpreter()) || !error().isNull()) return;
+                        // Remove the hook before evaluating: nested GIL releases
+                        // and worker joins need no bridge callback at all.
+                        detachEntry();
+                        busy = true;
+                        // Bootstrap always completes its own status first. A queued
+                        // control then runs with a known main thread and event scope.
+                        const request = (ready && pending) || { operation: 'status', signals: new Set() };
+                        request.signals.clear();
+                        let result = ptr(0);
+                        try {
+                            const record = { operation: request.operation };
+                            if (request.id) record._control_id = request.id;
+                            if (request.operation === 'menu') record.buttons = request.buttons;
+                            if (request.operation === 'loading') record.loading = request.loading;
+                            if (request.operation === 'settings') record.settings = request.settings;
+                            if (request.operation === 'themes') record.themes = request.themes;
+                            if (request.operation === 'prerequisites') record.prerequisites = request.prerequisites;
+                            if (request.regulations !== undefined) record.regulations = request.regulations;
+                            const requestJson = JSON.stringify(JSON.stringify(record));
+                            const expression = ready
+                                ? config.repeat_prefix + requestJson + ')'
+                                : config.prefix + requestJson + config.suffix;
+                            const source = Memory.allocUtf8String(expression);
+                            const main = addModule(mainName); // Borrowed: never decrement this reference.
+                            if (main.isNull()) throw new Error('No Python main module');
+                            const globals = moduleDict(main); // Borrowed dictionary, unchanged by our transient namespace.
+                            if (globals.isNull()) throw new Error('No Python main dictionary');
+                            result = evaluate(source, 258, globals, globals, ptr(0)); // 258 means a Python expression.
+                            if (result.isNull()) throw new Error('Manager bootstrap evaluation failed');
+                            const text = utf8(result);
+                            if (text.isNull()) throw new Error('Manager returned a non-string response');
+                            const value = text.readUtf8String();
+                            if (value.startsWith('WAIT:')) {
+                                if (ready) throw new Error('Unexpected interpreter readiness wait after bootstrap');
+                                // Only bootstrap may observe interpreter readiness
+                                // until Python can identify its actual main thread.
+                                return;
                             }
-                            completed.resolve(response.status);
+                            const response = JSON.parse(value);
+                            if (response.event === 'waiting' && pending === request) {
+                                if (!['imports', 'operations'].includes(response.dependency)) throw new Error('Unknown control dependency');
+                                // A completion can arrive while evaluation releases
+                                // the GIL, before its WAIT reply reaches JavaScript.
+                                request.waiting = request.signals.has(response.dependency) ? null : response.dependency;
+                                return;
+                            }
+                            if (response.event === 'waiting') return; // The caller cancelled during evaluation.
+                            if (response.event !== 'manager') {
+                                const error = new Error(response.detail || 'Invalid manager response');
+                                error.traceback = response.traceback;
+                                error.activity = response.activity;
+                                throw error;
+                            }
+                            if (!ready) {
+                                ready = true;
+                                mainThread = this.threadId;
+                                send(response);
+                            }
+                            for (const notice of response.status.regulation_notices || []) {
+                                send({ ...notice, event: 'diagnostic' });
+                            }
+                            for (const notice of response.status.activity_notices || []) {
+                                send({ ...notice, event: 'native-activity' });
+                            }
+                            if (request.operation === 'shutdown') {
+                                stopped = true;
+                                detachTransport();
+                                if (pending && pending !== request) {
+                                    pending.reject(new Error('Bridge is stopped'));
+                                    pending = null;
+                                }
+                            }
+                            // Cancellation may queue another request while Python
+                            // waits on publication. Its reply belongs to a later
+                            // entry, not to the operation captured above.
+                            if (pending === request) {
+                                const completed = pending;
+                                pending = null;
+                                completed.resolve(response.status);
+                            }
+                        } catch (failure) {
+                            // We entered with no Python error; clear only errors raised by our own evaluation.
+                            clearError();
+                            fail(failure);
+                        } finally {
+                            // The expression result is a new reference, owned by this callback.
+                            if (!result.isNull()) decref(result);
+                            busy = false;
+                            armEntry(); // Bootstrap, or a still-live unparked request, only.
                         }
-                    } catch (failure) {
-                        // We entered with no Python error; clear only errors raised by our own evaluation.
-                        clearError();
-                        fail(failure);
-                    } finally {
-                        // The expression result is a new reference, owned by this callback.
-                        if (!result.isNull()) decref(result);
-                        busy = false;
                     }
-                }
-            });
+                });
+                Interceptor.flush();
+            };
+            armEntry();
+            // The runtime has been identified; future controls reuse its APIs.
+            setImmediate(() => { if (observer) { observer.detach(); observer = null; } });
             send({ event: 'transport', level: 'DEBUG', detail: 'Waiting for Python main-thread readiness' });
         } catch (failure) { fail(failure); }
     }
@@ -235,10 +213,24 @@ function receiveCancellation() {
         if (pending && pending.id === message.id) {
             const cancelled = pending;
             pending = null;
-            cancelled.reject(new Error('Bridge request cancelled'));
+            if (ready) detachEntry();
+            cancelled.reject(new Error(message.detail || 'Bridge request cancelled'));
         }
         receiveCancellation();
     });
 }
+function receiveCompletion() {
+    recv('manager-resume', message => {
+        if (pending && pending.id === message.id && ['imports', 'operations'].includes(message.dependency)) {
+            pending.signals.add(message.dependency);
+            if (pending.waiting === message.dependency) {
+                pending.waiting = null;
+                armEntry();
+            }
+        }
+        receiveCompletion();
+    });
+}
 receiveRequests();
 receiveCancellation();
+receiveCompletion();

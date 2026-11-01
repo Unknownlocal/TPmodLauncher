@@ -39,7 +39,7 @@ class ImportHandover:
             lock.release()
             events = self._events()
             if events is not None and not self._closed:
-                events.imported(events.host.manager)
+                events.imported(events.host.manager, name)
             del events
 
     def close(self):

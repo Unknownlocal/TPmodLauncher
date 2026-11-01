@@ -19,6 +19,8 @@ class ReportingReceiver:
         self.records = deque()
         self.connected, self.finished = threading.Event(), threading.Event()
         self.confirmed = False
+        self.control_ready = None
+        self.control_failed = None
         self.expected = False
         self._closed = False
         self._thread = self._timer = None
@@ -48,7 +50,12 @@ class ReportingReceiver:
 
     def _connection_expired(self):
         if not self.connected.is_set() and not self._closed:
-            self.enqueue_event("reporting-closed", "Native reporting did not connect after manager startup")
+            self._failed("Native reporting did not connect after manager startup")
+
+    def _failed(self, detail):
+        if self.control_failed is not None:
+            self.control_failed(detail)
+        self.enqueue_event("reporting-closed", detail)
 
     def _run(self):
         authenticated = False
@@ -83,6 +90,14 @@ class ReportingReceiver:
                             if kind == "stopped" and set(message) == {"kind"}:
                                 self.confirmed = True
                                 return
+                            if kind == "control-ready" and set(message) == {"kind", "request", "dependency"}:
+                                if (type(message["request"]) is not str or len(message["request"]) != 32
+                                        or any(c not in "0123456789abcdef" for c in message["request"])
+                                        or message["dependency"] not in ("imports", "operations")):
+                                    raise ValueError("Invalid native control completion")
+                                if self.control_ready is not None:
+                                    self.control_ready(message["request"], message["dependency"])
+                                continue
                             if kind == "fallback" and set(message) == {"kind", "record"} and type(message["record"]) is dict:
                                 self.records.append(message["record"])
                             elif kind != "journal-ready" or set(message) != {"kind"}:
@@ -93,7 +108,7 @@ class ReportingReceiver:
                             raise
         except Exception as error:
             if not self._closed:
-                self.enqueue_event("reporting-closed", str(error))
+                self._failed(str(error))
         finally:
             self.finished.set()
 

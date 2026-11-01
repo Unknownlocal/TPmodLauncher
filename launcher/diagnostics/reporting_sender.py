@@ -24,6 +24,10 @@ class ReportingSender:
     def enqueue_journal_notice(self):
         self._queue.put({"kind": "journal-ready"})
 
+    def enqueue_control_ready(self, request, dependency):
+        """Wake one parked control without waiting for journal storage."""
+        self._queue.put({"kind": "control-ready", "request": request, "dependency": dependency})
+
     def enqueue_log_record(self, record):
         """Preserve a complete diagnostic when storage could not carry it."""
         self._queue.put({"kind": "fallback", "record": record})

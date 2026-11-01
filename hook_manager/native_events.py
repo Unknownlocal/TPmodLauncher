@@ -11,11 +11,12 @@ if __package__:
     from .native_loading import NativeLoading
     from .native_failures import NativeFailures
     from .import_handover import ImportHandover
+    from .control_locks import ControlLocks
     from .diagnostics import build_log_record
 
 
 class NativeEvents:
-    """Collect only on actual changes, keeping periodic status replies cached."""
+    """Collect on actual changes and wake controls on named completion events."""
 
     def __init__(self, host):
         self.host, self.cache = host, {}
@@ -25,10 +26,13 @@ class NativeEvents:
         self._loading_done = []
         self._managers = weakref.WeakSet()
         self.handover = ImportHandover(self)
+        self.control_locks = ControlLocks(self)
         self._previous = Manager.event_sink
         Manager.event_sink = self
+        self.control_imports, self.control_id = None, None
         for manager in (host.manager, host.readiness, host.activity):
             self.bind(manager)
+        self.control_imports = Manager()
         self.loading = NativeLoading(host.readiness, host.activity)
         self.failures = NativeFailures(host.activity)
         host.settings.changed = self.refresh
@@ -47,6 +51,24 @@ class NativeEvents:
     def watch_imports(self, names):
         self.handover.watch(names)
 
+    def control_ready(self, request, dependency):
+        """Notify only the matching control; no native callback address is retained."""
+        notifications = self.host.activity.writer.notifications
+        if request is not None and notifications is not None and not self.closed:
+            notifications.enqueue_control_ready(request, dependency)
+
+    def watch_control_imports(self, names):
+        """Observe the actual imports that can hold up native default definitions."""
+        request = self.control_id
+        def completed(module):
+            self.control_ready(request, "imports")
+            return True
+        for name in names:
+            self.control_imports.observe(name, completed)
+
+    def watch_control_lock(self, lock):
+        self.control_locks.watch(lock, self.control_id)
+
     def submit_log(self, record):
         """Route compatibility notices now, rather than waiting for a status reply."""
         self.host.activity.submit_log({**record, "event": "diagnostic"})
@@ -62,13 +84,15 @@ class NativeEvents:
         self.host.activity.submit_log({"event": topic, "event_sequence": next(self._sequence),
                                        "pack" if topic == "pack" else "status": value})
 
-    def imported(self, manager):
+    def imported(self, manager, name=None):
         """A worker never installs hooks; its completion requests main-thread service."""
         with self._lock:
             if self.closed:
                 return
             first = not self._pending
             self._pending.add(manager)
+        if self.control_imports is not None and name in self.control_imports.wanted:
+            self.control_ready(self.control_id, "imports")
         if first and not self.closed:
             self.host.activity.submit_log({"event": "native-service"})
 
@@ -147,7 +171,7 @@ class NativeEvents:
         self.service()
 
     def status(self):
-        """Return the latest plain values; an idle bridge pulse performs no collection."""
+        """Return cached plain values for an explicit status request."""
         return {"pack": self.cache.get("pack", {"state": "pending"}),
                 "menu": self.cache.get("menu", {"state": "pending"}),
                 "themes": self.cache.get("themes", {"state": "pending"}),
@@ -158,6 +182,8 @@ class NativeEvents:
 
     def close(self):
         self.closed = True
+        self.control_locks.close()
+        self.control_imports.stop()
         self.handover.close()
         if Manager.event_sink is self:
             Manager.event_sink = self._previous

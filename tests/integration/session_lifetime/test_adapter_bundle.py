@@ -126,7 +126,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         host.discovery.snapshot = {"state": "ready", "series": "formula", "root": str(tmp_path)}
         native.__spec__ = SimpleNamespace(_initializing=True)
         request = json.dumps(json.dumps({"operation": "regulation-defaults"}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation definitions are loading"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "imports"}
         native.__spec__._initializing = False
         defaults = pulse("regulation-defaults")
         assert defaults["regulation_notices"] == []
@@ -254,7 +254,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         # loader suite. Here check the generated bridge's WAIT/retry protocol.
         guard._active = 1
         request = json.dumps(json.dumps({"operation": "shutdown"}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "operations"}
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
         # Retirement uses the same WAIT/idle boundary but retains the loading
@@ -264,7 +264,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         channel.reset = resets.append
         guard._active = 1
         request = json.dumps(json.dumps({"operation": "retire-regulations", "regulations": control}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "operations"}
         assert not channel.validation_ready and not guard.closed and not resets
         guard._active = 0
         owner = host.adapters.preload
