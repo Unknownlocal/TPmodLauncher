@@ -12,6 +12,9 @@ through `bundled_dependencies.py`, registers the trusted source packages, and
 verifies the runner under `libs/mod-runners`. Its check-only path stops after
 verification. Normal startup also validates Steam's command against the installed
 `TeamPrincipal.exe` before creating the controller, bridge and mod scopes.
+Both paths claim ownership of the log before verification. Only fixed
+standard-library logging helpers load before the dependency checks, so a damaged
+dependency or runner can still leave a complete error log.
 
 Dependency verification uses the expected versions and file inventory in
 `bundled_packages.toml`. The runner's sources, notices and Wasm bytes have a
@@ -20,12 +23,12 @@ normal startup does not download packages or build components.
 
 ## Process and bridge ownership
 
-`process_lifecycle.py` holds the controller lock, starts the game through Frida
+`process_lifecycle.py` shares entry's log ownership, starts the game through Frida
 and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
-`diagnostics.py` configures standard Python logging for the console and
+[`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations
 use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
@@ -42,10 +45,20 @@ Handlers are removed when the launch ends.
 transport records with `hook_manager.diagnostics.build_log_record()`.
 `handle_error()` records failures at the controller's outer error handlers and
 requests game shutdown. Other ERROR records leave the decision to their caller.
-Errors before controller logging starts use Python's standard traceback output
-on the console.
+`handle_error()` also retains the first fatal reason and its setup/controller
+stage as plain text. File output is flushed and synchronised on fatal failure
+and again after game cleanup. A final log record joins the original reason to
+the cleanup results. The caller receives the final write result after the file
+has been synchronised and closed; the saved record cannot claim that its own
+write succeeded. No dialog is involved in logging.
 
-On Windows, `console_shutdown.py` handles launcher failures, closing the console,
+`diagnostics/log_file_handler.py` retains file-write failures even when Python logging would
+normally suppress them. An unavailable log produces a console warning and a
+failed launch result. A duplicate launcher leaves the active log untouched and
+reports its ownership failure on the console. Argument usage errors are reported
+before a log is opened.
+
+On Windows, `diagnostics/console_shutdown.py` handles launcher failures, closing the console,
 Ctrl+C and Ctrl+Break. It sends normal window-close requests only to game processes owned
 by this controller, while the controller thread closes mods and removes hooks.
 Process handles and executable checks protect against targeting an unrelated

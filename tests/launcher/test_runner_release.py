@@ -2,6 +2,7 @@
 """Verify the installed runner before entry creates any game session."""
 
 from contextlib import closing
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -40,9 +41,16 @@ def test_entry_rejects_runner_damage_before_launch_or_cache(installed, monkeypat
         pytest.fail("Runner rejection must precede game launch")
     monkeypatch.setattr(process_lifecycle, "run_launcher", forbidden)
     arguments = ["--check-only"] if check_only else ["--", str(executable)]
-    assert entry.main(arguments) == 1
+    outcome = {}
+    assert entry.main(arguments, outcome=outcome) == 1
     assert "Python runner verification failed" in capsys.readouterr().err
-    assert not any((root / name).exists() for name in ("bin", "logs", ".state", ".cache"))
+    text = (root / "logs/launcher.log").read_text(encoding="utf-8")
+    saved = json.loads(text.rpartition("LAUNCH FAILURE DETAILS ")[2])
+    assert saved["failure"] == outcome["failure"] and saved["session_id"] == outcome["session_id"]
+    assert outcome["log_written"]
+    assert outcome["failure"]["stage"] == "runner_verification" and "Traceback" in text
+    assert not any((root / name).exists() for name in ("bin", ".cache"))
+
 
 
 def test_entry_supplies_installed_runner_to_real_source_pack(installed, source_mod, monkeypatch, python_compilation_cache):

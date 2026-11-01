@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Close owned game processes when their Windows launcher console closes."""
 
-from launcher.diagnostics import bind_reporter
+from .core import bind_reporter
 
 import ctypes as c
 from ctypes import wintypes as w
@@ -21,6 +21,7 @@ class ConsoleShutdown:
         self._lock, self._processes, self._posted = threading.RLock(), {}, set()
         self._handler, self._deadline = None, None
         self._forced = False
+        self.result = "not_requested"
 
     def __enter__(self):
         if os.name != "nt":
@@ -143,8 +144,8 @@ class ConsoleShutdown:
                     for handle in self._processes.values():
                         self._kernel.WaitForSingleObject(handle, max(0, int((deadline - time.monotonic()) * 1000)))
                     pending = self._alive()
-                self.submit_log("GAME CLOSE " + ("pending; process exit not confirmed" if pending
-                            else "forced" if self._forced else "complete"),
+                self.result = "pending" if pending else "forced" if self._forced else "complete"
+                self.submit_log("GAME CLOSE " + ("pending; process exit not confirmed" if pending else self.result),
                             level="ERROR" if pending else "WARNING" if self._forced else "INFO")
         finally:
             if self._handler is not None:

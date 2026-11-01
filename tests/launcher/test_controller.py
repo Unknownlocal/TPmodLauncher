@@ -2,6 +2,8 @@
 """Check launcher tracking, command arguments, file locks and logging."""
 
 import os
+import json
+from contextlib import nullcontext
 from pathlib import Path
 import shutil
 import subprocess
@@ -140,7 +142,7 @@ def test_fatal_preload_status_keeps_complete_remote_error_and_closes_controller(
         def start(self):
             self.on_message({"type": "send", "payload": {"event": "career-preload", "status": status}})
         def close(self):
-            pass
+            raise RuntimeError("Owned bridge cleanup failure")
 
     # Assign the real pack scope when the owned session is attached.
     original = lifecycle.Controller._attach
@@ -158,8 +160,32 @@ def test_fatal_preload_status_keeps_complete_remote_error_and_closes_controller(
         assert "Native regulation loading protection became unavailable" in output
         assert cause in output and "ValueError:" in output and "in native_load" in output
         assert "direct cause" in output and "Native loading note" in output
-        assert "CONTROLLER STOPPED; cleanup complete" in output
+        assert "CONTROLLER STOPPED; cleanup incomplete" in output
         assert secret_local not in output
+        assert "Owned bridge cleanup failure" in output
+    saved = json.loads(path.read_text(encoding="utf-8").rpartition("LAUNCH FAILURE DETAILS ")[2])
+    assert saved["failure"]["stage"] == "controller" and saved["cleanup"] == "failed"
+    assert saved["failure"]["reason"] == "Native regulation loading protection became unavailable"
+
+
+def test_cleanup_failure_becomes_a_fatal_outcome_without_an_earlier_error(rig, tmp_path, monkeypatch):
+    device, _, _, _ = rig
+    requested = threading.Event()
+    requested.set()  # A console-close request before startup skips spawning the game.
+    shutdown = SimpleNamespace(requested=requested, request=requested.set)
+    monkeypatch.setattr(lifecycle, "ConsoleShutdown", lambda *args: nullcontext(shutdown))
+    def unavailable():
+        raise RuntimeError("Owned pending children could not be released")
+    monkeypatch.setattr(device, "enumerate_pending_children", unavailable)
+    path = tmp_path / "launcher.log"
+    assert lifecycle.run_launcher(SimpleNamespace(get_local_device=lambda: device), [device.game],
+                                  tmp_path / "lock", path) == 1
+    text = path.read_text(encoding="utf-8")
+    assert "Owned pending children could not be released" in text and "cleanup incomplete" in text
+    saved = json.loads(text.rpartition("LAUNCH FAILURE DETAILS ")[2])
+    assert saved["failure"]["stage"] == "cleanup" and saved["cleanup"] == "failed"
+    assert not device.handlers
+
 
 
 def test_game_is_gated_before_resume_with_original_environment_and_cwd(rig):
@@ -297,8 +323,15 @@ def test_unexpected_tracking_loss_fails_and_cleans_up(rig):
     assert all(not session.gating for session in device.sessions.values())
 
 
-def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tmp_path):
-    lock = tmp_path / "controller.lock"
+def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tmp_path, monkeypatch):
+    from launcher import entry
+
+    lock = tmp_path / ".state/controller.lock"
+    log = tmp_path / "logs/launcher.log"
+    log.parent.mkdir()
+    log.write_text("Active controller evidence", encoding="utf-8")
+    before = log.read_bytes(), log.stat().st_mtime_ns
+    monkeypatch.setattr(entry, "__file__", str(tmp_path / "launcher/entry.py"))
     probe = tmp_path / "lock_probe.py"
     shutil.copyfile(FIXTURES / "controller_lock_probe.py", probe)
     environment = os.environ.copy()
@@ -309,6 +342,10 @@ def test_controller_lock_rejects_other_process_and_recovers_after_holder_exit(tm
             command, env=environment, capture_output=True, text=True, timeout=20
         )
         assert result.returncode == 7, result.stderr
+        outcome = {}
+        assert entry.main(["--check-only"], outcome=outcome) == 1
+        assert (log.read_bytes(), log.stat().st_mtime_ns) == before
+        assert outcome["failure"]["stage"] == "log_ownership" and not outcome["log_written"]
     result = subprocess.run(
         command, env=environment, capture_output=True, text=True, timeout=20
     )

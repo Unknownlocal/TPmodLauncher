@@ -12,6 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  diagnostics:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-launcher-diagnostics.yml
+    with:
+      ref: ${{ inputs.ref }}
+
   test:
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/portable.yml

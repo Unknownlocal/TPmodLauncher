@@ -44,6 +44,7 @@ jobs:
               f"python-coverage-{suite}-{platform}": (label, platform_label)
               for suite, label in (
                   ("launcher", "Launcher"),
+                  ("launcher_diagnostics", "Launcher diagnostics"),
                   ("hook_manager", "Hook manager"),
                   ("career_preload", "Career loading"),
                   ("game_adapters", "Game adapters"),

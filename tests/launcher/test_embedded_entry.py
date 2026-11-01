@@ -43,7 +43,10 @@ def test_embedded_entry_reports_runner_damage_without_repair(embedded_project):
         )
         assert result.returncode == 1 and "Python runner verification failed" in result.stderr
         assert "Restore the complete launcher release" in result.stderr and "Traceback" in result.stderr
-        assert payload.read_bytes() == b"damaged runner" and set(root.iterdir()) == before
+        assert payload.read_bytes() == b"damaged runner"
+        assert {path.name for path in set(root.iterdir()) - before} <= {"logs", ".state"}
+        log = (root / "logs/launcher.log").read_text(encoding="utf-8")
+        assert "Python runner verification failed" in log and "Traceback" in log
     finally:
         payload.write_bytes(original)
 
@@ -81,7 +84,7 @@ def test_relocated_release_imports_dependencies_without_installation(
         if p.is_file()
     }
     assert not list((root / "libs/vendor").rglob("__pycache__"))
-    assert not (root / ".state").exists() and not (root / ".cache").exists()
+    assert (root / ".state/controller.lock").exists() and not (root / ".cache").exists()
     assert not (root / "libs/wheels").exists()
 
 
@@ -226,7 +229,9 @@ def test_entry_reports_package_damage_without_repair(embedded_project, name):
         )
         assert "Traceback" in result.stderr
         assert payload.read_bytes() == b"damaged package"
-        assert not (root / ".state").exists() and not (root / ".cache").exists()
+        assert not (root / ".cache").exists()
+        log = (root / "logs/launcher.log").read_text(encoding="utf-8")
+        assert "Dependency verification failed" in log and "Traceback" in log
     finally:
         payload.write_bytes(original)
 
@@ -316,4 +321,4 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
             timeout=20,
         )
         assert result.returncode == code and message in result.stderr, result.stderr
-    assert not (root / ".state").exists() and not (root / "logs").exists()
+    assert "installed game:" in (root / "logs/launcher.log").read_text(encoding="utf-8")

@@ -162,6 +162,9 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
         if mode == "fatal":
             assert process.returncode == 1 and "LAUNCHER ERROR: Owned launcher failure" in log
             assert "in failing_poll" in log
+            saved = json.loads(log.rpartition("LAUNCH FAILURE DETAILS ")[2])
+            assert saved["cleanup"] == "complete" and saved["game_close"] == "complete"
+            assert saved["failure"]["reason"] == "Owned launcher failure"
         else:
             assert "CONSOLE CLOSE requested" in log
         if blocked:

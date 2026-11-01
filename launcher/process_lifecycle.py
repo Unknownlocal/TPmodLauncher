@@ -10,8 +10,8 @@ from pathlib import Path
 import queue
 import time
 
-from launcher.console_shutdown import ConsoleShutdown
-from launcher.diagnostics import bind_reporter, exception_from_record, handle_error, write_log, reporter
+from launcher.diagnostics.console_shutdown import ConsoleShutdown
+from launcher.diagnostics import bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, sync_log
 
 
 class LaunchError(RuntimeError):
@@ -44,29 +44,7 @@ def validate_command(command, expected):
 @contextmanager
 def controller_lock(path):
     """Hold an OS file lock until this controller finishes, including error cleanup."""
-    # path is inside the launcher's .state folder; reuse the same inode across launches.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as stream:
-        # Windows locks a byte range, so ensure that byte exists before locking it.
-        if stream.seek(0, os.SEEK_END) == 0:
-            stream.write(b"\0")
-            stream.flush()
-        stream.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            raise LaunchError(
-                "Another controller is running, or the controller lock is unavailable."
-            ) from error
-        # Closing the file releases the OS lock; process termination also releases it.
-        # Keep the lock file itself, so another opener cannot lock a different replacement file.
+    with log_ownership(path, error_type=LaunchError):
         yield
 
 
@@ -454,44 +432,72 @@ def run_launcher(
     restart_grace=2.0,
     bridge_factory=None,
     mods_factory=None,
+    logger=None,
 ):
     """Run one controller and return 0 on normal exit, 1 on failure or 130 on interruption."""
-    # Acquire ownership before opening the log: a rejected duplicate must leave it untouched.
-    with controller_lock(lock_path):
-        with reporter(log_path) as logger, ConsoleShutdown(command[0], logger) as shutdown:
+    if logger is None:
+        # Direct controller callers own the same log session as normal entry.
+        # Entry already holds ownership while checking dependencies and supplies
+        # its logger, so it must not acquire the lock or truncate the log again.
+        outcome = {}
+        with controller_lock(lock_path), reporter(log_path, outcome=outcome) as logger:
+            code = run_launcher(frida, command, lock_path, log_path, restart_grace=restart_grace,
+                                bridge_factory=bridge_factory, mods_factory=mods_factory, logger=logger)
+        return 1 if outcome["log_error"] is not None else code
+
+    outcome = logger.launch_outcome
+    controller, shutdown, code, stage = None, None, 0, "controller_setup"
+    try:
+        with ConsoleShutdown(command[0], logger) as shutdown:
+            controller = Controller(frida.get_local_device(), command, logger,
+                                    restart_grace=restart_grace, bridge_factory=bridge_factory,
+                                    mods_factory=mods_factory, shutdown=shutdown)
             try:
-                controller = Controller(
-                    frida.get_local_device(),
-                    command,
-                    logger,
-                    restart_grace=restart_grace,
-                    bridge_factory=bridge_factory,
-                    mods_factory=mods_factory,
-                    shutdown=shutdown,
-                )
-                code = 0
-                try:
-                    controller.start()
-                    while not shutdown.requested.is_set() and not controller.poll(timeout=0.25):
-                        pass
-                    if shutdown.requested.is_set():
-                        logger.info("CONSOLE CLOSE requested; closing owned game windows")
-                        code = 130
-                    else:
-                        logger.info("GAME SESSION ENDED")
-                except KeyboardInterrupt:
-                    shutdown.request()
-                    logger.info("INTERRUPTED; closing owned game windows")
+                controller.start()
+                stage = "controller"
+                while not shutdown.requested.is_set() and not controller.poll(timeout=0.25):
+                    pass
+                if shutdown.requested.is_set():
+                    logger.info("CONSOLE CLOSE requested; closing owned game windows")
                     code = 130
-                except Exception as error:
-                    handle_error(logger, error, shutdown=shutdown, component="controller")
-                    code = 1
-                finally:
-                    controller.close()
-                return 1 if controller.cleanup_failed else code
+                else:
+                    logger.info("GAME SESSION ENDED")
             except KeyboardInterrupt:
-                logger.info("INTERRUPTED during controller setup")
-                return 130
+                shutdown.request()
+                logger.info("INTERRUPTED; closing owned game windows")
+                code = 130
             except Exception as error:
-                handle_error(logger, error, message="LAUNCHER SETUP ERROR", level="CRITICAL", shutdown=shutdown, component="controller")
-                return 1
+                handle_error(logger, error, stage=stage, shutdown=shutdown, component="controller")
+                code = 1
+            finally:
+                stage = "cleanup"
+                try:
+                    controller.close()
+                    outcome["cleanup"] = "failed" if controller.cleanup_failed else "complete"
+                except BaseException:
+                    outcome["cleanup"] = "failed"
+                    shutdown.request()
+                    raise
+                if controller.cleanup_failed:
+                    if outcome["failure"] is None:
+                        handle_error(logger, RuntimeError("Controller cleanup did not complete; see errors above"),
+                                     stage="cleanup", shutdown=shutdown, component="controller")
+                    code = 1
+    except KeyboardInterrupt:
+        logger.info("INTERRUPTED during controller setup or cleanup")
+        code = 130
+    except Exception as error:
+        if stage == "cleanup":
+            outcome["cleanup"] = "failed"
+        handle_error(logger, error, message="LAUNCHER SETUP ERROR" if stage == "controller_setup" else "LAUNCHER CLEANUP ERROR",
+                     level="CRITICAL", stage=stage, component="controller")
+        code = 1
+    finally:
+        outcome["game_close"] = getattr(shutdown, "result", "not_requested")
+        if outcome["game_close"] == "pending":
+            outcome["cleanup"] = "failed"
+            if outcome["failure"] is None:
+                handle_error(logger, RuntimeError("Owned game exit could not be confirmed"), stage="cleanup", component="controller")
+            code = 1
+        sync_log(logger)
+    return code
