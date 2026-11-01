@@ -1,57 +1,49 @@
-# Driver employment support
+# Driver contracts
 
-This package describes proposed Formula driver contracts without signing them or
-changing the live career. It works out the terms that mod rules will check;
-the game's signing method still decides whether an allowed proposal succeeds.
+The driver adapter prepares Formula employment proposals for
+`personnel.contract` validators. Use source API `0.4.0` with `regulations`.
+Mods receive copied terms before signing; the game's remaining checks decide
+whether an allowed proposal succeeds.
 
-## Main parts
+The [personnel API](../personnel/README.md) defines the shared identities,
+contract fields, offer previews and optional payroll input. The
+[regulation API](../regulations/README.md) defines declarations and handler returns.
 
-- [planner.py](planner.py): `DriverContractPlanner` builds the proposed contract,
-  including its team, role, status, dates, salary and bonuses. It also describes
-  the prior agreement and distinguishes a signing from a renewal.
-- [snapshot.py](snapshot.py): copies the candidate and relevant team contracts so
-  game helpers can calculate dates and status without editing live records.
-- [queries.py](queries.py): protects live contract records and the signing-query
-  cache when game callers ask about eligibility or contract status. Frequent
-  active-contract reads pass arguments directly rather than rebuilding them.
-- [query_inputs.py](query_inputs.py): reuses private active-contract inputs within
-  one negotiation. Every lookup still checks its requested week. Returned
-  agreements leave the reuse store so caller edits cannot affect later reads.
-  Drivers without current contracts share one private empty input.
-- [terms.py](terms.py): handles returned academy loans on the working copies.
-  Common person and contract formatting lives in
-  [employment.py](../employment.py).
-- [rookie_switch.py](rookie_switch.py): `RookieContractLengthSwitch` can disable the
-  native rookie length cap for one career. Missing or true installs nothing;
-  false supplies the game's no-cap result. Removal restores the original helper.
-  Trusted setup can supply a boolean query instead. The regulation consumer
-  chooses the applicable contract season; this switch only checks its result.
+## Data available to mods
 
-The planner accounts for current and future seats, reserve cover, loan returns,
-bonus conversion and the status promised within a team. These calculations stay
-separate from staff employment because the game's rules differ.
+`context["proposal"]` describes the driver, team, previous agreement and proposed
+contract. `contract_kind` is `"employment"`; `action` is `"sign"` or `"renew"`.
+Proposed terms include role, promised status, dates, annual salary and bonuses.
+Money is in millions, and employment duration is in weeks.
 
-## Integration
+The planner accounts for current/future seats, reserve cover, academy loan
+returns and the game's driver hierarchy. Use these calculated terms rather
+than assuming they equal the original offer.
 
-[Shared personnel support](../personnel/README.md) handles offers, AI negotiations
-and player confirmations. The [regulation adapter](../regulations/README.md)
-selects the rules, checks the proposal and controls whether signing runs.
-Already accepted contracts take effect through the game's normal activation code.
-Working copies are discarded when signing is allowed and when a caller finishes;
-they are never carried into another negotiation.
+The additional boolean
+`proposal["native_checks"]["rookie_contract_length_applies"]` tells a validator
+whether the game's rookie-length check applies to this person, role and team.
+It is calculated even when the native length cap is disabled; it is not a
+general label declaring the driver a rookie in all situations.
 
-Driver proposals include
-`proposal.native_checks.rookie_contract_length_applies`. The original game helper
-decides this result, including its experience, role and employer checks, even
-when the native cap is disabled. It describes this proposed contract, rather
-than declaring the driver a rookie in every situation. A working manager skips
-team ranking, which only chooses the unused native cap and can initialise live
-engines. The planner does not copy the whole career.
+## Native rookie-length check
 
-Custom validators can use that boolean with their adopted regulation data to
-enforce their own contract limits. The launcher connects declared contract
-validators and native switches when preparing the selected career.
+A mod's `native_rules` can set `rookie_contract_length_check` to `false` to
+disable that one native restriction. Omitted or `true` keeps it. A reference
+to a boolean in the mod's own category can vary this by contract season.
 
-Compatibility checks use game method names and the arguments they accept.
-Importing this package installs no hooks or game modules. It contains private
-launcher support, with no direct game-function access for mods.
+A validator can combine the applicability boolean with its selected rule to
+enforce a custom limit. See the [rookie contract example](../../../examples/rookie_contract_mod)
+and [native switch format](../regulations/README.md#native-rule-switches).
+
+## Internal responsibilities
+
+`DriverContractPlanner` uses small working copies for native date, seat and
+status calculations. Query helpers protect live contracts while negotiations
+run; `RookieContractLengthSwitch` owns the optional cap bypass.
+[Personnel support](../personnel/README.md) handles negotiations and feedback,
+while the regulation adapter selects rules and controls signing.
+
+Working copies do not outlive the negotiation. Accepted future contracts take
+effect through normal game code. These modules are private launcher support;
+importing them installs no hooks.

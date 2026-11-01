@@ -1,90 +1,102 @@
-# Shared personnel negotiations
+# Personnel approaches and contracts
 
-Driver and staff negotiations share game functions. This package supplies
-wrappers for offers, deadlines, AI choices and player confirmations. It handles
-records and feedback; rule selection and mod checks belong to the
-[regulation adapter](../regulations/README.md).
+This adapter supports Formula driver and staff negotiations. Mods can check
+approaches before talks begin and contract proposals before offers or signings
+change the career. Use source API `0.4.0` with `regulations`.
 
-## Main parts
+The [regulation API](../regulations/README.md) defines handler declarations,
+common context fields and allow/deny responses. The fields below are under
+`context["proposal"]`. They are copied data, not live game objects.
 
-- [payroll.py](payroll.py): the internal `project_payroll` helper reads annual
-  staff and driver salaries from supplied contract records. It includes a
-  proposed agreement, accounts for replacements and scheduled deals, and returns
-  the totals and the week they describe without changing either roster.
-  Requested totals are checked again before allowing a write. Staffing also
-  checks the borrowed driver records before applying the completed batch.
-  These checks last only for that operation; they do not cache the career.
+## Approaches: `personnel.approach`
 
-- [offer.py](offer.py): `PersonnelOffer` translates a submitted offer into the
-  existing planners' signing arguments. It preserves native salary/bonus field
-  choices without calling a signer or changing a negotiation.
+This scope covers driver and staff approaches to Formula teams.
 
-- [approach.py](approach.py): `PersonnelApproach` maps the shared native approach
-  method and prepares person, team and intended-start data. It uses private
-  driver contracts for native date queries and returns native refusal triples.
-  It contains no regulation conditions or mod dispatch.
+| Field | Meaning |
+| --- | --- |
+| `action` | `"approach"`. |
+| `person` | Candidate identity, as described below. |
+| `employer` | Team identity, as described below. |
+| `role` | Intended employment role. |
 
-- [callers.py](callers.py): `PersonnelCallers` wraps the shared negotiation
-  functions. [caller_targets.py](caller_targets.py) identifies those functions,
-  and [preparation.py](preparation.py) holds temporary changes made by their
-  scoring and eligibility helpers.
-- [market_preparation.py](market_preparation.py): `MarketPreparation` keeps draft
-  offers, deadlines, pending confirmations and mail separate from live records.
-  Completed market actions can be applied as the batch progresses; a later
-  interruption discards the remaining drafts.
-- [native_record_graph.py](../native_record_graph.py): the shared
-  `NativeRecordGraph` copies related records together, so references to the same
-  offer still refer to one offer. Applying changes
-  preserves the game's original dictionaries and lists.
-- [market_mail.py](market_mail.py): `MarketMail` keeps messages with the offer that
-  produced them, so unfinished work does not send premature mail.
-- [rollover.py](rollover.py): grants worker access for the active career while
-  the game's season-end function performs its normal work.
+`context["effective"]` gives the intended season and start week; `end_week`
+is `None`. Salary and contract duration are not available at this stage.
+An allowed approach does not approve a later contract.
 
-Shared [validation operation support](../validation_operation.py) keeps worker
-permission within identified game calls. `ValidationCancellation` carries a
-refusal back to the caller responsible for the action, including when a native
-helper catches the interruption.
+## Contracts: `personnel.contract`
 
-## Decisions and feedback
+This scope covers [driver](../drivers/README.md), [staff](../staff/README.md)
+and [academy](../academy/README.md) signings and renewals.
 
-Ordinary and final offer submissions are checked before the native method
-changes their record or decision deadline. Refusals return the native
-false/message/record result, so each screen uses its normal submission error
-display. Screen-local attempt handling remains native. The later signing
-check is separate and does not reuse a submission allowance.
+| Field | Meaning |
+| --- | --- |
+| `action` | `"sign"` or `"renew"`. |
+| `person` | Candidate identity. |
+| `employer` | Team, supplier or academy identity. |
+| `contract_kind` | `"employment"` or `"academy"`. |
+| `existing` | Previous agreement's terms, or `None`. |
+| `proposed` | Resulting agreement's terms. |
 
-A mod refusal keeps a player confirmation pending. A refusal from the game's own
-signing method retains its normal handling of alternative offers. If a required
-mod check cannot run, the caller stops rather than treating that failure as an
-ordinary rejected offer. Completed signings are not undone.
+Driver and staff offer submissions use `context["operation"] == "preview"`.
+Final signings use `"commit"` and are checked again. Already accepted agreements
+load and take effect normally without another mod check.
 
-Season-end signing and academy AI calls can run on the game's background worker.
-Their wrappers grant access only during those identified calls and release it
-afterwards. If required checks become unavailable, the operation stops with an
-error handled by the game's worker. Catching that error inside a native helper
-does not turn the unfinished operation into a success. Ordinary rule refusals
-retain native candidate selection.
+Both `existing` and `proposed` use these term fields:
 
-[feedback/](feedback/) uses the [shared UI components](../ui/README.md) to show
-refusal dialogs and retain the reason in the scrollable Latest Response panel.
-Its screen wrappers are separate from signing checks.
+| Field | Meaning |
+| --- | --- |
+| `role`, `status` | Employment role and driver status where available. |
+| `start_week`, `end_week` | Absolute game weeks; the end is exclusive. |
+| `duration_weeks`, `duration_seasons` | Full agreement length; employment uses weeks and leaves seasons as `None`. |
+| `annual_salary_m` | Annual employment salary, in millions. |
+| `annual_retainer_m` | Annual academy fee, in millions. |
+| `bonuses_m` | `point`, `win` and `podium` amounts, in millions. |
 
-Inbox contract approvals use the same refusal callback. `InboxNotice` shows the
-reason and candidate in the shared dialog while the agreement remains pending.
-Only the current Accept action receives that feedback; declining and trying
-backup offers keep their normal handling. The inbox retains its own action
-results and sound cues. Dialog input stays within the dialog until it closes.
-Screen compatibility failures disable only that screen's optional feedback;
-contract validation remains active.
+Unavailable values are `None`. Use the relevant adapter's explanation for
+differences between employment and academy terms.
 
-Staff approach failures reuse that dialog with approach-specific wording while
-keeping native inline text and error sound. The adapter observes the native
-confirmation's outcome only during that call; it restores the sound helper
-afterwards. Approach-only mods own the same optional feedback through
-their approach adapter. Driver approaches keep the native failure dialog, paired
-with the native action-error cue when it opens.
+## Person and employer identities
 
-The driver and staff packages prepare their own contract terms.
-Accepted future contracts are not checked again when loaded or activated.
-Importing this package installs nothing; it exposes no game-function API to mods.
+A person has `kind` (`"driver"` or `"staff"`), `ref`, `name`,
+`nationality`, `age` and `role`. The identity's role is the person's stored
+role; use proposed contract terms for the employment role.
+
+An employer has `kind` (`"team"`, `"supplier"` or `"academy"`), `ref`,
+`name`, `nationality`, `prestige_base`, `heritage_prestige` and
+`form_prestige`. Missing values are `None`. References identify loaded objects;
+do not store them as permanent save-file IDs.
+
+## Optional payroll input
+
+A `personnel.contract` validator can declare:
+
+```json
+"inputs": ["employer_payroll"]
+```
+
+This adds `proposal["employer"]["payroll"]`:
+
+| Field | Meaning |
+| --- | --- |
+| `as_of_week` | Today for an immediate/backdated deal, or the future start week. |
+| `staff_annual_salary_m` | Team's annual staff base salaries, in millions. |
+| `driver_annual_salary_m` | Team's annual driver base salaries, in millions. |
+
+Totals include the proposed agreement in place of the candidate's old deal,
+scheduled agreements and earlier hires in the same staffing operation.
+They exclude bonuses, buyouts and academy fees. Academy and supplier proposals
+give `None` for payroll. No payroll request means no roster scan.
+
+The [payroll example](../../../examples/staff_spend_mod) shows how to apply a cap.
+
+## Internal responsibilities
+
+`PersonnelApproach` prepares approach data; `PersonnelOffer` translates offers
+into signing terms. Negotiation wrappers keep draft offers and mail separate
+from live records. Payroll support calculates totals and rechecks them before
+allowing changes. Driver and staff planners supply their own contract terms.
+
+Feedback uses the game's submission errors and shared refusal dialogs. Failed
+required checks stop the action; completed signings are not undone. Supported
+weekly and season-end calls grant game workers access only while those calls run.
+These helpers are private launcher code and expose no direct game-call API.

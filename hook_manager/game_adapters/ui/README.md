@@ -1,36 +1,21 @@
-# Shared private UI components
+# Shared UI helpers
 
-Trusted game adapters can reuse `ui_bindings`, `ScrollText` and `ScrollableDialog`.
-Importing this package installs no hooks and imports no game modules. These are
-launcher helpers, with no new mod-facing API or callable registration.
+This package supplies private drawing and dialog helpers for trusted game
+adapters. It exposes no mod API. Public colour settings and palette operations
+are described in the [settings API](../../README.md#ui-settings-and-palettes).
 
-`ui_bindings(ScreenClass)` checks the shared screen/helper signatures and returns
-already-loaded native drawing, theme, wrapping and scrollbar support. The consumer
-calls it after its screen and native dependencies have imported normally. Checks
-use paths and signatures; matching implementations are accepted without hashes.
-Screen-specific signatures and compatibility reporting belong to the consumer.
+## Main parts
 
-`ScrollText(ui).draw(screen, surface, rect, blocks, font)` draws `(text, color)`
-blocks within the supplied rectangle. It caches wrapped lines, draws visible rows,
-clamps scrolling after layout changes and restores the surface clip. Forward input
-through `handle_event(screen, event)`. Wheel movement uses the font supplied to the
-last draw, and the native scrollbar handles track clicks and thumb dragging.
+- `ui_bindings(ScreenClass)` checks and returns the game's loaded drawing,
+  theme, text-wrapping and scrollbar helpers.
+- `ScrollText` wraps text, draws visible rows and handles scrolling within a
+  supplied rectangle. It keeps drawing inside that rectangle.
+- `ScrollableDialog` adds a dismissible dialog with a scrollable body,
+  caller-supplied text and an error or information style.
 
-`ScrollableDialog(ui)` supplies a dismissible dialog with a scrollable body. Its
-`draw` takes caller-owned `title` and `body`, optional `subtitle` and `footer`, an
-`error` or `info` style, and an optional body font. Without a font it requests the
-screen's standard 22px UI font. Set `open` to show it and forward input through
-`handle_event`; consumers own when to open it and what closing means.
+Consumers choose the wording, when a dialog opens and what closing it means.
+They forward input to the helpers and retain their own screen state.
+The [personnel adapter](../personnel/README.md) uses them for refusal messages.
 
-For example, inside a trusted adapter whose native UI is ready:
-
-```python
-ui = ui_bindings(ScreenClass)
-dialog = ScrollableDialog(ui)
-dialog.open = True
-dialog.draw(screen, surface, title="Schedule updated", body=summary, style="info")
-```
-
-The personnel adapter supplies contract wording, candidate names, pending-decision
-notes and persistent refusal state. Its native layout anchors, clipping boundaries,
-wrapper ownership and event lifecycle stay in `personnel/feedback`.
+Each consumer checks its screen-specific compatibility. Importing this package
+loads no game modules and installs no hooks.
