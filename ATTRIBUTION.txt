@@ -12,6 +12,12 @@ grants rights over game-owned material.
 This project is intended for free, noncommercial modding with a lawfully
 acquired game. It is not affiliated with or endorsed by the publisher.
 
+Testing credit: "F1 2026 PFM" data mod by Salo_14.
+Used to test launcher features. The launcher is independent of this data mod
+and does not require it.
+Steam Workshop: https://steamcommunity.com/sharedfiles/filedetails/?id=3821680568
+Google Drive: https://drive.google.com/drive/folders/1dnRNsKlDMeCfg12FBRYr5on72Q82-Smr
+
 Python 3.13.16 x64 embeddable distribution: Python Software Foundation and
 the upstream contributors identified in notices/LICENSE.Python.txt.
 Official origin: https://www.python.org/downloads/release/python-31316/
