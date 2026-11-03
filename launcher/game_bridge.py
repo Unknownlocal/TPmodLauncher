@@ -404,7 +404,15 @@ def factory(root, frida):
     # Keep bundled source as data in the bootstrap namespace. It is imported
     # only by the trusted 'adapters' operation, after normal bootstrap is ready.
     sources["modLauncher/hook_manager/adapter_modules.py"] += "\nADAPTER_SOURCES = " + repr(adapters) + "\n"
+    readiness_source = read("hook_manager/bootstrap_readiness.py")
     bootstrap_source = read("hook_manager/bootstrap.py")
+    # Evaluate only this small, fixed probe while interpreter startup is pending.
+    # It shares the same checks as pulse; the large source literals stay out.
+    readiness_expression = (
+        "(lambda ns: (exec(compile(" + json.dumps(readiness_source)
+        + ', "modLauncher/hook_manager/bootstrap_readiness.py", "exec"), ns), '
+        + 'ns["bootstrap_readiness"]())[1])({"__builtins__": __builtins__})'
+    )
     sources["modLauncher/launcher/diagnostics/activity_journal.py"] = read("launcher/diagnostics/activity_journal.py")
     sources["modLauncher/launcher/diagnostics/reporting_wire.py"] = read("launcher/diagnostics/reporting_wire.py")
     sources["modLauncher/launcher/diagnostics/reporting_queue.py"] = read("launcher/diagnostics/reporting_queue.py")
@@ -427,19 +435,22 @@ def factory(root, frida):
         # Build one fixed expression; the transport can append only a quoted JSON request.
         prefix = (
             "(lambda ns: (exec(compile("
+            + json.dumps(readiness_source)
+            + ', "modLauncher/hook_manager/bootstrap_readiness.py", "exec"), ns), exec(compile('
             + json.dumps(bootstrap_source)
             + ', "modLauncher/hook_manager/bootstrap.py", "exec"), ns), ns["pulse"]('
             + arguments
             + ","
         )
-        suffix = "," + json.dumps(str(journal.path)) + "," + json.dumps(reporting.endpoint) + '))[1])({"__builtins__": __builtins__})'
+        suffix = "," + json.dumps(str(journal.path)) + "," + json.dumps(reporting.endpoint) + '))[2])({"__builtins__": __builtins__})'
         # Once the private owner exists, source strings are unnecessary. Keep
         # the same digest/instance checks in pulse, with an empty source argument.
         repeat_prefix = "__import__('sys').modules['_tpm_hook_manager_host'].pulse(" + ",".join(
             json.dumps(value) for value in ({}, digest, instance, str(root.parent))) + ","
         # A fork transition loads the script engine for exec gating, but must not enter inherited Python.
         config = json.dumps(
-            {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap}
+            {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap,
+             "readiness": readiness_expression}
         )
         try:
             return Bridge(frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message, journal, reporting)

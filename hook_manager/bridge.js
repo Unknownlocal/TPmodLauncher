@@ -10,6 +10,22 @@ let failed = null;
 let pending = null;
 let armEntry = null;
 let mainThread = null;
+let bootstrapEntries = 0;
+let bootstrapLoads = 0;
+const bootstrapWaitReasons = new Set();
+
+function submitStartupLog(detail) {
+    send({ event: 'diagnostic', level: 'DEBUG', component: 'startup', detail: 'STARTUP ' + detail });
+}
+
+function submitBootstrapWait(value) {
+    if (!value.startsWith('WAIT:')) throw new Error('Invalid interpreter readiness response');
+    // Deduplicate startup waits rather than logging each intercepted GIL release.
+    if (!bootstrapWaitReasons.has(value)) {
+        bootstrapWaitReasons.add(value);
+        submitStartupLog(value);
+    }
+}
 
 function detachEntry() {
     if (listener) { listener.detach(); listener = null; }
@@ -62,6 +78,7 @@ observer = Process.attachModuleObserver({
                 : /^libpython3\.13\.so(?:\.\d+)*$/.test(name);
             if (!supported) throw new Error('Unsupported Python library: ' + name);
             if (Process.arch !== 'x64') throw new Error('Bridge requires x64 CPython 3.13');
+            submitStartupLog('CPython library detected: ' + name);
             function api(name, result, args, scheduling = 'exclusive') {
                 return new NativeFunction(module.getExportByName(name), result, args, { scheduling });
             }
@@ -82,6 +99,7 @@ observer = Process.attachModuleObserver({
             const utf8 = api('PyUnicode_AsUTF8', 'pointer', ['pointer']);
             const decref = api('Py_DecRef', 'void', ['pointer']);
             const mainName = Memory.allocUtf8String('__main__');
+            const readinessSource = Memory.allocUtf8String(config.readiness);
             armEntry = function () {
                 if (listener || busy || stopped || failed || (ready && (!pending || pending.waiting))) return;
                 listener = Interceptor.attach(module.getExportByName('PyEval_SaveThread'), {
@@ -102,6 +120,30 @@ observer = Process.attachModuleObserver({
                         request.signals.clear();
                         let result = ptr(0);
                         try {
+                            if (!ready && ++bootstrapEntries === 1) {
+                                submitStartupLog('First safe interpreter entry; checking Python main-thread readiness');
+                            }
+                            const main = addModule(mainName); // Borrowed: never decrement this reference.
+                            if (main.isNull()) throw new Error('No Python main module');
+                            const globals = moduleDict(main); // Borrowed dictionary, unchanged by our transient namespace.
+                            if (globals.isNull()) throw new Error('No Python main dictionary');
+                            if (!ready) {
+                                // Reject early startup/worker entries before constructing
+                                // or parsing the large bootstrap source expression.
+                                result = evaluate(readinessSource, 258, globals, globals, ptr(0));
+                                if (result.isNull()) throw new Error('Interpreter readiness evaluation failed');
+                                const probeText = utf8(result);
+                                if (probeText.isNull()) throw new Error('Readiness probe returned a non-string response');
+                                const readiness = probeText.readUtf8String();
+                                if (readiness !== 'READY') {
+                                    submitBootstrapWait(readiness);
+                                    return;
+                                }
+                                // Release the probe before evaluating the full expression;
+                                // finally releases whichever result is still owned.
+                                decref(result);
+                                result = ptr(0);
+                            }
                             const record = { operation: request.operation };
                             if (request.id) record._control_id = request.id;
                             if (request.operation === 'menu') record.buttons = request.buttons;
@@ -115,10 +157,7 @@ observer = Process.attachModuleObserver({
                                 ? config.repeat_prefix + requestJson + ')'
                                 : config.prefix + requestJson + config.suffix;
                             const source = Memory.allocUtf8String(expression);
-                            const main = addModule(mainName); // Borrowed: never decrement this reference.
-                            if (main.isNull()) throw new Error('No Python main module');
-                            const globals = moduleDict(main); // Borrowed dictionary, unchanged by our transient namespace.
-                            if (globals.isNull()) throw new Error('No Python main dictionary');
+                            if (!ready) bootstrapLoads++;
                             result = evaluate(source, 258, globals, globals, ptr(0)); // 258 means a Python expression.
                             if (result.isNull()) throw new Error('Manager bootstrap evaluation failed');
                             const text = utf8(result);
@@ -126,11 +165,15 @@ observer = Process.attachModuleObserver({
                             const value = text.readUtf8String();
                             if (value.startsWith('WAIT:')) {
                                 if (ready) throw new Error('Unexpected interpreter readiness wait after bootstrap');
+                                submitBootstrapWait(value);
                                 // Only bootstrap may observe interpreter readiness
                                 // until Python can identify its actual main thread.
                                 return;
                             }
                             const response = JSON.parse(value);
+                            if (!ready && response.startup) {
+                                for (const timing of response.startup) submitStartupLog(JSON.stringify(timing));
+                            }
                             if (response.event === 'waiting' && pending === request) {
                                 if (!['imports', 'operations'].includes(response.dependency)) throw new Error('Unknown control dependency');
                                 // A completion can arrive while evaluation releases
@@ -148,6 +191,8 @@ observer = Process.attachModuleObserver({
                             if (!ready) {
                                 ready = true;
                                 mainThread = this.threadId;
+                                submitStartupLog('Python bootstrap complete; readiness checks=' + bootstrapEntries
+                                    + '; full bootstrap evaluations=' + bootstrapLoads);
                                 send(response);
                             }
                             for (const notice of response.status.regulation_notices || []) {

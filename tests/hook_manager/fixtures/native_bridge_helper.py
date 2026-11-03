@@ -6,12 +6,16 @@ from pathlib import Path
 from types import ModuleType
 
 # No threading module exists yet: the bridge must wait rather than choose the wrong main thread.
-time.sleep(0.1)
+startup_started = time.perf_counter()
+for _ in range(600):
+    time.sleep(0)  # Real GIL boundaries while the small readiness probe must wait.
+startup_wait_seconds = time.perf_counter() - startup_started
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
 
 output = Path(sys.argv[1])
 (output / "target.pid").write_text(str(os.getpid()), encoding="ascii")
+(output / "startup-wait.json").write_text(json.dumps({"gil_releases": 600, "seconds": startup_wait_seconds}))
 deadline = time.monotonic() + 15
 while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadline:
     time.sleep(0.02)

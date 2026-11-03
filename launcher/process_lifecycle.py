@@ -14,7 +14,7 @@ import time
 from launcher.process_exit import ProcessExit
 
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
-from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, sync_log
+from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, startup_step, sync_log
 from launcher.diagnostics.activity_tracker import ActivityTracker
 
 
@@ -146,7 +146,8 @@ class Controller:
         waiter = ProcessExit(pid, self.game, lambda error: self.events.put(
             ("exit", (pid, session, waiter, error))))
         try:
-            session = self.device.attach(pid)
+            with startup_step(self.submit_log, "Frida process attachment", pid=pid):
+                session = self.device.attach(pid)
         except BaseException:
             waiter.close()
             raise
@@ -164,14 +165,16 @@ class Controller:
         session.enable_child_gating()
         if self.bridge_factory is not None:
             # Script messages are queued just like process events; this thread owns session state.
-            bridge = self.bridge_factory(
-                session,
-                pid,
-                lambda message: self.events.put(("bridge", (pid, session, message))),
-                **({"bootstrap": False} if not bootstrap else {}),
-            )
+            with startup_step(self.submit_log, "bridge configuration and script creation", pid=pid):
+                bridge = self.bridge_factory(
+                    session,
+                    pid,
+                    lambda message: self.events.put(("bridge", (pid, session, message))),
+                    **({"bootstrap": False} if not bootstrap else {}),
+                )
             self.bridges[pid] = bridge
-            bridge.start()
+            with startup_step(self.submit_log, "reporting setup and bridge script loading", pid=pid):
+                bridge.start()
         self._cancel_restart()
         self.submit_log(
             f"ATTACHED pid={pid}; child tracking active; awaiting manager bootstrap"
@@ -182,7 +185,8 @@ class Controller:
         if pid in self.resumed:
             return
         try:
-            self.device.resume(pid)
+            with startup_step(self.submit_log, "game process resume", pid=pid):
+                self.device.resume(pid)
         except Exception as error:
             # A short-lived process may disappear before it can be resumed.
             if self._processes([pid]):
@@ -310,12 +314,13 @@ class Controller:
         # fresh game after the user has already asked this controller to exit.
         if self.shutdown is not None and self.shutdown.requested.is_set():
             return
-        pid = self.device.spawn(
-            self.command,
-            envp=os.environ.copy(),
-            cwd=str(Path(self.command[0]).parent),
-            stdio="inherit",
-        )
+        with startup_step(self.submit_log, "game process spawn"):
+            pid = self.device.spawn(
+                self.command,
+                envp=os.environ.copy(),
+                cwd=str(Path(self.command[0]).parent),
+                stdio="inherit",
+            )
         self.held.add(pid)
         self.submit_log(f"SPAWNED pid={pid}")
         try:
@@ -329,6 +334,8 @@ class Controller:
         # Other Frida clients may share the device; touch only children of our sessions.
         if child.parent_pid not in self.parents:
             return
+        self.submit_log("STARTUP " + json.dumps({"phase": "child process notification", "parent_pid": child.parent_pid,
+                        "origin": getattr(child, "origin", None)}), level="DEBUG", pid=child.pid)
         if not self.stopping:
             # A new child can reuse a PID that belonged to an earlier completed process.
             self.resumed.discard(child.pid)
@@ -686,7 +693,9 @@ def run_launcher(
     controller, shutdown, code, stage = None, None, 0, "controller_setup"
     try:
         with ConsoleShutdown(command[0], logger) as shutdown:
-            controller = Controller(frida.get_local_device(), command, logger,
+            with startup_step(logger, "Frida local device acquisition"):
+                device = frida.get_local_device()
+            controller = Controller(device, command, logger,
                                     restart_grace=restart_grace, bridge_factory=bridge_factory,
                                     mods_factory=mods_factory, shutdown=shutdown)
             try:

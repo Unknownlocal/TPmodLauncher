@@ -9,6 +9,7 @@ from .core import (
     handle_error,
     log_ownership,
     reporter,
+    startup_step,
     sync_log,
     write_log,
 )

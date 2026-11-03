@@ -39,9 +39,10 @@ console wakes the queue directly.
 [`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations
-use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
-by default. Framework reports retain their severity through reporting functions
-and the bridge.
+use ERROR. Routine progress and mod messages use INFO. The file also retains
+DEBUG details; the console shows INFO and higher levels. Startup records name
+each setup step and its elapsed duration, including failed steps. Framework reports
+retain their severity through reporting functions and the bridge.
 Routine summaries have length limits. Supplied exceptions keep their complete
 messages, stack traces, causes and notes in both destinations, without captured
 local values. Game failures travel as text, so loading failures retain their
@@ -99,6 +100,9 @@ even if the controller is stuck in cleanup.
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,
 then exchanges bounded status, pack, loading, menu, settings and palette data.
+While startup is pending, a small check reads existing thread and import state
+before the full bootstrap expression is parsed. Normal controls reuse the loaded
+manager and do not run this startup check again.
 Source digests and session tokens identify the in-game manager owner.
 
 ## Pack loading and preparation

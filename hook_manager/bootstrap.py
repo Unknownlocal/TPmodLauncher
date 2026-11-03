@@ -1,29 +1,27 @@
 # SPDX-License-Identifier: MPL-2.0
 """Initialise the trusted manager only after Python's main thread is identifiable."""
 
+# Normal imports load the helper; the bridge supplies it in its private namespace.
+if globals().get("__package__"):
+    from .bootstrap_readiness import bootstrap_readiness
+
 
 def pulse(sources, digest, instance, game_root, request_json, journal_path=None, reporting_endpoint=None):
     # sources contains our trusted Python files; digest/instance identify their owner.
     # game_root is the installation folder; request_json contains data only.
     import sys
 
-    threads = sys.modules.get("threading")
-    if threads is None or getattr(
-        getattr(threads, "__spec__", None), "_initializing", False
-    ):
-        return "WAIT: threading is not ready"
-    if threads.current_thread() is not threads.main_thread():
-        return "WAIT: other thread"
-    # The new background transport must not re-enter a standard-library module
-    # whose import we interrupted. Later control/status sources reuse this scope.
-    for dependency in ("socket", "_socket", "select", "selectors", "struct", "_struct", "copy"):
-        if getattr(getattr(sys.modules.get(dependency), "__spec__", None), "_initializing", False):
-            return "WAIT: reporting dependency is importing"
+    # Recheck at entry: a worker can start an import after the small gate passed.
+    readiness = bootstrap_readiness()
+    if readiness != "READY":
+        return readiness
     import json
+    import time
     from types import ModuleType
 
     # Error metadata must never read readiness from an unverified foreign owner.
     module, activity_provider = None, None
+    startup, phase = [], "manager ownership verification"
     try:
         if (
             sys.version_info[:2] != (3, 13)
@@ -43,9 +41,14 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             if module.instance == instance:
                 activity_provider = module.activity_provider
         if module is None or module.instance != instance:
+            bootstrap_started = time.perf_counter()
             module = ModuleType(name)
             for filename, source in sources.items():
+                phase = "trusted source " + filename
+                started = time.perf_counter()
                 exec(compile(source, filename, "exec"), module.__dict__)
+                startup.append({"phase": phase, "seconds": round(time.perf_counter() - started, 6)})
+            phase, started = "observer and reporting setup", time.perf_counter()
             module.source_digest, module.instance = digest, instance
             # Later controls reuse this callable without resending/compiling
             # the full infrastructure and adapter source literals.
@@ -85,13 +88,15 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             module.manager.observe("ui.screen_manager", module.events.ready_ui)
             sys.modules[name] = module
             module.events.start()
+            startup.append({"phase": phase, "seconds": round(time.perf_counter() - started, 6)})
+            startup.append({"phase": "native bootstrap total", "seconds": round(time.perf_counter() - bootstrap_started, 6)})
         request = json.loads(request_json)
         module.events.control_id = request.pop("_control_id", None)
         if request == {"operation": "status"}:
             # Explicit inspection reads the cache; native events own collection.
             response = module.manager.status()
             response.update(module.events.status())
-            return json.dumps({"event": "manager", "status": response}, allow_nan=False)
+            return json.dumps({"event": "manager", "status": response, "startup": startup}, allow_nan=False)
         if request == {"operation": "changes"}:
             response = None  # The shared finalisation below services this request once.
         elif type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
@@ -208,6 +213,7 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         import traceback
 
         return json.dumps({"event": "error", "detail": str(error),
+                           "startup": startup + [{"phase": phase, "state": "failed"}],
                            "activity": getattr(error, "launcher_activity", None) or (activity_provider() if activity_provider is not None else None),
                            "traceback": "".join(traceback.TracebackException.from_exception(
                                error, max_group_width=float("inf"), max_group_depth=float("inf")).format())})

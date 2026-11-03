@@ -9,6 +9,35 @@ import pytest
 from launcher import entry
 
 
+def test_startup_phases_retain_elapsed_wait_and_original_failure(tmp_path, capsys):
+    import threading
+    from launcher.diagnostics import core as diagnostics
+
+    path = tmp_path / "launcher.log"
+    cause = RuntimeError("Owned startup failure")
+    with diagnostics.reporter(path) as logger:
+        # An actual wait establishes elapsed rather than CPU time. The failed
+        # phase must also retain its start and preserve the original exception.
+        controller_sink = diagnostics.bind_reporter(logger, component="controller")
+        with diagnostics.startup_step(controller_sink, "owned startup wait", pid=41):
+            threading.Event().wait(.03)
+        with pytest.raises(RuntimeError) as raised:
+            with diagnostics.startup_step(logger, "owned failed phase"):
+                raise cause
+        assert raised.value is cause
+        logger.info("Ordinary startup summary")
+    records = [json.loads(line.partition("STARTUP ")[2].partition(" activity=")[0])
+               for line in path.read_text().splitlines() if "STARTUP " in line]
+    assert [(row["phase"], row["state"]) for row in records] == [
+        ("owned startup wait", "started"), ("owned startup wait", "complete"),
+        ("owned failed phase", "started"), ("owned failed phase", "failed")]
+    assert records[1]["seconds"] >= .025
+    assert records[3]["seconds"] >= 0
+    assert "DEBUG modLauncher.controller pid=41 STARTUP" in path.read_text()
+    console = capsys.readouterr().err
+    assert "Ordinary startup summary" in console and "STARTUP " not in console
+
+
 @pytest.mark.parametrize("late_failure", ["sync", "close"])
 def test_final_log_failure_does_not_claim_its_own_success(tmp_path, monkeypatch, capsys, late_failure):
     from launcher.diagnostics import core as diagnostics

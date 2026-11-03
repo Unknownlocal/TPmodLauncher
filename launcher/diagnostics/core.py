@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import time
 import uuid
 
 if __package__:
@@ -41,6 +42,26 @@ def activity_scope(sink, kind, **context):
     context = {key: value for key, value in context.items() if key in ("pid", "mod", "owners", "folder")}
     tracker = getattr(sink, "launch_activity", None)
     return tracker.scope(kind, **context) if tracker is not None else nullcontext()
+
+
+@contextmanager
+def startup_step(sink, phase, **context):
+    """Mark one startup operation, including failure, using elapsed real time.
+
+    These boundaries run only during setup; they never sample gameplay. A start
+    record remains useful if the operation hangs and cannot produce its end.
+    """
+    # Preserve severity/context when a controller supplies a bound write_log.
+    submit_log = bind_reporter(sink, **context)
+    submit_log("STARTUP " + json.dumps({"phase": phase, "state": "started"}), level="DEBUG")
+    started, state = time.perf_counter(), "failed"
+    try:
+        yield
+        state = "complete"
+    finally:
+        seconds = time.perf_counter() - started
+        submit_log("STARTUP " + json.dumps({"phase": phase, "state": state, "seconds": round(seconds, 6)}),
+                   level="DEBUG")
 
 
 @contextmanager
@@ -214,11 +235,12 @@ def reporter(path, *, outcome=None):
         outcome.update(build_launch_outcome(path))
     logger.launch_outcome = outcome
     logger.launch_activity = ActivityTracker(lambda message: logger.info("%s", message))
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
     handlers = []
     try:
         console = logging.StreamHandler()
+        console.setLevel(logging.INFO)
         handlers.append(console)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

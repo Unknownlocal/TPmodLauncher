@@ -2,7 +2,9 @@
 """Host-independent helper lifetime; platform dialog/editor adapters plug in here."""
 
 import json
+import importlib.util
 import os
+from pathlib import Path
 import sys
 import threading
 import traceback
@@ -34,6 +36,26 @@ def main(*, show_dialog=None, open_log=None):
         os._exit(0)
 
     threading.Thread(target=owner_lifetime, name="notice-owner-lifetime", daemon=True).start()
+
+    if notice.get("host_platform") == "win32" and os.name == "nt":
+        def load(name):
+            spec = importlib.util.spec_from_file_location("_notice_" + name, Path(__file__).with_name(name + ".py"))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        # Resolve each path independently: a missing dialog must not suppress
+        # the editor request, or a missing editor suppress the dialog.
+        if show_dialog is None:
+            try:
+                dialog_type = load("windows_dialog").WindowsDialog
+                show_dialog = lambda notice, notify: dialog_type().show(notice, notify)
+            except Exception:
+                notify("error", traceback.format_exc(), operation="dialog")
+        if open_log is None:
+            try:
+                open_log = load("windows_log").open_log
+            except Exception:
+                notify("error", traceback.format_exc(), operation="log")
 
     def request_log():
         if not notice["log_written"]:

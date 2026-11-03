@@ -3,6 +3,22 @@
 This package owns the launcher's console and file logging, fatal failure details
 and requests to close its game processes.
 
+The file keeps DEBUG records, while the console shows INFO and higher levels.
+`core.startup_step()` records the start and finish of setup operations, with
+elapsed real time and a failed result if the operation raises an exception.
+These records cover dependency and runner checks, source preparation and process
+setup. They run at those boundaries rather than checking on a timer.
+The bridge adds one-time runtime detection and readiness wait messages, followed
+by source-loading and observer setup durations from inside the game. Each source
+duration includes compiling its Python text and executing it, including imports.
+This separates time waiting for game readiness from time spent in launcher code.
+Before loading the full bootstrap bundle, `hook_manager.bootstrap_readiness`
+checks the existing main-thread and import state using a small expression.
+Startup waits therefore avoid repeatedly parsing all the adapter sources.
+The completion record counts readiness checks and full bootstrap evaluations
+separately. Bound controller logging keeps the original DEBUG level and process
+context, so these details stay in the file without adding console output.
+
 `core.py` claims log ownership, configures the logger and keeps the original fatal
 reason through cleanup. It flushes and synchronises file output before returning
 the final write result. Normal package imports use the functions exported by
@@ -113,6 +129,9 @@ console available. Presentation errors are appended to the completed log without
 replacing the original failure. A launch that never owned the log cannot append
 to it or describe another launch's file as its completed log.
 
+`windows_console.py` restores the attached Windows console, or creates one if
+needed, and opens its input and output without replacing global Python streams.
+
 `console_input.py` contains `ConsoleInput`. It waits for a Windows console key or
 a Linux terminal byte without requiring Enter. Cancellation wakes the wait and
 restores terminal settings. Missing input and EOF leave the notice open without
@@ -123,6 +142,19 @@ helper asynchronously, with a deadline for dialog startup. That deadline cannot
 end the user's console-reading time. Dismissal closes only the owned helper,
 including one that starts late. `presentation_helper.py` watches the owner's
 input pipe before starting UI; losing the owner ends the helper and its windows.
-Dialog and log-opening functions run independently. The current default helper
-reports unavailable presentation functions, leaving the printed console notice
-in place. An independently opened editor does not belong to the dismissal session.
+Dialog and log-opening functions run independently. Windows notices select the
+Windows functions by a fixed source path, without loading game or mod packages.
+Other hosts retain the console notice when no dialog function is supplied.
+
+`windows_dialog.py` contains `WindowsDialog`. It uses a native Windows window
+with the failed activity, short reason and a scrollable, selectable log path.
+It announces readiness after the window is visible. Closing the window, pressing
+Escape or choosing Close dismisses the session. Closing the console ends the
+helper and its window; it never searches for other windows by title.
+
+`windows_log.py` opens the completed native log path in system Notepad through
+the Windows shell API. The path is passed as one argument, without a command
+shell or file-association prompt. Opening the editor runs on its own worker. The
+editor does not belong to the dismissal session and remains available after
+the console and dialog close. An editor failure is recorded in the original log
+and leaves the console and dialog available.

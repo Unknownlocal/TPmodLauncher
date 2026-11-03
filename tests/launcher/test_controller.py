@@ -73,7 +73,8 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
         assert "WARNING modLauncher.mods pid=10 CODE MOD REJECTED" in output
         invalid = next(line for line in output.splitlines() if "Invalid diagnostic severity" in line)
         assert "WARNING" in invalid and "\x1b" not in invalid and len(invalid) < 4400
-        assert "hidden readiness detail" not in output
+    assert "DEBUG modLauncher.bridge pid=10 hidden readiness detail" in first_text
+    assert "hidden readiness detail" not in console
     assert (list(logger.handlers), logger.level, logger.propagate) == before
     second = tmp_path / "second.log"
     with lifecycle.reporter(second) as logger:

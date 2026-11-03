@@ -12,24 +12,27 @@ import threading
 import traceback
 
 
-def _load_class(name, class_name):
+def _load_module(name):
     # Early dependency failures use the same fixed standard-library sources;
     # neither game folders nor unverified packages enter the import search path.
     spec = importlib.util.spec_from_file_location("_failure_" + name, Path(__file__).with_name(name + ".py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return getattr(module, class_name)
+    return module
 
 
 class FailureSession:
     """Print first, then run input and presentation independently of the game."""
 
-    def __init__(self, outcome, *, owned_log=True, input_stream=None, output=None, child_factory=None):
+    def __init__(self, outcome, *, owned_log=True, input_stream=None, output=None, child_factory=None, host_platform=None):
         self.outcome = deepcopy(outcome)
         self.owned_log = owned_log
         self.input_stream = sys.stdin if input_stream is None else input_stream
         self.output = sys.stderr if output is None else output
         self.child_factory = child_factory
+        self.host_platform = sys.platform if host_platform is None else host_platform
+        self._prepare_console = self.host_platform == "win32" and os.name == "nt" and input_stream is None and output is None
+        self._console_streams = ()
         self.events, self.dismissed = queue.Queue(), threading.Event()
         self.child = self.reader = None
 
@@ -61,10 +64,17 @@ class FailureSession:
     def run(self, *, wait=True):
         """Return only after dismissal; verification-only callers may skip waiting."""
         failure = self.outcome["failure"]
+        if wait and self._prepare_console:
+            try:
+                self.input_stream, self.output = _load_module("windows_console").prepare_console()
+                self._console_streams = (self.input_stream, self.output)
+            except Exception:
+                self._write_presentation_error("Could not show the launcher console:\n" + traceback.format_exc())
         activity = failure.get("activity") or {}
         reason = str(failure["reason"]).splitlines()
         short_reason = (reason[0] if reason else "Unknown failure")[:512]
         notice = dict(session_id=self.outcome["session_id"], title="Mod Launcher could not continue",
+                      host_platform=self.host_platform,
                       activity=activity.get("description", "during launcher operation"), reason=short_reason,
                       log_path=self.outcome["log_path"], log_written=self.owned_log and self.outcome["log_written"])
         self._print(notice["title"] + "\nAn error occurred " + notice["activity"] + ".\n" + short_reason)
@@ -73,13 +83,13 @@ class FailureSession:
             return
         self._print("Press any key to close this notice and end the launcher console session.")
         try:
-            self.reader = _load_class("console_input", "ConsoleInput")(self.input_stream, lambda event, detail: self.events.put((event, detail)))
+            self.reader = _load_module("console_input").ConsoleInput(self.input_stream, lambda event, detail: self.events.put((event, detail)))
             self.reader.start()
             try:
                 if self.child_factory is not None:
                     self.child = self.child_factory(notice, lambda event, detail: self.events.put((event, detail)))
                 else:
-                    child_type = _load_class("presentation_child", "PresentationChild")
+                    child_type = _load_module("presentation_child").PresentationChild
                     # Windows venv python.exe can be a redirector. Own the real
                     # interpreter so killing this handle also destroys its UI.
                     command = [sys._base_executable, "-I", "-S", "-B", str(Path(__file__).with_name("presentation_helper.py"))]
@@ -117,3 +127,8 @@ class FailureSession:
                         self.reader.close()
                     except Exception:
                         self._write_presentation_error("Could not restore console input:\n" + traceback.format_exc())
+                for stream in self._console_streams:
+                    try:
+                        stream.close()
+                    except (OSError, ValueError):
+                        pass

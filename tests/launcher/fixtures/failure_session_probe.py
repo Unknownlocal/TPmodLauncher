@@ -53,7 +53,8 @@ elif os.name == "nt":
     import msvcrt
     import struct
 
-    terminal = open("CONIN$", "r")
+    if mode != "windows-console-allocate":
+        terminal = open("CONIN$", "r")
     kernel = c.WinDLL("kernel32", use_last_error=True)
     kernel.WriteConsoleInputW.argtypes = (w.HANDLE, c.c_void_p, w.DWORD, c.POINTER(w.DWORD))
     kernel.WriteConsoleInputW.restype = w.BOOL
@@ -65,7 +66,8 @@ elif os.name == "nt":
     kernel.GetConsoleMode.argtypes = (w.HANDLE, c.POINTER(w.DWORD))
     kernel.GetConsoleMode.restype = w.BOOL
     original_mode = w.DWORD()
-    assert kernel.GetConsoleMode(msvcrt.get_osfhandle(terminal.fileno()), c.byref(original_mode))
+    if terminal is not None:
+        assert kernel.GetConsoleMode(msvcrt.get_osfhandle(terminal.fileno()), c.byref(original_mode))
 
     def control_key():
         assert kernel.GenerateConsoleCtrlEvent(0, 0)  # Only this fixture's private console.
@@ -100,14 +102,34 @@ def present(value, *, owned_log, wait):
         pass
 
     def child_factory(notice, submit):
-        command = [sys._base_executable, "-I", "-S", "-B", str(Path(__file__).with_name("failure_backend_probe.py")),
+        global terminal
+        native = mode.startswith("windows-")
+        backend = "windows_backend_probe.py" if native else "failure_backend_probe.py"
+        command = [sys._base_executable, "-I", "-S", "-B", str(Path(__file__).with_name(backend)),
                    str(project / "launcher/diagnostics"), str(output), mode]
         if mode == "missing":
             command[0] = str(output / "missing-helper-runtime")
-        return child_type(command, notice, submit, startup_timeout=.2 if mode == "timeout" else 5)
+        def received(event, detail):
+            if native and event == "dialog-ready":
+                temporary = output / "helper.json.tmp"
+                temporary.write_text(json.dumps({"pid": child.process.pid, **detail}), encoding="utf-8")
+                temporary.replace(output / "helper.json")
+            submit(event, detail)
+        child = child_type(command, notice, received, startup_timeout=.2 if mode == "timeout" else 5)
+        if mode in ("windows-console", "windows-console-allocate"):
+            if terminal is None:
+                terminal = open("CONIN$", "r")  # Production preparation has now created the window.
+            kernel = c.WinDLL("kernel32")
+            kernel.GetConsoleWindow.argtypes, kernel.GetConsoleWindow.restype = (), w.HWND
+            user = c.WinDLL("user32")
+            user.IsWindowVisible.argtypes, user.IsWindowVisible.restype = (w.HWND,), w.BOOL
+            hwnd = kernel.GetConsoleWindow()
+            (output / "console-visible.json").write_text(json.dumps({"window": hwnd, "visible": bool(user.IsWindowVisible(hwnd))}), encoding="utf-8")
+        return child
 
-    session = session_module.FailureSession(value, owned_log=owned_log, input_stream=terminal,
-                                            child_factory=None if mode == "default" else child_factory)
+    session = session_module.FailureSession(value, owned_log=owned_log, input_stream=None if mode in ("windows-console", "windows-console-allocate") else terminal,
+                                            child_factory=None if mode == "default" else child_factory,
+                                            host_platform="fixture-unavailable" if mode == "default" else None)
     def control():
         if mode == "default":
             while session.child is None or session.child.process is None:
@@ -124,7 +146,7 @@ def present(value, *, owned_log, wait):
     session.run()
     assert session.outcome["failure"] == value["failure"]
     restored = True
-    if mode not in ("failure", "missing"):
+    if mode not in ("failure", "missing", "windows-console-allocate"):
         if os.name == "nt":
             current_mode = w.DWORD()
             assert kernel.GetConsoleMode(msvcrt.get_osfhandle(terminal.fileno()), c.byref(current_mode))
@@ -137,7 +159,8 @@ def present(value, *, owned_log, wait):
 try:
     code = entry.main(["--", "owned-fixture-only"], outcome=outcome, presentation=present)
 finally:
-    terminal.close()
+    if terminal is not None:
+        terminal.close()
     if os.name != "nt" and mode not in ("failure", "missing"):
         os.close(master)
 raise SystemExit(code)

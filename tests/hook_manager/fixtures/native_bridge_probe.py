@@ -24,7 +24,7 @@ from launcher.pack_mods import PackMods
 output = Path(sys.argv[3])
 messages = io.StringIO()
 logger = logging.getLogger("owned.bridge_probe")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 logger.propagate = False
 handler = logging.StreamHandler(messages)
 handler.setFormatter(logging.Formatter("%(levelno)s %(message)s"))
@@ -36,10 +36,11 @@ pack.mkdir(parents=True)
 # Count actual intercepted GIL releases and Python evaluations, including workers.
 source_path = root / "hook_manager/bridge.js"
 original_source = source_path.read_text()
-instrumented = "let observedEntries = 0, observedEvaluations = 0;\n" + original_source.replace(
+instrumented = "let observedEntries = 0, observedEvaluations = 0, observedBootstrapEvaluations = 0;\n" + original_source.replace(
     "onEnter() {", "onEnter() { observedEntries++;").replace(
+    "result = evaluate(source,", "if (!ready) observedBootstrapEvaluations++; result = evaluate(source,").replace(
     "result = evaluate(", "observedEvaluations++; result = evaluate(")
-instrumented += "\nrpc.exports.entryState = () => ({entries: observedEntries, evaluations: observedEvaluations, armed: listener !== null, waiting: pending && pending.waiting, id: pending && pending.id});\n"
+instrumented += "\nrpc.exports.entryState = () => ({entries: observedEntries, evaluations: observedEvaluations, bootstrapEvaluations: observedBootstrapEvaluations, armed: listener !== null, waiting: pending && pending.waiting, id: pending && pending.id});\n"
 source_path.write_text(instrumented)
 try:
     bridge_factory = bridge.factory(root, frida)
@@ -60,9 +61,18 @@ try:
     controller.poll(timeout=0.02)
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages.getvalue().splitlines()), messages
+    startup_log = messages.getvalue()
+    assert "CPython library detected:" in startup_log and "First safe interpreter entry" in startup_log, startup_log
+    native_steps = [json.loads(line.partition("STARTUP ")[2].partition(" activity=")[0])
+                    for line in startup_log.splitlines() if "STARTUP {" in line]
+    native_total = [row for row in native_steps if row["phase"] == "native bootstrap total"]
+    assert len(native_total) == 1 and native_total[0]["seconds"] >= 0, native_steps
+    assert any(row["phase"].endswith("/native_events.py") and row["seconds"] >= 0 for row in native_steps), native_steps
     current = next(iter(controller.bridges.values()))
     counts = current.script.exports_sync.entry_state()
     assert not counts["armed"] and counts["waiting"] is None, counts
+    assert counts["evaluations"] >= 601 and counts["bootstrapEvaluations"] == 1, counts
+    (output / "startup-entry-counts.json").write_text(json.dumps(counts))
     (output / "idle-race-request").touch()
     deadline = time.monotonic() + 4
     while not (output / "idle-race.json").exists() and time.monotonic() < deadline:
@@ -294,6 +304,7 @@ finally:
     (output / "early-release").touch()
     controller.close()
 assert not controller.cleanup_failed, messages.getvalue()
+assert messages.getvalue().count('"phase":"native bootstrap total"') == 1, messages.getvalue()
 deadline = time.monotonic() + 5
 while not (output / "closed.json").exists() and time.monotonic() < deadline:
     time.sleep(0.02)

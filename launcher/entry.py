@@ -130,7 +130,8 @@ def _run(root, arguments, command, logger, lock_path, log_path):
     """Verify and run within the already-owned log; presentation is independent."""
     try:
         with _diagnostics.activity_scope(logger, "launcher_startup"):
-            frida = _dependencies.import_dependencies(root)
+            with _diagnostics.startup_step(logger, "dependency verification and imports"):
+                frida = _dependencies.import_dependencies(root)
     except Exception as error:
         _diagnostics.handle_error(logger, error, message="Dependency verification failed",
                                   stage="dependency_verification", component="startup")
@@ -138,11 +139,13 @@ def _run(root, arguments, command, logger, lock_path, log_path):
     try:
         # Source locations are trusted only after the dependency setup is verified.
         with _diagnostics.activity_scope(logger, "launcher_startup"):
-            _dependencies.load_source_packages(root)
-            from mod_runtime import ABI_VERSION, RunnerBundle
-            from mod_runtime.bundle import DIRECTORY
+            with _diagnostics.startup_step(logger, "launcher source package imports"):
+                _dependencies.load_source_packages(root)
+                from mod_runtime import ABI_VERSION, RunnerBundle
+                from mod_runtime.bundle import DIRECTORY
 
-            runner_bundle = RunnerBundle(root / DIRECTORY)
+            with _diagnostics.startup_step(logger, "Python runner verification"):
+                runner_bundle = RunnerBundle(root / DIRECTORY)
     except Exception as error:
         _diagnostics.handle_error(logger, error, message="Python runner verification failed",
                                   stage="runner_verification", component="startup")
@@ -154,15 +157,19 @@ def _run(root, arguments, command, logger, lock_path, log_path):
         )
         return 0
     # Only the launcher's own packages gain import paths; data-pack Python is never imported.
-    from launcher import game_bridge as bridge, process_lifecycle as lifecycle
-    from launcher.pack_mods import PackMods
-    from launcher.compilation_cache import CompilationCache
+    with _diagnostics.startup_step(logger, "controller package imports"):
+        from launcher import game_bridge as bridge, process_lifecycle as lifecycle
+        from launcher.pack_mods import PackMods
+        from launcher.compilation_cache import CompilationCache
 
     # The launcher folder and game executable share the same installation folder.
     expected = root.parent / "TeamPrincipal.exe"
-    command = lifecycle.validate_command(command, expected)
-    bridge_factory = bridge.factory(root, frida)
-    cache = CompilationCache(root)
+    with _diagnostics.startup_step(logger, "game command validation"):
+        command = lifecycle.validate_command(command, expected)
+    with _diagnostics.startup_step(logger, "trusted bridge source preparation"):
+        bridge_factory = bridge.factory(root, frida)
+    with _diagnostics.startup_step(logger, "compilation cache setup"):
+        cache = CompilationCache(root)
     return lifecycle.run_launcher(
         frida,
         command,
