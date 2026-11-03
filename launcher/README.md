@@ -33,18 +33,31 @@ verified process with a Windows handle or a Linux pidfd, then waits for exit or
 cancellation. This also detects exits when Frida's notification is late. The
 executable is checked before and after attachment; old exit events cannot retire
 a replacement session. Process enumeration is used at ownership boundaries,
-not on a timer. After the last process exits, a cancellable deadline allows a
-short gap for a possible replacement, including after a manual exit. It never
-starts another game. A timer wake that arrives early waits out the remaining
-time. Closing the console wakes the queue directly.
+not on a timer. A process's exit signal immediately wakes its pending bridge
+waits. Lifecycle events and already-delivered diagnostics are handled before
+routine work; cleanup still runs on the controller thread. Closing the console
+wakes the queue directly.
 
 Each bridge also retains restart-observer availability and the latest restart
 attempt for its own process. The controller reads this evidence from the shared
 journal, including during final process cleanup, and logs requested, confirmed
 or cancelled attempts. Session identity and sequence numbers reject old messages
-and duplicates. These records do not change the replacement deadline: abrupt
-termination or stalled reporting can lose a marker even when observation was
-installed. Missing markers alone do not establish an ordinary exit.
+and duplicates. A marked restart allows a bounded gap for its replacement. An
+unmarked exit skips that wait only when both observers passed their final check,
+the reporting stream completed and the journal was read successfully. Otherwise
+the same deadline allows for a possible replacement. It never starts another
+game. An early timer wake waits out the remaining time; an expired marked restart
+logs that no replacement was observed. Missing markers alone do not establish
+an ordinary exit, and restart intent never suppresses fatal diagnostics.
+
+`process_cancellation.py` keeps a separate flag for each process. Frida sends,
+script loading and reply waits can be interrupted. It retains delivered
+diagnostics until the process's final cleanup, including errors received while
+reporting is being closed. Mod loading checks the flag
+between operations, cancels pending worker requests during cleanup and discards
+abandoned results. A guest call already running retains its existing execution
+budget; individual operating system file calls and trusted host callbacks are
+not forcibly interrupted. Final logging and error presentation remain independent.
 
 [`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,

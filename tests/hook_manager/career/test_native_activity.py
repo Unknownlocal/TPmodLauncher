@@ -206,7 +206,7 @@ def test_failed_journal_keeps_exception_and_fatal_bridge_fallback(observed, rig,
     activity._unhandled(type(error), error, error.__traceback__)
     assert "Owned journal fallback failure" in capsys.readouterr().err
     assert any("Native activity journal failed" in record["detail"] for record in activity.records)
-    device, controller, _, _ = rig
+    device, controller, messages, _ = rig
     with closing(controller):
         controller.start()
         session = controller.sessions[10]
@@ -217,9 +217,9 @@ def test_failed_journal_keeps_exception_and_fatal_bridge_fallback(observed, rig,
         assert "Owned journal fallback failure" in str(fatal.value)
         assert fatal.value.launcher_activity["kind"] == "saving"
         assert controller.activity.snapshot(10)["kind"] == "in_save"
-        # Late unload errors remain quiet during an otherwise successful cleanup.
+        # A later script error stays visible without replacing the original fatal.
         controller.events.put(("bridge", (10, session, {"type": "error", "description": "Late script unload"})))
-    assert not controller.cleanup_failed
+    assert controller.cleanup_failed and any("Late script unload" in message for message in messages)
 
 
 def test_blocked_journal_does_not_delay_gameplay_status_or_stop(observed, tmp_path, monkeypatch):

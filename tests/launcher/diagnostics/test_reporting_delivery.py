@@ -29,7 +29,7 @@ def delivery(rig, tmp_path, monkeypatch):
         controller.start()
         session = controller.sessions[10]
         session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
-        enqueue = lambda message: controller.events.put(("bridge", (10, session, message)))
+        enqueue = lambda message: controller._queue_bridge(10, session, message)
         receiver = ReportingReceiver(os.getpid(), "owned-session", lambda event, detail: enqueue(
             {"type": "send", "payload": {"event": event, "detail": detail}}))
         journal = ActivityJournal(tmp_path / "owned.jsonl")
@@ -103,8 +103,8 @@ def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery,
     session = controller.sessions[10]
     bridge.journal.append_record({"event": "native-service"})
     bridge.journal.append_record({"event": "diagnostic", "level": "ERROR", "detail": "Final owned error"})
-    controller.events.put(("bridge", (10, session, {"type": "send",
-        "payload": {"event": "reporting-closed", "detail": "EOF"}})))
+    controller._queue_bridge(10, session, {"type": "send",
+        "payload": {"event": "reporting-closed", "detail": "EOF"}})
     controller.device.exit(10)
     controller.device.processes[10] = str(tmp_path / "foreign.exe")
     def no_pid_lookup(**kwargs):

@@ -10,9 +10,90 @@ import pytest
 
 from launcher import process_lifecycle as lifecycle
 from launcher.pack_mods import PackMods
+from launcher.game_bridge import Bridge
+from types import SimpleNamespace
 from tests.controller_device import rig
 from tests.hook_manager.test_native_events import native_events
 from tests.launcher.diagnostics.test_reporting_delivery import delivery, writer_for
+
+
+def test_process_exit_interrupts_pending_bridge_work_before_routine_backlog(rig, monkeypatch):
+    device, controller, messages, _ = rig
+    entered, done, closed = threading.Event(), threading.Event(), threading.Event()
+    failures = []
+    def bridge_factory(session, pid, on_message):
+        session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None, is_destroyed=False)
+        client = Bridge(None, session, "", on_message)
+        client.start = lambda: None
+        client._post = lambda *args: entered.set()
+        return client
+    controller.bridge_factory = bridge_factory
+    controller.start()
+    old_session, old_waiter, old_bridge = controller.sessions[10], device.exit_waits[10], controller.bridges[10]
+    controller.pack_mods[10] = SimpleNamespace(poll=lambda: old_bridge.request("status", timeout=30), close=closed.set)
+    controller.events.put(("mods-ready", (10, old_session)))
+    def run():
+        try:
+            controller.poll(timeout=None)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            done.set()
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        controller.events.put(("mods-ready", (10, old_session)))
+        device.exit(10)
+        assert done.wait(2), "Bridge waited for its 30-second timeout after process exit"
+        assert not failures and closed.is_set() and not old_bridge.waiters and not controller.sessions
+        assert old_bridge.cancellation.ended.is_set()
+        device.child(20, controller.game)
+        controller.poll()
+        replacement = controller.bridges[20]
+        old_waiter.completed(None)
+        old_session.handlers["detached"]("process-terminated")
+        controller.poll()
+        assert controller.sessions[20] is device.sessions[20] and not replacement.cancellation.ended.is_set()
+        assert not any("Timed out" in message or "ERROR" in message for message in messages)
+    finally:
+        if not done.is_set():
+            old_bridge.cancellation.cancel()
+            for waiter in old_bridge.waiters.values():
+                waiter.put({"status": {}})
+        worker.join(2)
+        controller.close()
+
+
+def test_confirmed_restart_retains_grace_and_describes_missing_replacement(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    source = "settings"
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "restart", "event_sequence": 1, "status": {
+        "attempt": 1, "source": source, "series": None, "state": "committed"}}, bridge.journal)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.device.exit(10)
+    assert not controller.poll() and controller.replacement[0] == "restart"
+    controller.clock = lambda: controller.idle_since + controller.restart_grace
+    assert controller.poll()
+    text = path.read_text()
+    assert "RESTART REPLACEMENT NOT OBSERVED" in text and source + " attempt=1" in text
+    assert not controller.stopping and not controller.cleanup_failed
+
+
+def test_restart_replacement_gets_fresh_scope_and_clears_outgoing_intent(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "restart", "event_sequence": 1, "status": {
+        "attempt": 1, "source": "mod-pack", "series": "oval", "state": "committed"}}, bridge.journal)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.device.exit(10)
+    assert not controller.poll() and controller.replacement[0] == "restart"
+    controller.device.child(20, controller.game)
+    controller.poll()
+    assert 20 in controller.sessions and controller.idle_since is None
+    assert controller.replacement[0] == "unknown" and not controller.cancellations[20].ended.is_set()
+    assert "RESTART REPLACEMENT NOT OBSERVED" not in path.read_text()
 
 
 def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, capsys):

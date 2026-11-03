@@ -5,6 +5,7 @@ from functools import update_wrapper
 from itertools import count
 from inspect import formatannotation
 from typing import Optional
+import atexit
 
 if __package__:
     from .manager import Manager
@@ -34,6 +35,26 @@ class NativeRestart(Manager):
                 self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             except Exception:
                 pass  # Compatibility errors are retained; native restart remains available.
+        # Registered after JournalWriter, so this memory-only check runs before
+        # its existing bounded interpreter-exit drain (atexit runs in reverse).
+        atexit.register(self.finish_on_exit)
+
+    def finish_on_exit(self):
+        """Queue final coverage; only a completed reporting stream can certify it."""
+        if self.closed:
+            return
+        status = self.status()
+        status["groups"] = {name: state if state != "active" or self.group_intact(name) else "failed"
+                            for name, state in status["groups"].items()}
+        try:
+            self.notifications.publish("restart-observation", {**status, "final": True})
+        except Exception:
+            pass  # Without this checkpoint, the launcher retains its grace.
+
+    def stop(self):
+        """Restore references and remove the no-longer-owned exit checkpoint."""
+        atexit.unregister(self.finish_on_exit)
+        return super().stop()
 
     def store_error(self, error):
         """Retain compatibility history and enqueue its complete warning."""

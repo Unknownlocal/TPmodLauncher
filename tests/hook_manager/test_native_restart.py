@@ -106,3 +106,12 @@ def test_reporting_failure_cannot_replace_native_exit(restart_events, monkeypatc
     with pytest.raises(SystemExit) as stopped:
         settings.relaunch_application()
     assert stopped.value is outcome.error and outcome.calls == [None]
+
+
+def test_final_checkpoint_marks_replaced_observer_unavailable(restart_events, monkeypatch):
+    host, settings, _, _, original = restart_events
+    records(host)
+    monkeypatch.setattr(settings, "relaunch_application", original)
+    host.events.restart.finish_on_exit()
+    final = [row["status"] for row in records(host) if row.get("event") == "restart-observation"]
+    assert final[-1]["final"] is True and final[-1]["groups"]["restart.settings"] == "failed"

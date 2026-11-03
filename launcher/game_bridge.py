@@ -15,6 +15,8 @@ from .diagnostics import exception_from_record
 from .diagnostics.activity_journal import ActivityJournal
 from .diagnostics.reporting_receiver import ReportingReceiver
 from .diagnostics.reporting_queue import build_overflow_record
+from .process_cancellation import ProcessCancellation
+from .process_ended import ProcessEnded
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -58,6 +60,7 @@ class Bridge:
         self.script = session.create_script(source, name="modLauncher-hook-bridge")
         self.loaded = False
         self.exited = False
+        self.cancellation = ProcessCancellation()
         self.waiters = {}
         self._on_message = on_message
         self.lock = threading.Lock()
@@ -97,7 +100,7 @@ class Bridge:
                 self.journal.create()
             if self.reporting is not None:
                 self.reporting.start()
-            self.script.load()
+            self._call_native(self.script.load)
             self.loaded = True
         except BaseException:
             if self.journal is not None:
@@ -109,7 +112,10 @@ class Bridge:
         with self.lock:
             live = request in self.waiters
         if live and not self.exited and not self.session.is_detached and not self.script.is_destroyed:
-            self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
+            try:
+                self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
+            except ProcessEnded:
+                pass  # Completion raced process termination; the owner is retired.
 
     def _control_failed(self, detail):
         """Cancel parked entry promptly; cleanup may still request native shutdown."""
@@ -119,7 +125,7 @@ class Bridge:
             try:
                 self._post({"type": "manager-cancel", "id": token,
                             "detail": "Native reporting connection failed: " + detail}, .25)
-            except Exception:
+            except (Exception, ProcessEnded):
                 pass  # The request deadline and final script unload still apply.
 
     def drain_activity(self):
@@ -160,15 +166,28 @@ class Bridge:
 
     def _post(self, message, timeout):
         # Frida's native send supports cancellation; its synchronous script RPC wait does not.
+        self._call_native(lambda: self.script.post(message), timeout)
+
+    def _call_native(self, action, timeout=None):
+        """Let owner termination interrupt an active Frida load or send."""
         cancellable = self.frida.Cancellable()
-        timer = threading.Timer(timeout, cancellable.cancel)
-        timer.daemon = True
-        timer.start()
+        self.cancellation.watch(cancellable.cancel)
+        timer = None
+        if timeout is not None:
+            timer = threading.Timer(timeout, cancellable.cancel)
+            timer.daemon = True
+            timer.start()
         try:
+            self.cancellation.check()
             with cancellable:
-                self.script.post(message)
+                return action()
+        except Exception:
+            self.cancellation.check()
+            raise
         finally:
-            timer.cancel()
+            if timer is not None:
+                timer.cancel()
+            self.cancellation.unwatch(cancellable.cancel)
 
     def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
                 regulations=None, prerequisites=None, _service=None):
@@ -245,10 +264,13 @@ class Bridge:
         waiter = queue.Queue()
         deadline = time.monotonic() + timeout
         answered = False
+        self.cancellation.check()
+        wake = lambda: waiter.put_nowait({"ended": True})
         with self.lock:
             if self.waiters:
                 raise BridgeError("A bridge request is already pending")
             self.waiters[token] = waiter
+        self.cancellation.watch(wake)
         try:
             message = {"type": "manager-request", "operation": operation, "id": token}
             if operation == "menu":
@@ -264,6 +286,7 @@ class Bridge:
             if regulations is not None:
                 message["regulations"] = regulations
             self._post(message, timeout)
+            self.cancellation.check()
             if _service is not None:
                 # Handle work published before subscription. Later socket
                 # requests wake this waiter directly, without a timed tick.
@@ -273,6 +296,9 @@ class Bridge:
                 if remaining == 0:
                     raise queue.Empty
                 response = waiter.get(timeout=remaining)
+                if "error" in response:
+                    raise exception_from_record(response["error"], response, BridgeError)
+                self.cancellation.check()
                 if response.get("wake"):
                     # The game waits for policy acknowledgements before replying
                     # here. Service only regulation transport/guest work: PackMods
@@ -282,19 +308,30 @@ class Bridge:
                     continue
                 break
             answered = True
-            if "error" in response:
-                raise exception_from_record(response["error"], response, BridgeError)
             return response["status"]
+        except ProcessEnded:
+            # A native failure can have arrived just before cancellation, while
+            # post() was still returning. Retain that delivered error in full.
+            while True:
+                try:
+                    response = waiter.get_nowait()
+                except queue.Empty:
+                    break
+                if "error" in response:
+                    raise exception_from_record(response["error"], response, BridgeError)
+            raise
         except queue.Empty as error:
             raise BridgeError(
                 f"Timed out waiting for Python main-thread entry ({operation})"
             ) from error
         finally:
+            self.cancellation.unwatch(wake)
             with self.lock:
                 self.waiters.pop(token, None)
             # Cancel any leftover target-side request, including after a timeout or send failure.
             if (
                 not answered
+                and not self.cancellation.ended.is_set()
                 and not self.session.is_detached
                 and not self.script.is_destroyed
             ):
@@ -319,13 +356,13 @@ class Bridge:
 
     def set_menu(self, buttons):
         """Apply a complete declarative registry; an exited game needs no native restoration."""
-        if self.exited or self.session.is_detached:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
         return self.request("menu", buttons=buttons)
 
     def set_settings(self, records, result=None):
         """Publish owned tabs and optionally acknowledge one native save request."""
-        if self.exited or self.session.is_detached:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
         return self.request("settings", settings={"records": records, "result": result})
 
@@ -349,7 +386,7 @@ class Bridge:
 
     def _close_native(self):
         """Stop the manager on its thread before unloading our native transport."""
-        if self.exited or self.session.is_detached or not self.loaded:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set() or not self.loaded:
             return  # No live script remains here, or loading failed before the manager could start.
         if self.script.is_destroyed:
             raise BridgeError(
@@ -363,13 +400,13 @@ class Bridge:
                 self.script.unload()
 
     def set_themes(self, records):
-        if self.exited or self.session.is_detached:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
         return self.request("themes", themes=records)
 
     def set_loading(self, loading):
         """Send trusted startup progress on the same serialized request channel as menu updates."""
-        if self.exited or self.session.is_detached:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
         result = self.request("loading", loading=loading)
         if result["menu"]["state"] == "failed":

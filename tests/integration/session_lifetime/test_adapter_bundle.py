@@ -374,6 +374,19 @@ def test_preparation_wait_services_only_controller_transport_and_cancels_on_fail
     assert client.waiters == {} and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
 
 
+def test_native_error_reply_received_before_cancellation_keeps_complete_details(monkeypatch, bridge):
+    client = bridge()
+    stack = "Owned native control stack " + "x" * 5000 + " FULL CONTROL END"
+    def post(record, timeout):
+        client._message({"type": "send", "payload": {"event": "reply", "id": record["id"],
+            "error": "Owned complete control failure", "traceback": stack}}, lambda *args: None)
+        client.cancellation.cancel()
+    monkeypatch.setattr(client, "_post", post)
+    with pytest.raises(BridgeError, match="Owned complete control failure") as failure:
+        client.request("status")
+    assert stack in "\n".join(failure.value.__notes__) and not client.waiters
+
+
 def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):
     client, sent, calls, failures = bridge(), [], [], []
     initial = threading.Event()

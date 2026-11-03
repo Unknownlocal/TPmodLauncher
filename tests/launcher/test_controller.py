@@ -21,6 +21,96 @@ from tests.controller_device import rig
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
+def test_exit_during_child_gating_skips_bridge_creation(rig, monkeypatch):
+    device, controller, _, _ = rig
+    attach = device.attach
+    def attach_then_exit(pid):
+        session = attach(pid)
+        session.enable_child_gating = lambda: device.exit(pid)
+        return session
+    monkeypatch.setattr(device, "attach", attach_then_exit)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Constructed a bridge for a retired process")
+    controller.bridge_factory = forbidden
+    try:
+        controller.start()
+        controller.poll()
+        assert not controller.sessions and not controller.bridges and not controller.cleanup_failed
+    finally:
+        controller.close()
+
+
+def test_queued_script_failure_keeps_full_stack_after_owner_cancellation(rig):
+    device, controller, _, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    stack = "Owned script stack " + "x" * 5000 + " FULL STACK END"
+    controller._queue_bridge(10, session, {"type": "error", "description": "Owned script failure END", "stack": stack})
+    device.exit(10)
+    try:
+        with pytest.raises(lifecycle.LaunchError, match="Owned script failure END") as failure:
+            controller.poll()
+        assert stack in "\n".join(failure.value.__notes__)
+    finally:
+        controller.close()
+
+
+def test_exit_during_live_bridge_shutdown_completes_cleanup(rig):
+    from launcher.game_bridge import Bridge
+
+    device, controller, _, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None, is_destroyed=False, unload=lambda: None)
+    bridge = Bridge(None, session, "", lambda *args: None)
+    bridge.loaded = True
+    bridge.cancellation = controller.cancellations[10]
+    controller.bridges[10] = bridge
+    bridge._post = lambda *args: device.exit(10)
+    controller.close()
+    assert not controller.sessions and not bridge.waiters and not controller.cleanup_failed
+    assert device.exit_waits[10].closed
+
+
+def test_retirement_signal_handles_native_disconnect_before_detached_flag(rig):
+    device, controller, messages, _ = rig
+    controller.start()
+    def disconnect():
+        # The callback's cancellation flag can precede Frida's detached property.
+        controller.cancellations[10].cancel()
+        raise RuntimeError("Owned transport already closed")
+    controller.sessions[10].disable_child_gating = disconnect
+    controller.close()
+    assert not controller.cleanup_failed and not controller.sessions
+    assert not any("CLEANUP ERROR" in message for message in messages)
+
+
+@pytest.mark.parametrize("during_cleanup", [False, True])
+def test_script_failure_delivered_during_final_reporting_survives_retirement(rig, during_cleanup):
+    from launcher.game_bridge import Bridge
+
+    device, controller, messages, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
+    bridge = Bridge(None, session, "", lambda *args: None)
+    controller.bridges[10] = bridge
+    stack = "Late stack " + "x" * 5000 + " FULL LATE STACK END"
+    bridge.finish_reporting = lambda: controller._queue_bridge(10, session, {
+        "type": "error", "description": "Late owned script failure END", "stack": stack})
+    device.exit(10)
+    try:
+        if during_cleanup:
+            controller.close()
+            assert controller.cleanup_failed
+        else:
+            with pytest.raises(lifecycle.LaunchError, match="Late owned script failure END"):
+                controller.poll()
+        assert any(stack in message for message in messages)
+    finally:
+        controller.close()
+
+
 def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig):
     device, controller, messages, _ = rig
     controller.start()

@@ -14,6 +14,7 @@ import weakref
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
+from launcher.process_ended import ProcessEnded
 from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod, _host_operations
 from launcher.pack_candidate import PackCandidate
@@ -130,6 +131,7 @@ class PackMods:
         if (self._bridge is None or not self.finished or not self._regulation_owners
                 or self._regulations_prepared or self._regulation_failed):
             return
+        self._check_process()
         from launcher.regulations.runtime import SCOPE_COMPONENTS
 
         self.bind_regulations(scopes=set(SCOPE_COMPONENTS),
@@ -456,6 +458,7 @@ class PackMods:
         candidates = []
         with os.scandir(folder) as entries:
             for count, entry in enumerate(entries, 1):
+                self._check_process()
                 if count > MAX_PACK_ENTRIES:
                     raise ManifestError("Data pack exceeds the discovery entry limit")
                 path = Path(entry.path)
@@ -515,10 +518,17 @@ class PackMods:
         self.loading = self._load(pack)
         self.poll()
 
+    def _check_process(self):
+        """Stop at work boundaries; worker reads/compiles retain their own cleanup."""
+        cancellation = getattr(self._bridge, "cancellation", None)
+        if cancellation is not None:
+            cancellation.check()
+
     def poll(self):
         """Advance only ready work on the owning controller thread; never wait on a compiler."""
         if self.closed:
             return
+        self._check_process()
         self._start_regulations()
         if self.regulations is not None:
             # This runs on the controller/Store owner before any synchronous UI
@@ -537,6 +547,8 @@ class PackMods:
             next(self.loading)
         except StopIteration:
             self.loading = None
+        except ProcessEnded:
+            raise  # Normal exit is not a failed loading operation.
         except BaseException:
             self._progress("error")
             raise
@@ -557,6 +569,7 @@ class PackMods:
                             if result is None:
                                 yield
                 with result:
+                    self._check_process()
                     timings.update(result.timings)
                     if result.compiled.cache_status is not None:
                         self._log("CACHE", owners=list(self._sources), **result.compiled.cache_status)
@@ -642,6 +655,7 @@ class PackMods:
                 # Only registrations needing unavailable native data stay held.
                 self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=str(error)[:512], error=error)
         for candidate in candidates_read:
+            self._check_process()
             manifest, timings = candidate.manifest, candidate.timings
             # Decide duplicate identity before initializing either copy; never pick a winner.
             if counts[manifest.id] > 1:
@@ -689,8 +703,10 @@ class PackMods:
                                   timings=timings, prepared=prepared)
                     # Retain ownership before activation so interruption can still close this instance.
                     self.mods[manifest.id] = mod
+                    self._check_process()
                     with measure(timings, "activate"):
                         mod.activate()
+                    self._check_process()
                     if "main-menu" in manifest.capabilities:
                         with measure(timings, "registration"):
                             self._flush_menu()

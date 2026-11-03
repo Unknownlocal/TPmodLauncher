@@ -19,8 +19,8 @@ from launcher.process_lifecycle import Controller, LaunchError
 from tests.controller_device import rig
 
 
-@pytest.mark.parametrize("abrupt", [False, True])
-def test_restart_exit_recovers_marker_but_abrupt_loss_does_not_prove_ordinary_exit(rig, tmp_path, abrupt):
+@pytest.mark.parametrize("mode", ["normal", "abrupt", "ordinary"])
+def test_final_restart_evidence_distinguishes_ordinary_exit_and_uncertain_loss(rig, tmp_path, mode):
     root = Path(__file__).resolve().parents[3]
     journal = ActivityJournal(tmp_path / "restart.jsonl")
     journal.create()
@@ -59,11 +59,12 @@ if sys.argv[3] == 'abrupt':
  journal.append_records=stalled
  activity.submit_log({'level':'INFO','detail':'Owned stalled writer'})
  assert entered.wait(2)
-sys.modules['ui.screens.season_pack_screen'].relaunch_application(series_mode='oval')
+if sys.argv[3] != 'ordinary':
+ sys.modules['ui.screens.season_pack_screen'].relaunch_application(series_mode='oval')
 ''', encoding="utf-8")
     executable = getattr(sys, "_base_executable", sys.executable)
     process = subprocess.Popen([executable, "-B", str(child), str(root), str(journal.path),
-                                "abrupt" if abrupt else "normal"],
+                                mode],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     receiver = ReportingReceiver(process.pid, "owned-restart", lambda *args: None)
     try:
@@ -76,7 +77,7 @@ sys.modules['ui.screens.season_pack_screen'].relaunch_application(series_mode='o
         _, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, stderr
         assert receiver.finished.wait(2)
-        assert receiver.confirmed is not abrupt
+        assert receiver.confirmed is (mode != "abrupt")
     finally:
         if process.poll() is None:
             process.kill()
@@ -91,15 +92,18 @@ sys.modules['ui.screens.season_pack_screen'].relaunch_application(series_mode='o
     try:
         # No journal notification is dispatched: only process exit triggers recovery.
         device.exit(10)
-        assert not controller.poll()
+        assert controller.poll() is (mode == "ordinary")
         assert bridge.restart_observation["groups"] == {"restart.settings": "active", "restart.mod-pack": "active"}
-        if abrupt:
+        if mode == "abrupt":
             assert bridge.restart_attempt is None and journal.retained
+        elif mode == "ordinary":
+            assert bridge.restart_attempt is None and bridge.restart_observation["final"] is True
+            assert not any("possible replacement" in message for message in messages)
         else:
             assert bridge.restart_attempt == {"attempt": 1, "source": "mod-pack", "series": "oval", "state": "committed"}
             assert sum("NATIVE RESTART:" in message for message in messages) == 2
             assert not journal.path.exists()
-        # R1 deliberately preserves the same replacement grace for both outcomes.
+        # Only positive restart intent or uncertain evidence retains the grace.
         now[0] = controller.restart_grace
         assert controller.poll() and not controller.stopping
     finally:

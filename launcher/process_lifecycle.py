@@ -12,7 +12,9 @@ import threading
 import time
 
 from launcher.process_exit import ProcessExit
-from launcher.restart_evidence import valid_restart_evidence
+from launcher.restart_evidence import valid_restart_evidence, replacement_decision
+from launcher.process_cancellation import ProcessCancellation
+from launcher.process_ended import ProcessEnded
 
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
 from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, startup_step, sync_log
@@ -84,6 +86,8 @@ class Controller:
         self.restart_grace = restart_grace
         self.clock = clock
         self.events = queue.Queue()
+        self.lifecycle_events = queue.Queue()
+        self.cancellations = {}
         self.sessions = {}
         self.exit_waits = {}
         self.bridges = {}
@@ -97,6 +101,7 @@ class Controller:
         self.subscriptions = []
         self.idle_since = None
         self._restart_timer = self._restart_token = None
+        self.replacement = ("unknown", "no final native reporting evidence")
         self.stopping = False
         self.cleanup_failed = False
         self.native_failure = None
@@ -144,8 +149,9 @@ class Controller:
             self.shutdown.track(pid)
         # Pin before attachment and verify it is still alive afterwards. This
         # prevents a reused PID from borrowing the old process's exit wait.
-        waiter = ProcessExit(pid, self.game, lambda error: self.events.put(
-            ("exit", (pid, session, waiter, error))))
+        cancellation = ProcessCancellation()
+        waiter = ProcessExit(pid, self.game, lambda error: self._queue_lifecycle(
+            "exit", (pid, session, waiter, error), cancellation))
         try:
             with startup_step(self.submit_log, "Frida process attachment", pid=pid):
                 session = self.device.attach(pid)
@@ -156,27 +162,31 @@ class Controller:
         # Store the session before enabling gating so partial setup is still cleaned up.
         self.sessions[pid] = session
         self.exit_waits[pid] = waiter
+        self.cancellations[pid] = cancellation
         session.on(
             "detached",
-            lambda reason, crash=None: self.events.put(
-                ("detached", (pid, session, reason))
-            ),
+            lambda reason, crash=None: self._queue_lifecycle("detached", (pid, session, reason), cancellation),
         )
         waiter.start()
+        cancellation.check()
         session.enable_child_gating()
+        cancellation.check()
         if self.bridge_factory is not None:
             # Script messages are queued just like process events; this thread owns session state.
             with startup_step(self.submit_log, "bridge configuration and script creation", pid=pid):
                 bridge = self.bridge_factory(
                     session,
                     pid,
-                    lambda message: self.events.put(("bridge", (pid, session, message))),
+                    lambda message: self._queue_bridge(pid, session, message, cancellation),
                     **({"bootstrap": False} if not bootstrap else {}),
                 )
             self.bridges[pid] = bridge
+            bridge.cancellation = cancellation
+            cancellation.check()
             with startup_step(self.submit_log, "reporting setup and bridge script loading", pid=pid):
                 bridge.start()
         self._cancel_restart()
+        self.replacement = ("unknown", "no final native reporting evidence")
         self.submit_log(
             f"ATTACHED pid={pid}; child tracking active; awaiting manager bootstrap"
         )
@@ -213,7 +223,53 @@ class Controller:
         if waiter is not None:
             waiter.close()
             self.exit_waits.pop(pid)
+        cancellation = self.cancellations.get(pid)
+        evidence_error = None
+        if cancellation is not None:
+            # Reporting cleanup may itself have received another script error.
+            # Seal this owner's inbox before forgetting it, then retain every
+            # delivered diagnostic even when an earlier one already failed.
+            for message in cancellation.finish_evidence():
+                try:
+                    self._event("bridge", (pid, self.sessions[pid], message))
+                except Exception as error:
+                    self.submit_log("FINAL PROCESS EVIDENCE ERROR", level="ERROR", error=error, pid=pid)
+                    if evidence_error is None:
+                        evidence_error = error
+        if evidence_error is not None:
+            raise evidence_error
+        bridge = self.bridges.get(pid)
+        journal = getattr(bridge, "journal", None)
+        if journal is not None:
+            journal.remove()
+        self.replacement = replacement_decision(bridge)
+        self.submit_log("GAME PROCESS ENDED; " + self.replacement[1], level="DEBUG", pid=pid)
+        self.bridges.pop(pid, None)
         self.sessions.pop(pid, None)
+        self.cancellations.pop(pid, None)
+
+    def _queue_lifecycle(self, kind, value, cancellation):
+        """Callbacks only cancel that owner, queue priority work and wake the loop."""
+        if not cancellation.cancel():
+            return  # Duplicate OS/Frida callbacks cannot add stale wake-ups.
+        self.lifecycle_events.put((kind, value))
+        self.events.put(("lifecycle-ready", None))
+
+    def _queue_bridge(self, pid, session, message, cancellation=None):
+        """Keep already-delivered diagnostics ahead of session retirement."""
+        event = message.get("payload", {}).get("event")
+        if message.get("type") == "error" or event in (
+                "native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+            if cancellation is None:
+                if self.sessions.get(pid) is not session:
+                    return
+                cancellation = self.cancellations[pid]
+            if not cancellation.capture(message):
+                return
+            self.lifecycle_events.put(("bridge-evidence", (pid, session, message, cancellation)))
+            self.events.put(("lifecycle-ready", None))
+        else:
+            self.events.put(("bridge", (pid, session, message)))
 
     def _drain_activity(self, pid):
         bridge, session = self.bridges.get(pid), self.sessions.get(pid)
@@ -285,6 +341,7 @@ class Controller:
                 raise journal_error
 
     def _discard_bridge(self, pid):
+        """Finish reporting, keeping this bridge bound until final evidence is read."""
         bridge = self.bridges.get(pid)
         finish = getattr(bridge, "finish_reporting", None)
         if callable(finish):
@@ -292,10 +349,6 @@ class Controller:
             # The receiver may have queued a final fallback while stopping.
             # Consume it while this exact session still owns the process.
             self._drain_activity(pid)
-        self.bridges.pop(pid, None)
-        journal = getattr(bridge, "journal", None)
-        if journal is not None:
-            journal.remove()
 
     @staticmethod
     def build_native_error(record):
@@ -334,6 +387,8 @@ class Controller:
         self.submit_log(f"SPAWNED pid={pid}")
         try:
             self._attach(pid)
+        except ProcessEnded:
+            pass  # The queued owned exit still performs final recovery and cleanup.
         finally:
             # An attach/setup failure must not leave the initial process suspended.
             self._resume(pid)
@@ -389,9 +444,26 @@ class Controller:
             self._resume(child.pid)
 
     def _event(self, kind, value):
+        if kind == "bridge-evidence":
+            pid, session, message, cancellation = value
+            if not cancellation.consume(message):
+                return  # Final retirement already consumed this exact delivery.
+            kind, value = "bridge", (pid, session, message)
+        try:
+            return self._owned_event(kind, value)
+        except ProcessEnded:
+            # Only our cancellation checks raise this control signal. Do not
+            # turn an interrupted bridge/preparation wait into a fatal mod error.
+            return
+
+    def _owned_event(self, kind, value):
         if kind in ("bridge", "detached", "exit"):
             pid, session = value[:2]
             if self.sessions.get(pid) is session:
+                if kind == "bridge" and (cancellation := self.cancellations.get(pid)) is not None and cancellation.ended.is_set():
+                    event = value[2].get("payload", {}).get("event")
+                    if value[2].get("type") != "error" and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+                        return
                 event = value[2].get("payload", {}).get("event") if kind == "bridge" else None
                 with self.activity.focus(pid, native=event != "pack"):
                     return self._process_event(kind, value)
@@ -436,7 +508,7 @@ class Controller:
             # blocking forever after that one wake has been used.
             self._restart_timer = self._restart_token = None
             self.submit_log(f"REPLACEMENT GRACE WAKE; elapsed={self.clock() - self.idle_since:.6f}s", level="DEBUG")
-        elif kind == "shutdown":
+        elif kind in ("shutdown", "lifecycle-ready"):
             return  # The close owner already set its request flag.
         elif kind == "detached":
             pid, session, reason = value
@@ -470,7 +542,7 @@ class Controller:
                 if event in ("native-service", "mods-ready", "manager", "pack", "menu", "settings",
                              "themes", "career-preload", "readiness"):
                     return
-            if self.stopping and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+            if self.stopping and message.get("type") != "error" and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
                 return
             if message.get("type") == "error":
                 raise exception_from_record(
@@ -586,12 +658,20 @@ class Controller:
 
     def poll(self, timeout=0):
         """Process queued work; timeout=None blocks until an event or owned deadline."""
-        try:
-            self._event(*self.events.get(timeout=timeout))
-        except queue.Empty:
-            pass
-        while not self.events.empty():
-            self._event(*self.events.get_nowait())
+        first = True
+        while True:
+            # Drain lifecycle work before admitting another routine event. The
+            # callback has already woken active waits through its owner's flag.
+            while not self.lifecycle_events.empty():
+                self._event(*self.lifecycle_events.get_nowait())
+            try:
+                event = self.events.get(timeout=timeout) if first else self.events.get_nowait()
+            except queue.Empty:
+                break
+            first = False
+            while not self.lifecycle_events.empty():
+                self._event(*self.lifecycle_events.get_nowait())
+            self._event(*event)
         if self.native_failure is not None and not self.stopping:
             failure, self.native_failure = self.native_failure, None
             raise self.build_native_error(failure)
@@ -599,12 +679,17 @@ class Controller:
         if self.sessions or self.held:
             self._cancel_restart()
             return False
+        if self.replacement[0] == "ordinary":
+            self._cancel_restart()
+            return True
         # Wait for queued/gated replacements instead of treating the first parent exit as game exit.
         starting_wait = self.idle_since is None
         if starting_wait:
             self.idle_since = now
         remaining = self.restart_grace - (now - self.idle_since)
         if remaining <= 0:
+            if self.replacement[0] == "restart":
+                self.submit_log("RESTART REPLACEMENT NOT OBSERVED; " + self.replacement[1], level="WARNING")
             return True
         if self._restart_timer is None:
             token = self._restart_token = object()
@@ -615,7 +700,7 @@ class Controller:
         if starting_wait:
             # Arm the deadline before console/file output can delay this thread.
             self.submit_log(
-                f"NO GAME PROCESSES REMAIN; allowing up to {self.restart_grace:g}s for a possible replacement"
+                f"NO GAME PROCESSES REMAIN; allowing up to {self.restart_grace:g}s for a possible replacement; {self.replacement[1]}"
             )
         return False
 
@@ -634,10 +719,15 @@ class Controller:
         def attempt(action, session=None, pid=None):
             try:
                 action()
+            except ProcessEnded:
+                pass  # Exit can interrupt a live shutdown request; recovery still runs below.
             except Exception as error:
                 # Exiting processes can detach between the check and the cleanup call.
                 if session is not None:
                     gone = session.is_detached
+                    if not gone and pid is not None:
+                        cancellation = self.cancellations.get(pid)
+                        gone = cancellation is not None and cancellation.ended.is_set()
                     if not gone and pid is not None:
                         try:
                             # Frida's detached flag can lag actual process exit.
@@ -661,8 +751,9 @@ class Controller:
                     # The pending list confirms it is currently gated, even if its PID was reused.
                     self.resumed.discard(child.pid)
                     attempt(lambda child=child: self._resume(child.pid))
-            while not self.events.empty():
-                attempt(lambda: self._event(*self.events.get_nowait()))
+            while not self.lifecycle_events.empty() or not self.events.empty():
+                pending = self.lifecycle_events if not self.lifecycle_events.empty() else self.events
+                attempt(lambda: self._event(*pending.get_nowait()))
 
         attempt(release_pending)
         for pid, session in list(self.sessions.items()):
@@ -678,6 +769,8 @@ class Controller:
                 attempt(session.disable_child_gating, session, pid)
             if not session.is_detached:
                 attempt(session.detach, session, pid)
+            if self.sessions.get(pid) is session:
+                attempt(lambda pid=pid: self._discard_session(pid))
         # Reconcile notifications arriving while the sessions were being detached.
         attempt(release_pending)
         for pid in list(self.held):
@@ -692,6 +785,7 @@ class Controller:
         for pid in self.sessions:
             self.activity.retire(pid)
         self.sessions.clear()
+        self.cancellations.clear()
         self.bridges.clear()
         for waiter in self.exit_waits.values():
             attempt(waiter.close)

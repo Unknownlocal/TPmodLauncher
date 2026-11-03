@@ -70,8 +70,10 @@ the helper's normal exit, and cancels the attempt if the call fails or returns.
 The game still starts its replacement and controls its own exit. Ordinary quit
 paths are untouched. Observer availability and attempt numbers travel through
 the same background journal, without a game-thread storage or network wait.
-Abrupt termination can lose queued markers, so their absence alone cannot prove
-an ordinary exit.
+At normal interpreter shutdown it checks that both references are still owned
+and queues a final availability record before the writer's bounded drain. This
+check performs no storage or network work. Abrupt termination can lose queued
+markers, so their absence alone cannot prove an ordinary exit.
 
 `native_activity.py` observes complete week progression, season rollover and
 career saves, including autosaves. The game's week-transition start and finish
