@@ -10,6 +10,7 @@ if __package__:
     from .manager import Manager
     from .native_loading import NativeLoading
     from .native_failures import NativeFailures
+    from .native_restart import NativeRestart
     from .import_handover import ImportHandover
     from .control_locks import ControlLocks
     from .diagnostics import build_log_record
@@ -35,6 +36,7 @@ class NativeEvents:
         self.control_imports = Manager()
         self.loading = NativeLoading(host.readiness, host.activity)
         self.failures = NativeFailures(host.activity)
+        self.restart = NativeRestart(self)
         host.settings.changed = self.refresh
         host.readiness.changed = self.refresh
         host.menu.changed = self.refresh
@@ -138,6 +140,7 @@ class NativeEvents:
         self._refreshing = True
         try:
             host = self.host
+            self.publish("restart-observation", self.restart.status())
             self.publish("pack", host.discovery.poll())
             menu = host.menu.status()
             loading = menu.get("loading", {})
@@ -192,6 +195,7 @@ class NativeEvents:
             self._loading_done.clear()
         self.loading.stop()
         self.failures.stop()
+        self.restart.stop()
         for manager in self._managers:
             if manager.events is self:
                 manager.events = None

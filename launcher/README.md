@@ -38,6 +38,14 @@ short gap for a possible replacement, including after a manual exit. It never
 starts another game. A timer wake that arrives early waits out the remaining
 time. Closing the console wakes the queue directly.
 
+Each bridge also retains restart-observer availability and the latest restart
+attempt for its own process. The controller reads this evidence from the shared
+journal, including during final process cleanup, and logs requested, confirmed
+or cancelled attempts. Session identity and sequence numbers reject old messages
+and duplicates. These records do not change the replacement deadline: abrupt
+termination or stalled reporting can lose a marker even when observation was
+installed. Missing markers alone do not establish an ordinary exit.
+
 [`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations

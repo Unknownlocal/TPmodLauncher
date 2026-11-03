@@ -24,7 +24,7 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "import_handover", "control_locks", "native_events",
+    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "native_restart", "import_handover", "control_locks", "native_events",
     "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 
@@ -67,6 +67,8 @@ class Bridge:
             reporting.control_ready = self._control_ready
             reporting.control_failed = self._control_failed
         self.event_sequences = {}
+        # Evidence stays with this owner; replacement policy uses its existing grace.
+        self.restart_observation = self.restart_attempt = None
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
         )

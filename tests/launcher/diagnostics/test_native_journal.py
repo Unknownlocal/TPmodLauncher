@@ -19,6 +19,93 @@ from launcher.process_lifecycle import Controller, LaunchError
 from tests.controller_device import rig
 
 
+@pytest.mark.parametrize("abrupt", [False, True])
+def test_restart_exit_recovers_marker_but_abrupt_loss_does_not_prove_ordinary_exit(rig, tmp_path, abrupt):
+    root = Path(__file__).resolve().parents[3]
+    journal = ActivityJournal(tmp_path / "restart.jsonl")
+    journal.create()
+    child = tmp_path / "owned_restart.py"
+    child.write_text('''import sys, json, os, threading
+from itertools import count
+from types import ModuleType, SimpleNamespace
+from typing import Optional
+sys.path.insert(0, sys.argv[1])
+from hook_manager.native_readiness import NativeReadiness
+from hook_manager.native_activity import NativeActivity
+from hook_manager.native_restart import NativeRestart
+from hook_manager.native_events import NativeEvents
+from launcher.diagnostics.activity_journal import ActivityJournal
+journal=ActivityJournal(sys.argv[2])
+activity=NativeActivity(NativeReadiness(),journal,json.loads(sys.stdin.readline()))
+def relaunch_application(*, series_mode: Optional[str] = None) -> None:
+ if sys.argv[3] == 'abrupt': os._exit(0)
+ raise SystemExit
+for name in ('ui.screens.options_screen','ui.screens.season_pack_screen'):
+ module=ModuleType(name)
+ module.relaunch_application=relaunch_application
+ sys.modules[name]=module
+events=NativeEvents.__new__(NativeEvents)
+events.host=SimpleNamespace(activity=activity)
+events.active,events.closed,events.cache,events._sequence=True,False,{},count(1)
+restart=NativeRestart(events)
+events.publish('restart-observation',restart.status())
+assert activity.writer.wait_idle(2)
+assert sys.stdin.readline().strip() == 'go'
+if sys.argv[3] == 'abrupt':
+ entered=threading.Event()
+ def stalled(rows):
+  entered.set()
+  threading.Event().wait(30)
+ journal.append_records=stalled
+ activity.submit_log({'level':'INFO','detail':'Owned stalled writer'})
+ assert entered.wait(2)
+sys.modules['ui.screens.season_pack_screen'].relaunch_application(series_mode='oval')
+''', encoding="utf-8")
+    executable = getattr(sys, "_base_executable", sys.executable)
+    process = subprocess.Popen([executable, "-B", str(child), str(root), str(journal.path),
+                                "abrupt" if abrupt else "normal"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    receiver = ReportingReceiver(process.pid, "owned-restart", lambda *args: None)
+    try:
+        receiver.start()
+        process.stdin.write(json.dumps(receiver.endpoint) + "\n")
+        process.stdin.flush()
+        assert receiver.connected.wait(2)
+        process.stdin.write("go\n")
+        process.stdin.flush()
+        _, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr
+        assert receiver.finished.wait(2)
+        assert receiver.confirmed is not abrupt
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=3)
+        receiver.close(drain=receiver.connected.is_set())
+    device, controller, messages, now = rig
+    controller.start()
+    session = controller.sessions[10]
+    session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
+    bridge = Bridge(None, session, "", lambda *args: None, journal, receiver)
+    controller.bridges[10] = bridge
+    try:
+        # No journal notification is dispatched: only process exit triggers recovery.
+        device.exit(10)
+        assert not controller.poll()
+        assert bridge.restart_observation["groups"] == {"restart.settings": "active", "restart.mod-pack": "active"}
+        if abrupt:
+            assert bridge.restart_attempt is None and journal.retained
+        else:
+            assert bridge.restart_attempt == {"attempt": 1, "source": "mod-pack", "series": "oval", "state": "committed"}
+            assert sum("NATIVE RESTART:" in message for message in messages) == 2
+            assert not journal.path.exists()
+        # R1 deliberately preserves the same replacement grace for both outcomes.
+        now[0] = controller.restart_grace
+        assert controller.poll() and not controller.stopping
+    finally:
+        controller.close()
+
+
 def test_immediate_native_exit_keeps_failure_and_saving_context(rig, tmp_path):
     root = Path(__file__).resolve().parents[3]
     journal = ActivityJournal(tmp_path / "native.jsonl")

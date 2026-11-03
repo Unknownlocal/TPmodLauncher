@@ -305,6 +305,7 @@ def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(
     writer = writer_for(receiver)
     writer.enqueue_log_record({"event": "unsupported-native-change", "detail": "UNKNOWN DATA END"}, bridge.journal)
     writer.enqueue_log_record({"event": "settings", "event_sequence": "invalid", "status": {"detail": "SEQUENCE DATA END"}}, bridge.journal)
+    writer.enqueue_log_record({"event": "restart", "event_sequence": 1, "status": {"state": "RESTART DATA END"}}, bridge.journal)
     record, failure = error_record("Original native fatal after invalid change FULL END")
     record.update(fatal=True, reason="Original native fatal after invalid change FULL END")
     writer.enqueue_log_record(record, bridge.journal, failure)
@@ -313,6 +314,33 @@ def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(
         controller.poll()
     text = path.read_text()
     assert "Original save diagnostic note" in text
-    assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text
+    assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text and "RESTART DATA END" in text
     controller.close()
     assert bridge.journal.path.exists() and bridge.journal.retained
+
+
+def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    def marker(sequence, attempt, state):
+        writer.enqueue_log_record({"event": "restart", "event_sequence": sequence,
+            "status": {"attempt": attempt, "state": state, "source": "settings", "series": None}}, bridge.journal)
+    marker(1, 1, "requested")
+    marker(2, 1, "committed")
+    marker(1, 1, "requested")  # A late copy must not undo the committed state.
+    assert writer.wait_idle(2)
+    controller._drain_activity(10)
+    assert bridge.restart_attempt["state"] == "committed"
+    marker(3, 2, "requested")
+    marker(4, 1, "cancelled")  # Completion of an older attempt cannot clear a newer one.
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    assert bridge.restart_attempt["attempt"] == 2 and bridge.restart_attempt["state"] == "requested"
+    text = path.read_text()
+    assert text.count('"attempt": 1, "state": "requested"') == 1
+    # The pinned session check applies before restart handling too.
+    old = controller.sessions[10]
+    controller._event("bridge", (10, object(), {"type": "send", "payload": {
+        "event": "restart", "event_sequence": 5, "status": {
+            "attempt": 3, "state": "requested", "source": "mod-pack", "series": "oval"}}}))
+    assert controller.sessions[10] is old and bridge.restart_attempt["attempt"] == 2

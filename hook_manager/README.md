@@ -64,6 +64,15 @@ exception hook, without recording the same fatal exception twice. Worker failure
 are reported without declaring the game fatal. Original hooks and crash files
 remain owned by the game.
 
+`native_restart.py` observes the settings and season-pack screens' references to
+the game's shared restart helper. It queues an attempt before the call, confirms
+the helper's normal exit, and cancels the attempt if the call fails or returns.
+The game still starts its replacement and controls its own exit. Ordinary quit
+paths are untouched. Observer availability and attempt numbers travel through
+the same background journal, without a game-thread storage or network wait.
+Abrupt termination can lose queued markers, so their absence alone cannot prove
+an ordinary exit.
+
 `native_activity.py` observes complete week progression, season rollover and
 career saves, including autosaves. The game's week-transition start and finish
 methods keep an activity open across its own worker and delayed exception.

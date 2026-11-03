@@ -12,6 +12,7 @@ import threading
 import time
 
 from launcher.process_exit import ProcessExit
+from launcher.restart_evidence import valid_restart_evidence
 
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
 from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, startup_step, sync_log
@@ -225,7 +226,7 @@ class Controller:
                 journal_error = error
                 fallback = getattr(bridge, "drain_fallback", None)
                 records = getattr(error, "decoded_records", []) + (fallback() if callable(fallback) else [])
-            changes, protocol_errors = [], []
+            changes, restart_evidence, protocol_errors = [], [], []
             def invalid_record(record, detail):
                 journal = getattr(bridge, "journal", None)
                 if journal is not None:
@@ -236,12 +237,15 @@ class Controller:
                     invalid_record(record, "Expected a native journal record")
                     continue
                 event = record.get("event", "native-activity")
-                if event not in ("native-activity", "diagnostic", "readiness", "pack", "menu", "settings", "themes", "career-preload", "native-service"):
+                if event not in ("native-activity", "diagnostic", "readiness", "pack", "menu", "settings", "themes", "career-preload", "native-service", "restart", "restart-observation"):
                     invalid_record(record, "Unknown native journal event")
                     continue
                 sequence = record.get("event_sequence")
                 if sequence is not None and (type(sequence) is not int or sequence <= 0):
                     invalid_record(record, "Invalid native change sequence")
+                    continue
+                if event in ("restart", "restart-observation") and not valid_restart_evidence(event, record.get("status"), sequence):
+                    invalid_record(record, "Invalid native restart evidence")
                     continue
                 if (event in ("readiness", "menu", "settings", "themes", "career-preload") and type(record.get("status")) is not dict
                         or event == "pack" and type(record.get("pack")) is not dict):
@@ -256,6 +260,8 @@ class Controller:
                 message = {"type": "send", "payload": {**record, "event": event}}
                 if event in ("native-activity", "diagnostic"):
                     self._event("bridge", (pid, session, message))
+                elif event in ("restart", "restart-observation"):
+                    restart_evidence.append(message)
                 else:
                     changes.append(message)
             for error in protocol_errors:
@@ -267,6 +273,9 @@ class Controller:
                 raise self.build_native_error(failure)
             if protocol_errors:
                 raise protocol_errors[0]
+            for message in restart_evidence:
+                # Unlike UI changes, final restart evidence is useful after exit.
+                self._event("bridge", (pid, session, message))
             # Preserve complete errors before a change triggers mod preparation
             # or a main-thread request, either of which may itself fail or wait.
             for message in changes:
@@ -461,13 +470,19 @@ class Controller:
                 if event in ("native-service", "mods-ready", "manager", "pack", "menu", "settings",
                              "themes", "career-preload", "readiness"):
                     return
-            if self.stopping and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed"):
+            if self.stopping and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
                 return
             if message.get("type") == "error":
                 raise exception_from_record(
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
             sequence = payload.get("event_sequence")
+            if event in ("restart", "restart-observation"):
+                if not valid_restart_evidence(event, payload.get("status"), sequence):
+                    journal = getattr(bridge, "journal", None)
+                    if journal is not None:
+                        journal.retained = True
+                    raise LaunchError("Invalid native restart evidence: " + json.dumps(payload, ensure_ascii=True))
             if sequence is not None:
                 if type(sequence) is not int or sequence <= 0:
                     journal = getattr(bridge, "journal", None)
@@ -478,6 +493,16 @@ class Controller:
                 if sequence <= previous:
                     return
                 bridge.event_sequences[event] = sequence
+            if event in ("restart", "restart-observation"):
+                # Consume final evidence even after detach. Session identity and
+                # sequences above reject duplicates and messages from old owners.
+                attribute = "restart_attempt" if event == "restart" else "restart_observation"
+                status, previous = payload["status"], getattr(bridge, attribute)
+                if event != "restart" or previous is None or status["attempt"] >= previous["attempt"]:
+                    setattr(bridge, attribute, status)
+                self.submit_log("NATIVE " + event.upper() + ": " + json.dumps(payload["status"], ensure_ascii=True),
+                                level="DEBUG" if event == "restart-observation" else "INFO", pid=pid)
+                return
             if event == "native-service":
                 bridge.request("changes")
                 return
