@@ -103,8 +103,9 @@ def test_untrusted_pack_records_cannot_choose_another_folder(pack, code_mod):
     with closing(PackMods(game, messages.append)) as scope:
         scope.load({**record, "id": "../escape"})
         assert not scope.mods and "DISCOVERY REJECTED" in messages[0]
+        before = list(messages)
         scope.load(record)  # A rejected snapshot is not reassigned later.
-        assert not scope.mods and len(messages) == 1
+        assert not scope.mods and messages == before
 
 
 def test_linked_child_and_pack_cannot_redirect_discovery(pack, code_mod):

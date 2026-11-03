@@ -66,6 +66,7 @@ def main():
         else:
             print("\nCopied to clipboard. Press Ctrl+V in Steam's Launch Options field.")
         print("\nKeep %command% unchanged. This helper does not change Steam settings or start the game.")
+        print("Add --log-level 1 before -- for detailed console and launcher.log output (default: 2/INFO).")
         return 0
     except (OSError, ValueError, RuntimeError) as error:
         print(f"Cannot generate launch options: {error}", file=sys.stderr)

@@ -13,6 +13,9 @@ import sys
 import time
 import uuid
 
+# Omitted options must not overwrite defaults held by a bound logging callback.
+_UNSET = object()
+
 if __package__:
     from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text
     from .log_file_handler import LogFileHandler
@@ -32,6 +35,26 @@ else:
     build_log_record, error_text = _records.build_log_record, _records.error_text
     LogFileHandler = _load_source(_folder / "log_file_handler.py").LogFileHandler
     ActivityTracker = _load_source(_folder / "activity_tracker.py").ActivityTracker
+
+
+def parse_log_level(value):
+    """Resolve a 1-5 selector, logging name or standard integer threshold."""
+    if type(value) is int:
+        level = value
+    elif isinstance(value, str):
+        text = value.strip()
+        level = logging.getLevelNamesMapping().get(text.upper())
+        if level is None:
+            try:
+                level = int(text, 10)
+            except ValueError:
+                raise ValueError("Log level must be a logging name or non-negative integer (for example ERROR or 4)") from None
+    else:
+        raise ValueError("Log level must be a logging name or non-negative integer")
+    if level < 0:
+        raise ValueError("Log level must be non-negative")
+    # Keep standard thresholds compatible; only the five short selectors expand.
+    return level * 10 if 1 <= level <= 5 else level
 
 
 def activity_scope(sink, kind, **context):
@@ -163,7 +186,7 @@ def handle_error(sink, error, *, message="LAUNCHER ERROR", level="ERROR", stage=
                     {"kind": "launcher_startup", "description": "while starting the launcher"})
         outcome["failure"] = {"reason": str(error), "stage": stage, "level": level, "activity": deepcopy(activity)}
     try:
-        write_log(sink, message + ": " + str(error), level=level, error=error, **context)
+        write_log(sink, message + ": " + str(error), level=level, error=error, fatal=True, **context)
     finally:
         # Even a failed output destination must not leave the owned game running.
         try:
@@ -181,12 +204,25 @@ def bind_reporter(sink, **context):
     return partial(write_log, sink, **context)
 
 
-def write_log(sink, value, *, level="INFO", error=None, **context):
+def write_log(sink, value, *, level=_UNSET, error=_UNSET, fatal=_UNSET, **context):
     """Accept transport records or local text and keep callable observers usable.
 
     Standard Logger sinks retain severity. Plain text callbacks receive the same
     rendered message for display, without needing to understand log records.
+    Fatal handling marks its records for retention regardless of the routine
+    threshold; their severity is unchanged.
     """
+    if isinstance(sink, partial) and sink.func is write_log:
+        # A bound logger still accepts records and severity. Rendering it as a
+        # plain text observer would lose the level and format context twice.
+        options = dict(context)
+        for name, option in (("level", level), ("error", error), ("fatal", fatal)):
+            if option is not _UNSET:
+                options[name] = option
+        return sink(value, **options)
+    level = "INFO" if level is _UNSET else level
+    error = None if error is _UNSET else error
+    fatal = False if fatal is _UNSET else fatal
     if type(value) is dict:
         level = value.get("level", level)
         context.update((key, value[key]) for key in CONTEXT if key in value)
@@ -213,18 +249,21 @@ def write_log(sink, value, *, level="INFO", error=None, **context):
         message = fields + " " + message
     if isinstance(sink, logging.Logger):
         component = record.get("component", "runtime")
-        sink.getChild(component).log(LEVELS[level], "%s", message)
+        sink.getChild(component).log(LEVELS[level], "%s", message, extra={"launcher_fatal": fatal})
     else:
         sink(message)
 
 
 @contextmanager
-def reporter(path, *, outcome=None):
+def reporter(path, *, outcome=None, log_level="INFO"):
     """Own early/runtime logging and finish a plain failure outcome without UI.
 
     Callers acquire log_ownership first. File failure leaves console logging
     usable; outcome records whether the complete log was actually synchronised.
+    log_level filters routine console and file output equally. Complete fatal
+    diagnostics are always retained in both destinations.
     """
+    minimum_level = parse_log_level(log_level)
     logger = logging.getLogger("modLauncher")
     previous = logger.level, logger.propagate
     previous_outcome = getattr(logger, "launch_outcome", None)
@@ -240,14 +279,19 @@ def reporter(path, *, outcome=None):
     handlers = []
     try:
         console = logging.StreamHandler()
-        console.setLevel(logging.INFO)
         handlers.append(console)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            handlers.append(LogFileHandler(path, partial(_store_log_error, logger)))
+            file_handler = LogFileHandler(path, partial(_store_log_error, logger))
+            handlers.append(file_handler)
         except OSError as error:
             _store_log_error(logger, error)
+        # Share filtering as well as formatting so both destinations agree.
+        # Handler/logger level checks would discard low-level fatal evidence
+        # before this exception to the selected routine threshold can apply.
+        threshold = lambda record: record.levelno >= minimum_level or getattr(record, "launcher_fatal", False)
         for handler in handlers:
+            handler.addFilter(threshold)
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
             logger.addHandler(handler)
         yield logger
@@ -261,7 +305,7 @@ def reporter(path, *, outcome=None):
                 # and cleanup details; only the returned outcome records the final
                 # write result, after every file operation has completed.
                 details = {key: value for key, value in outcome.items() if key not in ("log_written", "log_error")}
-                logger.error("LAUNCH FAILURE DETAILS %s", json.dumps(details, ensure_ascii=True))
+                logger.error("LAUNCH FAILURE DETAILS %s", json.dumps(details, ensure_ascii=True), extra={"launcher_fatal": True})
                 sync_log(logger)
         finally:
             for handler in handlers:

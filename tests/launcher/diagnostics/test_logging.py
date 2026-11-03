@@ -9,13 +9,22 @@ import pytest
 from launcher import entry
 
 
+@pytest.mark.parametrize("level", ["verbose", "2.5", "-1"])
+def test_invalid_log_level_is_rejected_before_opening_log(tmp_path, monkeypatch, level):
+    monkeypatch.setattr(entry, "__file__", str(tmp_path / "launcher/entry.py"))
+    with pytest.raises(SystemExit) as error:
+        entry.main(["--log-level", level, "--check-only"])
+    assert error.value.code == 2 and not (tmp_path / "logs/launcher.log").exists()
+
+
 def test_startup_phases_retain_elapsed_wait_and_original_failure(tmp_path, capsys):
     import threading
     from launcher.diagnostics import core as diagnostics
 
     path = tmp_path / "launcher.log"
     cause = RuntimeError("Owned startup failure")
-    with diagnostics.reporter(path) as logger:
+    # Numeric NOTSET includes all supported records, including startup DEBUG.
+    with diagnostics.reporter(path, log_level=0) as logger:
         # An actual wait establishes elapsed rather than CPU time. The failed
         # phase must also retain its start and preserve the original exception.
         controller_sink = diagnostics.bind_reporter(logger, component="controller")
@@ -35,7 +44,75 @@ def test_startup_phases_retain_elapsed_wait_and_original_failure(tmp_path, capsy
     assert records[3]["seconds"] >= 0
     assert "DEBUG modLauncher.controller pid=41 STARTUP" in path.read_text()
     console = capsys.readouterr().err
-    assert "Ordinary startup summary" in console and "STARTUP " not in console
+    assert "Ordinary startup summary" in console and console == path.read_text()
+
+
+def test_nested_logging_preserves_levels_context_and_full_remote_details(tmp_path, capsys):
+    from launcher.diagnostics import core as diagnostics
+
+    path = tmp_path / "launcher.log"
+    activity = {"kind": "saving", "description": "while saving"}
+    with diagnostics.reporter(path, log_level="DEBUG") as logger:
+        bound = diagnostics.bind_reporter(logger, component="controller", pid=41)
+        diagnostics.write_log(bound, "Owned debug detail", level="DEBUG", scope="startup")
+        diagnostics.write_log(bound, {"level": "WARNING", "detail": "Owned warning", "activity": activity})
+        diagnostics.write_log(diagnostics.bind_reporter(bound, component="mods"),
+                              {"level": "ERROR", "detail": "Owned remote failure", "traceback": "Full remote cause\nEnd of remote cause"})
+        defaults = diagnostics.bind_reporter(bound, level="WARNING", error=ValueError("Bound default cause"))
+        diagnostics.write_log(defaults, "Inherited warning")
+        diagnostics.write_log(defaults, "Explicit info", level="INFO", error=None)
+    text = path.read_text()
+    assert "DEBUG modLauncher.controller pid=41 scope=startup Owned debug detail" in text
+    warning = next(line for line in text.splitlines() if "Owned warning" in line)
+    assert "WARNING modLauncher.controller pid=41" in warning
+    assert json.loads(warning.partition(" activity=")[2]) == activity
+    assert text.count("ERROR modLauncher.mods pid=41 Owned remote failure") == 1
+    assert text.count("Full remote cause\nEnd of remote cause") == 1
+    assert "WARNING modLauncher.controller pid=41 Inherited warning" in text
+    assert "INFO modLauncher.controller pid=41 Explicit info" in text
+    assert text.count("Bound default cause") == 1
+    console = capsys.readouterr().err
+    assert console == text
+
+
+@pytest.mark.parametrize("level,visible", [
+    (1, ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+    (2, ["INFO", "WARNING", "ERROR", "CRITICAL"]),
+    (3, ["WARNING", "ERROR", "CRITICAL"]),
+    (4, ["ERROR", "CRITICAL"]),
+    (5, ["CRITICAL"]),
+    (40, ["ERROR", "CRITICAL"]),
+])
+def test_numbered_threshold_filters_console_and_file_equally(tmp_path, capsys, level, visible):
+    from launcher.diagnostics import core as diagnostics
+
+    path = tmp_path / "launcher.log"
+    with diagnostics.reporter(path, log_level=level) as logger:
+        for severity in diagnostics.LEVELS:
+            diagnostics.write_log(logger, "Selected " + severity, level=severity)
+    text = path.read_text()
+    assert [severity for severity in diagnostics.LEVELS if "Selected " + severity in text] == visible
+    assert capsys.readouterr().err == text
+
+
+def test_critical_threshold_still_retains_complete_fatal_error_at_original_level(tmp_path, capsys):
+    from launcher.diagnostics import core as diagnostics
+
+    path, outcome = tmp_path / "launcher.log", {}
+    with diagnostics.reporter(path, outcome=outcome, log_level="CRITICAL") as logger:
+        logger.info("Routine progress filtered from file")
+        try:
+            raise OSError("Original full nested cause")
+        except OSError as cause:
+            error = RuntimeError("Original fatal failure")
+            error.__cause__ = cause
+            diagnostics.handle_error(logger, error)
+    text = path.read_text()
+    assert "Routine progress" not in text
+    assert "ERROR modLauncher.runtime" in text and "Original full nested cause" in text
+    assert "Original fatal failure" in text and "ERROR modLauncher LAUNCH FAILURE DETAILS" in text
+    assert outcome["log_written"] and outcome["failure"]["reason"] == "Original fatal failure"
+    assert capsys.readouterr().err == text
 
 
 @pytest.mark.parametrize("late_failure", ["sync", "close"])

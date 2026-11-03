@@ -577,7 +577,7 @@ class PackMods:
                     self._source_entries = {snapshot.manifest.id: SharedSourceMod(self._source_runner, snapshot)
                                             for snapshot in result.snapshots}
             finally:
-                self._log("SOURCE GROUP TIMING", owners=list(self._sources), phase_seconds=timings)
+                self._log("SOURCE GROUP TIMING", level="DEBUG", owners=list(self._sources), phase_seconds=timings)
 
     def _load(self, pack):
         """Keep guest calls serial while yielding during worker preparation."""
@@ -592,9 +592,9 @@ class PackMods:
             self._log(
                 "DISCOVERY REJECTED", level="WARNING",
                 detail=str(error)[:512],
-                phase_seconds=load_timings,
-                total_seconds=round(perf_counter() - started, 6),
             )
+            self._log("DISCOVERY TIMING", level="DEBUG", phase_seconds=load_timings,
+                      total_seconds=round(perf_counter() - started, 6))
             self._progress("error")
             return
         self.total = len(candidates)
@@ -618,8 +618,8 @@ class PackMods:
                     folder=path.name,
                     detail=str(error)[:512],
                     error=error,
-                    phase_seconds=timings,
                 )
+                self._log("TIMING", level="DEBUG", folder=path.name, phase_seconds=timings)
         counts = Counter(item.manifest.id for item in candidates_read)
         candidates_read.sort(key=lambda item: (item.manifest.id, item.root.name))
         self._sources = {item.manifest.id: item for item in candidates_read
@@ -652,8 +652,8 @@ class PackMods:
                     id=manifest.id,
                     folder=candidate.root.name,
                     detail="Duplicate mod ID",
-                    phase_seconds=timings,
                 )
+                self._log("TIMING", level="DEBUG", id=manifest.id, folder=candidate.root.name, phase_seconds=timings)
                 continue
             if type(manifest) is SourceManifest and self._source_unavailable:
                 continue  # The fixed group's failure already counted and logged every member.
@@ -725,7 +725,7 @@ class PackMods:
                     prepared.close()  # An adopted result has already transferred its resources.
                 # Log once per attempted mod, after execution and cleanup return.
                 self._log(
-                    "TIMING", pack=folder.name, id=manifest.id, phase_seconds=timings
+                    "TIMING", level="DEBUG", pack=folder.name, id=manifest.id, phase_seconds=timings
                 )
             self._progress()
         self.finished = True
@@ -739,6 +739,9 @@ class PackMods:
             "BINDING REQUIRED" if self._regulation_waiting() else "READY",
             pack=pack["id"],
             active=len(self.mods),
+        )
+        self._log(
+            "PACK TIMING", level="DEBUG", pack=pack["id"],
             phase_seconds=load_timings,
             total_seconds=round(perf_counter() - started, 6),
         )

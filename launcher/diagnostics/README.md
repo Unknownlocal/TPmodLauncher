@@ -3,7 +3,14 @@
 This package owns the launcher's console and file logging, fatal failure details
 and requests to close its game processes.
 
-The file keeps DEBUG records, while the console shows INFO and higher levels.
+The console and file default to INFO. Entry's `--log-level` option selects their
+shared minimum level; DEBUG includes startup and code-mod timings. Fatal errors
+and the final failure details bypass the routine threshold in both destinations
+while keeping their original severity.
+`core.parse_log_level()` maps 1-5 onto DEBUG through CRITICAL. Names and standard
+numeric thresholds remain accepted, so 4, ERROR and 40 are equivalent.
+Entry validates the option before opening the log. The Linux wrapper forwards
+it unchanged to the same parser.
 `core.startup_step()` records the start and finish of setup operations, with
 elapsed real time and a failed result if the operation raises an exception.
 These records cover dependency and runner checks, source preparation and process
@@ -17,7 +24,10 @@ checks the existing main-thread and import state using a small expression.
 Startup waits therefore avoid repeatedly parsing all the adapter sources.
 The completion record counts readiness checks and full bootstrap evaluations
 separately. Bound controller logging keeps the original DEBUG level and process
-context, so these details stay in the file without adding console output.
+context, so the selected threshold works consistently in both destinations.
+`write_log()` also recognises bound logging callbacks before rendering text,
+so nested forwarding preserves record levels, context and full errors. Only
+plain text observers receive the final formatted text.
 
 `core.py` claims log ownership, configures the logger and keeps the original fatal
 reason through cleanup. It flushes and synchronises file output before returning

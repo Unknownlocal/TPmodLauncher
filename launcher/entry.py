@@ -49,11 +49,20 @@ def main(argv=None, *, outcome=None, presentation=None) -> int:
         help="seconds to wait for a game replacement after the last process exits (default: 2)",
     )
     parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="console/file log level: 1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR, 5=CRITICAL; names also accepted (default: 2/INFO)",
+    )
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="Steam's original command, supplied after --",
     )
     arguments = parser.parse_args(argv)
+    try:
+        arguments.log_level = _diagnostics.parse_log_level(arguments.log_level)
+    except ValueError as error:
+        parser.error(str(error))
     if not math.isfinite(arguments.restart_grace) or arguments.restart_grace <= 0:
         parser.error("--restart-grace must be a finite number greater than zero")
     command = arguments.command
@@ -76,7 +85,7 @@ def main(argv=None, *, outcome=None, presentation=None) -> int:
         # Claim the log before verification can fail, and retain ownership until
         # all controller/game cleanup and final filesystem synchronisation finish.
         with _diagnostics.log_ownership(lock_path):
-            with _diagnostics.reporter(log_path, outcome=outcome) as logger:
+            with _diagnostics.reporter(log_path, outcome=outcome, log_level=arguments.log_level) as logger:
                 try:
                     code = _run(root, arguments, command, logger, lock_path, log_path)
                 except KeyboardInterrupt:

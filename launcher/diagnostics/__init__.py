@@ -8,6 +8,7 @@ from .core import (
     exception_from_record,
     handle_error,
     log_ownership,
+    parse_log_level,
     reporter,
     startup_step,
     sync_log,

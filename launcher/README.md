@@ -33,14 +33,20 @@ verified process with a Windows handle or a Linux pidfd, then waits for exit or
 cancellation. This also detects exits when Frida's notification is late. The
 executable is checked before and after attachment; old exit events cannot retire
 a replacement session. Process enumeration is used at ownership boundaries,
-not on a timer. Restart grace uses a cancellable one-shot deadline. Closing the
-console wakes the queue directly.
+not on a timer. After the last process exits, a cancellable deadline allows a
+short gap for a possible replacement, including after a manual exit. It never
+starts another game. A timer wake that arrives early waits out the remaining
+time. Closing the console wakes the queue directly.
 
 [`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations
-use ERROR. Routine progress and mod messages use INFO. The file also retains
-DEBUG details; the console shows INFO and higher levels. Startup records name
+use ERROR. Routine progress and mod messages use INFO. Both destinations default
+to INFO; `--log-level` selects their shared minimum level, including DEBUG for
+timing details. Complete fatal diagnostics bypass that threshold in both.
+Selectors 1-5, names and standard numeric thresholds use the same parser on
+Windows and Linux/Proton; for example, 4, ERROR and 40 select the same level.
+Startup records name
 each setup step and its elapsed duration, including failed steps. Framework reports
 retain their severity through reporting functions and the bridge.
 Routine summaries have length limits. Supplied exceptions keep their complete
@@ -52,6 +58,9 @@ Handlers are removed when the launch ends.
 `submit_log` callbacks attach context and route records or messages to
 `write_log()`, which uses the standard logger. Game adapters construct their
 transport records with `hook_manager.diagnostics.build_log_record()`.
+When one logging callback forwards through another bound callback, it passes the
+record and its level onward before formatting. This retains severity, process
+context and complete error details without adding duplicate context text.
 `handle_error()` records failures at the controller's outer error handlers and
 requests game shutdown. Other ERROR records leave the decision to their caller.
 `handle_error()` also retains the first fatal reason and its setup/controller
@@ -133,7 +142,7 @@ Closing one loading scope lets compilation still needed by another scope finish.
 `bin/wasmtime-cache` after checking ownership and access. Failed cache checks fall
 back to uncached compilation. Every admission still verifies current bytes and
 creates fresh instance state. `load_timing.py` measures loading phases; the pack
-loader logs those timings and cache status.
+loader logs those timings at DEBUG and keeps loading outcomes at INFO.
 
 `pack_candidate.py` holds checked metadata. The controller creates one
 `SharedPythonRunner` for all source candidates. All sources transfer before
@@ -280,8 +289,9 @@ The Linux helper uses Bash and optional desktop clipboard tools without a native
 Python runtime. Its Steam line invokes `launch_proton.sh`, preserving Steam's
 Proton prefix and game arguments while substituting the bundled Windows Python.
 `proton_entry.py` supplies the installed Wine-mapped executable path to the normal
-entry point, retaining its target validation. This route is tested with owned
-process fixtures; actual Proton mod loading remains untested.
+entry point, retaining its target validation. A separate argument prefix carries
+launcher log options; game arguments keep their original meaning. This route is
+tested with owned process fixtures; actual Proton mod loading remains untested.
 
 `Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency

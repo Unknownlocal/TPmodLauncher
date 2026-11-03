@@ -73,12 +73,22 @@ def test_relocated_release_imports_dependencies_without_installation(
     first = subprocess.run(
         command, cwd=tmp_path, capture_output=True, text=True, timeout=60
     )
+    log = root / "logs/launcher.log"
+    assert "DEBUG" not in log.read_text(encoding="utf-8")
+    assert first.stderr == log.read_text(encoding="utf-8")
     second = subprocess.run(
-        command, cwd=tmp_path, capture_output=True, text=True, timeout=60
+        [*command, "--log-level", "debug"], cwd=tmp_path, capture_output=True, text=True, timeout=60
     )
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert first.stdout == second.stdout and "Frida 17.23.3" in first.stdout
     assert "Wasmtime 49.0.0" in first.stdout
+    assert "DEBUG modLauncher.runtime STARTUP" in log.read_text(encoding="utf-8")
+    assert second.stderr == log.read_text(encoding="utf-8")
+    numeric = subprocess.run(
+        [*command, "--log-level", "4"], cwd=tmp_path, capture_output=True, text=True, timeout=60
+    )
+    assert numeric.returncode == 0 and numeric.stdout == first.stdout, numeric.stderr
+    assert numeric.stderr == log.read_text(encoding="utf-8") == ""
     assert before == {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in runtime.iterdir()

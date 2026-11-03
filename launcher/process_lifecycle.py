@@ -420,8 +420,13 @@ class Controller:
             self._process_event("detached", (pid, session, "process-terminated"))
             self.submit_log(f"EXITED pid={pid}")
         elif kind == "restart-expired":
-            if value is not self._restart_token:
+            if value is None or value is not self._restart_token:
                 return
+            # A timer wake may arrive just before the clock reaches its deadline.
+            # Mark it consumed so poll can arm the remaining time instead of
+            # blocking forever after that one wake has been used.
+            self._restart_timer = self._restart_token = None
+            self.submit_log(f"REPLACEMENT GRACE WAKE; elapsed={self.clock() - self.idle_since:.6f}s", level="DEBUG")
         elif kind == "shutdown":
             return  # The close owner already set its request flag.
         elif kind == "detached":
@@ -570,17 +575,24 @@ class Controller:
             self._cancel_restart()
             return False
         # Wait for queued/gated replacements instead of treating the first parent exit as game exit.
-        if self.idle_since is None:
+        starting_wait = self.idle_since is None
+        if starting_wait:
             self.idle_since = now
+        remaining = self.restart_grace - (now - self.idle_since)
+        if remaining <= 0:
+            return True
+        if self._restart_timer is None:
             token = self._restart_token = object()
-            self._restart_timer = threading.Timer(self.restart_grace,
+            self._restart_timer = threading.Timer(remaining,
                 lambda: self.events.put(("restart-expired", token)))
             self._restart_timer.daemon = True
             self._restart_timer.start()
+        if starting_wait:
+            # Arm the deadline before console/file output can delay this thread.
             self.submit_log(
-                f"WAITING FOR RESTART; no game processes remain; grace={self.restart_grace:g}s"
+                f"NO GAME PROCESSES REMAIN; allowing up to {self.restart_grace:g}s for a possible replacement"
             )
-        return now - self.idle_since >= self.restart_grace
+        return False
 
     def _cancel_restart(self):
         if self._restart_timer is not None:

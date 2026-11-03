@@ -35,4 +35,5 @@ else
     printf '\nCould not copy to the clipboard. Copy the displayed line manually.\n'
 fi
 printf '\nKeep %%command%% unchanged. This helper does not change Steam settings or start the game.\n'
+printf 'Add --log-level 1 before %%command%% for detailed console and launcher.log output (default: 2/INFO).\n'
 printf 'Proton/Wine mod loading remains experimental and untested.\n'

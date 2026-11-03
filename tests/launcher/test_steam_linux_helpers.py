@@ -86,7 +86,8 @@ def test_linux_clipboard_failure_keeps_line_displayed(installed):
     assert "bash '" in result.stdout and "Copy the displayed line manually" in result.stdout
 
 
-def test_proton_wrapper_keeps_prefix_environment_arguments_and_exit_status(installed):
+@pytest.mark.parametrize("log_level", [None, "debug", "4"])
+def test_proton_wrapper_keeps_prefix_environment_arguments_and_exit_status(installed, log_level):
     root, tools, environment = installed
     proton = tools / "proton"
     capture = root.parent / "proton-argv.json"
@@ -100,9 +101,10 @@ def test_proton_wrapper_keeps_prefix_environment_arguments_and_exit_status(insta
     outer.write_text(f'#!{sys.executable}\nimport os,sys\nassert sys.argv[1:3] == ["--marker", "space value"]\nos.execv(sys.argv[3], sys.argv[3:])\n')
     outer.chmod(0o755)
     environment.update(ARGV_CAPTURE=str(capture), STEAM_COMPAT_DATA_PATH="owned prefix with spaces")
-    game_args = ["--save", "quotes ' $value ; `literal`", ""]
+    game_args = ["--save", "quotes ' $value ; `literal`", "", "--log-level", "game-owned"]
+    options = ["--log-level", log_level] if log_level else []
     result = subprocess.run([
-        "/bin/bash", str(root / "launcher/launch_proton.sh"),
+        "/bin/bash", str(root / "launcher/launch_proton.sh"), *options,
         str(outer), "--marker", "space value", str(proton), "waitforexitandrun",
         str(root.parent / "TeamPrincipal.exe"), *game_args,
     ], env=environment, capture_output=True, text=True, timeout=10)
@@ -111,7 +113,8 @@ def test_proton_wrapper_keeps_prefix_environment_arguments_and_exit_status(insta
     assert record["prefix"] == "owned prefix with spaces"
     assert record["args"][:4] == ["waitforexitandrun", str(root / "libs/python-fixture/python.exe"), "-B", "-c"]
     assert "proton_entry.py" in record["args"][4]
-    assert record["args"][5:] == game_args
+    prefix = ["--log-level", log_level] if log_level else []
+    assert record["args"][5:] == [*prefix, "--", *game_args]
     # Execute the exact captured bootstrap against an owned entry stub. Stand in
     # for Wine's mapped sys.executable; no fixed drive or host path is required.
     shutil.copyfile(PROJECT / "launcher/proton_entry.py", root / "launcher/proton_entry.py")
@@ -121,11 +124,11 @@ def test_proton_wrapper_keeps_prefix_environment_arguments_and_exit_status(insta
     )
     bootstrap_result = subprocess.run([
         sys.executable, "-B", "-c", "import sys;sys.executable=sys.argv.pop(1);" + record["args"][4],
-        str(root / "libs/python-fixture/python.exe"), *game_args,
+        str(root / "libs/python-fixture/python.exe"), *record["args"][5:],
     ], env=environment, capture_output=True, text=True, timeout=10)
     assert bootstrap_result.returncode == 31, bootstrap_result.stderr
     assert json.loads((root / "launcher/received.json").read_text()) == [
-        "--", str(root.parent / "TeamPrincipal.exe"), *game_args,
+        *prefix, "--", str(root.parent / "TeamPrincipal.exe"), *game_args,
     ]
 
 

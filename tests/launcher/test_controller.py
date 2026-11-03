@@ -49,7 +49,7 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
     logger = logging.getLogger("modLauncher")
     before = list(logger.handlers), logger.level, logger.propagate
     first = tmp_path / "first.log"
-    with lifecycle.reporter(first) as logger:
+    with lifecycle.reporter(first, log_level="DEBUG") as logger:
         controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
         controller.mods_factory = lambda report, bridge: PackMods(game, report)
         controller.start()
@@ -74,7 +74,7 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
         invalid = next(line for line in output.splitlines() if "Invalid diagnostic severity" in line)
         assert "WARNING" in invalid and "\x1b" not in invalid and len(invalid) < 4400
     assert "DEBUG modLauncher.bridge pid=10 hidden readiness detail" in first_text
-    assert "hidden readiness detail" not in console
+    assert console == first_text
     assert (list(logger.handlers), logger.level, logger.propagate) == before
     second = tmp_path / "second.log"
     with lifecycle.reporter(second) as logger:
@@ -347,6 +347,48 @@ def test_idle_controller_blocks_until_owned_exit_and_restart_deadline(rig, monke
         assert controller.poll(timeout=None)
         assert waits[-1] is None
     finally:
+        worker.join(2)
+        controller.close()
+
+
+def test_early_deadline_wake_does_not_leave_session_end_blocked(rig, monkeypatch):
+    device, controller, _, now = rig
+    timer_type, scheduled = threading.Timer, []
+    finished, errors = threading.Event(), []
+
+    def timer(delay, callback):
+        number = len(scheduled)
+        def wake():
+            # First wake is early. Only a newly armed timer advances the test
+            # clock to its deadline; no manual event may finish the session.
+            if number:
+                now[0] = controller.restart_grace
+            callback()
+        scheduled.append(delay)
+        return timer_type(0, wake)
+
+    monkeypatch.setattr(lifecycle.threading, "Timer", timer)
+    controller.start()
+    device.exit(10)
+
+    def finish_session():
+        try:
+            while not controller.poll(timeout=None):
+                pass
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=finish_session)
+    try:
+        worker.start()
+        assert finished.wait(2), "Session end lost its only deadline wake"
+        assert not errors and not controller.sessions and not controller.held
+    finally:
+        # Release a regressed implementation's blocked queue wait before cleanup.
+        now[0] = controller.restart_grace
+        controller.events.put(("shutdown", None))
         worker.join(2)
         controller.close()
 

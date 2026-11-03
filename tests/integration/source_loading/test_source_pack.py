@@ -18,6 +18,7 @@ from hook_manager.menu import MenuAdapter
 from hook_manager.settings import SettingsAdapter
 from hook_manager.themes import THEME_ROLES
 from launcher.pack_mods import PackMods
+from launcher.diagnostics import reporter
 from launcher.compiled_mod import CompiledMod
 from launcher.sandbox import SandboxError
 from mod_runtime import preparation
@@ -55,6 +56,25 @@ def records(messages, event):
     # Activity context and complete trace text can follow the event's JSON data.
     return [json.JSONDecoder().raw_decode(line.split(": ", 1)[1])[0]
             for line in messages if line.startswith(f"CODE MOD {event}:")]
+
+
+def test_loading_outcomes_remain_info_and_all_timing_details_use_debug(pack, source_mod, code_mod, runner_bundle, capsys):
+    game, folder, record = pack
+    source_mod(folder, "owned.source")
+    code_mod(folder, "owned.prebuilt")
+    path = game / "launcher.log"
+    with reporter(path, log_level="DEBUG") as logger:
+        with closing(PackMods(game, logger, runner_bundle=runner_bundle)) as scope:
+            scope.load(record)
+            finish(scope)
+            assert len(scope.mods) == 2 and scope.finished
+    text = path.read_text()
+    for event in ("SOURCE GROUP TIMING", "TIMING", "PACK TIMING"):
+        line = next(line for line in text.splitlines() if "CODE MOD " + event + ":" in line)
+        assert "DEBUG modLauncher.mods" in line and '"phase_seconds"' in line
+    console = capsys.readouterr().err
+    assert "CODE MOD ACTIVE" in console and "CODE MOD READY" in console
+    assert console == text
 
 
 def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source_mod, code_mod, runner_bundle):

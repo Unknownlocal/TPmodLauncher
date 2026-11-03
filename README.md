@@ -30,6 +30,13 @@ changing mods or selecting another pack. Loading results and mod messages appear
 in `modLauncher/logs/launcher.log`, replaced on each run. The main menu waits
 for mod loading before allowing season actions.
 
+Logging defaults to 2 (INFO). For startup and code-mod timing details, insert
+`--log-level 1` before `-- %command%` in the Windows launch line. The choices are
+1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR and 5=CRITICAL, from most to least detail.
+Names and standard numeric levels (10, 20, 30, 40, 50) also work.
+This sets the same minimum level for the console and `launcher.log`.
+Complete fatal diagnostics always appear in both at their original level.
+
 Closing the launcher console or pressing Ctrl+C also closes the game. After
 four seconds, any remaining game processes are force-closed.
 
@@ -56,6 +63,8 @@ The helper displays the line and copies it if a supported clipboard tool is
 available. No Linux Python installation is needed. The wrapper uses Steam's
 Proton version, compatibility prefix and game arguments. Game injection and mod
 loading remain untested under Proton/Wine; plain Wine setup is not provided.
+To select the log level here, insert `--log-level 1` before `%command%`
+in the Linux launch line. Omitting it keeps 2 (INFO).
 
 macOS is unsupported and untested.
 
