@@ -82,15 +82,18 @@ else:
     frida = load("test_binding", "native_test_binding.py").load(root)
     load("dependencies", "bundled_dependencies.py").load_source_packages(root)
     from launcher.process_lifecycle import Controller, run_launcher
+    from launcher.diagnostics.host_lifetime import HostLifetime
 
-    if sys.argv[1] == "blocked":
+    lifetime = HostLifetime(detach_stdin=True) if sys.argv[1] in ("host", "host-blocked") else None
+
+    if sys.argv[1] in ("blocked", "host-blocked"):
         def blocked_cleanup(self):
             # Stand in for a controller stuck inside native bridge cleanup.
             (root / "cleanup-started").touch()
             time.sleep(15)
         Controller.close = blocked_cleanup
 
-    if sys.argv[1] == "fatal":
+    if sys.argv[1] in ("fatal", "host-blocked"):
         poll = Controller.poll
         def failing_poll(self, *args, **kwargs):
             if not hasattr(self, "_failure_watcher"):
@@ -105,6 +108,7 @@ else:
                 self._failure_watcher.start()
             result = poll(self, *args, **kwargs)
             if (root / "fail-request").exists():
+                (root / "failure-started").write_text(str(time.monotonic()))
                 raise RuntimeError("Owned launcher failure")
             return result
         Controller.poll = failing_poll
@@ -113,4 +117,4 @@ else:
     kernel.GetConsoleWindow.restype = w.HWND
     publish_ready(root / "console.json", {"hwnd": kernel.GetConsoleWindow()})
     raise SystemExit(run_launcher(frida, sys.argv[2:], root / ".state/controller.lock",
-                                 root / "logs/console-test.log", restart_grace=.2))
+                                 root / "logs/console-test.log", restart_grace=.2, host_lifetime=lifetime))

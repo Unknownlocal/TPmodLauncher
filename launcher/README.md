@@ -314,6 +314,27 @@ entry point, retaining its target validation. A separate argument prefix carries
 launcher log options; game arguments keep their original meaning. This route is
 tested with owned process fixtures; actual Proton mod loading remains untested.
 
+`launch_proton.sh` stays alive as a native host supervisor. After game cleanup,
+`proton_entry.py` hands fatal outcomes to `diagnostics/linux_failure_channel.py`.
+The controller retains its completed log's lock while the host notice is open.
+A launch-specific control line and authenticated local connection link the
+controller and notice without polling files or requiring Linux Python.
+An inherited pipe also signals native supervisor loss during normal play. A
+blocked reader wakes the existing owned-game shutdown path, including its
+four-second allowance, shared with any earlier failure. If cleanup stays stuck
+after forced game closure, an emergency exit ends the controller too. The pipe
+stays private to the controller; the game gets null input so startup cannot
+compete with that reader.
+
+`diagnostics/linux_notice.sh` uses an existing terminal or `xterm`, shows a Zenity
+dialog and separately requests log opening through `xdg-open`. It uses the Linux
+installation path supplied by the wrapper rather than guessing Wine drive
+mappings. Console input, dialog dismissal and connection closure wake blocking
+waits. Dismissal closes only the owned notice/dialog; the editor stays separate.
+Missing desktop tools retain the console diagnostic. The wrapper returns the
+original controller exit status and leaves Steam's prefix and game arguments
+intact. Native Linux desktop and Proton execution remain unverified.
+
 `Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency
 preparation, and ZIP assembly. No pre-existing binary cache is required; the

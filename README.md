@@ -66,6 +66,19 @@ loading remain untested under Proton/Wine; plain Wine setup is not provided.
 To select the log level here, insert `--log-level 1` before `%command%`
 in the Linux launch line. Omitting it keeps 2 (INFO).
 
+For native Linux failure notices, install `xterm`, `zenity` and `xdg-utils` using
+your distribution's package manager. The scripts use Bash with `/dev/tcp` support
+and the standard coreutils commands. `xterm` needs X11 or
+XWayland; Zenity can use X11 or Wayland. No Linux Python is required.
+
+After a fatal error and game cleanup, the wrapper prints the failure in an
+existing terminal or opens an `xterm` console. It separately starts a Zenity
+dialog and asks `xdg-open` to open the completed `launcher.log` at its Linux path.
+A keypress, dialog dismissal or console closure ends the notice; the log editor
+stays open. Missing or failed desktop tools leave the error on console output.
+Without a terminal or working `xterm`, that output depends on how Steam was
+started. Native desktop and Proton behaviour remain unverified.
+
 macOS is unsupported and untested.
 
 ### Package a release
@@ -149,6 +162,41 @@ supplies the API and sandboxed Python runner. Additional packages need
 
 Start with the [diagnostic](examples/diagnostic_mod),
 [menu](examples/menu_mod) or [theme](examples/theme_mod) example.
+
+### Mods with prebuilt Wasm components
+
+You supply `mod.toml` and the compiled component, for example:
+
+```text
+data/<selected-data-pack>/my_mod/
+  mod.toml
+  mod.wasm
+```
+
+In `mod.toml`:
+
+```toml
+schema = 1
+id = "my.mod"
+version = "0.1.0"
+api = "0.3.0"
+runtime = "wasm"
+component = "mod.wasm"
+capabilities = ["diagnostics"]
+```
+
+Use your language's WebAssembly Component Model compiler and binding generator
+with the matching [WIT contract](hook_manager/api/README.md), such as
+`hook_manager/api/0.3.0/mod.wit`, and its `code-mod` world. Enable the WIT features
+matching your requested capabilities. Implement `activate` and `on-event`; event
+names and JSON payloads cross the contract as strings. Import only the operations
+your manifest requests. The launcher does not provide WASI filesystem, network
+or process access, so the component must work without those host services.
+
+Distribute the manifest and finished `.wasm` component together, keeping the
+manifest's relative component path. The launcher supplies the WIT definitions,
+sandbox and permitted host operations; it loads the supplied component without
+building it. Prebuilt components support API `0.1.0`, `0.2.0` and `0.3.0`.
 
 ### Choose an API
 

@@ -156,6 +156,36 @@ Dialog and log-opening functions run independently. Windows notices select the
 Windows functions by a fixed source path, without loading game or mod packages.
 Other hosts retain the console notice when no dialog function is supplied.
 
+The Proton entry route selects `linux_failure_channel.py` instead of a Windows
+dialog. `LinuxFailureChannel` writes a launch-specific notice after cleanup and
+signals the native Bash supervisor. An authenticated loopback connection links
+their lifetimes; the controller keeps the completed log locked until dismissal.
+Connection setup has a deadline, but user reading time has none. Notices include
+the host's Linux log path supplied by the wrapper, not a guessed Wine mapping.
+An early entry import failure retains its full traceback without claiming an old
+log as the current launch's output.
+
+`linux_notice.sh` prints the notice in an existing terminal or requests `xterm`.
+Zenity supplies the native dialog, while `xdg-open` independently requests the
+completed log. Reserved Zenity response codes distinguish dismissal from desktop
+startup failures. A private event pipe joins console input, dialog responses and
+controller loss without polling. Closing the console closes its dialog; closing
+the dialog ends the console session. The editor is outside that lifetime.
+Unavailable desktop tools leave the diagnostic on console output. This route
+requires Bash network redirections and standard coreutils, with `xterm`, Zenity
+and `xdg-utils` supplying desktop actions.
+
+`host_lifetime.py` contains `HostLifetime`. It blocks on an inherited pipe whose
+only writer belongs to the native supervisor. Losing that writer requests the
+existing owned-game shutdown, including the shared four-second fallback, even when a
+Proton process spawned the controller instead of replacing itself. The watcher
+owns a private, non-inheritable pipe handle; controller and game stdin are then
+set to null input. This keeps the lifetime read separate from game startup.
+If cleanup remains stuck after forced game closure and a short final grace,
+the controller exits too, preserving failure or interruption status.
+Notice socket waits also include a cancellation socket, so owner loss wakes
+connection setup, authentication and the final dismissal wait directly.
+
 `windows_dialog.py` contains `WindowsDialog`. It uses a native Windows window
 with the failed activity, short reason and a scrollable, selectable log path.
 It announces readiness after the window is visible. Closing the window, pressing

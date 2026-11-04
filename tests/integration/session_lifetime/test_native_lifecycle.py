@@ -100,17 +100,22 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
 
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Windows console close")
-@pytest.mark.parametrize("mode", ["controller", "blocked", "fatal"], ids=["normal", "blocked-cleanup", "launcher-error"])
+@pytest.mark.parametrize("mode", ["controller", "blocked", "fatal", "host", "host-blocked"], ids=["normal", "blocked-cleanup", "launcher-error", "native-owner-loss", "native-owner-blocked-cleanup"])
 def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path, mode):
     import ctypes as c
     from ctypes import wintypes as w
 
     root, client = native_project.root, native_project.client
-    blocked = mode == "blocked"
+    blocked = mode in ("blocked", "host-blocked")
+    host_owned = mode in ("host", "host-blocked")
     runtime = tmp_path / "owned gui runtime"
     shutil.copytree(client.parent, runtime)
     target = runtime / "pythonw.exe"
     probe = root / "launcher/console_shutdown_probe.py"
+    # native_project is shared across cases; failure coordination belongs only
+    # to this owned launch, including the delayed owner-loss deadline check.
+    for name in ("fail-request", "cleanup-started", "failure-started"):
+        (root / name).unlink(missing_ok=True)
     shutil.copyfile(FIXTURES / probe.name, probe)
     shutil.copyfile(FIXTURES.parents[1] / "fixtures/native_test_binding.py", root / "launcher/native_test_binding.py")
     owned, unrelated = tmp_path / "owned", tmp_path / "unrelated"
@@ -128,6 +133,7 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
         command.append("ignore-close")
     process = subprocess.Popen(command,
         creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=startup,
+        stdin=subprocess.PIPE if host_owned else None,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     other, owned_handle = None, None
 
@@ -147,7 +153,18 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
         # reject pre-existing games. This same-executable window is not owned.
         other = subprocess.Popen([str(target), "-B", str(probe), "window", str(unrelated)])
         ready(unrelated.with_suffix(".json"))
-        if mode == "fatal":
+        if host_owned:
+            if blocked:
+                (root / "fail-request").touch()
+                deadline = time.monotonic() + 5
+                while not (root / "cleanup-started").exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                assert (root / "cleanup-started").exists()
+                failure_started = float((root / "failure-started").read_text())
+                time.sleep(1)  # Owner loss must reuse the already-running fatal deadline.
+            process.stdin.close()
+            process.stdin = None
+        elif mode == "fatal":
             (root / "fail-request").touch()
         else:
             console = ready(root / "console.json")["hwnd"]
@@ -165,6 +182,9 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
             saved = json.loads(log.rpartition("LAUNCH FAILURE DETAILS ")[2])
             assert saved["cleanup"] == "complete" and saved["game_close"] == "complete"
             assert saved["failure"]["reason"] == "Owned launcher failure"
+        elif mode == "host-blocked":
+            assert process.returncode == 1 and "Owned launcher failure" in log
+            assert time.monotonic() - failure_started < 5.1, "Host loss restarted the fatal shutdown allowance"
         else:
             assert "CONSOLE CLOSE requested" in log
         if blocked:

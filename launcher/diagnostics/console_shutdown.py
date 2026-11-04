@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Close owned game processes when their Windows launcher console closes."""
+"""Close owned game processes when their console or native supervisor closes."""
 
 from .core import bind_reporter
 
@@ -17,6 +17,7 @@ class ConsoleShutdown:
     def __init__(self, executable, submit_log):
         self.executable = os.path.normcase(str(Path(executable).resolve()))
         self.submit_log = bind_reporter(submit_log, component="shutdown")
+        self._outcome = getattr(submit_log, "launch_outcome", None)
         self.requested, self.finished = threading.Event(), threading.Event()
         self._lock, self._processes, self._posted = threading.RLock(), {}, set()
         self._handler, self._deadline = None, None
@@ -120,6 +121,20 @@ class ConsoleShutdown:
             self._force_close()
             self.finished.wait(.4)
         return True
+
+    def request_from_host(self):
+        """Use the same owned-window deadline after a native supervisor is lost."""
+        self.request()
+        def enforce():
+            remaining = max(0, self._deadline - time.monotonic())
+            if not self.finished.wait(remaining) and os.name == "nt":
+                self._force_close()
+                if not self.finished.wait(.4):
+                    # Unlike a Windows console-close callback, native host loss
+                    # does not make Windows end a controller stuck in cleanup.
+                    # Its owned games have already been force-closed above.
+                    os._exit(1 if self._outcome and self._outcome["failure"] is not None else 130)
+        threading.Thread(target=enforce, name="host-game-shutdown", daemon=True).start()
 
     def _force_close(self):
         """Terminate surviving owned handles after the normal-close allowance."""

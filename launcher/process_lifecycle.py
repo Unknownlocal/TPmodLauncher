@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Start the supplied game command and track its Frida sessions until the game exits."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 from functools import partial
 import math
@@ -808,6 +808,7 @@ def run_launcher(
     bridge_factory=None,
     mods_factory=None,
     logger=None,
+    host_lifetime=None,
 ):
     """Run one controller and return 0 on normal exit, 1 on failure or 130 on interruption."""
     if logger is None:
@@ -817,13 +818,15 @@ def run_launcher(
         outcome = {}
         with controller_lock(lock_path), reporter(log_path, outcome=outcome) as logger:
             code = run_launcher(frida, command, lock_path, log_path, restart_grace=restart_grace,
-                                bridge_factory=bridge_factory, mods_factory=mods_factory, logger=logger)
+                                bridge_factory=bridge_factory, mods_factory=mods_factory, logger=logger,
+                                host_lifetime=host_lifetime)
         return 1 if outcome["log_error"] is not None else code
 
     outcome = logger.launch_outcome
     controller, shutdown, code, stage = None, None, 0, "controller_setup"
     try:
-        with ConsoleShutdown(command[0], logger) as shutdown:
+        with ConsoleShutdown(command[0], logger) as shutdown, \
+                (host_lifetime.watch(shutdown.request_from_host) if host_lifetime is not None else nullcontext()):
             with startup_step(logger, "Frida local device acquisition"):
                 device = frida.get_local_device()
             controller = Controller(device, command, logger,

@@ -28,7 +28,7 @@ _dependencies = _load_helper("bundled_dependencies")
 _diagnostics = _load_helper("diagnostics/core")
 
 
-def main(argv=None, *, outcome=None, presentation=None) -> int:
+def main(argv=None, *, outcome=None, presentation=None, host_lifetime=None) -> int:
     """Finish logging and cleanup before optional presentation under the log lock.
 
     Programmatic callers receive their exit code without presentation by default.
@@ -87,7 +87,11 @@ def main(argv=None, *, outcome=None, presentation=None) -> int:
         with _diagnostics.log_ownership(lock_path):
             with _diagnostics.reporter(log_path, outcome=outcome, log_level=arguments.log_level) as logger:
                 try:
-                    code = _run(root, arguments, command, logger, lock_path, log_path)
+                    if host_lifetime is None:
+                        code = _run(root, arguments, command, logger, lock_path, log_path)
+                    else:
+                        host_lifetime.check()
+                        code = _run(root, arguments, command, logger, lock_path, log_path, host_lifetime=host_lifetime)
                 except KeyboardInterrupt:
                     logger.info("INTERRUPTED during launcher setup")
                     code = 130
@@ -135,7 +139,7 @@ def run(argv=None):
     return main(argv, presentation=_present_failure)
 
 
-def _run(root, arguments, command, logger, lock_path, log_path):
+def _run(root, arguments, command, logger, lock_path, log_path, *, host_lifetime=None):
     """Verify and run within the already-owned log; presentation is independent."""
     try:
         with _diagnostics.activity_scope(logger, "launcher_startup"):
@@ -179,6 +183,8 @@ def _run(root, arguments, command, logger, lock_path, log_path):
         bridge_factory = bridge.factory(root, frida)
     with _diagnostics.startup_step(logger, "compilation cache setup"):
         cache = CompilationCache(root)
+    if host_lifetime is not None:
+        host_lifetime.check()
     return lifecycle.run_launcher(
         frida,
         command,
@@ -187,6 +193,7 @@ def _run(root, arguments, command, logger, lock_path, log_path):
         restart_grace=arguments.restart_grace,
         bridge_factory=bridge_factory,
         logger=logger,
+        host_lifetime=host_lifetime,
         mods_factory=lambda submit_log, bridge: PackMods(
             root.parent,
             submit_log,
