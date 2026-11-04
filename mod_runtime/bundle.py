@@ -9,10 +9,21 @@ No manifest, source file or Wasm component is executed here.
 import hashlib
 import json
 import os
+from contextlib import ExitStack
 from pathlib import Path
 import re
 import stat
 from types import MappingProxyType
+
+if __package__:
+    from . import _source_files as disk
+else:
+    # Release preparation loads this reader directly under isolated Python,
+    # without registering the runtime package or changing its import paths.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("_tpm_runner_files", Path(__file__).with_name("_source_files.py"))
+    disk = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(disk)
 
 ABI_VERSION = "0.4.0"
 COMPONENTIZE_VERSION = "0.25.1"
@@ -155,7 +166,9 @@ class RunnerBundle:
     """Verify a trusted runner bundle without a compiler or mod permissions."""
 
     def __init__(self, directory):
-        self.directory = _checked(directory)
+        # Check lexical ancestors before collapsing '..': normalising first
+        # could hide a linked segment. Pins then receive a canonical path.
+        self.directory = Path(os.path.abspath(_checked(directory)))
         try:
             self._receipt = _read(self.directory / MANIFEST, 64 * 1024)
             receipt = json.loads(self._receipt, object_pairs_hook=_unique_object)
@@ -183,9 +196,12 @@ class RunnerBundle:
         except (OSError, TypeError, ValueError, RecursionError) as error:
             raise BundleError("Cannot read runner receipt") from error
 
-    def _file(self, name):
+    def _file(self, name, *, parent=None, expected=None):
+        """Read and hash a file, using a pinned parent during full verification."""
         record = self._records[name]
-        data = _read(self.directory / name, record["size"])
+        path = self.directory / name
+        data = (_read(path, record["size"]) if parent is None
+                else disk.read_file(path, parent, record["size"], expected))
         if len(data) != record["size"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
             raise BundleError(f"Runner bundle file differs from receipt: {name}")
         if name.endswith(".wasm") and not data.startswith(_HEADER):
@@ -193,23 +209,56 @@ class RunnerBundle:
         return data
 
     def verify(self):
-        """Check the complete bounded inventory, including sources and preserved notices."""
-        found = set()
-        for parent, directories, files in self.directory.walk(follow_symlinks=False):
-            for name in directories + files:
-                item = _checked(parent / name)
-                relative = item.relative_to(self.directory).as_posix()
-                if item.is_dir():
-                    if relative not in DIRECTORIES:
-                        raise BundleError("Unexpected runner bundle directory")
-                else:
-                    found.add(relative)
-                    if relative not in FILES | {MANIFEST}:
-                        raise BundleError("Unexpected runner bundle file")
-        if found != FILES | {MANIFEST}:
-            raise BundleError("Incomplete runner bundle inventory")
-        for name in FILES:
-            self._file(name)
+        """Check the complete bundle while keeping its directories open for this pass."""
+        try:
+            with ExitStack() as stack:
+                root, parent = disk.root_directory(stack, self.directory)
+                found, directories = {}, []
+
+                def collect(path, descriptor):
+                    directories.append((descriptor, disk.stamp(os.fstat(descriptor))))
+                    # POSIX scans the pinned descriptor. Windows scans its path;
+                    # the open directories deny replacement until this pass ends.
+                    with os.scandir(path if os.name == "nt" else descriptor) as children:
+                        for child in children:
+                            item = path / child.name
+                            relative = item.relative_to(root).as_posix()
+                            # Windows directory entries omit file identity fields;
+                            # a full stat is needed to compare the opened handle.
+                            info = (os.stat(item, follow_symlinks=False) if os.name == "nt"
+                                    else child.stat(follow_symlinks=False))
+                            if (stat.S_ISLNK(info.st_mode)
+                                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                                raise BundleError("Runner bundle paths must not be linked or reparse points")
+                            if stat.S_ISDIR(info.st_mode):
+                                if relative not in DIRECTORIES:
+                                    raise BundleError("Unexpected runner bundle directory")
+                                nested = stack.enter_context(disk.opened(item, descriptor, directory=True))
+                                if disk.stamp(os.fstat(nested)) != disk.stamp(info):
+                                    raise BundleError("Runner bundle directory changed before scanning")
+                                collect(item, nested)
+                            else:
+                                if relative not in FILES | {MANIFEST}:
+                                    raise BundleError("Unexpected runner bundle file")
+                                found[relative] = (descriptor, info)
+
+                collect(root, parent)
+                if found.keys() != FILES | {MANIFEST}:
+                    raise BundleError("Incomplete runner bundle inventory")
+                receipt_parent, receipt_info = found[MANIFEST]
+                if disk.read_file(root / MANIFEST, receipt_parent, 64 * 1024, receipt_info) != self._receipt:
+                    raise BundleError("Runner receipt changed during verification")
+                for name in FILES:
+                    self._file(name, parent=found[name][0], expected=found[name][1])
+                for descriptor, before in directories:
+                    if disk.stamp(os.fstat(descriptor)) != before:
+                        raise BundleError("Runner bundle directory changed during verification")
+                # Pins exist only for this pass. Later component reads still
+                # check the current path and exact bytes against the receipt.
+        except BundleError:
+            raise
+        except (OSError, ValueError, TypeError) as error:
+            raise BundleError("Cannot verify runner bundle: " + str(error)) from error
 
     def component(self):
         """Return newly verified portable bytes; the host binds per-mod permissions."""
