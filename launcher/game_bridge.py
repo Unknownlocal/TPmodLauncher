@@ -26,7 +26,7 @@ PYTHON_SOURCES = (
     "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "native_restart", "import_handover", "control_locks", "native_events",
+    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "native_restart", "workshop_metadata", "import_handover", "control_locks", "native_events",
     "career_preload", "menu", "settings", "themes", "adapter_modules",
 )
 

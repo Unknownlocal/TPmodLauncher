@@ -11,6 +11,7 @@ if __package__:
     from .native_loading import NativeLoading
     from .native_failures import NativeFailures
     from .native_restart import NativeRestart
+    from .workshop_metadata import WorkshopMetadata
     from .import_handover import ImportHandover
     from .control_locks import ControlLocks
     from .diagnostics import build_log_record
@@ -37,6 +38,7 @@ class NativeEvents:
         self.loading = NativeLoading(host.readiness, host.activity)
         self.failures = NativeFailures(host.activity)
         self.restart = NativeRestart(self)
+        self.workshop = WorkshopMetadata(host.activity)
         host.settings.changed = self.refresh
         host.readiness.changed = self.refresh
         host.menu.changed = self.refresh
@@ -181,7 +183,7 @@ class NativeEvents:
                 "settings": self.cache.get("settings", {"state": "idle"}),
                 "readiness": self.cache.get("readiness", {"watching": True}),
                 "adapters": self.cache.get("adapters", {"state": "idle"}),
-                "events_enabled": True}
+                "events_enabled": True, "workshop_metadata": self.workshop.status()}
 
     def close(self):
         self.closed = True
@@ -196,6 +198,7 @@ class NativeEvents:
         self.loading.stop()
         self.failures.stop()
         self.restart.stop()
+        self.workshop.stop()
         for manager in self._managers:
             if manager.events is self:
                 manager.events = None

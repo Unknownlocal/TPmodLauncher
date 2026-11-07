@@ -14,6 +14,7 @@ SUITES = {
     "launcher": dict(path="tests/launcher/", sources=("launcher",), runner=True),
     "launcher_diagnostics": dict(path="tests/launcher/diagnostics/", sources=("launcher/diagnostics",), parent="launcher"),
     "hook_manager": dict(path="tests/hook_manager/", sources=("hook_manager",)),
+    "workshop_metadata": dict(path="tests/hook_manager/workshop/", sources=("hook_manager/workshop_metadata.py",), parent="hook_manager"),
     "career_preload": dict(path="tests/hook_manager/career/", sources=("hook_manager/career_preload.py", "hook_manager/native_readiness.py", "hook_manager/native_activity.py"), parent="hook_manager"),
     "game_adapters": dict(path="tests/hook_manager/game_adapters/", sources=("hook_manager/game_adapters",), parent="hook_manager"),
     "personnel": dict(path="tests/hook_manager/game_adapters/personnel/", sources=("hook_manager/game_adapters/personnel",), parent="game_adapters"),
