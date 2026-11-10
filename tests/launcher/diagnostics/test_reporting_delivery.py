@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.launcher.fixtures.log_support import read_log
+
 from launcher.diagnostics import reporter
 from launcher.diagnostics.activity_journal import ActivityJournal
 from launcher.diagnostics.exception_snapshot import ExceptionSnapshot
@@ -72,7 +74,7 @@ def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
     writer.enqueue_log_record(record, bridge.journal, failure)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "Owned save failed FULL END" in text and "Original save diagnostic note" in text
     assert '"kind":"saving"' in text.replace(" ", "")
     assert reads == [threading.get_ident()]
@@ -95,7 +97,7 @@ def test_exec_drains_old_errors_without_servicing_replaced_image(delivery, repla
     assert (10 in controller.sessions) == (replacement == "game")
     if replacement == "game":
         assert controller.sessions[10] is not previous
-    assert "x" * 5000 + " FULL EXEC END" in path.read_text()
+    assert "x" * 5000 + " FULL EXEC END" in read_log(path)
 
 
 def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery, tmp_path, monkeypatch):
@@ -112,7 +114,7 @@ def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery,
     monkeypatch.setattr(controller.device, "enumerate_processes", no_pid_lookup)
     controller.poll()
     assert bridge.exited and not controller.sessions and not controller.cleanup_failed
-    assert bridge.journal.retained and "Final owned error" in path.read_text()
+    assert bridge.journal.retained and "Final owned error" in read_log(path)
 
 
 def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
@@ -148,7 +150,7 @@ def test_failed_journal_delivers_full_multiframe_error_over_socket(delivery, tmp
     writer.enqueue_log_record(record, ActivityJournal(tmp_path / "missing" / "journal"), failure)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "Native activity journal failed" in text
     assert "x" * 180_000 + " FULL SOCKET END" in text and "Original save diagnostic note" in text
     assert not controller.stopping and receiver.confirmed
@@ -176,7 +178,7 @@ def test_torn_append_cannot_hide_socket_only_fatal_details(delivery, monkeypatch
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="First durable native failure FULL END"):
         controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "Original save diagnostic note" in text and "Native activity journal failed" in text
     assert "Original socket-only native failure FULL END" in text and "First durable native failure FULL END" in text
     assert "NATIVE JOURNAL READ FAILED" in text and "later complete append" in text
@@ -240,7 +242,7 @@ def test_reporting_fault_recovers_journal_and_keeps_evidence(delivery):
         assert receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="reporting sequence"):
         controller.poll()
-    assert "Last durable save error before channel failure" in path.read_text()
+    assert "Last durable save error before channel failure" in read_log(path)
     assert bridge.journal.retained
 
 
@@ -264,12 +266,12 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
     writer.enqueue_log_record(record, bridge.journal, failure)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    assert reads == [] and "FULL END" not in path.read_text()
+    assert reads == [] and "FULL END" not in read_log(path)
     session = controller.sessions[10]
     session.is_detached = True
     controller.events.put(("detached", (10, session, "process-terminated")))
     controller.poll()
-    assert "Durable failure with lost notice FULL END" in path.read_text()
+    assert "Durable failure with lost notice FULL END" in read_log(path)
     assert not bridge.journal.path.exists()
 
 
@@ -283,7 +285,7 @@ def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="Owned fatal before import service FULL END"):
         controller.poll()
-    assert "Original save diagnostic note" in path.read_text()
+    assert "Original save diagnostic note" in read_log(path)
 
 
 def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
@@ -312,7 +314,7 @@ def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="Original native fatal after invalid change FULL END"):
         controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "Original save diagnostic note" in text
     assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text and "RESTART DATA END" in text
     controller.close()
@@ -336,7 +338,7 @@ def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delive
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
     assert bridge.restart_attempt["attempt"] == 2 and bridge.restart_attempt["state"] == "requested"
-    text = path.read_text()
+    text = read_log(path)
     assert text.count('"attempt": 1, "state": "requested"') == 1
     # The pinned session check applies before restart handling too.
     old = controller.sessions[10]

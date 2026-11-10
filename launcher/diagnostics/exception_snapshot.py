@@ -37,8 +37,8 @@ class ExceptionSnapshot:
             pending.extend(item for item in (cause, context) if item is not None)
             pending.extend(children or ())
 
-    def format(self):
-        """Resolve source lines and use standard traceback presentation on the writer."""
+    def format(self, *, lookup_lines=True):
+        """Render full chains, optionally keeping output failures free of source I/O."""
         rendered = {}
         for key, node in self.nodes.items():
             # Harmless stand-ins avoid invoking a game's exception constructors,
@@ -53,10 +53,12 @@ class ExceptionSnapshot:
                                                    max_group_width=float("inf"), max_group_depth=float("inf"))
             summary.stack = traceback.StackSummary.from_list([
                 traceback.FrameSummary(filename, lineno, name, lookup_line=False,
+                                       line=None if lookup_lines else "",
                                        end_lineno=end, colno=column, end_colno=end_column)
                 for filename, lineno, name, end, column, end_column in node["stack"]])
-            for filename, *_ in node["stack"]:
-                linecache.checkcache(filename)
+            if lookup_lines:
+                for filename, *_ in node["stack"]:
+                    linecache.checkcache(filename)
             summary.__suppress_context__ = node["suppress"]
             rendered[key] = summary
         # Follow each causal edge once to avoid cyclic exception chains. Group

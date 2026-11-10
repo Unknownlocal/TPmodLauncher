@@ -2,6 +2,7 @@
 """Check complete fatal logging independently of packages and presentation."""
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -122,18 +123,18 @@ def test_final_log_failure_does_not_claim_its_own_success(tmp_path, monkeypatch,
     path = tmp_path / "launcher.log"
     outcome = {}
     if late_failure == "sync":
-        sync = diagnostics.os.fsync
+        sync = os.fsync
         def final_sync(fd):
             if "LAUNCH FAILURE DETAILS" in path.read_text(encoding="utf-8"):
                 raise OSError("Final filesystem sync failed")
             sync(fd)
-        monkeypatch.setattr(diagnostics.os, "fsync", final_sync)
+        monkeypatch.setattr(os, "fsync", final_sync)
     else:
-        close = diagnostics.LogFileHandler.close
+        close = diagnostics.LogOutput.file_type.close
         def final_close(handler):
             close(handler)
             raise OSError("Final file close failed")
-        monkeypatch.setattr(diagnostics.LogFileHandler, "close", final_close)
+        monkeypatch.setattr(diagnostics.LogOutput.file_type, "close", final_close)
     with diagnostics.reporter(path, outcome=outcome) as logger:
         diagnostics.handle_error(logger, RuntimeError("Original launcher failure"), stage="controller")
     text = path.read_text(encoding="utf-8")
@@ -148,11 +149,11 @@ def test_final_log_failure_does_not_claim_its_own_success(tmp_path, monkeypatch,
 def test_log_close_failure_alone_keeps_its_activity(tmp_path, monkeypatch):
     from launcher.diagnostics import core as diagnostics
 
-    close = diagnostics.LogFileHandler.close
+    close = diagnostics.LogOutput.file_type.close
     def failed_close(handler):
         close(handler)
         raise OSError("Log close failed after normal operation")
-    monkeypatch.setattr(diagnostics.LogFileHandler, "close", failed_close)
+    monkeypatch.setattr(diagnostics.LogOutput.file_type, "close", failed_close)
     outcome = {}
     with diagnostics.reporter(tmp_path / "launcher.log", outcome=outcome) as logger:
         logger.launch_activity.attach(41)
@@ -179,12 +180,12 @@ def test_dependency_failure_is_complete_without_packages_or_presentation(tmp_pat
     def unavailable(*args):
         raise OSError("simulated file " + file_failure + " failure")
     if file_failure == "sync":
-        monkeypatch.setattr(entry._diagnostics.os, "fsync", unavailable)
+        monkeypatch.setattr(os, "fsync", unavailable)
     elif file_failure == "open":
         root.mkdir()
         (root / "logs").write_text("Keep this existing file", encoding="utf-8")
     elif file_failure == "write":
-        handler = entry._diagnostics.LogFileHandler
+        handler = entry._diagnostics.LogOutput.file_type
         open_stream = handler._open
         def unwritable(instance):
             stream = open_stream(instance)

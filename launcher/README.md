@@ -74,7 +74,10 @@ Routine summaries have length limits. Supplied exceptions keep their complete
 messages, stack traces, causes and notes in both destinations, without captured
 local values. Game failures travel as text, so loading failures retain their
 original details even when the controller stops before another message arrives.
-Handlers are removed when the launch ends.
+Console and file records use separate queues and writer threads. A blocked
+console cannot delay the log, and blocked storage cannot delay console output.
+Routine queue overflow is reported by the affected destination; complete failure
+records are protected. Handlers are removed when the launch ends.
 
 `submit_log` callbacks attach context and route records or messages to
 `write_log()`, which uses the standard logger. Game adapters construct their
@@ -86,10 +89,11 @@ context and complete error details without adding duplicate context text.
 requests game shutdown. Other ERROR records leave the decision to their caller.
 `handle_error()` also retains the first fatal reason and its setup/controller
 stage as plain text. File output is flushed and synchronised on fatal failure
-and again after game cleanup. A final log record joins the original reason to
-the cleanup results. The caller receives the final write result after the file
-has been synchronised and closed; the saved record cannot claim that its own
-write succeeded. No dialog is involved in logging.
+and again after game cleanup, with bounded acknowledgement waits. Final writer
+shutdown shares a one-second deadline; unconfirmed file output remains incomplete.
+A final log record joins the original reason to the cleanup results. The caller
+receives the final write result after closure or the deadline; the saved record
+cannot claim that its own write succeeded. No dialog is involved in logging.
 
 Activity context identifies launcher/game startup, an individual mod or shared
 loading group, save loading, and being inside a save. It follows actual host
@@ -113,9 +117,11 @@ periodic file checks. Journal failures carry their complete records over the
 same authenticated local connection. Socket waits cannot hold up journal writes;
 unconfirmed delivery keeps the journal available for diagnosis.
 
-`diagnostics/log_file_handler.py` retains file-write failures even when Python logging would
-normally suppress them. An unavailable log produces a console warning and a
-failed launch result. A duplicate launcher leaves the active log untouched and
+`diagnostics/log_file_handler.py` performs file operations on its own worker,
+without using Python logging's output locks during writes or shutdown. An
+unavailable log queues a console warning and produces a failed launch result.
+A late writer retains the launch lock until it stops or its process exits.
+A console failure discovered after file closure remains in the returned outcome. A duplicate launcher leaves the active log untouched and
 reports its ownership failure on the console. Argument usage errors are reported
 before a log is opened.
 

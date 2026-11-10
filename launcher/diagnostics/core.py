@@ -7,7 +7,6 @@ from functools import partial
 import importlib.util
 import json
 import logging
-import os
 from pathlib import Path
 import sys
 import time
@@ -18,7 +17,8 @@ _UNSET = object()
 
 if __package__:
     from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text
-    from .log_file_handler import LogFileHandler
+    from .log_output import LogOutput
+    from .log_ownership import LogOwnership
     from .activity_tracker import ActivityTracker
 else:
     # Entry needs only these standard-library sources before dependency/package
@@ -33,7 +33,8 @@ else:
     _records = _load_source(_folder.parent.parent / "hook_manager/diagnostics.py")
     CONTEXT, LEVELS = _records.CONTEXT, _records.LEVELS
     build_log_record, error_text = _records.build_log_record, _records.error_text
-    LogFileHandler = _load_source(_folder / "log_file_handler.py").LogFileHandler
+    LogOutput = _load_source(_folder / "log_output.py").LogOutput
+    LogOwnership = _load_source(_folder / "log_ownership.py").LogOwnership
     ActivityTracker = _load_source(_folder / "activity_tracker.py").ActivityTracker
 
 
@@ -89,42 +90,23 @@ def startup_step(sink, phase, **context):
 
 @contextmanager
 def log_ownership(path, *, error_type=RuntimeError):
-    """Claim this launch before opening its log, including dependency checks."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as stream:
-        # Windows locks a byte range. Keep the inode/file after release so another
-        # opener cannot acquire a different replacement while this one is locked.
-        if stream.seek(0, os.SEEK_END) == 0:
-            stream.write(b"\0")
-            stream.flush()
-        stream.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
+    """Claim a launch; stalled file workers retain the lock until they finish.
 
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            raise error_type("Another controller is running, or the controller lock is unavailable.") from error
-        yield
-
-
-def _store_log_error(logger, error):
-    """Keep the first file failure and print it without re-entering logging."""
-    outcome = logger.launch_outcome
-    outcome["log_written"] = False
-    if outcome["log_error"] is None:
-        outcome["log_error"] = error_text(error)
-        tracker = getattr(logger, "launch_activity", None)
-        outcome["log_activity"] = tracker.snapshot() if tracker is not None else None
-        try:
-            print("Launcher log could not be completed: " + str(outcome["log_path"])
-                  + "\n" + outcome["log_error"], file=sys.stderr, flush=True)
-        except (OSError, ValueError):
-            pass  # A closed console cannot report this; retain the write result.
+    The standard logger provides the shared early/runtime ownership slot, even
+    when entry loads this standard-library module before package verification.
+    """
+    try:
+        ownership = LogOwnership(path)
+    except OSError as error:
+        raise error_type("Another controller is running, or the controller lock is unavailable.") from error
+    logger = logging.getLogger("modLauncher")
+    previous = getattr(logger, "launch_ownership", None)
+    logger.launch_ownership = ownership
+    try:
+        yield ownership
+    finally:
+        logger.launch_ownership = previous
+        ownership.release()
 
 
 def _build_logging_failure(outcome):
@@ -133,18 +115,10 @@ def _build_logging_failure(outcome):
             "activity": deepcopy(outcome.get("log_activity"))}
 
 
-def sync_log(logger):
-    """Flush and synchronise owned file handlers; retain failures for the caller."""
-    if not isinstance(logger, logging.Logger) or not hasattr(logger, "launch_outcome"):
-        return
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler):
-            try:
-                handler.flush()
-                os.fsync(handler.stream.fileno())
-                logger.launch_outcome["log_written"] = logger.launch_outcome["log_error"] is None
-            except (OSError, ValueError) as error:
-                _store_log_error(logger, error)
+def sync_log(logger, *, timeout=1):
+    """Await only the owned file queue, within a bounded failure/shutdown wait."""
+    output = getattr(logger, "launch_output", None)
+    return output.sync_file(timeout) if output is not None else False
 
 
 def exception_from_record(message, record, exception_type=RuntimeError):
@@ -231,6 +205,9 @@ def write_log(sink, value, *, level=_UNSET, error=_UNSET, fatal=_UNSET, **contex
         detail = value
     if type(level) is not str or level not in LEVELS:
         level, detail = "WARNING", f"Invalid diagnostic severity; {detail}"
+    output = getattr(sink, "launch_output", None)
+    if output is not None and LEVELS[level] < output.minimum and not fatal:
+        return  # Do not format errors or copy activity for suppressed routine logs.
     record = build_log_record(level, detail, error=error, **context)
     tracker = getattr(sink, "launch_activity", None)
     supplied = value.get("activity") if type(value) is dict else None
@@ -249,25 +226,24 @@ def write_log(sink, value, *, level=_UNSET, error=_UNSET, fatal=_UNSET, **contex
         message = fields + " " + message
     if isinstance(sink, logging.Logger):
         component = record.get("component", "runtime")
-        sink.getChild(component).log(LEVELS[level], "%s", message, extra={"launcher_fatal": fatal})
+        sink.getChild(component).log(LEVELS[level], "%s", message,
+                                     extra={"launcher_fatal": fatal, "launcher_protected": "traceback" in record})
     else:
         sink(message)
 
 
 @contextmanager
 def reporter(path, *, outcome=None, log_level="INFO"):
-    """Own early/runtime logging and finish a plain failure outcome without UI.
+    """Own independent console/file writers and certify only completed file I/O.
 
-    Callers acquire log_ownership first. File failure leaves console logging
-    usable; outcome records whether the complete log was actually synchronised.
-    log_level filters routine console and file output equally. Complete fatal
-    diagnostics are always retained in both destinations.
+    Callers claim log_ownership before opening a log. Shutdown has one shared
+    deadline; an unresponsive writer retains its own resources and lock lease
+    until it finishes or the process exits, without blocking another destination.
     """
     minimum_level = parse_log_level(log_level)
     logger = logging.getLogger("modLauncher")
     previous = logger.level, logger.propagate
-    previous_outcome = getattr(logger, "launch_outcome", None)
-    previous_activity = getattr(logger, "launch_activity", None)
+    attributes = {name: getattr(logger, name, None) for name in ("launch_outcome", "launch_activity", "launch_output")}
     if outcome is None:
         outcome = {}
     if not outcome:
@@ -276,56 +252,38 @@ def reporter(path, *, outcome=None, log_level="INFO"):
     logger.launch_activity = ActivityTracker(lambda message: logger.info("%s", message))
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
-    handlers = []
+    output = None
     try:
-        console = logging.StreamHandler()
-        handlers.append(console)
+        output = LogOutput(path, outcome, minimum=minimum_level, console=sys.stderr,
+                           ownership=getattr(logger, "launch_ownership", None),
+                           activity=logger.launch_activity.snapshot)
+        logger.launch_output = output
+        logger.addHandler(output)
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = LogFileHandler(path, partial(_store_log_error, logger))
-            handlers.append(file_handler)
-        except OSError as error:
-            _store_log_error(logger, error)
-        # Share filtering as well as formatting so both destinations agree.
-        # Handler/logger level checks would discard low-level fatal evidence
-        # before this exception to the selected routine threshold can apply.
-        threshold = lambda record: record.levelno >= minimum_level or getattr(record, "launcher_fatal", False)
-        for handler in handlers:
-            handler.addFilter(threshold)
-            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-            logger.addHandler(handler)
-        yield logger
-    finally:
-        try:
-            sync_log(logger)
-            if outcome["failure"] is None and outcome["log_error"] is not None:
-                outcome["failure"] = _build_logging_failure(outcome)
-            if outcome["failure"] is not None:
-                # A file cannot certify its own final sync/close. Persist failure
-                # and cleanup details; only the returned outcome records the final
-                # write result, after every file operation has completed.
-                details = {key: value for key, value in outcome.items() if key not in ("log_written", "log_error")}
-                logger.error("LAUNCH FAILURE DETAILS %s", json.dumps(details, ensure_ascii=True), extra={"launcher_fatal": True})
-                sync_log(logger)
+            yield logger
         finally:
-            for handler in handlers:
-                logger.removeHandler(handler)
-                try:
-                    handler.close()
-                except (OSError, ValueError) as error:
-                    _store_log_error(logger, error)
-            if outcome["failure"] is None and outcome["log_error"] is not None:
-                outcome["failure"] = _build_logging_failure(outcome)
-            logger.setLevel(previous[0])
-            logger.propagate = previous[1]
-            if previous_outcome is None:
-                del logger.launch_outcome
+            deadline = time.monotonic() + 1
+            try:
+                output.sync_file(max(0, deadline - time.monotonic()))
+                if outcome["failure"] is None and outcome["log_error"] is not None:
+                    outcome["failure"] = _build_logging_failure(outcome)
+                if outcome["failure"] is not None:
+                    details = {key: value for key, value in outcome.items() if key not in ("log_written", "log_error")}
+                    logger.error("LAUNCH FAILURE DETAILS %s", json.dumps(details, ensure_ascii=True), extra={"launcher_fatal": True})
+            finally:
+                logger.removeHandler(output)
+                output.finish(deadline=deadline)
+                if outcome["failure"] is None and outcome["log_error"] is not None:
+                    outcome["failure"] = _build_logging_failure(outcome)
+    finally:
+        logger.setLevel(previous[0])
+        logger.propagate = previous[1]
+        for name, value in attributes.items():
+            if value is None:
+                if hasattr(logger, name):
+                    delattr(logger, name)
             else:
-                logger.launch_outcome = previous_outcome
-            if previous_activity is None:
-                del logger.launch_activity
-            else:
-                logger.launch_activity = previous_activity
+                setattr(logger, name, value)
 
 
 def build_launch_outcome(path):

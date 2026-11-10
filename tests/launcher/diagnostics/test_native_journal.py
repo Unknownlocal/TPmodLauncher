@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.launcher.fixtures.log_support import read_log
+
 from launcher.diagnostics import handle_error, reporter
 from launcher.diagnostics.activity_journal import ActivityJournal
 from launcher.diagnostics.reporting_receiver import ReportingReceiver
@@ -175,7 +177,7 @@ State().save_season(manual=True)
         with pytest.raises(LaunchError) as failure:
             controller.poll()
         handle_error(logger, failure.value, stage="controller", shutdown=shutdown)
-    text = path.read_text(encoding="utf-8")
+    text = read_log(path)
     assert outcome["failure"]["activity"]["kind"] == "saving" and outcome["log_written"]
     assert "FULL EXIT END" in outcome["failure"]["reason"]
     assert "FULL EXIT END" in text and "save_season" in text
@@ -200,8 +202,8 @@ def test_interrupted_journal_write_retains_raw_failure_evidence(tmp_path):
         except ValueError as error:
             handle_error(logger, error)
     journal.remove()
-    assert outcome["failure"] is not None and detail in path.read_text(encoding="utf-8")
-    assert "Earlier complete native error" in path.read_text(encoding="utf-8")
+    assert outcome["failure"] is not None and detail in read_log(path)
+    assert "Earlier complete native error" in read_log(path)
     assert str(journal.path) in outcome["failure"]["reason"] and journal.path.exists()
 
 

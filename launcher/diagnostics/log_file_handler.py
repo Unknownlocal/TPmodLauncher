@@ -1,18 +1,27 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Retain file-output failures even when Python logging suppresses them."""
+"""File operations owned exclusively by the launcher's file-output worker."""
 
-import logging
-import sys
+import os
 
 
-class LogFileHandler(logging.FileHandler):
-    """Retain write failures through a callback instead of logging recursively."""
+class LogFileHandler:
+    """Keep blocking file I/O outside logging's global shutdown/handler locks."""
 
-    def __init__(self, path, store_error):
-        self.store_error = store_error
-        super().__init__(path, mode="w", encoding="utf-8", errors="backslashreplace")
+    def __init__(self, path, *, mode="w"):
+        self.path, self.mode = path, mode
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.stream = self._open()
 
-    def handleError(self, record):
-        # StreamHandler catches write/flush errors here even when raiseExceptions
-        # is false. The console handler has already received the original record.
-        self.store_error(sys.exception())
+    def _open(self):
+        return self.path.open(self.mode, encoding="utf-8", errors="backslashreplace")
+
+    def write(self, text):
+        self.stream.write(text)
+        self.stream.flush()
+
+    def sync(self):
+        self.stream.flush()
+        os.fsync(self.stream.fileno())
+
+    def close(self):
+        self.stream.close()

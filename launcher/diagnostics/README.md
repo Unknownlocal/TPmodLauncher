@@ -30,10 +30,29 @@ so nested forwarding preserves record levels, context and full errors. Only
 plain text observers receive the final formatted text.
 
 `core.py` claims log ownership, configures the logger and keeps the original fatal
-reason through cleanup. It flushes and synchronises file output before returning
-the final write result. Normal package imports use the functions exported by
-`__init__.py`. Startup loads `core.py` directly by a fixed path so dependency
-verification failures can be logged before other launcher packages are available.
+reason through cleanup. `log_output.py` sends each accepted record to separate
+console and file queues. Each queue has its own `OutputWriter` thread, so a slow
+console cannot delay the log and slow storage cannot delay console output.
+Messages keep their submission time, order and severity. Routine records below
+the chosen level are rejected before formatting. Each destination bounds its
+routine backlog and reports any dropped ordinary records; complete failures are
+protected from that limit.
+
+`log_file_handler.py` opens, writes, synchronises and closes the file only on its
+worker. `console_output.py` uses a private raw descriptor or Windows console
+handle, keeping blocked writes away from Python's standard-stream shutdown locks.
+Storage errors queue a console warning rather than printing on the file worker.
+`sync_log()` waits only for the file worker, with a one-second deadline. Final
+shutdown shares one second across the two writers. A missing acknowledgement or
+failed file operation leaves the log incomplete. `log_ownership.py` retains the
+launch lock while a late file worker can still write, until it finishes or its
+process exits. No new launch may replace that writer's log. A console failure
+discovered after file closure remains in the returned outcome; its warning cannot
+be added to the already-closed log.
+
+Normal package imports use the functions exported by `__init__.py`. Startup loads
+`core.py` directly by a fixed path so dependency verification failures can be
+logged before other launcher packages are available.
 
 `activity_tracker.py` contains `ActivityTracker`. It records startup, game loading,
 mod loading and career activity for each owned process. Nested work keeps its
@@ -114,10 +133,8 @@ even when line lookup is disabled. The writer resolves source lines and applies
 standard traceback formatting later, without keeping live frames or local values.
 If source lookup or formatting fails, the log retains the complete captured
 messages, notes, relationships and frame locations as plain snapshot data.
-
-`log_file_handler.py` contains `LogFileHandler`. It retains file-write failures
-that standard Python logging could otherwise suppress. The console can still
-show the original error when the log cannot be written.
+Output failures use the same snapshot without source lookups, retaining full
+causes and stack locations without risking another storage wait.
 
 `console_shutdown.py` contains `ConsoleShutdown`. On Windows it requests normal
 window closure for verified, owned game processes. After four seconds it closes
@@ -127,14 +144,16 @@ The shared plain-text record format comes from `hook_manager.diagnostics`, which
 also runs inside the game. No dialog participates in writing or completing logs.
 
 For normal console entry, `entry.py` presents fatal outcomes after game cleanup
-and after closing the log. It retains the log lock while the notice is open, so a
+and after the file worker finishes or its deadline expires. It retains the log
+lock while the notice is open, so a
 second launch cannot replace the file being displayed. Code calling `main`
 directly can handle the returned outcome itself. Dependency-check commands
 print the summary without waiting for input.
 
-`failure_session.py` contains `FailureSession`. It always prints the failed
-activity, short reason and log path before starting presentation work. It waits
-for a real key or dialog dismissal. Failure to start or display UI leaves the
+`failure_session.py` contains `FailureSession`. It queues the failed activity,
+short reason and log path before starting presentation work. Its console and
+optional log additions use independent writers, so blocked output cannot hold up
+keyboard input or the dialog. It waits for a real key or dialog dismissal. Failure to start or display UI leaves the
 console available. Presentation errors are appended to the completed log without
 replacing the original failure. A launch that never owned the log cannot append
 to it or describe another launch's file as its completed log.

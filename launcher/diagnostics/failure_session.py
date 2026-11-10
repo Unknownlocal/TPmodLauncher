@@ -3,7 +3,7 @@
 
 from copy import deepcopy
 import importlib.util
-import json
+import logging
 import os
 from pathlib import Path
 import queue
@@ -38,6 +38,8 @@ class FailureSession:
         self._console_streams = ()
         self.events, self.dismissed = queue.Queue(), threading.Event()
         self.child = self.reader = None
+        self._output = None
+        self._presentation_errors = []
 
     def dismiss(self):
         """Queue one idempotent user/owner dismissal without waiting in callbacks."""
@@ -45,26 +47,31 @@ class FailureSession:
             self.events.put(("dismiss", None))
 
     def _print(self, text):
-        try:
-            print(text, file=self.output, flush=True)
-        except (OSError, ValueError):
-            pass  # A closing console cannot suppress log retention or child cleanup.
+        self._output.console.enqueue_log_record(text + "\n")
 
     def _write_presentation_error(self, detail):
-        """Append only to this launch's completed log, still locked by entry."""
-        self._print(detail)
-        if not self.owned_log or not self.outcome["log_written"]:
-            return
-        try:
-            with Path(self.outcome["log_path"]).open("a", encoding="utf-8") as stream:
-                stream.write("\nPRESENTATION ERROR " + json.dumps(detail, ensure_ascii=True) + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-        except (OSError, ValueError) as error:
-            self.outcome["log_written"] = False
-            self._print("Could not append presentation details to the log: " + str(error))
+        """Queue both outputs independently, including failures before run starts."""
+        if self._output is None:
+            self._presentation_errors.append(detail)
+        else:
+            self._output.presentation_error(detail)
 
     def run(self, *, wait=True):
+        """Finish notice output without letting its I/O block input or desktop UI."""
+        try:
+            return self._run(wait=wait)
+        finally:
+            if self._output is not None:
+                self._output.finish()
+            # Writers use private raw descriptors, so these empty original
+            # console wrappers are never locked by an output operation.
+            for stream in self._console_streams:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass  # Console loss must not replace the original failure.
+
+    def _run(self, *, wait=True):
         """Return only after dismissal; verification-only callers may skip waiting."""
         failure = self.outcome["failure"]
         if wait and self._prepare_console:
@@ -73,6 +80,14 @@ class FailureSession:
                 self._console_streams = (self.input_stream, self.output)
             except Exception:
                 self._write_presentation_error("Could not show the launcher console:\n" + traceback.format_exc())
+        output_type = _load_module("log_output").LogOutput
+        logger = logging.getLogger("modLauncher")
+        path = Path(self.outcome["log_path"]) if self.owned_log and self.outcome["log_written"] else None
+        self._output = output_type(path, self.outcome, console=self.output, mode="a",
+                                   ownership=getattr(logger, "launch_ownership", None) if self.owned_log else None)
+        for detail in self._presentation_errors:
+            self._output.presentation_error(detail)
+        self._presentation_errors.clear()
         activity = failure.get("activity") or {}
         reason = str(failure["reason"]).splitlines()
         short_reason = (reason[0] if reason else "Unknown failure")[:512]
@@ -142,8 +157,3 @@ class FailureSession:
                         self.reader.close()
                     except Exception:
                         self._write_presentation_error("Could not restore console input:\n" + traceback.format_exc())
-                for stream in self._console_streams:
-                    try:
-                        stream.close()
-                    except (OSError, ValueError):
-                        pass

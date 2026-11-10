@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+from tests.launcher.fixtures.log_support import read_log
+
 from launcher import process_lifecycle as lifecycle
 from launcher.pack_mods import PackMods
 from launcher.game_bridge import Bridge
@@ -76,7 +78,7 @@ def test_confirmed_restart_retains_grace_and_describes_missing_replacement(deliv
     assert not controller.poll() and controller.replacement[0] == "restart"
     controller.clock = lambda: controller.idle_since + controller.restart_grace
     assert controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "RESTART REPLACEMENT NOT OBSERVED" in text and source + " attempt=1" in text
     assert not controller.stopping and not controller.cleanup_failed
 
@@ -93,7 +95,7 @@ def test_restart_replacement_gets_fresh_scope_and_clears_outgoing_intent(deliver
     controller.poll()
     assert 20 in controller.sessions and controller.idle_since is None
     assert controller.replacement[0] == "unknown" and not controller.cancellations[20].ended.is_set()
-    assert "RESTART REPLACEMENT NOT OBSERVED" not in path.read_text()
+    assert "RESTART REPLACEMENT NOT OBSERVED" not in read_log(path)
 
 
 def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, capsys):
@@ -124,7 +126,7 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
             assert controller.sessions[10] is session and not controller.stopping
         finally:
             controller.close()
-    for output in (path.read_text(), capsys.readouterr().err):
+    for output in (read_log(path), capsys.readouterr().err):
         assert " ERROR modLauncher.regulations " in output
         assert "pid=10" in output and "REGULATIONS VALIDATION FAILED" in output
         assert "Unscoped worker or reentrant regulation validation" in output

@@ -5,6 +5,8 @@ import threading
 
 import pytest
 
+from tests.launcher.fixtures.log_support import read_log
+
 from launcher.diagnostics import activity_journal, reporting_sender
 from launcher.diagnostics.activity_journal import ActivityJournal
 from launcher.diagnostics.journal_writer import JournalWriter
@@ -54,7 +56,7 @@ def test_stalled_writer_batches_routine_storm_and_preserves_first_fatal(delivery
     assert len(batches) < 10 and max(batches) > 1 and len(syncs) == 2
     with pytest.raises(LaunchError, match="First fatal"):
         controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "First fatal" + "x" * 7000 + " FULL END" in text
     assert "Second fatal" + "x" * 7000 + " FULL END" in text
     assert "Original save diagnostic note" in text and "dropped 744" in text
@@ -86,7 +88,7 @@ def test_stalled_socket_bounds_fallback_and_coalesces_launcher_wakes(delivery, m
         assert sender.finished.wait(3) and receiver.finished.wait(3)
     assert reads == []
     controller.poll()
-    text = path.read_text()
+    text = read_log(path)
     assert "x" * 7000 + " FULL END" in text and "fallback 999" in text
     assert "dropped 744" in text and "Original save diagnostic note" in text
     assert reads == [threading.get_ident()]  # One pending controller hint for the entire storm.
