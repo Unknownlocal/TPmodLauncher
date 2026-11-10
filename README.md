@@ -44,7 +44,7 @@ To update, close the game and launcher, replace the whole `modLauncher` folder,
 and update the launch line if the Python path changed. Mods stay in your data
 packs. Clear Steam's Launch Options to restore normal startup.
 
-### Linux through Proton/Wine (experimental, untested)
+### Linux through Proton/Wine (experimental)
 
 Use the Windows runtime supplied in the Linux/Proton release. Enable Proton for
 the game in Steam and enter this launch line, using your Linux game path:
@@ -61,23 +61,19 @@ bash modLauncher/SteamLaunchOptions.sh
 
 The helper displays the line and copies it if a supported clipboard tool is
 available. No Linux Python installation is needed. The wrapper uses Steam's
-Proton version, compatibility prefix and game arguments. Game injection and mod
-loading remain untested under Proton/Wine; plain Wine setup is not provided.
+Proton version, compatibility prefix and game arguments. Standalone Wine setup
+is not provided.
 To select the log level here, insert `--log-level 1` before `%command%`
 in the Linux launch line. Omitting it keeps 2 (INFO).
 
-For native Linux failure notices, install `xterm`, `zenity` and `xdg-utils` using
-your distribution's package manager. The scripts use Bash with `/dev/tcp` support
-and the standard coreutils commands. `xterm` needs X11 or
-XWayland; Zenity can use X11 or Wayland. No Linux Python is required.
+Fatal diagnostics use the launcher's own Proton console. After game cleanup it
+shows the failed activity, stage, reason and Linux path to `launcher.log`. Press
+any key or close that console to dismiss the notice. Open the printed log path
+manually in your editor for the full details.
 
-After a fatal error and game cleanup, the wrapper prints the failure in an
-existing terminal or opens an `xterm` console. It separately starts a Zenity
-dialog and asks `xdg-open` to open the completed `launcher.log` at its Linux path.
-A keypress, dialog dismissal or console closure ends the notice; the log editor
-stays open. Missing or failed desktop tools leave the error on console output.
-Without a terminal or working `xterm`, that output depends on how Steam was
-started. Native desktop and Proton behaviour remain unverified.
+Linux error dialogs and automatic log opening are disabled. No terminal emulator,
+dialog package or editor package is required. The wrapper uses Bash and standard
+coreutils; no native Linux Python installation is needed.
 
 macOS is unsupported and untested.
 

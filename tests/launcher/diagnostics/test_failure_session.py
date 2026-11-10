@@ -3,6 +3,7 @@
 
 import json
 import io
+import os
 import sys
 import threading
 
@@ -13,6 +14,48 @@ from launcher import entry
 from launcher.diagnostics.failure_session import FailureSession
 
 from tests.launcher.fixtures.failure_support import launch_notice, wait_for
+
+
+def test_linux_any_key_retains_native_path_and_original_failure_without_helpers(launch_notice):
+    process, directory = launch_notice("linux-console")
+    assert process.poll() is None and not (directory / "helper.json").exists()
+    process.stdin.write(b"key\n")
+    process.stdin.flush()
+    assert process.wait(timeout=5) == 37
+    text = (directory / "console.txt").read_text(encoding="utf-8")
+    assert "while saving" in text and "Stage: controller" in text
+    assert "/home/player/Game's $literal/modLauncher/logs/launcher.log" in text
+    assert "Open the log manually" in text and "Press any key" in text
+    assert "Could not start failure presentation" not in text
+    finished = json.loads((directory / "finished.json").read_text())
+    assert finished["terminal_restored"]
+    assert "END OF ORIGINAL CAUSE" in (directory / "modLauncher/logs/launcher.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Proton console uses the Windows runtime APIs")
+@pytest.mark.parametrize("dismissal", ["key", "window-close"])
+def test_linux_host_label_restores_runtime_console_when_standard_input_is_redirected(launch_notice, dismissal):
+    process, directory = launch_notice("linux-console-allocate")
+    console = json.loads((directory / "console-visible.json").read_text())
+    assert console["visible"] and "while saving" in console["text"]
+    assert "Stage: controller" in console["text"]
+    assert "/home/player/Game's $literal/modLauncher/logs/launcher.log" in console["text"]
+    assert not (directory / "helper.json").exists()
+    log = directory / "modLauncher/logs/launcher.log"
+    before = log.read_bytes()
+    if dismissal == "key":
+        process.stdin.write(b"key\n")
+        process.stdin.flush()
+        assert process.wait(timeout=5) == 37
+        assert json.loads((directory / "finished.json").read_text())["terminal_restored"]
+    else:
+        import ctypes as c
+        from ctypes import wintypes as w
+        user = c.WinDLL("user32")
+        user.PostMessageW.argtypes, user.PostMessageW.restype = (w.HWND, w.UINT, w.WPARAM, w.LPARAM), w.BOOL
+        assert user.PostMessageW(console["window"], 0x10, 0, 0)  # Only this fixture's console.
+        assert process.wait(timeout=8) != 0
+    assert log.read_bytes() == before and b"END OF ORIGINAL CAUSE" in before
 
 
 @pytest.mark.parametrize("key", ["key", "ctrl"])

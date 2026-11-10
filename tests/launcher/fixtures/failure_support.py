@@ -35,12 +35,12 @@ def launch_notice(tmp_path):
             startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startup.wShowWindow = 0
             options.update(creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=startup)
-            if mode == "windows-console-allocate":
+            if mode in ("windows-console-allocate", "linux-console-allocate"):
                 options["creationflags"] = subprocess.CREATE_NO_WINDOW
         process = subprocess.Popen([sys._base_executable, "-I", "-S", "-B", str(PROBE), str(ROOT), str(directory), mode, sys.executable],
                                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=stderr, **options)
         processes.append(process)
-        wait_for(lambda: (directory / "helper.json").exists() or process.poll() is not None
+        wait_for(lambda: (directory / "console-ready").exists() or (directory / "helper.json").exists() or process.poll() is not None
                  or mode == "missing" and "Presentation helper failed" in (directory / "console.txt").read_text(encoding="utf-8")
                  or mode == "timeout" and "Error dialog startup timed out" in (directory / "console.txt").read_text(encoding="utf-8"))
         code = process.poll()

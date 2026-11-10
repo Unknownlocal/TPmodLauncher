@@ -31,7 +31,10 @@ class FailureSession:
         self.output = sys.stderr if output is None else output
         self.child_factory = child_factory
         self.host_platform = sys.platform if host_platform is None else host_platform
-        self._prepare_console = self.host_platform == "win32" and os.name == "nt" and input_stream is None and output is None
+        self.console_only = self.host_platform.startswith("linux")
+        # Proton uses Windows Python and its attached console. The user's host
+        # selects desktop features; the running interpreter selects console APIs.
+        self._prepare_console = self.host_platform in ("win32", "linux") and os.name == "nt" and input_stream is None and output is None
         self._console_streams = ()
         self.events, self.dismissed = queue.Queue(), threading.Event()
         self.child = self.reader = None
@@ -76,17 +79,28 @@ class FailureSession:
         notice = dict(session_id=self.outcome["session_id"], title="Mod Launcher could not continue",
                       host_platform=self.host_platform,
                       activity=activity.get("description", "during launcher operation"), reason=short_reason,
-                      log_path=self.outcome["log_path"], log_written=self.owned_log and self.outcome["log_written"])
+                      log_path=self.outcome.get("host_log_path", self.outcome["log_path"]),
+                      log_written=self.owned_log and self.outcome["log_written"])
         self._print(notice["title"] + "\nAn error occurred " + notice["activity"] + ".\n" + short_reason)
+        if self.console_only and failure.get("stage"):
+            self._print("Stage: " + str(failure["stage"]))
         self._print(("Full details: " if notice["log_written"] else "No completed log for this launch: ") + notice["log_path"])
+        if failure.get("details"):
+            self._print(failure["details"])
         if not wait:
             return
         self._print("Press any key to close this notice and end the launcher console session.")
+        if self.console_only and notice["log_written"]:
+            self._print("Open the log manually in your editor for full details.")
         try:
             self.reader = _load_module("console_input").ConsoleInput(self.input_stream, lambda event, detail: self.events.put((event, detail)))
             self.reader.start()
             try:
-                if self.child_factory is not None:
+                if self.console_only:
+                    # Native Linux desktop UI is deferred. Never start even a
+                    # placeholder helper or editor while retaining the console.
+                    pass
+                elif self.child_factory is not None:
                     self.child = self.child_factory(notice, lambda event, detail: self.events.put((event, detail)))
                 else:
                     child_type = _load_module("presentation_child").PresentationChild
@@ -94,7 +108,8 @@ class FailureSession:
                     # interpreter so killing this handle also destroys its UI.
                     command = [sys._base_executable, "-I", "-S", "-B", str(Path(__file__).with_name("presentation_helper.py"))]
                     self.child = child_type(command, notice, lambda event, detail: self.events.put((event, detail)))
-                self.child.start()
+                if self.child is not None:
+                    self.child.start()
             except Exception:
                 self._write_presentation_error("Could not start failure presentation:\n" + traceback.format_exc())
             dialog_ready = False
@@ -105,8 +120,8 @@ class FailureSession:
                 elif event == "dialog-ready":
                     dialog_ready = True
                 elif event == "input-unavailable":
-                    self._write_presentation_error("Console input unavailable: " + str(detail)
-                                                   + "\nClose this launcher window or dismiss its dialog to end the notice.")
+                    action = "Close this launcher window to end the notice." if self.console_only else "Close this launcher window or dismiss its dialog to end the notice."
+                    self._write_presentation_error("Console input unavailable: " + str(detail) + "\n" + action)
                 elif event == "error":
                     self._write_presentation_error(str(detail))
                 elif event == "helper-exited":

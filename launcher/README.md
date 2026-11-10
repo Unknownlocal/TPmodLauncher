@@ -311,29 +311,26 @@ Python runtime. Its Steam line invokes `launch_proton.sh`, preserving Steam's
 Proton prefix and game arguments while substituting the bundled Windows Python.
 `proton_entry.py` supplies the installed Wine-mapped executable path to the normal
 entry point, retaining its target validation. A separate argument prefix carries
-launcher log options; game arguments keep their original meaning. This route is
-tested with owned process fixtures; actual Proton mod loading remains untested.
+launcher log options; game arguments keep their original meaning.
 
-`launch_proton.sh` stays alive as a native host supervisor. After game cleanup,
-`proton_entry.py` hands fatal outcomes to `diagnostics/linux_failure_channel.py`.
-The controller retains its completed log's lock while the host notice is open.
-A launch-specific control line and authenticated local connection link the
-controller and notice without polling files or requiring Linux Python.
-An inherited pipe also signals native supervisor loss during normal play. A
-blocked reader wakes the existing owned-game shutdown path, including its
-four-second allowance, shared with any earlier failure. If cleanup stays stuck
-after forced game closure, an emergency exit ends the controller too. The pipe
-stays private to the controller; the game gets null input so startup cannot
-compete with that reader.
+`launch_proton.sh` stays alive as a native host supervisor. Private pipes opened
+explicitly through Python's mapped installation path carry startup and completion
+messages that identify their session. Console standard streams are separate. The
+supervisor combines Windows and outer process results; missing completion is
+failure. A separate owner pipe wakes the existing owned-game shutdown when the
+supervisor disappears, including its shared four-second allowance. The game gets
+null input so its startup cannot compete with the private reader.
 
-`diagnostics/linux_notice.sh` uses an existing terminal or `xterm`, shows a Zenity
-dialog and separately requests log opening through `xdg-open`. It uses the Linux
-installation path supplied by the wrapper rather than guessing Wine drive
-mappings. Console input, dialog dismissal and connection closure wake blocking
-waits. Dismissal closes only the owned notice/dialog; the editor stays separate.
-Missing desktop tools retain the console diagnostic. The wrapper returns the
-original controller exit status and leaves Steam's prefix and game arguments
-intact. Native Linux desktop and Proton execution remain unverified.
+After cleanup, `proton_entry.py` selects `diagnostics/linux_failure_channel.py`.
+It retains entry's completed log lock and uses `FailureSession` for a console
+notice showing the activity, stage, reason and Linux log path. Windows Python
+under Proton supplies the console APIs; no native terminal or desktop helper is
+started. A keypress, console closure or native-owner loss ends the notice without
+a reading timeout. The user opens the completed log manually.
+
+Linux dialog and log-opening adapters are unimplemented stubs. Both the session
+and helper entry points guard against starting Linux desktop UI. The
+`linux_notice.sh` compatibility entry exits without starting external tools.
 
 `Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency

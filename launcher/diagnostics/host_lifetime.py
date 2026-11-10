@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Observe native supervisor loss through one inherited, blocking input pipe."""
+"""Observe native supervisor loss through one private, blocking input handle."""
 
 from contextlib import contextmanager
 import os
@@ -10,21 +10,22 @@ import threading
 class HostLifetime:
     """Wake the active shutdown/notice owner on EOF, without polling the host.
 
-    The supervisor retains the sole write end. Proton shims may spawn rather
-    than exec, but their controller still inherits the same read end. Callbacks
+    The supervisor retains the sole write end. The Proton controller explicitly
+    opens its read end independently of console standard handles. Callbacks
     must only request cancellation; the controller retains cleanup ownership.
     """
 
-    def __init__(self, *, detach_stdin=False):
-        """Optionally reserve protocol stdin and give the game ordinary NUL input.
+    def __init__(self, *, descriptor=None, detach_stdin=False):
+        """Copy a private endpoint and optionally give the game ordinary NUL input.
 
-        Native Bash owns keyboard input on the Proton route. Its lifetime pipe
-        must not also be inherited as game stdin: synchronous Windows pipe reads
-        can block Frida's stdio duplication even through a duplicate handle.
+        Keep the native lifetime pipe separate from game input and from the
+        failure console's keyboard handle. Synchronous Windows pipe reads can
+        block Frida's stdio duplication even through a duplicate handle.
+        The stdin default remains available for direct pipe-based callers.
         """
         self.lost = threading.Event()
         self._lock, self._callback = threading.Lock(), None
-        self._fd = sys.stdin.fileno()
+        self._fd = sys.stdin.fileno() if descriptor is None else descriptor
         if os.name == "nt":
             import ctypes as c
             from ctypes import wintypes as w

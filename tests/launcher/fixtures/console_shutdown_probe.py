@@ -79,12 +79,22 @@ else:
         spec.loader.exec_module(module)
         return module
 
+    lifetime = None
+    if sys.argv[1] in ("host", "host-blocked"):
+        # Model an explicitly opened endpoint independently of standard stdin.
+        descriptor = os.dup(sys.stdin.fileno())
+        assert not os.get_inheritable(descriptor)
+        try:
+            lifetime = load("owned_host_lifetime", "diagnostics/host_lifetime.py").HostLifetime(
+                descriptor=descriptor, detach_stdin=True)
+        finally:
+            os.close(descriptor)
+
+    # Import the real binding and dependencies with the private lifetime read
+    # already blocked, then spawn the owned GUI through the ordinary controller.
     frida = load("test_binding", "native_test_binding.py").load(root)
     load("dependencies", "bundled_dependencies.py").load_source_packages(root)
     from launcher.process_lifecycle import Controller, run_launcher
-    from launcher.diagnostics.host_lifetime import HostLifetime
-
-    lifetime = HostLifetime(detach_stdin=True) if sys.argv[1] in ("host", "host-blocked") else None
 
     if sys.argv[1] in ("blocked", "host-blocked"):
         def blocked_cleanup(self):

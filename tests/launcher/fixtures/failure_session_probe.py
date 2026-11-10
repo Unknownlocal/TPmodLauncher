@@ -53,7 +53,7 @@ elif os.name == "nt":
     import msvcrt
     import struct
 
-    if mode != "windows-console-allocate":
+    if mode not in ("windows-console-allocate", "linux-console-allocate"):
         terminal = open("CONIN$", "r")
     kernel = c.WinDLL("kernel32", use_last_error=True)
     kernel.WriteConsoleInputW.argtypes = (w.HANDLE, c.c_void_p, w.DWORD, c.POINTER(w.DWORD))
@@ -127,10 +127,42 @@ def present(value, *, owned_log, wait):
             (output / "console-visible.json").write_text(json.dumps({"window": hwnd, "visible": bool(user.IsWindowVisible(hwnd))}), encoding="utf-8")
         return child
 
-    session = session_module.FailureSession(value, owned_log=owned_log, input_stream=None if mode in ("windows-console", "windows-console-allocate") else terminal,
+    if mode.startswith("linux-"):
+        value["host_log_path"] = "/home/player/Game's $literal/modLauncher/logs/launcher.log"
+    session = session_module.FailureSession(value, owned_log=owned_log, input_stream=None if mode in ("windows-console", "windows-console-allocate", "linux-console-allocate") else terminal,
                                             child_factory=None if mode == "default" else child_factory,
-                                            host_platform="fixture-unavailable" if mode == "default" else None)
+                                            host_platform="linux" if mode.startswith("linux-") else "fixture-unavailable" if mode == "default" else "win32" if mode.startswith("windows-") else "fixture")
     def control():
+        global terminal, original_mode
+        if mode.startswith("linux-"):
+            while session.reader is None or session.reader._thread is None:
+                time.sleep(.01)
+            if mode == "linux-console-allocate":
+                terminal = open("CONIN$", "r")
+                original_mode = w.DWORD(session.reader._previous_mode)
+                kernel.GetConsoleWindow.restype = w.HWND
+                user = c.WinDLL("user32")
+                user.IsWindowVisible.argtypes, user.IsWindowVisible.restype = (w.HWND,), w.BOOL
+                hwnd = kernel.GetConsoleWindow()
+                # Read the real console buffer, rather than the redirected log
+                # stream, to verify the host label did not suppress preparation.
+                kernel.GetConsoleScreenBufferInfo.argtypes = (w.HANDLE, c.c_void_p)
+                kernel.GetConsoleScreenBufferInfo.restype = w.BOOL
+                kernel.ReadConsoleOutputCharacterW.argtypes = (w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD, c.POINTER(w.DWORD))
+                kernel.ReadConsoleOutputCharacterW.restype = w.BOOL
+                descriptor = os.open("CONOUT$", os.O_RDWR | os.O_BINARY)
+                try:
+                    handle = msvcrt.get_osfhandle(descriptor)
+                    info = c.create_string_buffer(22)
+                    assert kernel.GetConsoleScreenBufferInfo(handle, info)
+                    width, height = struct.unpack_from("<hh", info.raw)
+                    text = c.create_unicode_buffer(min(width * height, 30000) + 1)
+                    count = w.DWORD()
+                    assert kernel.ReadConsoleOutputCharacterW(handle, text, len(text) - 1, 0, c.byref(count))
+                finally:
+                    os.close(descriptor)
+                (output / "console-visible.json").write_text(json.dumps({"window": hwnd, "visible": bool(user.IsWindowVisible(hwnd)), "text": text.value}))
+            (output / "console-ready").touch()
         if mode == "default":
             while session.child is None or session.child.process is None:
                 time.sleep(.01)

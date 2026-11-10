@@ -156,35 +156,47 @@ Dialog and log-opening functions run independently. Windows notices select the
 Windows functions by a fixed source path, without loading game or mod packages.
 Other hosts retain the console notice when no dialog function is supplied.
 
-The Proton entry route selects `linux_failure_channel.py` instead of a Windows
-dialog. `LinuxFailureChannel` writes a launch-specific notice after cleanup and
-signals the native Bash supervisor. An authenticated loopback connection links
-their lifetimes; the controller keeps the completed log locked until dismissal.
-Connection setup has a deadline, but user reading time has none. Notices include
-the host's Linux log path supplied by the wrapper, not a guessed Wine mapping.
-An early entry import failure retains its full traceback without claiming an old
-log as the current launch's output.
+The Proton entry route selects `linux_failure_channel.py`. `LinuxFailureChannel`
+keeps entry's completed log locked and records this launch's outcome, then runs
+`FailureSession` in console-only mode. The notice shows the failed activity,
+stage, reason and host-native log path, rather than a guessed Wine drive mapping.
+Early import failures include their full traceback. Failure to save the separate
+outcome file cannot suppress the console notice or claim another launch's log.
 
-`linux_notice.sh` prints the notice in an existing terminal or requests `xterm`.
-Zenity supplies the native dialog, while `xdg-open` independently requests the
-completed log. Reserved Zenity response codes distinguish dismissal from desktop
-startup failures. A private event pipe joins console input, dialog responses and
-controller loss without polling. Closing the console closes its dialog; closing
-the dialog ends the console session. The editor is outside that lifetime.
-Unavailable desktop tools leave the diagnostic on console output. This route
-requires Bash network redirections and standard coreutils, with `xterm`, Zenity
-and `xdg-utils` supplying desktop actions.
+The user's host selects desktop features; the running interpreter selects console
+APIs. Windows Python under Proton opens its own console input/output even though
+the host is Linux. Game stdin stays null. A keypress, console closure or native
+supervisor loss ends the notice. Missing input does not silently dismiss it.
+There is no user-reading deadline or periodic input check.
 
-`host_lifetime.py` contains `HostLifetime`. It blocks on an inherited pipe whose
-only writer belongs to the native supervisor. Losing that writer requests the
-existing owned-game shutdown, including the shared four-second fallback, even when a
-Proton process spawned the controller instead of replacing itself. The watcher
-owns a private, non-inheritable pipe handle; controller and game stdin are then
+Linux desktop features have early-exit guards in both `FailureSession` and
+`presentation_helper.py`. `linux_dialog.py` and `linux_log.py` contain unimplemented
+adapter interfaces. `linux_notice.sh` is a compatibility guard that exits without
+starting a terminal, dialog or editor. The user opens the printed log manually;
+no Linux desktop packages are required.
+
+`host_channel.py` opens private owner and control pipes through Windows Python's
+own mapped installation path. A bounded exchange checks the session before
+dependency imports and game startup. Console input and output carry no control
+messages. Wine's working FIFO handles can be character devices; an actual
+console handle is refused instead of assuming a particular device type.
+
+`proton_supervisor.sh` creates the private session and joins control messages,
+Windows pipe closure and the outer Proton process result through blocking pipe
+reads. The controller sends its final result explicitly; neither a missing result
+nor a failing outer command can be treated as success. Startup/transport failures
+retain their own session details without claiming an earlier launch's log.
+
+`host_lifetime.py` contains `HostLifetime`. It blocks on the explicitly opened
+owner pipe whose only writer belongs to the native supervisor. Losing that
+writer requests the existing owned-game shutdown, including the shared four-second
+fallback, even when Proton spawned the controller instead of replacing itself.
+The watcher owns a private, non-inheritable pipe handle; controller and game stdin are then
 set to null input. This keeps the lifetime read separate from game startup.
 If cleanup remains stuck after forced game closure and a short final grace,
 the controller exits too, preserving failure or interruption status.
-Notice socket waits also include a cancellation socket, so owner loss wakes
-connection setup, authentication and the final dismissal wait directly.
+Owner loss also queues console dismissal directly, so a retained failure does
+not wait for keyboard input after its native supervisor ends.
 
 `windows_dialog.py` contains `WindowsDialog`. It uses a native Windows window
 with the failed activity, short reason and a scrollable, selectable log path.

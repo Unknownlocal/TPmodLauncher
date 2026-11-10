@@ -22,20 +22,45 @@ def _load_helper(root, relative):
 
 
 def main(game_arguments=None, *, launcher_arguments=(), host_session=None, host_log_path=None):
+    root = Path(__file__).resolve().parent.parent
+    transport = None
+    code = 1
     try:
-        return _main(game_arguments, launcher_arguments=launcher_arguments,
-                     host_session=host_session, host_log_path=host_log_path)
-    finally:
         if host_session is not None:
-            # Runtime wrappers may relay stdin and wait for EOF themselves.
-            # Release the host's writer after our cleanup/presentation finishes.
+            transport = _load_helper(root, "diagnostics/host_channel").HostChannel(root, host_session)
+        code = _main(game_arguments, launcher_arguments=launcher_arguments,
+                     host_session=host_session, host_log_path=host_log_path, transport=transport)
+    except KeyboardInterrupt:
+        code = 130
+    except Exception:
+        # Before entry owns the log, transport failures belong to this fresh
+        # session only. Never append them to an earlier launch's launcher.log.
+        details = traceback.format_exc()
+        if host_session is not None:
+            import re
+            if re.fullmatch(r"linux-notice\.[A-Za-z0-9]{10}", host_session):
+                try:
+                    with (root / ".state" / host_session / "transport-error.txt").open("x", encoding="utf-8") as stream:
+                        stream.write(details)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                except OSError:
+                    pass  # Console output remains an independent attempt.
+        print(details, file=sys.stderr, flush=True)
+    finally:
+        if transport is not None:
             try:
-                os.write(1, ("MOD_LAUNCHER_DONE " + host_session + "\n").encode("utf-8"))
+                transport.send("DONE", code)
             except OSError:
-                pass  # A lost supervisor must not replace the original exit code.
+                # An unknown native result must never turn a successful run
+                # into false success. Preserve any original failure code.
+                code = code or 1
+            finally:
+                transport.close()
+    return code
 
 
-def _main(game_arguments=None, *, launcher_arguments=(), host_session=None, host_log_path=None):
+def _main(game_arguments=None, *, launcher_arguments=(), host_session=None, host_log_path=None, transport=None):
     root = Path(__file__).resolve().parent.parent
     presentation = None
     host_lifetime = None
@@ -45,7 +70,9 @@ def _main(game_arguments=None, *, launcher_arguments=(), host_session=None, host
     try:
         if host_session is not None:
             lifetime_module = _load_helper(root, "diagnostics/host_lifetime")
-            host_lifetime = lifetime_module.HostLifetime(detach_stdin=True)
+            host_lifetime = lifetime_module.HostLifetime(descriptor=transport.reader, detach_stdin=True)
+            os.close(transport.reader)
+            transport.reader = None
             presentation.host_lifetime = host_lifetime
         entry = _load_helper(root, "entry")
     except Exception as error:

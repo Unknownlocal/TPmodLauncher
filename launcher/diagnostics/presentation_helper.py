@@ -23,6 +23,10 @@ def main(*, show_dialog=None, open_log=None):
     if len(line) > 1024 * 1024:
         return 1
     notice = json.loads(line)
+    if str(notice.get("host_platform", "")).startswith("linux"):
+        # Deferred Linux adapters must not launch a desktop helper, including
+        # when a caller supplies callbacks or executes this module directly.
+        return 0
     lock = threading.Lock()
 
     def notify(event, detail=None, *, operation=None):
