@@ -17,6 +17,7 @@ from .diagnostics.reporting_receiver import ReportingReceiver
 from .diagnostics.reporting_queue import build_overflow_record
 from .process_cancellation import ProcessCancellation
 from .process_ended import ProcessEnded
+from .pending_request import PendingRequest
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -61,7 +62,7 @@ class Bridge:
         self.loaded = False
         self.exited = False
         self.cancellation = ProcessCancellation()
-        self.waiters = {}
+        self.pending = None
         self._on_message = on_message
         self.lock = threading.Lock()
         self.journal = journal
@@ -88,9 +89,9 @@ class Bridge:
             and payload.get("event") == "reply"
         ):
             with self.lock:
-                waiter = self.waiters.get(payload.get("id"))
-                if waiter is not None:
-                    waiter.put_nowait(payload)
+                pending = self.pending
+                if pending is not None and pending.token == payload.get("id"):
+                    pending.replies.put_nowait(payload)
         else:
             on_message(message)
 
@@ -111,7 +112,7 @@ class Bridge:
     def _control_ready(self, request, dependency):
         """Only arm native entry; the receiver never executes Python or controller work."""
         with self.lock:
-            live = request in self.waiters
+            live = self.pending is not None and self.pending.token == request
         if live and not self.exited and not self.session.is_detached and not self.script.is_destroyed:
             try:
                 self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
@@ -121,10 +122,10 @@ class Bridge:
     def _control_failed(self, detail):
         """Cancel parked entry promptly; cleanup may still request native shutdown."""
         with self.lock:
-            tokens = tuple(self.waiters)
-        for token in tokens:
+            pending = self.pending
+        if pending is not None:
             try:
-                self._post({"type": "manager-cancel", "id": token,
+                self._post({"type": "manager-cancel", "id": pending.token,
                             "detail": "Native reporting connection failed: " + detail}, .25)
             except (Exception, ProcessEnded):
                 pass  # The request deadline and final script unload still apply.
@@ -165,8 +166,8 @@ class Bridge:
     def wake_service(self):
         """Wake only the regulation service inside a synchronous control wait."""
         with self.lock:
-            for waiter in self.waiters.values():
-                waiter.put_nowait({"wake": True})
+            if self.pending is not None:
+                self.pending.replies.put_nowait({"wake": True})
 
     def _post(self, message, timeout):
         # Frida's native send supports cancellation; its synchronous script RPC wait does not.
@@ -265,15 +266,16 @@ class Bridge:
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
-        waiter = queue.Queue()
+        pending = PendingRequest(token)
+        waiter = pending.replies
         deadline = time.monotonic() + timeout
         answered = False
         self.cancellation.check()
         wake = lambda: waiter.put_nowait({"ended": True})
         with self.lock:
-            if self.waiters:
+            if self.pending is not None:
                 raise BridgeError("A bridge request is already pending")
-            self.waiters[token] = waiter
+            self.pending = pending
         self.cancellation.watch(wake)
         try:
             message = {"type": "manager-request", "operation": operation, "id": token}
@@ -331,7 +333,7 @@ class Bridge:
         finally:
             self.cancellation.unwatch(wake)
             with self.lock:
-                self.waiters.pop(token, None)
+                self.pending = None
             # Cancel any leftover target-side request, including after a timeout or send failure.
             if (
                 not answered

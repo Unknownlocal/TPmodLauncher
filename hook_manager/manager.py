@@ -181,10 +181,15 @@ class Manager:
     """Register approved targets and restore the wrappers owned by each hook group."""
 
     event_sink = None  # Set only by this trusted private bootstrap scope.
+    error_level = "ERROR"
+    error_prefix = ""
+    error_suffix = ""
+    error_component = None
 
-    def __init__(self, dispatch=None):
+    def __init__(self, dispatch=None, *, submit_log=None):
         # dispatch is a trusted host adapter used by synthetic tests; no mod loader supplies it.
         self.dispatch = dispatch
+        self._error_log_sink = submit_log
         self.targets = {}
         self.groups = {}
         self.completed = {}
@@ -221,16 +226,24 @@ class Manager:
         """Retain short history and the latest complete failure without writing a log."""
         # Plain snapshots retain complete failures without retaining live frames
         # or looking up source files during native hook/import callbacks.
-        self.error_record = build_log_record("ERROR", str(error), error=error)
+        context = {} if self.error_component is None else {"component": self.error_component}
+        self.error_record = build_log_record(self.error_level,
+            self.error_prefix + str(error) + self.error_suffix, error=error, **context)
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
+        return self.error_record
 
     def _store_and_submit_error(self, error):
-        self.store_error(error)
-        # Overrides with their own submission retain their chosen severity and
-        # detail. Publishing the base record too would duplicate compatibility errors.
-        if self.events is not None and type(self).store_error is Manager.store_error:
-            self.events.submit_log(self.error_record)
+        """Retain once, then submit once without replacing a native failure."""
+        record = self.store_error(error)
+        submit_log = self._error_log_sink
+        if submit_log is None and self.events is not None:
+            submit_log = self.events.submit_log
+        if submit_log is not None:
+            try:
+                submit_log({**record, "event": "diagnostic"})
+            except Exception:
+                pass  # Status retains the failure even when reporting is unavailable.
 
     def _observe_safely(self, callback, *args, **kwargs):
         """Keep diagnostic observation from changing the native operation.
@@ -242,7 +255,7 @@ class Manager:
             return callback(*args, **kwargs)
         except Exception as error:
             try:
-                self.store_error(error)
+                self._store_and_submit_error(error)
             except Exception:
                 pass  # Preserve the game result even when reporting also fails.
 

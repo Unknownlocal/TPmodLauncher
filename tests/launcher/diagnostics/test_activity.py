@@ -44,9 +44,9 @@ def test_native_activity_rejects_old_career_and_replaced_process_events(rig, tmp
         controller = lifecycle.Controller(device, [device.game], logger)
         with closing(controller):
             controller.start()
-            first = controller.sessions[10]
-            def observe(session, kind, sequence, generation):
-                controller.events.put(("bridge", (10, session, {"type": "send", "payload": {
+            first = controller.processes[10]
+            def observe(owner, kind, sequence, generation):
+                controller.events.put(("bridge", (owner, {"type": "send", "payload": {
                     "event": "readiness", "status": {"activity": {
                         "kind": kind, "sequence": sequence, "generation": generation}}}})))
                 controller.poll()
@@ -56,19 +56,19 @@ def test_native_activity_rejects_old_career_and_replaced_process_events(rig, tmp
             observe(first, "save_loading", 2, 0)
             observe(first, "save_loading", 4, 0)
             assert controller.activity.snapshot(10)["kind"] == "in_save"
-            controller.events.put(("bridge", (10, first, {"type": "send", "payload": {
+            controller.events.put(("bridge", (first, {"type": "send", "payload": {
                 "event": "diagnostic", "level": "ERROR", "detail": "Owned delayed loading diagnostic",
                 "activity": {"kind": "save_loading", "sequence": 1, "generation": 0}}})))
             controller.poll()
             assert controller.activity.snapshot(10)["kind"] == "in_save"
             original_session = controller.activity.snapshot(10)["process_session"]
-            first.is_detached = True
+            first.session.is_detached = True
             device.child(10, device.game)
             controller.poll()
             observe(first, "in_save", 99, 99)
             current = controller.activity.snapshot(10)
             assert current["kind"] == "game_loading" and current["process_session"] != original_session
-            controller.events.put(("bridge", (10, controller.sessions[10], {"type": "error", "description": "Owned bridge failure"})))
+            controller.events.put(("bridge", (controller.processes[10], {"type": "error", "description": "Owned bridge failure"})))
             with pytest.raises(lifecycle.LaunchError) as failure:
                 controller.poll()
             diagnostics.handle_error(logger, failure.value)

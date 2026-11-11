@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Attach optional personnel feedback when native screens import normally."""
 
-from ....diagnostics import build_log_record
-
 from functools import update_wrapper
 import threading
 from weakref import WeakKeyDictionary
@@ -16,9 +14,14 @@ from ...ui import ui_bindings
 
 
 class PersonnelFeedback(Manager):
+    error_level = 'WARNING'
+    error_prefix = 'REGULATIONS UI COMPATIBILITY FAILED personnel: '
+    error_suffix = '; feedback integration skipped; signing guards remain active'
+    error_component = 'regulations'
+
     def __init__(self, guards, state, submit_log, *, kinds=None):
-        super().__init__(lambda *args: None)
-        self.guards, self.state, self.submit_log = guards, state, submit_log
+        super().__init__(lambda *args: None, submit_log=submit_log)
+        self.guards, self.state = guards, state
         self.notices, self.ui = WeakKeyDictionary(), {}
         # UI groups have their own lifecycle: a changed screen can disable its
         # feedback while contract guards stay active. Observe ordinary imports.
@@ -29,12 +32,6 @@ class PersonnelFeedback(Manager):
             # Only contract feedback owns inbox approvals; approach checks do
             # not sign agreements or require a mailbox integration.
             self.observe("ui.screens.mailbox_screen", lambda module: self._ready("inbox", module))
-
-    def store_error(self, error):
-        """Retain a feedback failure and submit its compatibility warning."""
-        super().store_error(error)
-        self.submit_log(build_log_record('WARNING', "REGULATIONS UI COMPATIBILITY FAILED personnel: " + str(error)
-                    + "; feedback integration skipped; signing guards remain active", error=error, component="regulations"))
 
     def _ready(self, kind, module):
         screen = getattr(module, "MailboxScreen" if kind == "inbox" else kind.title() + "NegotiationScreen")

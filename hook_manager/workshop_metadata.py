@@ -27,9 +27,13 @@ class WorkshopMetadata(Manager):
         "_is_link": "941e3d32e5b2f1b02d514be7494b81594c1f3576d7bb881d26701595906189f2",
     }
 
+    error_level = 'WARNING'
+    error_prefix = 'Workshop metadata optimisation unavailable: '
+    error_component = 'workshop'
+
     def __init__(self, activity):
         self.activity = activity
-        super().__init__(lambda record: None)
+        super().__init__(lambda record: None, submit_log=activity.submit_log)
         target = Target("workshop.metadata", "workshop_manager", (), "_content_files",
                         "(root: 'Path', *, packaging=False, content_type='season') -> 'list[Path]'")
         self.approve(target)
@@ -53,19 +57,6 @@ class WorkshopMetadata(Manager):
                 return {"frozenset": sorted(value)}
             return value
         return hashlib.sha256(json.dumps(describe(code), separators=(",", ":")).encode()).hexdigest()
-
-    def store_error(self, error):
-        """Retain and submit a warning; unavailable optimisation is not fatal."""
-        self.errors.append(str(error)[:4096])
-        del self.errors[:-16]
-        self.error_record = build_log_record("WARNING", "Workshop metadata optimisation unavailable: " + str(error),
-                                             error=error, component="workshop")
-        try:
-            # The writer formats traceback details; imports must not read source
-            # files. Reporting failure must also leave native validation usable.
-            self.activity.submit_log({**self.error_record, "event": "diagnostic"})
-        except Exception:
-            pass  # The compatibility failure is still retained in status.
 
     def _wrapper(self, name, binding, target, original, signature):
         native = sys.modules[target.module]

@@ -14,7 +14,6 @@ from launcher.diagnostics.journal_writer import JournalWriter
 
 
 def test_failed_import_observer_retains_plain_error_while_source_lookup_waits_on_worker(tmp_path, monkeypatch):
-    manager = Manager()
     module = ModuleType("owned_native_diagnostics")
     monkeypatch.setitem(sys.modules, module.__name__, module)
     journal = ActivityJournal(tmp_path / "native.jsonl")
@@ -35,14 +34,20 @@ def test_failed_import_observer_retains_plain_error_while_source_lookup_waits_on
             error.add_note("Owned complete native note")
             raise error from cause
     writer = JournalWriter(lambda record: None)
+    submitted = []
+    def submit_log(record):
+        submitted.append(record)
+        writer.enqueue_log_record(record, journal)
+        raise OSError("Owned diagnostic sink failed after accepting the record")
+    manager = Manager(submit_log=submit_log)
     try:
         with monkeypatch.context() as patch:
             patch.setattr(linecache, "checkcache", blocked_source)
             manager.observe(module.__name__, failed_import)
             retained = json.dumps(manager.error_record, sort_keys=True)
             reply = json.loads(json.dumps({"status": {"failure": manager.error_record}}))
-            assert not entered.is_set() and manager.status()["errors"]
-            writer.enqueue_log_record(reply["status"]["failure"], journal)
+            assert manager.status()["errors"]
+            assert submitted == [{**manager.error_record, "event": "diagnostic"}]
             assert entered.wait(1)
             assert manager.status()["state"] == "ready"
             release.set()

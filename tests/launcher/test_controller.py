@@ -35,7 +35,7 @@ def test_exit_during_child_gating_skips_bridge_creation(rig, monkeypatch):
     try:
         controller.start()
         controller.poll()
-        assert not controller.sessions and not controller.bridges and not controller.cleanup_failed
+        assert not controller.processes and not controller.cleanup_failed
     finally:
         controller.close()
 
@@ -44,12 +44,12 @@ def test_exit_during_child_gating_skips_bridge_creation(rig, monkeypatch):
 def test_queued_script_failure_keeps_full_stack_after_owner_cancellation(rig, source):
     device, controller, _, _ = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
     stack = "Owned script stack " + "x" * 5000 + " FULL STACK END"
     message = ({"type": "error", "description": "Owned script failure END", "stack": stack}
                if source == "script" else {"type": "send", "payload": {
                    "event": "error", "detail": "Owned script failure END", "traceback": stack}})
-    controller._queue_bridge(10, session, message)
+    controller._queue_bridge(owner, message)
     device.exit(10)
     try:
         with pytest.raises(lifecycle.LaunchError, match="Owned script failure END") as failure:
@@ -64,15 +64,16 @@ def test_exit_during_live_bridge_shutdown_completes_cleanup(rig):
 
     device, controller, _, _ = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None, is_destroyed=False, unload=lambda: None)
     bridge = Bridge(None, session, "", lambda *args: None)
     bridge.loaded = True
-    bridge.cancellation = controller.cancellations[10]
-    controller.bridges[10] = bridge
+    bridge.cancellation = controller.processes[10].cancellation
+    controller.processes[10].bridge = bridge
     bridge._post = lambda *args: device.exit(10)
     controller.close()
-    assert not controller.sessions and not bridge.waiters and not controller.cleanup_failed
+    assert not controller.processes and bridge.pending is None and not controller.cleanup_failed
     assert device.exit_waits[10].closed
 
 
@@ -81,11 +82,11 @@ def test_retirement_signal_handles_native_disconnect_before_detached_flag(rig):
     controller.start()
     def disconnect():
         # The callback's cancellation flag can precede Frida's detached property.
-        controller.cancellations[10].cancel()
+        controller.processes[10].cancellation.cancel()
         raise RuntimeError("Owned transport already closed")
-    controller.sessions[10].disable_child_gating = disconnect
+    controller.processes[10].session.disable_child_gating = disconnect
     controller.close()
-    assert not controller.cleanup_failed and not controller.sessions
+    assert not controller.cleanup_failed and not controller.processes
     assert not any("CLEANUP ERROR" in message for message in messages)
 
 
@@ -95,12 +96,13 @@ def test_script_failure_delivered_during_final_reporting_survives_retirement(rig
 
     device, controller, messages, _ = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
     bridge = Bridge(None, session, "", lambda *args: None)
-    controller.bridges[10] = bridge
+    controller.processes[10].bridge = bridge
     stack = "Late stack " + "x" * 5000 + " FULL LATE STACK END"
-    bridge.finish_reporting = lambda: controller._queue_bridge(10, session, {
+    bridge.finish_reporting = lambda: controller._queue_bridge(owner, {
         "type": "error", "description": "Late owned script failure END", "stack": stack})
     device.exit(10)
     try:
@@ -118,15 +120,16 @@ def test_script_failure_delivered_during_final_reporting_survives_retirement(rig
 def test_diagnostic_delivered_during_detach_is_retained_before_retirement(rig, monkeypatch):
     device, controller, messages, _ = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     detach = session.detach
     def final_detach():
-        controller._queue_bridge(10, session, {"type": "error", "description": "Final detach error FULL END",
+        controller._queue_bridge(owner, {"type": "error", "description": "Final detach error FULL END",
                                              "stack": "Owned final detach stack FULL END"})
         detach()
     monkeypatch.setattr(session, "detach", final_detach)
     controller.close()
-    assert controller.cleanup_failed and session.is_detached and not controller.sessions
+    assert controller.cleanup_failed and session.is_detached and not controller.processes
     assert any("Owned final detach stack FULL END" in message for message in messages)
 
 
@@ -134,13 +137,14 @@ def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig)
     device, controller, messages, _ = rig
     controller.start()
     try:
-        session = controller.sessions[10]
+        owner = controller.processes[10]
+        session = owner.session
         detail = "REGULATIONS COMPATIBILITY FAILED career.preload; continuing native game"
-        controller.events.put(("bridge", (10, session, {
+        controller.events.put(("bridge", (owner, {
             "type": "send", "payload": {"event": "compatibility", "detail": detail}})))
         controller.poll()
         assert any(detail in message for message in messages)
-        assert controller.sessions[10] is session and not session.is_detached
+        assert controller.processes[10].session is session and not session.is_detached
         assert not controller.stopping
     finally:
         controller.close()
@@ -162,18 +166,19 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
         controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
         controller.mods_factory = lambda report, bridge: PackMods(game, report)
         controller.start()
-        session = controller.sessions[10]
+        owner = controller.processes[10]
+        session = owner.session
         def send(payload):
-            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            controller.events.put(("bridge", (owner, {"type": "send", "payload": payload})))
             controller.poll()
         try:
             send({"event": "pack", "pack": dict(state="ready", series="formula", id=pack.name, root=str(pack.resolve()))})
-            assert controller.pack_mods[10].failed == 1
+            assert controller.processes[10].mods.failed == 1
             # Malformed severity and guest control characters stay ordinary
             # bounded diagnostics; neither changes the session's lifetime.
             send({"event": "diagnostic", "level": [], "detail": "unsafe\n\x1bmessage" + "x" * 5000})
             send({"event": "waiting", "level": "DEBUG", "detail": "hidden readiness detail"})
-            assert controller.sessions[10] is session and not controller.stopping
+            assert controller.processes[10].session is session and not controller.stopping
         finally:
             controller.close()
     first_text = first.read_text()
@@ -259,7 +264,7 @@ def test_fatal_preload_status_keeps_complete_remote_error_and_closes_controller(
     original = lifecycle.Controller._attach
     def attach(controller, pid, **options):
         result = original(controller, pid, **options)
-        controller.pack_mods[pid] = scope
+        controller.processes[pid].mods = scope
         return result
     monkeypatch.setattr(lifecycle.Controller, "_attach", attach)
     monkeypatch.setattr(lifecycle, "ConsoleShutdown", Shutdown)
@@ -328,7 +333,7 @@ def test_initial_setup_failure_resumes_game_and_removes_tracking(rig):
     finally:
         controller.close()
     assert ("resume", 10) in device.calls
-    assert not device.handlers and not controller.sessions
+    assert not device.handlers and not controller.processes
     assert all(not session.gating for session in device.sessions.values())
 
 
@@ -344,7 +349,7 @@ def test_console_close_during_setup_does_not_start_game(rig, monkeypatch):
     monkeypatch.setattr(device, "enumerate_processes", closing)
     try:
         controller.start()
-        assert not device.processes and not controller.sessions and not controller.held
+        assert not device.processes and not controller.processes and not controller.held
     finally:
         controller.close()
     assert not device.handlers and not controller.cleanup_failed
@@ -372,7 +377,8 @@ def test_children_are_verified_and_helpers_and_late_children_are_released(
 def test_restart_gap_and_stale_detached_event_do_not_end_session(rig):
     device, controller, _, now = rig
     controller.start()
-    first = controller.sessions[10]
+    first_owner = controller.processes[10]
+    first = controller.processes[10].session
     del device.processes[10]
     first.handlers["detached"]("process-terminated")
     assert not controller.poll()
@@ -380,12 +386,12 @@ def test_restart_gap_and_stale_detached_event_do_not_end_session(rig):
     assert not controller.poll()
     device.child(20, controller.game)
     assert not controller.poll()
-    current = controller.sessions[20]
-    # A delayed event with the same PID but an old session must not remove the replacement.
-    controller.events.put(("detached", (20, first, "process-terminated")))
-    assert not controller.poll() and controller.sessions[20] is current
+    current = controller.processes[20].session
+    # A delayed callback still belongs to the retired process owner.
+    controller.events.put(("detached", (first_owner, "process-terminated")))
+    assert not controller.poll() and controller.processes[20].session is current
     for pid in list(device.processes):
-        if pid in controller.sessions:
+        if pid in controller.processes:
             device.exit(pid)
         else:
             device.processes.pop(pid)
@@ -403,7 +409,7 @@ def test_reused_game_pid_attaches_again_before_delayed_old_detach(rig):
     controller.start()
     device.child(20, controller.game)
     controller.poll()
-    old = controller.sessions[20]
+    old = controller.processes[20].session
     old_waiter = device.exit_waits[20]
     # Native state has changed, but the controller has not consumed the old notification yet.
     old.is_detached = True
@@ -412,7 +418,7 @@ def test_reused_game_pid_attaches_again_before_delayed_old_detach(rig):
     old_waiter.completed(None)
     try:
         assert not controller.poll()
-        replacement = controller.sessions[20]
+        replacement = controller.processes[20].session
         assert replacement is not old and not replacement.is_detached
         assert device.calls.count(("attach", 20)) == 2
         assert device.calls.count(("resume", 20)) == 2
@@ -422,7 +428,7 @@ def test_reused_game_pid_attaches_again_before_delayed_old_detach(rig):
         device.sessions[10].handlers["detached"]("process-terminated")
         controller.poll()
         now[0] = 10.0
-        assert not controller.poll() and controller.sessions[20] is replacement
+        assert not controller.poll() and controller.processes[20].session is replacement
     finally:
         controller.close()
 
@@ -436,7 +442,7 @@ def test_idle_controller_blocks_until_owned_exit_and_restart_deadline(rig, monke
     def unexpected(*args, **kwargs):
         raise AssertionError("Idle controller inspected processes or polled mods")
     monkeypatch.setattr(device, "enumerate_processes", unexpected)
-    controller.pack_mods[10] = SimpleNamespace(poll=unexpected, close=released.set)
+    controller.processes[10].mods = SimpleNamespace(poll=unexpected, close=released.set)
     get, waits = controller.events.get, []
     def receive(*args, **kwargs):
         waits.append(kwargs.get("timeout"))
@@ -452,7 +458,7 @@ def test_idle_controller_blocks_until_owned_exit_and_restart_deadline(rig, monke
         entered.clear()
         worker.start()
         assert not controller.poll(timeout=None)
-        assert released.is_set() and not controller.sessions
+        assert released.is_set() and not controller.processes
         assert controller.poll(timeout=None)
         assert waits[-1] is None
     finally:
@@ -493,7 +499,7 @@ def test_early_deadline_wake_does_not_leave_session_end_blocked(rig, monkeypatch
     try:
         worker.start()
         assert finished.wait(2), "Session end lost its only deadline wake"
-        assert not errors and not controller.sessions and not controller.held
+        assert not errors and not controller.processes and not controller.held
     finally:
         # Release a regressed implementation's blocked queue wait before cleanup.
         now[0] = controller.restart_grace
@@ -518,13 +524,14 @@ def test_unexpected_tracking_loss_fails_and_cleans_up(rig):
 def test_cleanup_accepts_confirmed_exit_before_frida_detached_notification(rig):
     device, controller, messages, _ = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     def exit_during_gating_cleanup():
         device.exit(10)
         raise RuntimeError("The process transport has closed")
     session.disable_child_gating = exit_during_gating_cleanup
     controller.close()
-    assert not controller.cleanup_failed and not device.handlers and not controller.sessions
+    assert not controller.cleanup_failed and not device.handlers and not controller.processes
     assert not any("CLEANUP ERROR" in message for message in messages)
 
 

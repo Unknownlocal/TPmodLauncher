@@ -117,10 +117,11 @@ if sys.argv[3] != 'ordinary':
         receiver.close(drain=receiver.connected.is_set())
     device, controller, messages, now = rig
     controller.start()
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
     bridge = Bridge(None, session, "", lambda *args: None, journal, receiver)
-    controller.bridges[10] = bridge
+    controller.processes[10].bridge = bridge
     try:
         # No journal notification is dispatched: only process exit triggers recovery.
         device.exit(10)
@@ -193,17 +194,18 @@ State().save_season(manual=True)
     shutdown = SimpleNamespace(requested=requested, track=tracked.append, request=requested.set)
     with reporter(path, outcome=outcome) as logger, closing(Controller(device, [device.game], logger, shutdown=shutdown)) as controller:
         controller.start()
-        session = controller.sessions[10]
+        owner = controller.processes[10]
+        session = owner.session
         session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
-        controller.bridges[10] = Bridge(None, session, "", lambda *args: None, journal, receiver)
+        controller.processes[10].bridge = Bridge(None, session, "", lambda *args: None, journal, receiver)
         for notice in notices:
-            controller.events.put(("bridge", (10, session, notice)))
+            controller.events.put(("bridge", (owner, notice)))
         device.child(20, device.game)
         unrelated = tmp_path / "unrelated-helper.exe"
         unrelated.write_bytes(b"owned fixture, never executed")
         device.child(30, unrelated)
         session.is_detached = True
-        controller.events.put(("detached", (10, session, "process-terminated")))
+        controller.events.put(("detached", (owner, "process-terminated")))
         with pytest.raises(LaunchError) as failure:
             controller.poll()
         handle_error(logger, failure.value, stage="controller", shutdown=shutdown)

@@ -39,28 +39,29 @@ def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
 @pytest.mark.parametrize("replacement", ["game", "helper"])
 def test_exec_drains_old_errors_without_servicing_replaced_image(delivery, replacement, tmp_path):
     controller, bridge, receiver, path, _ = delivery
-    previous = controller.sessions[10]
-    controller.pack_mods[10] = SimpleNamespace(close=lambda: bridge.set_menu([]))
+    previous = controller.processes[10].session
+    controller.processes[10].mods = SimpleNamespace(close=lambda: bridge.set_menu([]))
     bridge.journal.append_record({"event": "native-service"})
     bridge.journal.append_record({"event": "diagnostic", "level": "ERROR",
                                   "detail": "Old native error", "traceback": "x" * 5000 + " FULL EXEC END"})
     controller.device.processes[10] = controller.game if replacement == "game" else str(tmp_path / "helper.exe")
     controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
     controller.poll()
-    assert bridge.exited and 10 not in controller.bridges and 10 not in controller.pack_mods
+    assert bridge.exited
     assert previous.is_detached and receiver.finished.is_set() and not controller.cleanup_failed
-    assert (10 in controller.sessions) == (replacement == "game")
+    assert (10 in controller.processes) == (replacement == "game")
     if replacement == "game":
-        assert controller.sessions[10] is not previous
+        assert controller.processes[10].session is not previous
+        assert controller.processes[10].bridge is None and controller.processes[10].mods is None
     assert "x" * 5000 + " FULL EXEC END" in read_log(path)
 
 
 def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery, tmp_path, monkeypatch):
     controller, bridge, _, path, _ = delivery
-    session = controller.sessions[10]
+    owner = controller.processes[10]
     bridge.journal.append_record({"event": "native-service"})
     bridge.journal.append_record({"event": "diagnostic", "level": "ERROR", "detail": "Final owned error"})
-    controller._queue_bridge(10, session, {"type": "send",
+    controller._queue_bridge(owner, {"type": "send",
         "payload": {"event": "reporting-closed", "detail": "EOF"}})
     controller.device.exit(10)
     controller.device.processes[10] = str(tmp_path / "foreign.exe")
@@ -68,7 +69,7 @@ def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery,
         raise AssertionError("Exit recovery inspected a reused PID")
     monkeypatch.setattr(controller.device, "enumerate_processes", no_pid_lookup)
     controller.poll()
-    assert bridge.exited and not controller.sessions and not controller.cleanup_failed
+    assert bridge.exited and not controller.processes and not controller.cleanup_failed
     assert bridge.journal.retained and "Final owned error" in read_log(path)
 
 
@@ -210,9 +211,10 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
     assert reads == [] and "FULL END" not in read_log(path)
-    session = controller.sessions[10]
+    owner = controller.processes[10]
+    session = owner.session
     session.is_detached = True
-    controller.events.put(("detached", (10, session, "process-terminated")))
+    controller.events.put(("detached", (owner, "process-terminated")))
     controller.poll()
     assert "Durable failure with lost notice FULL END" in read_log(path)
     assert not bridge.journal.path.exists()
@@ -223,7 +225,7 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
 
 def test_exec_retirement_preserves_native_fatal_over_delivery_failure_and_releases_owner(delivery, monkeypatch):
     controller, bridge, _, path, _ = delivery
-    previous = controller.sessions[10]
+    previous = controller.processes[10].session
     bridge.journal.append_record({"event": "native-activity", "level": "CRITICAL", "fatal": True,
         "detail": "Native terminal failure", "reason": "Original exec fatal FULL END",
         "traceback": "Original exec traceback " + "x" * 5000 + " FULL TRACE END",
@@ -237,7 +239,7 @@ def test_exec_retirement_preserves_native_fatal_over_delivery_failure_and_releas
     with pytest.raises(LaunchError, match="Original exec fatal FULL END") as failure:
         controller.poll()
     assert "FULL TRACE END" in "\n".join(failure.value.__notes__)
-    assert previous.is_detached and not controller.sessions and not controller.exit_waits and not controller.bridges
+    assert previous.is_detached and not controller.processes
     assert not controller.held and bridge.journal.retained and bridge.journal.path.exists()
     text = read_log(path)
     assert "Secondary final delivery failure" in text and "FULL TRACE END" in text
@@ -259,7 +261,7 @@ def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery
 def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
     controller, bridge, receiver, _, _ = delivery
     accepted = []
-    controller.pack_mods[10] = SimpleNamespace(settings_status=accepted.append, poll=lambda: None, close=lambda: None)
+    controller.processes[10].mods = SimpleNamespace(settings_status=accepted.append, poll=lambda: None, close=lambda: None)
     writer = writer_for(receiver)
     current = {"save": None, "generation": 2}
     writer.enqueue_log_record({"event": "settings", "event_sequence": 2, "status": current}, bridge.journal)
@@ -299,7 +301,7 @@ def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delive
     marker(2, 1, "committed")
     marker(1, 1, "requested")  # A late copy must not undo the committed state.
     assert writer.wait_idle(2)
-    controller._drain_activity(10)
+    controller._drain_activity(controller.processes[10])
     assert bridge.restart_attempt["state"] == "committed"
     marker(3, 2, "requested")
     marker(4, 1, "cancelled")  # Completion of an older attempt cannot clear a newer one.
@@ -308,9 +310,10 @@ def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delive
     assert bridge.restart_attempt["attempt"] == 2 and bridge.restart_attempt["state"] == "requested"
     text = read_log(path)
     assert text.count('"attempt": 1, "state": "requested"') == 1
-    # The pinned session check applies before restart handling too.
-    old = controller.sessions[10]
-    controller._event("bridge", (10, object(), {"type": "send", "payload": {
+    # The process-owner check applies before restart handling too.
+    old = controller.processes[10].session
+    from launcher.tracked_process import TrackedProcess
+    controller._event("bridge", (TrackedProcess(10), {"type": "send", "payload": {
         "event": "restart", "event_sequence": 5, "status": {
             "attempt": 3, "state": "requested", "source": "mod-pack", "series": "oval"}}}))
-    assert controller.sessions[10] is old and bridge.restart_attempt["attempt"] == 2
+    assert controller.processes[10].session is old and bridge.restart_attempt["attempt"] == 2

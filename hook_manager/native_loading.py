@@ -26,8 +26,12 @@ class NativeLoading(Manager):
         ("cancel", "ui.session_preload", "SessionPreloader", "cancel", "(self)"),
     )
 
+    error_level = 'WARNING'
+    error_prefix = 'Loading observation unavailable: '
+    error_component = 'activity'
+
     def __init__(self, readiness, activity):
-        super().__init__(lambda record: None)
+        super().__init__(lambda record: None, submit_log=activity.submit_log)
         self.readiness, self.activity = readiness, activity
         self._jobs = weakref.WeakKeyDictionary()
         # Late workers retain their original attempt without retaining a career.
@@ -39,13 +43,6 @@ class NativeLoading(Manager):
                 self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "after"}])
             except Exception:
                 pass  # Retain compatibility diagnostics; native methods remain usable.
-
-    def store_error(self, error):
-        """Retain compatibility history and queue its full warning without source lookup."""
-        self.errors.append(str(error)[:4096])
-        del self.errors[:-16]
-        self.error_record = build_log_record("WARNING", "Loading observation unavailable: " + str(error), error=error, component="activity")
-        self.activity.submit_log({**self.error_record, "event": "diagnostic"})
 
     def _wrapper(self, name, binding, target, original, signature):
         mode = target.name.removeprefix("loading.")

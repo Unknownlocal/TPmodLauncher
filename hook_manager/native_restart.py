@@ -10,7 +10,6 @@ import atexit
 if __package__:
     from .manager import Manager
     from .callables import CallableTarget
-    from .diagnostics import build_log_record
 
 
 class NativeRestart(Manager):
@@ -23,10 +22,14 @@ class NativeRestart(Manager):
     TARGETS = (("settings", "ui.screens.options_screen"),
                ("mod-pack", "ui.screens.season_pack_screen"))
 
+    error_level = 'WARNING'
+    error_prefix = 'Restart observation unavailable: '
+    error_component = 'lifecycle'
+
     def __init__(self, events):
         self.notifications = events
         self._attempts = count(1)
-        super().__init__(lambda record: None)
+        super().__init__(lambda record: None, submit_log=events.host.activity.submit_log)
         for source, module in self.TARGETS:
             target = CallableTarget("restart." + source, module, (), "relaunch_application",
                                     f"(*, series_mode: {formatannotation(Optional[str])} = None) -> None")
@@ -56,21 +59,13 @@ class NativeRestart(Manager):
         atexit.unregister(self.finish_on_exit)
         return super().stop()
 
-    def store_error(self, error):
-        """Retain compatibility history and enqueue its complete warning."""
-        self.errors.append(str(error)[:4096])
-        del self.errors[:-16]
-        self.error_record = build_log_record("WARNING", "Restart observation unavailable: " + str(error),
-                                             error=error, component="lifecycle")
-        self.notifications.host.activity.submit_log({**self.error_record, "event": "diagnostic"})
-
     def _publish(self, status):
         # Reporting failures must never replace a native return or exception.
         try:
             self.notifications.publish("restart", status)
         except Exception as error:
             try:
-                self.store_error(error)
+                self._store_and_submit_error(error)
             except Exception:
                 pass  # Even diagnostic failure must preserve the native outcome.
 

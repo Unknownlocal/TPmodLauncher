@@ -24,15 +24,16 @@ def delivery(rig, tmp_path, monkeypatch):
     with reporter(path) as logger:
         controller = Controller(device, [device.game], logger)
         controller.start()
-        session = controller.sessions[10]
+        owner = controller.processes[10]
+        session = owner.session
         session.create_script = lambda *args, **kwargs: SimpleNamespace(on=lambda *args: None)
-        enqueue = lambda message: controller._queue_bridge(10, session, message)
+        enqueue = lambda message: controller._queue_bridge(owner, message)
         receiver = ReportingReceiver(os.getpid(), "owned-session", lambda event, detail: enqueue(
             {"type": "send", "payload": {"event": event, "detail": detail}}))
         journal = ActivityJournal(tmp_path / "owned.jsonl")
         journal.create()
         bridge = Bridge(None, session, "", enqueue, journal, receiver)
-        controller.bridges[10] = bridge
+        controller.processes[10].bridge = bridge
         reads, read = [], journal.read_available
         def read_available():
             reads.append(threading.get_ident())

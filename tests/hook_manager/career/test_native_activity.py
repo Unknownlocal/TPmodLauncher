@@ -249,9 +249,9 @@ def test_failed_save_crosses_socket_fallback_with_full_error_and_original_activi
         controller.poll()
     assert reason in str(fatal.value) and fatal.value.launcher_activity["kind"] == "saving"
     assert controller.activity.snapshot(10)["kind"] == "in_save" and receiver.confirmed
-    session = controller.sessions[10]
+    owner = controller.processes[10]
     # Secondary cleanup errors remain visible after the original save failed.
-    controller.events.put(("bridge", (10, session, {"type": "error", "description": "Late script unload"})))
+    controller.events.put(("bridge", (owner, {"type": "error", "description": "Late script unload"})))
     controller.close()
     text = read_log(path)
     assert reason in text and "Original save diagnostic note" in text

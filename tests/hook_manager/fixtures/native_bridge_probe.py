@@ -68,7 +68,7 @@ try:
     native_total = [row for row in native_steps if row["phase"] == "native bootstrap total"]
     assert len(native_total) == 1 and native_total[0]["seconds"] >= 0, native_steps
     assert any(row["phase"].endswith("/native_events.py") and row["seconds"] >= 0 for row in native_steps), native_steps
-    current = next(iter(controller.bridges.values()))
+    current = next(iter(controller.processes.values())).bridge
     counts = current.script.exports_sync.entry_state()
     assert not counts["armed"] and counts["waiting"] is None, counts
     assert counts["evaluations"] >= 601 and counts["bootstrapEvaluations"] == 1, counts
@@ -204,13 +204,13 @@ try:
         time.sleep(0.02)
     assert (output / "settings-again-acknowledged").exists(), messages
     attempts = []
-    pid = next(iter(controller.sessions))
+    pid = next(iter(controller.processes))
     # Exercise readiness validation while collecting preload notices below;
     # diagnostic activity travels in the same native status record.
     scope = PackMods(root.parent, logger)
     scope.load({"state": "ready", "series": "formula", "id": pack.name, "root": str(pack.resolve())})
     scope.career_preload = attempts.append
-    controller.pack_mods[pid] = scope
+    controller.processes[pid].mods = scope
     current.request("await-regulations")
     deadline = time.monotonic() + 3
     while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:

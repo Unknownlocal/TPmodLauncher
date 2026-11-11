@@ -331,6 +331,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         if name in sys.modules:
             pulse("shutdown")
             del sys.modules[name]
+        # Shutdown signals the writer; its final delivery finishes independently.
+        client.finish_reporting()
         client.drain_activity()
         client.journal.remove()
 
@@ -392,7 +394,7 @@ def test_preparation_wait_services_only_controller_transport_and_cancels_on_fail
         raise RuntimeError("Controller service failed")
     with pytest.raises(RuntimeError, match="Controller service failed"):
         client.request("prepare-regulations", regulations=control, _service=fail)
-    assert client.waiters == {} and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
+    assert client.pending is None and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
 
 
 def test_native_error_reply_received_before_cancellation_keeps_complete_details(monkeypatch, bridge):
@@ -405,7 +407,7 @@ def test_native_error_reply_received_before_cancellation_keeps_complete_details(
     monkeypatch.setattr(client, "_post", post)
     with pytest.raises(BridgeError, match="Owned complete control failure") as failure:
         client.request("status")
-    assert stack in "\n".join(failure.value.__notes__) and not client.waiters
+    assert stack in "\n".join(failure.value.__notes__) and client.pending is None
 
 
 def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):
@@ -414,6 +416,11 @@ def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):
     monkeypatch.setattr(client, "_post", lambda record, timeout: sent.append(record))
     def service():
         calls.append(threading.get_ident())
+        if len(calls) == 1:
+            with pytest.raises(BridgeError, match="already pending"):
+                client.request("status")
+            client._message({"type": "send", "payload": {"event": "reply", "id": "stale-request",
+                            "status": {"stale": True}}}, lambda _: None)
         initial.set()
         if len(calls) == 2:
             client._message({"type": "send", "payload": {"event": "reply", "id": sent[0]["id"],

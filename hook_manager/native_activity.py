@@ -32,12 +32,14 @@ class NativeActivity(Manager):
         ("finish", "ui.week_advance_transition", "WeekAdvanceTransitionMixin", "_finish_background_week_advance", "(self, *, show_review=True)"),
     )
 
+    error_component = 'activity'
+
     def __init__(self, readiness, journal=None, reporting_endpoint=None, *, writer=None):
         # Production uses the reporting connection; observation tests can supply
         # the same background writer with their own output collector.
         if writer is None and reporting_endpoint is None:
             raise ValueError("Native activity needs a reporting endpoint or an explicit writer")
-        super().__init__(lambda record: None)
+        super().__init__(lambda record: None, submit_log=self.submit_log)
         self.readiness = readiness
         self.journal = journal
         self._ids, self._sequences = count(1), count(1)
@@ -92,13 +94,6 @@ class NativeActivity(Manager):
                 self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
             except Exception:
                 pass  # Manager retains the compatibility failure; native calls stay intact.
-
-    def store_error(self, error):
-        """Retain compatibility history and also queue its complete diagnostic."""
-        self.error_record = build_log_record("ERROR", str(error), error=error, component="activity")
-        self.errors.append(str(error)[:4096])
-        del self.errors[:-16]
-        self.submit_log(self.error_record)
 
     def submit_log(self, record, *, error=None):
         """Capture and enqueue without I/O; return acceptance, not delivery proof."""

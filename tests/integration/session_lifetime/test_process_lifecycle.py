@@ -31,9 +31,10 @@ def test_process_exit_interrupts_pending_bridge_work_before_routine_backlog(rig,
         return client
     controller.bridge_factory = bridge_factory
     controller.start()
-    old_session, old_waiter, old_bridge = controller.sessions[10], device.exit_waits[10], controller.bridges[10]
-    controller.pack_mods[10] = SimpleNamespace(poll=lambda: old_bridge.request("status", timeout=30), close=closed.set)
-    controller.events.put(("mods-ready", (10, old_session)))
+    old_owner = controller.processes[10]
+    old_session, old_waiter, old_bridge = old_owner.session, old_owner.exit_wait, old_owner.bridge
+    controller.processes[10].mods = SimpleNamespace(poll=lambda: old_bridge.request("status", timeout=30), close=closed.set)
+    controller.events.put(("mods-ready", (old_owner, None)))
     def run():
         try:
             controller.poll(timeout=None)
@@ -45,24 +46,22 @@ def test_process_exit_interrupts_pending_bridge_work_before_routine_backlog(rig,
     worker.start()
     try:
         assert entered.wait(2)
-        controller.events.put(("mods-ready", (10, old_session)))
+        controller.events.put(("mods-ready", (old_owner, None)))
         device.exit(10)
         assert done.wait(2), "Bridge waited for its 30-second timeout after process exit"
-        assert not failures and closed.is_set() and not old_bridge.waiters and not controller.sessions
+        assert not failures and closed.is_set() and old_bridge.pending is None and not controller.processes
         assert old_bridge.cancellation.ended.is_set()
         device.child(20, controller.game)
         controller.poll()
-        replacement = controller.bridges[20]
+        replacement = controller.processes[20].bridge
         old_waiter.completed(None)
         old_session.handlers["detached"]("process-terminated")
         controller.poll()
-        assert controller.sessions[20] is device.sessions[20] and not replacement.cancellation.ended.is_set()
+        assert controller.processes[20].session is device.sessions[20] and not replacement.cancellation.ended.is_set()
         assert not any("Timed out" in message or "ERROR" in message for message in messages)
     finally:
         if not done.is_set():
             old_bridge.cancellation.cancel()
-            for waiter in old_bridge.waiters.values():
-                waiter.put({"status": {}})
         worker.join(2)
         controller.close()
 
@@ -93,8 +92,8 @@ def test_restart_replacement_gets_fresh_scope_and_clears_outgoing_intent(deliver
     assert not controller.poll() and controller.replacement[0] == "restart"
     controller.device.child(20, controller.game)
     controller.poll()
-    assert 20 in controller.sessions and controller.idle_since is None
-    assert controller.replacement[0] == "unknown" and not controller.cancellations[20].ended.is_set()
+    assert 20 in controller.processes and controller.idle_since is None
+    assert controller.replacement[0] == "unknown" and not controller.processes[20].cancellation.ended.is_set()
     assert "RESTART REPLACEMENT NOT OBSERVED" not in read_log(path)
 
 
@@ -120,10 +119,11 @@ def test_validation_error_keeps_severity_in_file_and_console(rig, tmp_path, caps
         controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
         controller.start()
         try:
-            session = controller.sessions[10]
-            controller.events.put(("bridge", (10, session, {"type": "send", "payload": payload})))
+            owner = controller.processes[10]
+            session = owner.session
+            controller.events.put(("bridge", (owner, {"type": "send", "payload": payload})))
             controller.poll()
-            assert controller.sessions[10] is session and not controller.stopping
+            assert controller.processes[10].session is session and not controller.stopping
         finally:
             controller.close()
     for output in (read_log(path), capsys.readouterr().err):
@@ -146,7 +146,7 @@ def test_empty_pack_accepts_native_menu_readiness_with_activity(native_events, d
     writer.enqueue_log_record({"event": "readiness", "status": status}, bridge.journal)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    scope = controller.pack_mods[10]
+    scope = controller.processes[10].mods
     assert scope.finished and not scope.mods and not controller.stopping
     assert controller.activity.snapshot(10)["kind"] == "menu"
     assert scope.prerequisites.native == {key: value for key, value in status.items() if key != "activity"}
@@ -161,9 +161,9 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
     for name in ("first", "second"):
         source_mod(game / "data" / name, f"owned.{name}")
     controller.mods_factory = lambda report, bridge: PackMods(game, report, runner_bundle=runner_bundle)
-    def send(pid, session, name):
+    def send(owner, name):
         pack = dict(state="ready", series="formula", id=name, root=str((game / "data" / name).resolve()))
-        controller.events.put(("bridge", (pid, session, {"type": "send", "payload": {"event": "pack", "pack": pack}})))
+        controller.events.put(("bridge", (owner, {"type": "send", "payload": {"event": "pack", "pack": pack}})))
     def drain(scope):
         deadline = time.monotonic() + 30
         while scope.loading is not None:
@@ -171,31 +171,31 @@ def test_source_mods_follow_controller_session_identity(rig, source_mod, runner_
             controller.poll(timeout=max(0, deadline - time.monotonic()))
     controller.start()
     try:
-        first = controller.sessions[10]
-        send(10, first, "first")
+        first = controller.processes[10]
+        send(first, "first")
         controller.poll()
-        initial = controller.pack_mods[10]
+        initial = controller.processes[10].mods
         drain(initial)
         old_mod = initial.mods["owned.first"]
-        send(10, first, "second")
+        send(first, "second")
         controller.poll()
         assert list(initial.mods) == ["owned.first"]
-        first.is_detached = True
+        first.session.is_detached = True
         device.child(10, controller.game)
         controller.poll()
         assert initial.closed and old_mod.sandbox.closed
-        replacement = controller.sessions[10]
-        send(10, first, "first")  # A stale source pack cannot reattach to the new session.
-        send(10, replacement, "second")
+        replacement = controller.processes[10]
+        send(first, "first")  # A stale source pack cannot reattach to the new session.
+        send(replacement, "second")
         controller.poll()
-        current_scope = controller.pack_mods[10]
+        current_scope = controller.processes[10].mods
         drain(current_scope)
         assert list(current_scope.mods) == ["owned.second"]
         current_mod = current_scope.mods["owned.second"]
     finally:
         controller.close()
     assert current_scope.closed and current_mod.sandbox.closed
-    assert not controller.pack_mods and not controller.cleanup_failed
+    assert not controller.processes and not controller.cleanup_failed
     assert sum("CODE MOD ACTIVE:" in line for line in messages) == 2
 
 
@@ -218,19 +218,19 @@ def test_controller_cancels_source_job_on_exit_and_keeps_child_handling_responsi
     controller.start()
     scope = None
     try:
-        first = controller.sessions[10]
+        first = controller.processes[10].session
         pack = dict(state="ready", series="formula", id=mod.parent.name, root=str(mod.parent.resolve()))
-        controller.events.put(("bridge", (10, first, {"type": "send", "payload": {"event": "pack", "pack": pack}})))
+        controller.events.put(("bridge", (controller.processes[10], {"type": "send", "payload": {"event": "pack", "pack": pack}})))
         controller.poll()
-        scope = controller.pack_mods[10]
+        scope = controller.processes[10].mods
         assert entered.wait(30)
         device.child(20, controller.game)
         controller.poll()
-        assert 20 in controller.sessions and ("resume", 20) in device.calls
+        assert 20 in controller.processes and ("resume", 20) in device.calls
         first.is_detached = True
         first.handlers["detached"]("process-terminated")
         controller.poll()
-        assert scope.closed and 10 not in controller.pack_mods and results[0].snapshots is not None
+        assert scope.closed and 10 not in controller.processes and results[0].snapshots is not None
     finally:
         release.set()
         controller.close()

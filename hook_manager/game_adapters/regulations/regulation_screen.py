@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Show loaded regulation categories omitted by the native screen's fixed groups."""
 
-from ...diagnostics import build_log_record
-
 from functools import update_wrapper
 import inspect
 import threading
@@ -15,19 +13,18 @@ from ..ui import ui_bindings
 class RegulationScreenAdapter(Manager):
     """Append native cards without replacing the screen's input or inspector."""
 
+    error_level = 'WARNING'
+    error_prefix = 'REGULATIONS UI COMPATIBILITY FAILED catalogue: '
+    error_suffix = '; custom cards unavailable; continuing native game'
+    error_component = 'regulations'
+
     def __init__(self, submit_log, categories=None):
         """Observe the screen and send later errors to the pack's notice queue."""
-        super().__init__(lambda record: None)
-        self.submit_log, self.categories = submit_log, categories
+        super().__init__(lambda record: None, submit_log=submit_log)
+        self.categories = categories
         # Opening this screen is optional. Observe its normal import instead of
         # importing it during career loading or making readiness wait for it.
         self.observe("ui.screens.regulations_screen", self._ready)
-
-    def store_error(self, error):
-        """Retain a screen failure and submit its compatibility warning."""
-        super().store_error(error)
-        self.submit_log(build_log_record('WARNING', "REGULATIONS UI COMPATIBILITY FAILED catalogue: " + str(error)
-                    + "; custom cards unavailable; continuing native game", error=error, component="regulations"))
 
     def _ready(self, module):
         """Check native drawing and label methods before installing owned hooks."""
