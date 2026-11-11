@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Observe complete native week/save calls without changing their execution."""
 
-from collections import deque
 from functools import update_wrapper
 from itertools import count
 import threading
@@ -33,16 +32,22 @@ class NativeActivity(Manager):
         ("finish", "ui.week_advance_transition", "WeekAdvanceTransitionMixin", "_finish_background_week_advance", "(self, *, show_review=True)"),
     )
 
-    def __init__(self, readiness, journal=None, reporting_endpoint=None):
+    def __init__(self, readiness, journal=None, reporting_endpoint=None, *, writer=None):
+        # Production uses the reporting connection; observation tests can supply
+        # the same background writer with their own output collector.
+        if writer is None and reporting_endpoint is None:
+            raise ValueError("Native activity needs a reporting endpoint or an explicit writer")
         super().__init__(lambda record: None)
-        self.readiness, self.records = readiness, deque()
+        self.readiness = readiness
         self.journal = journal
         self._ids, self._sequences = count(1), count(1)
         self._lock, self._operations = threading.RLock(), {}
         self._status, self._key = None, None
-        notifications = ReportingSender(reporting_endpoint) if reporting_endpoint is not None else None
-        self.writer = JournalWriter(notifications.enqueue_log_record if notifications is not None else self.records.append,
-                                    notifications)
+        if writer is None:
+            notifications = ReportingSender(reporting_endpoint)
+            writer = JournalWriter(notifications.enqueue_log_record, notifications)
+        self.writer = writer
+        notifications = writer.notifications
         # Only our owned frozen Windows process delegates terminal presentation
         # to the external launcher, including under Proton. Ordinary Python and
         # native Linux interpreters keep their existing exception exit path.

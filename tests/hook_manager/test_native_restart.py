@@ -8,7 +8,7 @@ from typing import Optional
 
 import pytest
 
-from tests.hook_manager.test_native_events import native_events, records
+from tests.hook_manager.fixtures.native_events_support import native_events, records
 
 
 @pytest.fixture

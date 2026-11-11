@@ -23,7 +23,6 @@ NATIVE_LOG = "/home/player/Game's $literal/modLauncher/logs/launcher.log"
 
 def test_owner_loss_dismisses_console_after_complete_log_without_desktop_tools(tmp_path, monkeypatch):
     root = tmp_path / "modLauncher"
-    (root / ".state" / SESSION).mkdir(parents=True)
     monkeypatch.setattr(entry, "__file__", str(root / "launcher/entry.py"))
     reader, writer = os.pipe()
     lifetime = HostLifetime(descriptor=reader)
@@ -34,7 +33,7 @@ def test_owner_loss_dismisses_console_after_complete_log_without_desktop_tools(t
     def session_factory(value, **options):
         return FailureSession(value, input_stream=io.StringIO(), output=console,
                               child_factory=desktop, **options)
-    channel = LinuxFailureChannel(root, SESSION, NATIVE_LOG, host_lifetime=lifetime,
+    channel = LinuxFailureChannel(NATIVE_LOG, host_lifetime=lifetime,
                                   session_factory=session_factory)
     def fail(root, arguments, command, logger, lock_path, log_path):
         with entry._diagnostics.activity_scope(logger, "saving"):
@@ -60,9 +59,7 @@ def test_owner_loss_dismisses_console_after_complete_log_without_desktop_tools(t
     log = (root / "logs/launcher.log").read_text()
     assert "x" * 7000 + " END" in log and "LAUNCH FAILURE DETAILS" in log
     assert "Linux must not start" not in log
-    value = json.loads((root / ".state" / SESSION / "outcome.json").read_text())
-    assert value["log_written"] and value["host_log_path"] == NATIVE_LOG
-    assert (root / ".state" / SESSION / "log-complete").is_file()
+    assert not (root / ".state" / SESSION).exists()
     with entry._diagnostics.log_ownership(root / ".state/controller.lock"):
         pass
 
@@ -73,7 +70,7 @@ def test_check_only_prints_unowned_host_path_and_full_early_details_without_wait
     value = entry._diagnostics.build_launch_outcome(old_log)
     value.update(log_written=True, failure=dict(reason="early failure", stage="startup",
                  activity=None, details="full chained traceback details"))
-    LinuxFailureChannel(tmp_path, SESSION, NATIVE_LOG)(value, owned_log=False, wait=False)
+    LinuxFailureChannel(NATIVE_LOG)(value, owned_log=False, wait=False)
     text = capsys.readouterr().err
     assert "No completed log for this launch: " + NATIVE_LOG in text
     assert "full chained traceback details" in text and "Press any key" not in text
@@ -81,7 +78,7 @@ def test_check_only_prints_unowned_host_path_and_full_early_details_without_wait
     assert not (tmp_path / ".state").exists()
 
 
-def test_failed_sidecar_write_keeps_original_failure_and_waiting_console(tmp_path):
+def test_console_waits_for_dismissal_without_a_session_directory(tmp_path):
     console = io.StringIO()
     value = entry._diagnostics.build_launch_outcome(tmp_path / "not-owned.log")
     value["failure"] = dict(reason="primary failure", activity=None)
@@ -90,7 +87,7 @@ def test_failed_sidecar_write_keeps_original_failure_and_waiting_console(tmp_pat
         session = FailureSession(value, input_stream=io.StringIO(), output=console, **options)
         retained.append(session)
         return session
-    channel = LinuxFailureChannel(tmp_path, SESSION, NATIVE_LOG, session_factory=factory)
+    channel = LinuxFailureChannel(NATIVE_LOG, session_factory=factory)
     finished = threading.Event()
     def present():
         channel(value, owned_log=False, wait=True)
@@ -99,13 +96,13 @@ def test_failed_sidecar_write_keeps_original_failure_and_waiting_console(tmp_pat
     worker.start()
     try:
         wait_for(lambda: "Console input unavailable" in console.getvalue())
-        assert "Could not retain session diagnostics" in console.getvalue()
         assert "primary failure" in console.getvalue() and not finished.is_set()
     finally:
         if retained:
             retained[0].dismiss()
         worker.join(timeout=3)
     assert finished.is_set() and not (tmp_path / "not-owned.log").exists()
+    assert not (tmp_path / ".state").exists()
 
 
 def test_linux_helper_guard_exits_without_starting_desktop_or_waiting_on_owner():

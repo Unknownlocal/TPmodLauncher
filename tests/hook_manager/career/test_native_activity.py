@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from hook_manager import diagnostics
-from hook_manager.native_activity import NativeActivity
+from tests.hook_manager.fixtures.collected_activity import CollectedActivity
 from hook_manager.native_readiness import NativeReadiness
 from launcher.diagnostics import reporter, write_log
 from tests.controller_device import rig
@@ -62,7 +62,7 @@ def observed(monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, name, module)
     readiness = NativeReadiness()
     readiness._activity_status = {"kind": "in_save", "sequence": 1, "generation": 1}
-    activity = NativeActivity(readiness)
+    activity = CollectedActivity(readiness)
     monkeypatch.setattr(diagnostics, "activity_provider", activity.current_activity)
     try:
         yield State, Transition, activity, readiness

@@ -66,7 +66,7 @@ def _main(game_arguments=None, *, launcher_arguments=(), host_session=None, host
     host_lifetime = None
     if host_session is not None:
         channel = _load_helper(root, "diagnostics/linux_failure_channel")
-        presentation = channel.LinuxFailureChannel(root, host_session, host_log_path)
+        presentation = channel.LinuxFailureChannel(host_log_path)
     try:
         if host_session is not None:
             lifetime_module = _load_helper(root, "diagnostics/host_lifetime")

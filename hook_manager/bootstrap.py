@@ -206,9 +206,6 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             response["adapters"] = module.adapters.status(poll=False)
             response.update(pack=module.discovery.poll(), menu=module.menu.status(), themes=module.themes.status(),
                             settings=module.settings.status(), readiness=module.readiness.snapshot())
-        activity_notices = response["activity_notices"] = []
-        while module.activity.records:
-            activity_notices.append(module.activity.records.popleft())
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
         # Bootstrap may fail before the shared diagnostics source has loaded.

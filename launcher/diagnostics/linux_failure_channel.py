@@ -4,11 +4,7 @@
 from contextlib import nullcontext
 from copy import deepcopy
 import importlib.util
-import json
-import os
 from pathlib import Path, PurePosixPath
-import re
-import traceback
 
 
 class LinuxFailureChannel:
@@ -19,12 +15,9 @@ class LinuxFailureChannel:
     The existing explicit owner channel cancels the notice without polling.
     """
 
-    def __init__(self, root, session, host_log_path, *, host_lifetime=None, session_factory=None):
-        if not re.fullmatch(r"linux-notice\.[A-Za-z0-9]{10}", session):
-            raise ValueError("Invalid Linux notice session")
+    def __init__(self, host_log_path, *, host_lifetime=None, session_factory=None):
         if not PurePosixPath(host_log_path).is_absolute():
             raise ValueError("The Linux log path must be absolute")
-        self.directory = Path(root) / ".state" / session
         self.host_log_path = host_log_path
         self.host_lifetime = host_lifetime
         self.session_factory = session_factory
@@ -45,19 +38,5 @@ class LinuxFailureChannel:
             spec.loader.exec_module(module)
             factory = module.FailureSession
         session = factory(value, owned_log=owned_log, host_platform="linux")
-        if wait:
-            try:
-                if self.directory.is_symlink() or not self.directory.is_dir():
-                    raise OSError("The Linux notice directory is unavailable")
-                with (self.directory / "outcome.json").open("x", encoding="utf-8", newline="\n") as stream:
-                    json.dump(value, stream, ensure_ascii=True)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if value["log_written"]:
-                    (self.directory / "log-complete").touch(exist_ok=False)
-            except OSError:
-                # Sidecar diagnostics cannot suppress the retained console or
-                # replace the original failure and completed launcher.log.
-                session._write_presentation_error("Could not retain session diagnostics:\n" + traceback.format_exc())
         with self.host_lifetime.watch(session.dismiss) if self.host_lifetime is not None else nullcontext():
             session.run(wait=wait)

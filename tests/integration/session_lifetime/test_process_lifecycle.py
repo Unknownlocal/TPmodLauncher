@@ -15,8 +15,8 @@ from launcher.pack_mods import PackMods
 from launcher.game_bridge import Bridge
 from types import SimpleNamespace
 from tests.controller_device import rig
-from tests.hook_manager.test_native_events import native_events
-from tests.launcher.diagnostics.test_reporting_delivery import delivery, writer_for
+from tests.hook_manager.fixtures.native_events_support import native_events
+from tests.launcher.fixtures.reporting_support import delivery, writer_for
 
 
 def test_process_exit_interrupts_pending_bridge_work_before_routine_backlog(rig, monkeypatch):

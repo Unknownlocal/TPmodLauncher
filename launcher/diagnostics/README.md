@@ -206,11 +206,9 @@ Windows functions by a fixed source path, without loading game or mod packages.
 Other hosts retain the console notice when no dialog function is supplied.
 
 The Proton entry route selects `linux_failure_channel.py`. `LinuxFailureChannel`
-keeps entry's completed log locked and records this launch's outcome, then runs
-`FailureSession` in console-only mode. The notice shows the failed activity,
-stage, reason and host-native log path, rather than a guessed Wine drive mapping.
-Early import failures include their full traceback. Failure to save the separate
-outcome file cannot suppress the console notice or claim another launch's log.
+keeps entry's completed log locked while `FailureSession` displays the failed
+activity, stage, reason and Linux log path in the console.
+Early import failures include their full traceback.
 
 The user's host selects desktop features; the running interpreter selects console
 APIs. Windows Python under Proton opens its own console input/output even though
