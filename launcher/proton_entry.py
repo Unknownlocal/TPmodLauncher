@@ -84,7 +84,9 @@ def _main(game_arguments=None, *, launcher_arguments=(), host_session=None, host
         print(details, file=sys.stderr, flush=True)
         presentation(dict(session_id=uuid.uuid4().hex, log_path=str(root / "logs/launcher.log"),
                           log_written=False, failure=dict(reason=str(error), details=details,
-                          activity=dict(description="while starting the launcher"))), owned_log=False, wait=True)
+                          stage="startup_helpers", level="ERROR",
+                          activity=dict(kind="launcher_startup", description="while starting the launcher"))),
+                     owned_log=False, wait=True)
         return 1
     # entry.main still validates this exact installed executable. Game
     # arguments cross from the shell wrapper, as separate argv entries. Launcher

@@ -53,6 +53,12 @@ be added to the already-closed log.
 Normal package imports use the functions exported by `__init__.py`. Startup loads
 `core.py` directly by a fixed path so dependency verification failures can be
 logged before other launcher packages are available.
+If these helpers themselves cannot load, `entry.py` uses a standard-library
+console notice with the full traceback and `startup_helpers` stage. It never
+opens a log or describes an earlier launch's file as completed. Independent raw
+output and input threads keep key dismissal available during slow output;
+missing input leaves the notice open until console closure or Proton owner loss.
+Check-only and programmatic calls without presentation return without waiting.
 
 `activity_tracker.py` contains `ActivityTracker`. It records startup, game loading,
 mod loading and career activity for each owned process. Nested work keeps its

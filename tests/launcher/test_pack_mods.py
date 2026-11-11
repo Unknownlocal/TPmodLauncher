@@ -10,6 +10,8 @@ import queue
 import pytest
 
 from launcher.pack_mods import PackMods
+from launcher.diagnostics import reporter, handle_error
+from launcher.mod_contract import Mod
 
 
 @pytest.fixture
@@ -23,6 +25,68 @@ def pack(tmp_path):
         "root": str(folder.resolve()),
     }
     return tmp_path, folder, record
+
+
+def test_fatal_loading_progress_failure_is_logged_without_a_second_bridge_request(pack):
+    game, _, record = pack
+    failure = TimeoutError("Owned progress request timed out " + "x" * 7000 + " FULL END")
+    requests = []
+    def stalled_progress(value):
+        requests.append(value)
+        raise failure
+    path = game / "launcher.log"
+    with reporter(path) as logger:
+        with closing(PackMods(game, logger, set_loading=stalled_progress)) as scope:
+            with pytest.raises(TimeoutError) as caught:
+                scope.load(record)
+            assert caught.value is failure and len(requests) == 1
+            handle_error(logger, caught.value, stage="controller")
+    text = path.read_text()
+    assert "CODE MOD LOADING FAILED" in text and "FULL END" in text
+
+
+@pytest.mark.parametrize("secondary", ["progress", "cleanup"])
+def test_original_mod_failure_survives_failed_cleanup_or_progress(pack, code_mod, monkeypatch, secondary):
+    game, folder, record = pack
+    code_mod(folder, "owned.failure")
+    original = RuntimeError("Original activation failure " + "x" * 7000 + " PRIMARY END")
+    def failed_activation(mod):
+        try:
+            raise OSError("Owned complete activation cause")
+        except OSError as cause:
+            if secondary == "progress":
+                raise original
+            raise original from cause
+    monkeypatch.setattr(Mod, "activate", failed_activation)
+    close = Mod.close
+    def failed_close(mod):
+        close(mod)
+        raise OSError("Owned cleanup secondary failure")
+    if secondary == "cleanup":
+        monkeypatch.setattr(Mod, "close", failed_close)
+    progress = []
+    def publish(value):
+        progress.append(value)
+        if secondary == "progress" and value["failed"]:
+            raise TimeoutError("Owned progress secondary failure")
+    path, outcome = game / "launcher.log", {}
+    with reporter(path, outcome=outcome) as logger:
+        with closing(PackMods(game, logger, set_loading=publish)) as scope:
+            with pytest.raises(RuntimeError) as caught:
+                scope.load(record)
+            assert caught.value is original
+            cause = original.__context__ if secondary == "progress" else original.__cause__
+            assert isinstance(cause, OSError) and str(cause) == "Owned complete activation cause"
+            handle_error(logger, caught.value, stage="controller")
+            # Later fatal cleanup reporting must remain secondary to this load.
+            handle_error(logger, OSError("Owned final cleanup failure"), stage="cleanup")
+    assert outcome["failure"]["reason"] == str(original)
+    assert outcome["failure"]["stage"] == "controller"
+    assert outcome["failure"]["activity"]["mod"] == "owned.failure"
+    text = path.read_text()
+    assert "PRIMARY END" in text and "Owned complete activation cause" in text
+    assert f"Owned {secondary} secondary failure" in text and "Owned final cleanup failure" in text
+    assert len(progress) == (2 if secondary == "progress" else 1)
 
 
 def test_only_direct_declared_mods_load_once_in_id_order(pack, code_mod):

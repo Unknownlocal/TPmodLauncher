@@ -15,6 +15,10 @@ verification. Normal startup also validates Steam's command against the installe
 Both paths claim ownership of the log before verification. Only fixed
 standard-library logging helpers load before the dependency checks, so a damaged
 dependency or runner can still leave a complete error log.
+If those first helpers cannot load, entry retains the complete traceback in a
+console-only notice using the standard library. It identifies the startup stage
+and leaves any previous log untouched. Check-only calls print without waiting;
+normal launches wait for a key, console closure or loss of the Proton owner.
 
 Dependency verification uses the expected versions and file inventory in
 `bundled_packages.toml`. The runner's sources, notices and Wasm bytes have a
@@ -177,6 +181,10 @@ entry imports, so a member can import a peer immediately. Imports happen togethe
 at the first source candidate; source and prebuilt activation stays in ID order.
 Source UI declarations stay staged until pack startup finishes. A failed source
 member rejects the whole fixed group; the loader does not retry with fewer mods.
+The loader records a rejection before cleanup or progress updates. If either
+fails too, the original error keeps its causes and activity, with secondary
+details added. A fatal load failure goes straight to controller error handling
+without another progress request to the same bridge.
 
 ## Mod execution and native readiness
 

@@ -2,6 +2,7 @@
 """Discover and own sandboxed code mods for one process's selected Formula pack."""
 
 from launcher.diagnostics import activity_scope, bind_reporter
+from hook_manager.diagnostics import error_text
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -14,7 +15,6 @@ import weakref
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
-from launcher.process_ended import ProcessEnded
 from launcher.compiled_mod import CompiledMod
 from launcher.mod_contract import Manifest, ManifestError, Mod, _host_operations
 from launcher.pack_candidate import PackCandidate
@@ -211,7 +211,7 @@ class PackMods:
                 self._reject_mods(self._regulation_owners, str(error)[:512])
             except Exception as cleanup_error:
                 self._log("CLEANUP ERROR", level="ERROR", detail=str(cleanup_error)[:512], error=cleanup_error)
-            self._progress("error")
+            self._progress("error", error=error)
             raise
         if self.regulations.ready:
             self._publish_ui()
@@ -472,22 +472,32 @@ class PackMods:
                         raise ManifestError("Data pack exceeds the 32-code-mod limit")
         return sorted(candidates)
 
-    def _progress(self, state="loading"):
-        """Publish host-owned counts; native readiness still waits for registry installation."""
+    def _progress(self, state="loading", *, error=None):
+        """Publish counts, preserving an already-recorded rejection if delivery fails."""
         if state in ("loading", "complete") and self._regulation_waiting():
             failed = self._regulation_failed
             # The native preload adapter protects the selected career after
             # the menu opens, without holding pack-owned UI for career activation.
             state = "error" if failed else "complete" if self.finished and self._regulation_armed else "loading"
         if self.set_loading is not None:
-            self.set_loading(
-                dict(
-                    state=state,
-                    loaded=len(self.mods),
-                    failed=self.failed,
-                    total=self.total,
+            try:
+                self.set_loading(
+                    dict(
+                        state=state,
+                        loaded=len(self.mods),
+                        failed=self.failed,
+                        total=self.total,
+                    )
                 )
-            )
+                return
+            except Exception as progress_error:
+                if error is None:
+                    raise
+                self._log("PROGRESS FAILED", level="ERROR", error=progress_error, detail=str(progress_error)[:512])
+                error.add_note("Loading progress could not be updated:\n" + error_text(progress_error))
+            # Leave the secondary exception handler before re-raising, so the
+            # primary failure keeps its original implicit context and cause.
+            raise error
 
     def _manifest(self, path):
         if self.runner_bundle is None:
@@ -547,10 +557,10 @@ class PackMods:
             next(self.loading)
         except StopIteration:
             self.loading = None
-        except ProcessEnded:
-            raise  # Normal exit is not a failed loading operation.
-        except BaseException:
-            self._progress("error")
+        except Exception as error:
+            # Retain the primary failure locally. A second progress request to
+            # the same bridge can time out again or replace the original error.
+            self._log("LOADING FAILED", level="ERROR", error=error, detail=str(error)[:512])
             raise
         self._start_regulations()
 
@@ -605,10 +615,11 @@ class PackMods:
             self._log(
                 "DISCOVERY REJECTED", level="WARNING",
                 detail=str(error)[:512],
+                error=error,
             )
             self._log("DISCOVERY TIMING", level="DEBUG", phase_seconds=load_timings,
                       total_seconds=round(perf_counter() - started, 6))
-            self._progress("error")
+            self._progress("error", error=error)
             return
         self.total = len(candidates)
         self._progress()
@@ -672,6 +683,7 @@ class PackMods:
             if type(manifest) is SourceManifest and self._source_unavailable:
                 continue  # The fixed group's failure already counted and logged every member.
             prepared = None
+            load_error = None
             try:
                 with activity_scope(self.submit_log, "mod_loading", mod=manifest.id):
                     if type(manifest) is SourceManifest:
@@ -715,20 +727,34 @@ class PackMods:
                         self._flush_themes()
                     self._log("ACTIVE", id=manifest.id, version=manifest.version)
             except Exception as error:
+                load_error = error
                 if type(manifest) is SourceManifest:
                     self._reject_sources(error)
-                    if self._source_runner is not None:
-                        self._source_runner.close()
-                    else:
-                        self._remove_sources()
                 else:
                     self.failed += 1
-                    failed = self.mods.get(manifest.id)
-                    if failed is not None:
-                        failed.close()
-                    self._remove_mod(manifest.id)
                     self._log("REJECTED", level="WARNING" if isinstance(error, ManifestError) else "ERROR",
                               id=manifest.id, folder=candidate.root.name, detail=str(error)[:512], error=error)
+                # Record the rejection before cleanup can fail. A cleanup error
+                # makes loading fatal, but cannot become its primary reason.
+                cleanup_failed = False
+                try:
+                    if type(manifest) is SourceManifest:
+                        if self._source_runner is not None:
+                            self._source_runner.close()
+                        else:
+                            self._remove_sources()
+                    else:
+                        failed = self.mods.get(manifest.id)
+                        if failed is not None:
+                            failed.close()
+                        self._remove_mod(manifest.id)
+                except Exception as cleanup_error:
+                    self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, error=cleanup_error,
+                              detail=str(cleanup_error)[:512])
+                    error.add_note("Code mod cleanup failed:\n" + error_text(cleanup_error))
+                    cleanup_failed = True
+                if cleanup_failed:
+                    raise
                 for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),
                                           ("ui-settings", self._flush_themes)):
                     if capability in manifest.capabilities:
@@ -743,7 +769,7 @@ class PackMods:
                 self._log(
                     "TIMING", level="DEBUG", pack=folder.name, id=manifest.id, phase_seconds=timings
                 )
-            self._progress()
+            self._progress(error=load_error)
         self.finished = True
         self._source_starting = False
         self._source_entries.clear()

@@ -10,6 +10,7 @@ from importlib.metadata import version
 import math
 from pathlib import Path
 import sys
+import traceback
 
 # Do not create compiled Python files when loading our code or packages.
 sys.dont_write_bytecode = True
@@ -24,8 +25,114 @@ def _load_helper(relative):
     return module
 
 
-_dependencies = _load_helper("bundled_dependencies")
-_diagnostics = _load_helper("diagnostics/core")
+_startup_failure = None
+try:
+    _dependencies = _load_helper("bundled_dependencies")
+    _diagnostics = _load_helper("diagnostics/core")
+except Exception as error:
+    # Capture while the chain is intact. A damaged helper must not escape the
+    # console entry boundary or claim a previous launch's unowned log.
+    _startup_failure = dict(reason=str(error), details=traceback.format_exc())
+
+
+def _startup_notice(failure, *, outcome=None, wait=False, host_lifetime=None, host_log_path=None):
+    """Retain a complete pre-log failure using only the standard library.
+
+    Normal diagnostics may be the damaged source, so this last boundary cannot
+    depend on their writer, input or presentation helpers. It never opens a log.
+    """
+    import os
+    import threading
+    import uuid
+    from contextlib import nullcontext
+
+    root = Path(__file__).resolve().parent.parent
+    value = dict(session_id=uuid.uuid4().hex, runtime_platform=sys.platform,
+                 log_path=str(root / "logs/launcher.log"), log_written=False, log_error=None,
+                 failure={**failure, "stage": "startup_helpers", "level": "ERROR",
+                          "activity": {"kind": "launcher_startup", "description": "while starting the launcher"}},
+                 cleanup="not_started", game_close="not_requested")
+    if outcome is not None:
+        outcome.update(value)
+    text = ("Mod Launcher could not continue\nAn error occurred while starting the launcher.\n"
+            "Stage: startup_helpers\n" + failure["details"] + "\nNo completed log for this launch: "
+            + str(host_log_path or value["log_path"]) + "\n")
+    if wait:
+        text += "Press any key to close this notice, or close the launcher console.\n"
+    dismissed = threading.Event()
+    native_console = False
+    if wait and os.name == "nt":
+        try:
+            import ctypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetConsoleWindow.argtypes, kernel.GetConsoleWindow.restype = (), ctypes.c_void_p
+            native_console = bool(kernel.GetConsoleWindow())
+        except Exception:
+            pass  # Damaged native support must leave redirected output usable.
+
+    # Use an owned raw descriptor so a stalled console cannot hold Python's
+    # standard-stream lock at interpreter exit. Input proceeds independently.
+    descriptor = None
+    if native_console:
+        try:
+            descriptor = os.open("CONOUT$", os.O_WRONLY | os.O_BINARY)
+        except OSError:
+            pass
+    if descriptor is None:
+        try:
+            descriptor = os.dup(sys.stderr.fileno())
+        except (AttributeError, OSError, ValueError):
+            pass
+    def write_notice():
+        try:
+            if descriptor is None:
+                sys.stderr.write(text)
+                sys.stderr.flush()
+            else:
+                encoding = os.device_encoding(descriptor) if native_console else getattr(sys.stderr, "encoding", None)
+                data = text.encode(encoding or "utf-8", errors="backslashreplace")
+                while data:
+                    count = os.write(descriptor, data)
+                    if count == 0:
+                        break
+                    data = data[count:]
+        except (AttributeError, OSError, ValueError):
+            pass  # A closed console cannot replace the startup failure.
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    writer = threading.Thread(target=write_notice, daemon=True, name="startup-failure-output")
+    writer.start()
+    if wait:
+        def read_key():
+            try:
+                # Steam can redirect stdin while Python still owns a console.
+                # The CRT's console reader bypasses those redirected handles.
+                if native_console:
+                    import msvcrt
+                    key = msvcrt.getwch()
+                else:
+                    try:
+                        input_descriptor = os.dup(sys.stdin.fileno())
+                    except (AttributeError, OSError, ValueError):
+                        key = sys.stdin.read(1)  # In-memory callers have no OS stream lock.
+                    else:
+                        try:
+                            key = os.read(input_descriptor, 1)
+                        finally:
+                            os.close(input_descriptor)
+                if key:
+                    dismissed.set()
+            except (AttributeError, OSError, ValueError):
+                pass  # Missing input/EOF leaves the notice for window closure.
+        threading.Thread(target=read_key, daemon=True, name="startup-failure-input").start()
+        with host_lifetime.watch(dismissed.set) if host_lifetime is not None else nullcontext():
+            try:
+                dismissed.wait()
+            except KeyboardInterrupt:
+                pass  # Keep the failed-startup classification.
+    writer.join(timeout=1)
+    return 1
 
 
 def main(argv=None, *, outcome=None, presentation=None, host_lifetime=None) -> int:
@@ -33,6 +140,13 @@ def main(argv=None, *, outcome=None, presentation=None, host_lifetime=None) -> i
 
     Programmatic callers receive their exit code without presentation by default.
     """
+    if _startup_failure is not None:
+        options = list(sys.argv[1:] if argv is None else argv)
+        options = options[:options.index("--")] if "--" in options else options
+        return _startup_notice(_startup_failure, outcome=outcome,
+                               wait=presentation is not None and "--check-only" not in options,
+                               host_lifetime=host_lifetime,
+                               host_log_path=getattr(presentation, "host_log_path", None))
     # Arguments before -- configure the launcher; arguments after it belong to the game.
     parser = argparse.ArgumentParser(
         description="Check dependencies or launch and track the game."
