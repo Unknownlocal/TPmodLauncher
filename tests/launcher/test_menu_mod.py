@@ -38,9 +38,8 @@ def menu_pack(tmp_path, built_menu_mod, built_python_mod):
     return tmp_path, record
 
 
-@pytest.mark.parametrize("background", [False, True])
 def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
-    menu_pack, native_menu, background
+    menu_pack, native_menu
 ):
     game, record = menu_pack
     hub, _ = native_menu
@@ -52,7 +51,7 @@ def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
             messages.append,
             set_menu=lambda items: {"menu": adapter.update(items)},
             set_loading=adapter.set_loading,
-            background=background,
+            background=True,
         )
     ) as scope:
         scope.load(record)

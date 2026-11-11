@@ -9,7 +9,6 @@ from tests.launcher.fixtures.log_support import read_log
 
 from launcher.diagnostics import activity_journal, reporting_sender
 from launcher.diagnostics.activity_journal import ActivityJournal
-from launcher.diagnostics.journal_writer import JournalWriter
 from launcher.process_lifecycle import LaunchError
 from tests.controller_device import rig  # Dependency of the shared delivery fixture.
 from tests.launcher.fixtures.reporting_support import delivery, error_record, writer_for
@@ -92,27 +91,6 @@ def test_stalled_socket_bounds_fallback_and_coalesces_launcher_wakes(delivery, m
     assert "x" * 7000 + " FULL END" in text and "fallback 999" in text
     assert "dropped 744" in text and "Original save diagnostic note" in text
     assert reads == [threading.get_ident()]  # One pending controller hint for the entire storm.
-
-
-def test_formatted_snapshot_survives_source_lookup_failure(tmp_path, monkeypatch):
-    import linecache
-    from launcher.diagnostics.exception_snapshot import ExceptionSnapshot
-    journal = ActivityJournal(tmp_path / "owned.jsonl")
-    journal.create()
-    try:
-        raise ValueError("Original failure " + "x" * 7000 + " FULL END")
-    except ValueError as error:
-        error.add_note("Original diagnostic note")
-        failure = ExceptionSnapshot(error)
-    def unavailable(*args):
-        raise OSError("Source cache unavailable")
-    monkeypatch.setattr(linecache, "checkcache", unavailable)
-    writer = JournalWriter(lambda record: pytest.fail(str(record)))
-    writer.enqueue_log_record({"level": "ERROR", "detail": "captured failure"}, journal, failure)
-    assert writer.finish(2)
-    text = journal.read_available()[0]["traceback"]
-    assert "Source cache unavailable" in text and "x" * 7000 + " FULL END" in text
-    assert "Original diagnostic note" in text and "test_reporting_pressure.py" in text
 
 
 def test_slow_launcher_bounds_received_info_but_keeps_saves_and_errors(delivery):

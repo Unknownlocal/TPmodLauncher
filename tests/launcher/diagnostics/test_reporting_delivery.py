@@ -98,18 +98,6 @@ def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
         assert writer.finish(2) and receiver.finished.wait(2)
 
 
-def test_failed_journal_delivers_full_multiframe_error_over_socket(delivery, tmp_path):
-    controller, bridge, receiver, path, _ = delivery
-    writer = writer_for(receiver)
-    record, failure = error_record("Owned large error " + "x" * 180_000 + " FULL SOCKET END")
-    writer.enqueue_log_record(record, ActivityJournal(tmp_path / "missing" / "journal"), failure)
-    assert writer.finish(2) and receiver.finished.wait(2)
-    controller.poll()
-    text = read_log(path)
-    assert "Native activity journal failed" in text
-    assert "x" * 180_000 + " FULL SOCKET END" in text and "Original save diagnostic note" in text
-    assert not controller.stopping and receiver.confirmed
-    assert bridge.journal.path.exists()  # A caught save error is not a fatal exit.
 
 
 def test_torn_append_cannot_hide_socket_only_fatal_details(delivery, monkeypatch):

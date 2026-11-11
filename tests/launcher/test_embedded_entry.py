@@ -18,6 +18,13 @@ def test_normal_entry_loads_source_examples_without_build_tools(embedded_project
     root = embedded_project
     probe = root / "launcher/entry_runner_probe.py"
     shutil.copyfile(FIXTURES / probe.name, probe)
+    # The probe writes real source into this target before testing link rejection.
+    target = root.parent / "data/entry-owned-pack/owned.source"
+    target.mkdir(parents=True)
+    linked = root / ".state/runner-linked"
+    linked.parent.mkdir(exist_ok=True)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(linked), str(target)],
+                   check=True, capture_output=True, timeout=10)
     try:
         result = subprocess.run(
             [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(probe)],
@@ -26,6 +33,7 @@ def test_normal_entry_loads_source_examples_without_build_tools(embedded_project
         assert result.returncode == 0 and "Normal entry loaded source examples" in result.stdout, result.stderr
     finally:
         probe.unlink()
+        linked.rmdir()  # Only the fixture's junction, never the source directory.
 
 
 @pytest.mark.embedded

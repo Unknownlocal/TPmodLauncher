@@ -95,6 +95,7 @@ def test_dialog_close_ends_visible_console_but_leaves_completed_log_open(launch_
         assert "END OF ORIGINAL CAUSE" in editor["text"] and "Owned cleanup complete" in editor["text"]
         assert user.PostMessageW(notice["window"], 0x10, 0, 0)
         assert process.wait(timeout=5) == 37 and helper_done.wait(3)
+        assert json.loads((directory / "finished.json").read_text())["terminal_restored"]
         assert not editor_done.is_set()
         visible(editor)
 

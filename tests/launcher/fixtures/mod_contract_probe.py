@@ -3,6 +3,7 @@
 
 from contextlib import closing
 import importlib.util
+import json
 from pathlib import Path
 import sys
 
@@ -30,9 +31,9 @@ with closing(PackMods(Path(sys.argv[1]), messages.append)) as scope:
     )
     mod = scope.mods["example.diagnostics"]
     assert mod.event("echo", {"number": 42}) == {"count": 1, "value": {"number": 42}}
-assert any(
-    '"id": "example.diagnostics", "message": "ready  "' in line for line in messages
-)
+reported = [json.JSONDecoder().raw_decode(line.partition("CODE MOD REPORT: ")[2])[0]
+            for line in messages if "CODE MOD REPORT: " in line]
+assert any(row == {"id": "example.diagnostics", "message": "ready "} for row in reported)
 assert mod.sandbox.closed
 assert importlib.util.find_spec("componentize_py") is None
 print("Python author contract and pack loading passed")

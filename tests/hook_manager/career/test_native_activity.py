@@ -12,7 +12,9 @@ from hook_manager import diagnostics
 from tests.hook_manager.fixtures.collected_activity import CollectedActivity
 from hook_manager.native_readiness import NativeReadiness
 from launcher.diagnostics import reporter, write_log
-from tests.controller_device import rig
+from tests.launcher.fixtures.log_support import read_log
+from tests.launcher.fixtures.reporting_support import delivery, writer_for
+from tests.controller_device import rig  # Dependency of the shared delivery fixture.
 
 
 @pytest.fixture
@@ -215,35 +217,46 @@ def test_new_week_root_uses_new_generation_while_old_transition_awaits_finish(ob
     assert activity.current_activity()["kind"] == "in_save"
 
 
-def test_failed_journal_keeps_exception_and_fatal_bridge_fallback(observed, rig, tmp_path, capsys):
-    from contextlib import closing
+def test_failed_save_crosses_socket_fallback_with_full_error_and_original_activity(observed, delivery, tmp_path, capsys):
     from launcher.diagnostics.activity_journal import ActivityJournal
     from launcher.process_lifecycle import LaunchError
 
     State, _, activity, _ = observed
+    controller, bridge, receiver, path, _ = delivery
+    assert activity.writer.finish(2)
+    activity.writer = writer_for(receiver)
     activity.journal = ActivityJournal(tmp_path / "unavailable.jsonl")
-    state, error = State(), OSError("Owned journal fallback failure")
+    reason = "Owned journal fallback failure " + "x" * 180_000 + " FULL SOCKET END"
+    state, error = State(), OSError(reason)
+    error.add_note("Original save diagnostic note")
     state.fail_save = error
     with pytest.raises(OSError) as raised:
         state.save_season()
     assert raised.value is error
+    assert activity.writer.wait_idle(2)
+    caught = threading.Event()
+    receiver.control_ready = lambda request, dependency: caught.set()
+    # This ordered marker acknowledges the preceding fallback records without
+    # closing the connection needed by the later unhandled failure.
+    activity.writer.notifications.enqueue_control_ready("a" * 32, "operations")
+    assert caught.wait(2)
+    controller.poll()
+    assert reason in read_log(path) and not controller.stopping
+    assert bridge.journal.path.exists()
     activity._unhandled(type(error), error, error.__traceback__)
-    assert "Owned journal fallback failure" in capsys.readouterr().err
-    assert any("Native activity journal failed" in record["detail"] for record in activity.records)
-    device, controller, messages, _ = rig
-    with closing(controller):
-        controller.start()
-        session = controller.sessions[10]
-        for record in activity.records:
-            controller.events.put(("bridge", (10, session, {"type": "send", "payload": {**record, "event": "native-activity"}})))
-        with pytest.raises(LaunchError) as fatal:
-            controller.poll()
-        assert "Owned journal fallback failure" in str(fatal.value)
-        assert fatal.value.launcher_activity["kind"] == "saving"
-        assert controller.activity.snapshot(10)["kind"] == "in_save"
-        # A later script error stays visible without replacing the original fatal.
-        controller.events.put(("bridge", (10, session, {"type": "error", "description": "Late script unload"})))
-    assert controller.cleanup_failed and any("Late script unload" in message for message in messages)
+    assert reason in capsys.readouterr().err and receiver.finished.wait(2)
+    with pytest.raises(LaunchError) as fatal:
+        controller.poll()
+    assert reason in str(fatal.value) and fatal.value.launcher_activity["kind"] == "saving"
+    assert controller.activity.snapshot(10)["kind"] == "in_save" and receiver.confirmed
+    session = controller.sessions[10]
+    # Secondary cleanup errors remain visible after the original save failed.
+    controller.events.put(("bridge", (10, session, {"type": "error", "description": "Late script unload"})))
+    controller.close()
+    text = read_log(path)
+    assert reason in text and "Original save diagnostic note" in text
+    assert "Native activity journal failed" in text and "Late script unload" in text
+    assert controller.cleanup_failed
 
 
 def test_blocked_journal_does_not_delay_gameplay_status_or_stop(observed, tmp_path, monkeypatch):

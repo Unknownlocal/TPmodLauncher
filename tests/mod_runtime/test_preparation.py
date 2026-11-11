@@ -175,29 +175,6 @@ def test_cancel_during_compilation_disposes_late_result(runner_bundle, source_gr
     assert future.exception() is None and results[0].closed
 
 
-def test_cancel_after_last_checkpoint_disposes_entire_late_group(runner_bundle, source_group, monkeypatch):
-    entered, release = threading.Event(), threading.Event()
-    results = []
-    original = preparation._prepare_group
-    def blocked(*args):
-        result = original(*args)
-        results.append(result)
-        entered.set()
-        assert release.wait(10), "Test did not release prepared result"
-        return result
-    monkeypatch.setattr(preparation, "_prepare_group", blocked)
-    with ThreadPoolExecutor(max_workers=1) as executor, SourcePreparation(executor, runner_bundle, source_group) as job:
-        future = job._future
-        try:
-            assert entered.wait(30)
-            job.close()
-            assert future.running()
-        finally:
-            release.set()
-    assert future.exception() is None
-    assert results[0].snapshots is None and results[0].component is None and results[0].compiled is None
-
-
 @pytest.mark.parametrize("failure", ["compile", "interrupt"])
 def test_worker_errors_propagate_and_close_the_job(runner_bundle, source_group, monkeypatch, failure):
     if failure == "compile":

@@ -43,8 +43,7 @@ def launch_notice(tmp_path):
         wait_for(lambda: (directory / "console-ready").exists() or (directory / "helper.json").exists() or process.poll() is not None
                  or mode == "missing" and "Presentation helper failed" in (directory / "console.txt").read_text(encoding="utf-8")
                  or mode == "timeout" and "Error dialog startup timed out" in (directory / "console.txt").read_text(encoding="utf-8"))
-        code = process.poll()
-        assert code is None or mode == "dialog" and code == 37, (directory / "console.txt").read_text(encoding="utf-8")
+        assert process.poll() is None, (directory / "console.txt").read_text(encoding="utf-8")
         return process, directory
     yield launch
     for directory in tmp_path.iterdir():

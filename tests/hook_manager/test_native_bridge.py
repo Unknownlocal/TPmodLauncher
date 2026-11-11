@@ -15,16 +15,16 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 @pytest.mark.native
 def test_real_bridge_initialises_hooks_and_restores_before_detach(
-    native_project, tmp_path
+    native_bridge_project, tmp_path
 ):
-    root, client = native_project.root, native_project.client
+    root, client = native_bridge_project.root, native_bridge_project.client
     runtime = tmp_path / "owned Python target"
     if os.name == "nt":
         shutil.copytree(client.parent, runtime)
     else:
         runtime.mkdir()
-        shutil.copy2(native_project.target, runtime / native_project.target.name)
-    target = runtime / native_project.target.name
+        shutil.copy2(native_bridge_project.target, runtime / native_bridge_project.target.name)
+    target = runtime / native_bridge_project.target.name
     helper = tmp_path / "owned_helper.py"
     (tmp_path / "owned_native_fixture.py").write_text(
         "def method(value):\n    return value + 1\n"

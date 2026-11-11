@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import sys
 import threading
-import time
 
 folder, output, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 spec = importlib.util.spec_from_file_location("owned_presentation_helper", folder / "presentation_helper.py")
@@ -17,18 +16,14 @@ spec.loader.exec_module(helper)
 deadline = threading.Timer(10, lambda: os._exit(86))
 deadline.daemon = True
 deadline.start()
-log_finished = threading.Event()
 
 
 def open_log(path):
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-        assert "END OF ORIGINAL CAUSE" in text and "Owned cleanup complete" in text
-        (output / "log-requested").write_text(path, encoding="utf-8")
-        if mode == "failure":
-            raise OSError("Fixture editor could not open")
-    finally:
-        log_finished.set()
+    text = Path(path).read_text(encoding="utf-8")
+    assert "END OF ORIGINAL CAUSE" in text and "Owned cleanup complete" in text
+    (output / "log-requested").write_text(path, encoding="utf-8")
+    if mode == "failure":
+        raise OSError("Fixture editor could not open")
 
 
 def show_dialog(notice, notify):
@@ -36,15 +31,9 @@ def show_dialog(notice, notify):
     (output / "helper.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
     if mode == "failure":
         raise RuntimeError("Fixture dialog could not open")
-    if mode in ("late", "timeout"):
-        threading.Event().wait()  # Dismissal must kill startup before any window.
-    (output / "dialog-ready").write_text("ready", encoding="utf-8")
-    notify("dialog-ready")
-    if mode == "dialog":
-        assert log_finished.wait(5)
-        notify("dialog-closed")
-    else:
-        threading.Event().wait()
+    # Healthy dismissal uses real Windows windows; this helper covers startup
+    # that never reaches a dialog, and must still die when its owner dismisses.
+    threading.Event().wait()
 
 
 raise SystemExit(helper.main(show_dialog=show_dialog, open_log=open_log))

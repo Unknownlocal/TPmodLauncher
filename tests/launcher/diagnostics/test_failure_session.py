@@ -74,13 +74,6 @@ def test_any_key_dismisses_pending_dialog_after_cleanup(launch_notice, key):
     assert "END OF ORIGINAL CAUSE" in log and "Owned cleanup complete" in log
 
 
-def test_dialog_dismissal_cancels_console_input(launch_notice):
-    process, directory = launch_notice("dialog")
-    assert process.wait(timeout=5) == 37
-    assert (directory / "dialog-ready").exists() and (directory / "log-requested").exists()
-    assert json.loads((directory / "finished.json").read_text())["terminal_restored"]
-
-
 @pytest.mark.parametrize("mode", ["failure", "missing"])
 def test_ui_failures_and_absent_input_do_not_dismiss_or_spin(launch_notice, mode):
     process, directory = launch_notice(mode)
@@ -106,21 +99,6 @@ def test_dialog_startup_deadline_does_not_expire_console_reading(launch_notice):
     process.stdin.write(b"key\n")
     process.stdin.flush()
     assert process.wait(timeout=5) == 37
-
-
-def test_console_owner_exit_closes_only_its_helper(launch_notice):
-    process, directory = launch_notice("owner")
-    wait_for(lambda: (directory / "dialog-ready").exists())
-    pid = json.loads((directory / "helper.json").read_text())["pid"]
-    exited = threading.Event()
-    owner = ProcessExit(pid, sys._base_executable, lambda error: exited.set())
-    try:
-        owner.start()
-        process.kill()
-        process.wait(timeout=5)
-        assert exited.wait(3), "Presentation helper outlived its console owner"
-    finally:
-        owner.close()
 
 
 def test_default_backend_failure_retains_console_until_key(launch_notice):
