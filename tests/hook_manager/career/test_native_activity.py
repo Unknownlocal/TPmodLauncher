@@ -93,6 +93,29 @@ def test_manual_save_and_nested_autosave_preserve_results_and_restore_week(obser
     assert activity.current_activity()["kind"] == "in_save"
 
 
+@pytest.mark.parametrize("fault,raise_native", [("_begin", False), ("_store_failure", True), ("_end", False), ("_end", True), ("submit_log", False)])
+def test_observer_fault_cannot_change_native_return_or_exception(observed, monkeypatch, fault, raise_native):
+    State, _, activity, _ = observed
+    state, original = State(), RuntimeError("Original native week failure")
+    if raise_native:
+        state.fail_week = original
+    def broken_observer(*args, **kwargs):
+        raise OSError("Owned diagnostic observer failed: " + fault)
+    monkeypatch.setattr(activity, fault, broken_observer)
+    if raise_native:
+        with pytest.raises(RuntimeError) as raised:
+            state.advance_week(persist=False)
+        assert raised.value is original
+    else:
+        assert state.advance_week(persist=False) is True and state.week == 1
+    assert activity.writer.wait_idle(2)
+    if fault == "submit_log":
+        assert activity.errors and activity.current_activity()["kind"] == "in_save"
+    else:
+        assert any("Owned diagnostic observer failed: " + fault in record.get("traceback", "")
+                   for record in activity.records)
+
+
 def test_rollover_observation_coexists_with_later_native_caller_decorators(observed):
     from functools import wraps
     from hook_manager.callables import CallableTarget
@@ -131,7 +154,8 @@ def test_worker_failure_keeps_original_scope_through_main_thread_reraise_and_log
     kind = "saving" if failure == "fail_save" else "week_progression"
     record = diagnostics.build_log_record("ERROR", "Deferred worker failure", error=error)
     assert record["activity"]["kind"] == kind
-    assert "FULL END" in record["traceback"]
+    record = json.loads(json.dumps(record))  # A status reply carries plain data.
+    assert "FULL END" in json.dumps(record["exception_snapshot"])
     assert activity.writer.wait_idle(2)
     failures = [row for row in activity.records if row["level"] == "ERROR"]
     assert len(failures) == 1 and failures[0]["activity"]["kind"] == kind

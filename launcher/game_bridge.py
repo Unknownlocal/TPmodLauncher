@@ -23,7 +23,7 @@ from .process_ended import ProcessEnded
 # The callable files skip relative imports on that path; the package __init__
 # serves normal host imports and is deliberately absent from this execution list.
 PYTHON_SOURCES = (
-    "diagnostics", "manager", "callables/signatures", "callables/target",
+    "exception_snapshot", "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
     "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "native_restart", "workshop_metadata", "import_handover", "control_locks", "native_events",
@@ -457,7 +457,6 @@ def factory(root, frida):
     sources["modLauncher/launcher/diagnostics/reporting_queue.py"] = read("launcher/diagnostics/reporting_queue.py")
     sources["modLauncher/launcher/diagnostics/reporting_sender.py"] = read("launcher/diagnostics/reporting_sender.py")
     sources["modLauncher/launcher/diagnostics/journal_writer.py"] = read("launcher/diagnostics/journal_writer.py")
-    sources["modLauncher/launcher/diagnostics/exception_snapshot.py"] = read("launcher/diagnostics/exception_snapshot.py")
     script = read("hook_manager/bridge.js")
     digest = hashlib.sha256(json.dumps(sources).encode("utf-8")).hexdigest()
 

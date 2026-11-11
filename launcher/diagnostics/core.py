@@ -16,7 +16,7 @@ import uuid
 _UNSET = object()
 
 if __package__:
-    from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text
+    from hook_manager.diagnostics import CONTEXT, LEVELS, build_log_record, error_text, format_log_record
     from .log_output import LogOutput
     from .log_ownership import LogOwnership
     from .activity_tracker import ActivityTracker
@@ -32,7 +32,9 @@ else:
     _folder = Path(__file__).resolve().parent
     _records = _load_source(_folder.parent.parent / "hook_manager/diagnostics.py")
     CONTEXT, LEVELS = _records.CONTEXT, _records.LEVELS
+    _records.ExceptionSnapshot = _load_source(_folder.parent.parent / "hook_manager/exception_snapshot.py").ExceptionSnapshot
     build_log_record, error_text = _records.build_log_record, _records.error_text
+    format_log_record = _records.format_log_record
     LogOutput = _load_source(_folder / "log_output.py").LogOutput
     LogOwnership = _load_source(_folder / "log_ownership.py").LogOwnership
     ActivityTracker = _load_source(_folder / "activity_tracker.py").ActivityTracker
@@ -132,13 +134,14 @@ def exception_from_record(message, record, exception_type=RuntimeError):
     while pending:
         value = pending.pop()
         if type(value) is dict:
-            detail = value.get("traceback") or value.get("detail")
+            rendered = format_log_record(value)
+            detail = rendered.get("traceback") or rendered.get("detail")
             if detail:
                 text = error_text(detail)
                 if text not in seen:
                     error.add_note(text)
                     seen.add(text)
-            pending.extend(reversed([item for item in value.values() if type(item) in (dict, list)]))
+            pending.extend(reversed([item for key, item in value.items() if key != "exception_snapshot" and type(item) in (dict, list)]))
         elif type(value) is list:
             pending.extend(reversed(value))
     return error
@@ -209,6 +212,9 @@ def write_log(sink, value, *, level=_UNSET, error=_UNSET, fatal=_UNSET, **contex
     if output is not None and LEVELS[level] < output.minimum and not fatal:
         return  # Do not format errors or copy activity for suppressed routine logs.
     record = build_log_record(level, detail, error=error, **context)
+    if type(value) is dict and "exception_snapshot" in value:
+        record["exception_snapshot"] = value["exception_snapshot"]
+    record = format_log_record(record)
     tracker = getattr(sink, "launch_activity", None)
     supplied = value.get("activity") if type(value) is dict else None
     activity = getattr(error, "launcher_activity", None) or supplied or (tracker.snapshot(context.get("pid")) if tracker is not None else None)

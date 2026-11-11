@@ -212,7 +212,8 @@ class Manager:
 
     def store_error(self, error):
         """Retain short history and the latest complete failure without writing a log."""
-        # Store text only: retaining exceptions would keep game objects in frames alive.
+        # Plain snapshots retain complete failures without retaining live frames
+        # or looking up source files during native hook/import callbacks.
         self.error_record = build_log_record("ERROR", str(error), error=error)
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
@@ -223,6 +224,20 @@ class Manager:
         # detail. Publishing the base record too would duplicate compatibility errors.
         if self.events is not None and type(self).store_error is Manager.store_error:
             self.events.submit_log(self.error_record)
+
+    def _observe_safely(self, callback, *args, **kwargs):
+        """Keep diagnostic observation from changing the native operation.
+
+        Use only for observers: callable validation and game actions keep their
+        normal error behaviour. Even failed diagnostic submission must return.
+        """
+        try:
+            return callback(*args, **kwargs)
+        except Exception as error:
+            try:
+                self.store_error(error)
+            except Exception:
+                pass  # Preserve the game result even when reporting also fails.
 
     def approve(self, target):
         """Add a host-owned target descriptor without importing or changing its module."""

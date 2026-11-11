@@ -8,7 +8,7 @@ import threading
 
 def log_delivery(record):
     """Return a safe replacement key and whether an ordinary record may overflow."""
-    if (record.get("fatal") or "traceback" in record or "reason" in record
+    if (record.get("fatal") or "traceback" in record or "exception_snapshot" in record or "reason" in record
             or record.get("level") not in (None, "DEBUG", "INFO")):
         return None, False
     event = record.get("event", "native-activity")

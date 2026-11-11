@@ -59,11 +59,11 @@ class WorkshopMetadata(Manager):
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
         self.error_record = build_log_record("WARNING", "Workshop metadata optimisation unavailable: " + str(error),
-                                             component="workshop")
+                                             error=error, component="workshop")
         try:
             # The writer formats traceback details; imports must not read source
             # files. Reporting failure must also leave native validation usable.
-            self.activity.submit_log({**self.error_record, "event": "diagnostic"}, error=error)
+            self.activity.submit_log({**self.error_record, "event": "diagnostic"})
         except Exception:
             pass  # The compatibility failure is still retained in status.
 

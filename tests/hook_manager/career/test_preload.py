@@ -11,6 +11,7 @@ import pytest
 from hook_manager.career_preload import CareerPreload
 from hook_manager.manager import HookError
 from hook_manager.native_readiness import NativeReadiness
+from hook_manager.diagnostics import format_log_record
 
 
 @pytest.fixture
@@ -234,7 +235,7 @@ def test_missing_native_job_restores_completion_instead_of_raising_into_loader(n
     try:
         assert hub.advance_session_preload(screen, screen.state) is True
         assert preload.closed and preload.loading_status()["state"] == "unavailable"
-        failure = preload.loading_status()
+        failure = format_log_record(preload.loading_status())
         assert "Native preloading completed without its loading job" in failure["detail"]
         assert "in wrapped" in failure["traceback"] and "HookError:" in failure["traceback"]
         assert hub.advance_session_preload is helper.advance_session_preload

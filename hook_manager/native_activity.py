@@ -13,7 +13,7 @@ if __package__:
     from .diagnostics import build_log_record
     from .manager import Manager
     from launcher.diagnostics.journal_writer import JournalWriter
-    from launcher.diagnostics.exception_snapshot import ExceptionSnapshot
+    from .exception_snapshot import ExceptionSnapshot
     from launcher.diagnostics.reporting_sender import ReportingSender
 
 
@@ -75,18 +75,19 @@ class NativeActivity(Manager):
 
     def store_error(self, error):
         """Retain compatibility history and also queue its complete diagnostic."""
-        self.error_record = build_log_record("ERROR", str(error), component="activity")
+        self.error_record = build_log_record("ERROR", str(error), error=error, component="activity")
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
-        self.submit_log(self.error_record, error=error)
+        self.submit_log(self.error_record)
 
     def submit_log(self, record, *, error=None):
         """Capture plain context and enqueue without encoding, storage or console I/O."""
-        failure = ExceptionSnapshot(error) if error is not None else None
+        if error is not None and "exception_snapshot" not in record:
+            record = {**record, "exception_snapshot": ExceptionSnapshot(error).to_data()}
         with self._lock:
             if self.closed:
                 return
-            self.writer.enqueue_log_record(record, self.journal, failure)
+            self.writer.enqueue_log_record(record, self.journal)
 
     def store_exception(self, error, *, fatal=False):
         """Keep generic failures and frozen context; a worker failure alone is not fatal."""
@@ -163,7 +164,7 @@ class NativeActivity(Manager):
             self._operations[row["operation"]] = row
             record = {"level": "INFO", "detail": "NATIVE ACTIVITY STARTED", "component": "activity",
                       "transition": True, "activity": self._context(row)}
-        self.submit_log(record)
+        self._observe_safely(self.submit_log, record)
         return row
 
     def _end(self, row):
@@ -189,35 +190,39 @@ class NativeActivity(Manager):
         observer = self
 
         def wrapped(owner, *args, **kwargs):
-            if not observer.group_intact(name):
+            if not observer._observe_safely(observer.group_intact, name):
                 return original(owner, *args, **kwargs)
-            if mode == "finish":
-                with observer._lock:
-                    row = next((row for row in observer._operations.values()
-                                if row["persistent"] and row["screen"]() is owner), None)
-                if row is None:
-                    return original(owner, *args, **kwargs)
-            else:
-                row = observer._begin(kind, owner, persistent=mode == "start")
+            row = observer._observe_safely(observer._operation_row, mode, kind, owner)
             keep = False
             try:
                 result = original(owner, *args, **kwargs)
                 keep = mode == "start"
                 return result
             except Exception as error:
-                observer._store_failure(error, row)
+                if row is not None:
+                    observer._observe_safely(observer._store_failure, error, row)
+                else:
+                    observer._observe_safely(observer.store_exception, error)
                 raise
             finally:
                 # The start call creates the game's own worker. Its span ends
                 # when the native finish method joins/re-raises, not at start().
-                if not keep:
-                    observer._end(row)
+                if row is not None and not keep:
+                    observer._observe_safely(observer._end, row)
 
         update_wrapper(wrapped, original)
         # This is an observational decorator, not a callable-validation owner.
         # Existing regulation callers can wrap it; cleanup removes them first.
         wrapped._tpm_activity_group = name
         return wrapped
+
+    def _operation_row(self, mode, kind, owner):
+        """Associate the existing worker span, or begin a new native operation."""
+        if mode == "finish":
+            with self._lock:
+                return next((row for row in self._operations.values()
+                             if row["persistent"] and row["screen"]() is owner), None)
+        return self._begin(kind, owner, persistent=mode == "start")
 
     def stop(self):
         """Restore owned methods and discard spans without retaining game objects."""

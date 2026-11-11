@@ -215,11 +215,11 @@ def test_unavailable_reporting_cannot_prevent_validation(native, tmp_path, monke
             for name in WorkshopMetadata.CODE_DIGESTS})
     failures = []
     def unavailable(record, *, error=None):
-        if error is not None:
-            # Preserve the exception for background formatting rather than
-            # formatting a traceback during this native import callback.
+        if "exception_snapshot" in record:
+            # The retained warning and outbox now carry the same plain snapshot.
+            # Native callbacks never need to pass a live exception to a sink.
             assert "traceback" not in record
-            failures.append(error)
+            failures.append(record["exception_snapshot"])
         raise OSError("Fixture diagnostic channel unavailable")
     target = tmp_path / "teams.json"
     target.write_text("{}")

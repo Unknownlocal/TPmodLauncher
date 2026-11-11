@@ -126,11 +126,17 @@ termination share one one-second drain budget across the writer and sender.
 Ordinary gameplay never waits for that drain. A stalled backend may leave queued
 records unwritten at the limit.
 
-`exception_snapshot.py` contains `ExceptionSnapshot`. Game threads copy only
+`hook_manager/exception_snapshot.py` contains the shared `ExceptionSnapshot`.
+The existing `launcher.diagnostics.exception_snapshot` import points to the same
+class. Game threads copy only
 messages, notes, exception relationships and frame locations from memory. This
 avoids Python's usual traceback source-cache checks, which can read the filesystem
 even when line lookup is disabled. The writer resolves source lines and applies
 standard traceback formatting later, without keeping live frames or local values.
+Generic hook and compatibility records carry these snapshots too, including in
+retained status. Journal rendering returns a separate record; the original stays
+plain and safe to include in a status reply. The launcher renders snapshots from
+those replies when it needs their complete error details.
 If source lookup or formatting fails, the log retains the complete captured
 messages, notes, relationships and frame locations as plain snapshot data.
 Output failures use the same snapshot without source lookups, retaining full

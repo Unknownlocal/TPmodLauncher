@@ -32,11 +32,16 @@ and theme adapters. A source digest and session token identify their owner and p
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
-`diagnostics.py` provides `build_log_record()` with short summaries, complete
-exception text, severity and relevant check or action details. Adapters hand them to
-`submit_log`; the bridge's `enqueue_log_record` callback holds them for delivery
-to the launcher's standard logger. `Manager.store_error()` separately retains
-recent error text for status checks. Mod `report` messages continue through their
+`diagnostics.py` provides `build_log_record()` with short summaries, severity,
+action details and a plain snapshot of each complete exception. Capture reads
+memory only. `exception_snapshot.py` stores messages, causes, notes and stack
+locations without keeping live frames or looking up source files. The journal
+worker renders snapshots for delivery; explicit status replies can carry the
+same plain data for the launcher to render. Rendering never changes the retained
+status record. Failed source lookup preserves all captured details instead.
+Adapters pass records to `submit_log` for background delivery to the launcher's
+standard logger. `Manager.store_error()` retains recent summaries and the latest
+complete snapshot for status checks. Mod `report` messages continue through their
 existing host operation and use INFO severity.
 
 Diagnostic records also carry cached career activity. This plain snapshot can be
@@ -91,7 +96,10 @@ connection. Socket waits cannot delay durable appends. Unhandled observed
 exceptions retain the original exception hook and
 produce a fatal launcher outcome; caught native errors remain diagnostic records.
 Observation works without regulation mods and leaves native results and files
-under the game's control.
+under the game's control. Loading and activity observers share a safety boundary:
+failed context capture, submission or cleanup cannot suppress a native call,
+change its return or replace its exception. A reporting failure is retained when
+possible, without requiring a working reporting channel for the game to continue.
 
 Shutdown signals the writer and returns to the game. The launcher waits for
 completion outside the game thread. Only final process termination can wait for

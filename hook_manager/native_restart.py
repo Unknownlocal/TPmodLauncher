@@ -61,8 +61,8 @@ class NativeRestart(Manager):
         self.errors.append(str(error)[:4096])
         del self.errors[:-16]
         self.error_record = build_log_record("WARNING", "Restart observation unavailable: " + str(error),
-                                             component="lifecycle")
-        self.notifications.host.activity.submit_log({**self.error_record, "event": "diagnostic"}, error=error)
+                                             error=error, component="lifecycle")
+        self.notifications.host.activity.submit_log({**self.error_record, "event": "diagnostic"})
 
     def _publish(self, status):
         # Reporting failures must never replace a native return or exception.

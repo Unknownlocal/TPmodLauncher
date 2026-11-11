@@ -2,12 +2,12 @@
 """Keep journal encoding and storage off game execution threads."""
 
 import atexit
-import json
 import threading
 from time import monotonic
 
 if __package__:
     from .reporting_queue import ReportingQueue, log_delivery, build_overflow_record
+    from hook_manager.diagnostics import format_log_record
 
 
 class JournalWriter:
@@ -27,11 +27,13 @@ class JournalWriter:
         atexit.register(self.finish_on_exit)
 
     def enqueue_log_record(self, record, journal, failure=None):
+        if failure is not None:
+            record = {**record, "exception_snapshot": failure.to_data()}
         with self._state_lock:
             if not self._closed:
-                key, ordinary = log_delivery(record) if failure is None else (None, False)
+                key, ordinary = log_delivery(record)
                 self._last_journal = journal
-                self._queue.put((record, journal, failure, None), key=key, ordinary=ordinary)
+                self._queue.put((record, journal, None), key=key, ordinary=ordinary)
 
     def close(self):
         with self._state_lock:
@@ -57,7 +59,7 @@ class JournalWriter:
         with self._state_lock:
             event = self.finished if self._closed else threading.Event()
             if not self._closed:
-                self._queue.put((None, None, None, event))
+                self._queue.put((None, None, event))
         return event.wait(timeout)
 
     def _run(self):
@@ -65,24 +67,18 @@ class JournalWriter:
             while True:
                 jobs, dropped, done = self._queue.take()
                 if dropped:
-                    jobs.insert(0, (build_overflow_record(dropped, "Native journal queue"), self._last_journal, None, None))
+                    jobs.insert(0, (build_overflow_record(dropped, "Native journal queue"), self._last_journal, None))
                 records, destination = [], None
-                for record, journal, failure, checkpoint in jobs:
+                for record, journal, checkpoint in jobs:
                     if records and (checkpoint is not None or journal is not destination):
                         self._write_batch(records, destination)
                         records = []
                     if checkpoint is not None:
                         checkpoint.set()
                         continue
-                    if failure is not None:
-                        # Source lookup/formatting stay on this worker; snapshots
-                        # contain no live frames or local game values.
-                        try:
-                            text = "".join(failure.format())
-                            record["traceback"] = "".join(c if c.isprintable() or c in "\n\t" else " " for c in text)
-                        except Exception as error:
-                            record["traceback"] = ("Deferred error formatting failed: " + str(error) + "\n"
-                                + json.dumps({"root": failure.root, "nodes": failure.nodes}, ensure_ascii=True))
+                    # Only this worker resolves source lines. Retained native
+                    # status keeps its plain snapshot even after rendering.
+                    record = format_log_record(record)
                     destination = journal
                     records.append(record)
                     # Do not postpone a failure's sync to format a later batch.
