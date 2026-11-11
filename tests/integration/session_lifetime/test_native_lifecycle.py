@@ -100,13 +100,13 @@ def test_real_frida_follows_game_children_and_releases_unrelated_helper(
 
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Windows console close")
-@pytest.mark.parametrize("mode", ["controller", "blocked", "fatal", "host", "host-blocked"], ids=["normal", "blocked-cleanup", "launcher-error", "native-owner-loss", "native-owner-blocked-cleanup"])
+@pytest.mark.parametrize("mode", ["controller", "blocked", "fatal", "host", "host-blocked", "fatal-blocked"], ids=["normal", "blocked-cleanup", "launcher-error", "native-owner-loss", "native-owner-blocked-cleanup", "launcher-error-blocked-cleanup"])
 def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native_project, tmp_path, mode):
     import ctypes as c
     from ctypes import wintypes as w
 
     root, client = native_project.root, native_project.client
-    blocked = mode in ("blocked", "host-blocked")
+    blocked = mode in ("blocked", "host-blocked", "fatal-blocked")
     host_owned = mode in ("host", "host-blocked")
     runtime = tmp_path / "owned gui runtime"
     shutil.copytree(client.parent, runtime)
@@ -139,11 +139,14 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
 
     def ready(path):
         deadline = time.monotonic() + 10
-        while not path.exists() and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, PermissionError):
+                pass  # Windows can briefly hold a newly replaced ready file.
             assert process.poll() is None, process.communicate(timeout=2)
             time.sleep(.02)
-        assert path.exists(), path
-        return json.loads(path.read_text(encoding="utf-8"))
+        pytest.fail("Owned helper readiness was not readable: " + str(path))
 
     try:
         record = ready(owned.with_suffix(".json"))
@@ -164,8 +167,13 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
                 time.sleep(1)  # Owner loss must reuse the already-running fatal deadline.
             process.stdin.close()
             process.stdin = None
-        elif mode == "fatal":
+        elif mode in ("fatal", "fatal-blocked"):
             (root / "fail-request").touch()
+            if mode == "fatal-blocked":
+                # The game deadline applies while controller cleanup is still
+                # blocked. Release cleanup only after observing pinned exit.
+                assert kernel.WaitForSingleObject(owned_handle, 5000) == 0
+                (root / "release-cleanup").touch()
         else:
             console = ready(root / "console.json")["hwnd"]
             assert console and user.PostMessageW(console, 0x0010, 0, 0)
@@ -176,11 +184,11 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
         assert other.poll() is None and not unrelated.with_suffix(".closed").exists()
         log = (root / "logs/console-test.log").read_text(encoding="utf-8")
         assert "CLEANUP ERROR" not in log
-        if mode == "fatal":
+        if mode in ("fatal", "fatal-blocked"):
             assert process.returncode == 1 and "LAUNCHER ERROR: Owned launcher failure" in log
             assert "in failing_poll" in log
             saved = json.loads(log.rpartition("LAUNCH FAILURE DETAILS ")[2])
-            assert saved["cleanup"] == "complete" and saved["game_close"] == "complete"
+            assert saved["cleanup"] == "complete" and saved["game_close"] == ("forced" if blocked else "complete")
             assert saved["failure"]["reason"] == "Owned launcher failure"
         elif mode == "host-blocked":
             assert process.returncode == 1 and "Owned launcher failure" in log
@@ -194,18 +202,22 @@ def test_launcher_exit_closes_owned_game_window_and_leaves_other_instance(native
     finally:
         if process.poll() is None:
             process.kill()
-            process.communicate(timeout=5)
         if owned_handle:
             if kernel.WaitForSingleObject(owned_handle, 0) == 258:
                 kernel.TerminateProcess(owned_handle, 1)  # Only the test-owned GUI helper.
             kernel.CloseHandle(owned_handle)
         if other is not None:
             path = unrelated.with_suffix(".json")
-            if path.exists():
+            try:
                 user.PostMessageW(json.loads(path.read_text())["hwnd"], 0x0010, 0, 0)
+            except (FileNotFoundError, PermissionError):
+                other.kill()
             try:
                 other.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 other.kill()
                 other.wait(timeout=3)
+        # Helpers inherit the captured pipes. Reap them before reading EOF,
+        # including when an assertion failed before the normal close request.
+        process.communicate(timeout=5)
         probe.unlink(missing_ok=True)

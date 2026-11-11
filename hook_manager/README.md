@@ -73,6 +73,15 @@ exception hook, without recording the same fatal exception twice. Worker failure
 are reported without declaring the game fatal. Original hooks and crash files
 remain owned by the game.
 
+When the Windows game crashes, it still writes its crash report and runs its
+cleanup. The launcher's exception handler waits up to one second for queued
+diagnostics, then calls the game's original exception handler. If reporting
+succeeded, it exits Python with code 1 so PyInstaller does not open a second
+error window. Launcher cleanup leaves this handler installed if a crash has
+already been captured; otherwise it restores the original handler. Failed
+reporting leaves the game's normal error handling in place. This also applies
+under Proton, where the launcher shows errors in its console.
+
 `native_restart.py` observes the settings and season-pack screens' references to
 the game's shared restart helper. It queues an attempt before the call, confirms
 the helper's normal exit, and cancels the attempt if the call fails or returns.

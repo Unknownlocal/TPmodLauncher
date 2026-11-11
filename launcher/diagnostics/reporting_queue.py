@@ -6,6 +6,17 @@ from itertools import count
 import threading
 
 
+def is_terminal_message(message):
+    """Keep final evidence during cancellation, stopping and priority delivery.
+
+    This only classifies messages. The controller still validates their contents
+    against the exact process/session before acting on them.
+    """
+    return message.get("type") == "error" or message.get("payload", {}).get("event") in (
+        "native-activity", "diagnostic", "journal-ready", "reporting-closed",
+        "restart", "restart-observation", "error")
+
+
 def log_delivery(record):
     """Return a safe replacement key and whether an ordinary record may overflow."""
     if (record.get("fatal") or "traceback" in record or "exception_snapshot" in record or "reason" in record

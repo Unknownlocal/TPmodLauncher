@@ -273,6 +273,31 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
     controller.poll()
     assert "Durable failure with lost notice FULL END" in read_log(path)
     assert not bridge.journal.path.exists()
+    bridge.close()
+    controller.close()
+    assert reads == [threading.get_ident()]  # Retired resources are not drained again.
+
+
+def test_exec_retirement_preserves_native_fatal_over_delivery_failure_and_releases_owner(delivery, monkeypatch):
+    controller, bridge, _, path, _ = delivery
+    previous = controller.sessions[10]
+    bridge.journal.append_record({"event": "native-activity", "level": "CRITICAL", "fatal": True,
+        "detail": "Native terminal failure", "reason": "Original exec fatal FULL END",
+        "traceback": "Original exec traceback " + "x" * 5000 + " FULL TRACE END",
+        "activity": {"kind": "game_loading", "generation": 1, "sequence": 1}})
+    finish_reporting = bridge.finish_reporting
+    def failed_delivery():
+        finish_reporting()
+        raise RuntimeError("Secondary final delivery failure")
+    monkeypatch.setattr(bridge, "finish_reporting", failed_delivery)
+    controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
+    with pytest.raises(LaunchError, match="Original exec fatal FULL END") as failure:
+        controller.poll()
+    assert "FULL TRACE END" in "\n".join(failure.value.__notes__)
+    assert previous.is_detached and not controller.sessions and not controller.exit_waits and not controller.bridges
+    assert not controller.held and bridge.journal.retained and bridge.journal.path.exists()
+    text = read_log(path)
+    assert "Secondary final delivery failure" in text and "FULL TRACE END" in text
 
 
 def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery):

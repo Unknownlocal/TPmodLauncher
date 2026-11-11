@@ -19,6 +19,7 @@ class JournalWriter:
         self._queue, self._state_lock = ReportingQueue(), threading.Lock()
         self._last_journal = None
         self._closed, self.finished = False, threading.Event()
+        self.failed = False
         self._exit_deadline = None
         self._thread = threading.Thread(target=self._run, name="mod-launcher-journal", daemon=True)
         self._thread.start()
@@ -27,6 +28,7 @@ class JournalWriter:
         atexit.register(self.finish_on_exit)
 
     def enqueue_log_record(self, record, journal, failure=None):
+        """Return whether the open writer accepted this record, not delivery proof."""
         if failure is not None:
             record = {**record, "exception_snapshot": failure.to_data()}
         with self._state_lock:
@@ -34,6 +36,8 @@ class JournalWriter:
                 key, ordinary = log_delivery(record)
                 self._last_journal = journal
                 self._queue.put((record, journal, None), key=key, ordinary=ordinary)
+                return True
+            return False
 
     def close(self):
         with self._state_lock:
@@ -89,6 +93,9 @@ class JournalWriter:
                     self._write_batch(records, destination)
                 if done:
                     break
+        except BaseException:
+            self.failed = True
+            raise
         finally:
             if self.notifications is not None:
                 # The sender has its own thread: network waits cannot delay any

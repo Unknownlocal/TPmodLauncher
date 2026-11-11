@@ -96,14 +96,19 @@ else:
     load("dependencies", "bundled_dependencies.py").load_source_packages(root)
     from launcher.process_lifecycle import Controller, run_launcher
 
-    if sys.argv[1] in ("blocked", "host-blocked"):
+    if sys.argv[1] in ("blocked", "host-blocked", "fatal-blocked"):
         def blocked_cleanup(self):
             # Stand in for a controller stuck inside native bridge cleanup.
             (root / "cleanup-started").touch()
-            time.sleep(15)
+            if sys.argv[1] == "fatal-blocked":
+                deadline = time.monotonic() + 15
+                while not (root / "release-cleanup").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+            else:
+                time.sleep(15)
         Controller.close = blocked_cleanup
 
-    if sys.argv[1] in ("fatal", "host-blocked"):
+    if sys.argv[1] in ("fatal", "host-blocked", "fatal-blocked"):
         poll = Controller.poll
         def failing_poll(self, *args, **kwargs):
             if not hasattr(self, "_failure_watcher"):

@@ -40,12 +40,16 @@ def test_exit_during_child_gating_skips_bridge_creation(rig, monkeypatch):
         controller.close()
 
 
-def test_queued_script_failure_keeps_full_stack_after_owner_cancellation(rig):
+@pytest.mark.parametrize("source", ["script", "manager"])
+def test_queued_script_failure_keeps_full_stack_after_owner_cancellation(rig, source):
     device, controller, _, _ = rig
     controller.start()
     session = controller.sessions[10]
     stack = "Owned script stack " + "x" * 5000 + " FULL STACK END"
-    controller._queue_bridge(10, session, {"type": "error", "description": "Owned script failure END", "stack": stack})
+    message = ({"type": "error", "description": "Owned script failure END", "stack": stack}
+               if source == "script" else {"type": "send", "payload": {
+                   "event": "error", "detail": "Owned script failure END", "traceback": stack}})
+    controller._queue_bridge(10, session, message)
     device.exit(10)
     try:
         with pytest.raises(lifecycle.LaunchError, match="Owned script failure END") as failure:
@@ -109,6 +113,21 @@ def test_script_failure_delivered_during_final_reporting_survives_retirement(rig
         assert any(stack in message for message in messages)
     finally:
         controller.close()
+
+
+def test_diagnostic_delivered_during_detach_is_retained_before_retirement(rig, monkeypatch):
+    device, controller, messages, _ = rig
+    controller.start()
+    session = controller.sessions[10]
+    detach = session.detach
+    def final_detach():
+        controller._queue_bridge(10, session, {"type": "error", "description": "Final detach error FULL END",
+                                             "stack": "Owned final detach stack FULL END"})
+        detach()
+    monkeypatch.setattr(session, "detach", final_detach)
+    controller.close()
+    assert controller.cleanup_failed and session.is_detached and not controller.sessions
+    assert any("Owned final detach stack FULL END" in message for message in messages)
 
 
 def test_career_compatibility_notice_reports_failure_and_keeps_game_running(rig):

@@ -94,9 +94,13 @@ It then removes only its own journal. If an interrupted write corrupts
 a record, the error includes its raw contents and the journal stays available.
 Already decoded records keep their place before socket fallbacks, so a later
 damaged append cannot replace the first fatal reason.
-The normal logger still owns
-`launcher.log`; an unhandled native exception follows the same fatal outcome and
-cleanup path even if no further game pulse can run.
+Before closing a game session, the controller stops its reporting connection
+and detaches Frida, then reads the last messages from the journal and socket.
+It finishes handling those messages before removing the journal and closing
+the process handle. If one cleanup step fails, it still attempts the rest.
+The game's original crash remains the main reported error if cleanup also fails.
+If the game is still running, the controller first removes the hooks it installed.
+The controller can write these errors to `launcher.log` after the game has stopped.
 
 `reporting_sender.py` contains `ReportingSender`. Its own worker sends journal
 notifications over an authenticated local connection, so a blocked socket does
@@ -111,6 +115,9 @@ with the exact drop count. Failures, warnings, save requests, loading attempts
 and control events remain protected. Healthy readiness, menu and theme hints
 keep only their latest pending value. Complete errors and protected events have
 no fixed memory limit; the queue limit is not a total memory guarantee.
+`is_terminal_message()` identifies errors, activity updates, restart messages
+and reporting notices that must still be processed during shutdown. The controller
+uses it both when queuing messages and when cancelling work.
 
 `reporting_receiver.py` contains `ReportingReceiver`. It waits for socket data,
 checks the process/session identity and message order, and queues controller
@@ -132,6 +139,15 @@ termination share one one-second drain budget across the writer and sender.
 Ordinary gameplay never waits for that drain. A stalled backend may leave queued
 records unwritten at the limit.
 
+When the Windows game crashes, it writes its crash report and runs its cleanup
+before the launcher's exception handler finishes. That handler waits up to one
+second for queued diagnostics and calls the game's original exception handler.
+If reporting succeeded, it exits Python with code 1 so only the launcher shows
+an error window. If capture or reporting failed, the game keeps its normal error
+handling. The handler stays installed during cleanup if a crash has already
+been captured. This also applies under Proton; the Linux launcher uses its
+console instead of a dialog.
+
 `hook_manager/exception_snapshot.py` contains the shared `ExceptionSnapshot`.
 The existing `launcher.diagnostics.exception_snapshot` import points to the same
 class. Game threads copy only
@@ -151,6 +167,8 @@ causes and stack locations without risking another storage wait.
 `console_shutdown.py` contains `ConsoleShutdown`. On Windows it requests normal
 window closure for verified, owned game processes. After four seconds it closes
 any survivors forcibly. Its process handles protect unrelated game instances.
+A separate thread enforces the four-second limit even if launcher cleanup is
+stuck. Repeated close requests use the same deadline.
 
 The shared plain-text record format comes from `hook_manager.diagnostics`, which
 also runs inside the game. No dialog participates in writing or completing logs.

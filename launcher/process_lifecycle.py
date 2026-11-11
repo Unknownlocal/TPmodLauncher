@@ -19,6 +19,7 @@ from launcher.process_ended import ProcessEnded
 from launcher.diagnostics.console_shutdown import ConsoleShutdown
 from launcher.diagnostics import activity_scope, bind_reporter, exception_from_record, handle_error, log_ownership, write_log, reporter, startup_step, sync_log
 from launcher.diagnostics.activity_tracker import ActivityTracker
+from launcher.diagnostics.reporting_queue import is_terminal_message
 
 
 class LaunchError(RuntimeError):
@@ -140,7 +141,6 @@ class Controller:
                 return
             # A new process may reuse this PID before the old detach event is handled.
             # Remove only the detached handle; its delayed event cannot remove the new session.
-            self._drain_activity(pid)
             self._discard_session(pid)
         if not self._matches(pid):
             raise LaunchError(f"Cannot verify the game executable for pid={pid}.")
@@ -216,37 +216,60 @@ class Controller:
                 self.submit_log("CLEANUP ERROR", level="ERROR", error=error, pid=pid)
 
     def _discard_session(self, pid):
-        """Release owned resources before forgetting a retired session."""
+        """Finish delivery and consume final evidence before releasing this owner."""
+        session = self.sessions.get(pid)
+        if session is None:
+            return
         self._close_mods(pid)
-        self._discard_bridge(pid)
-        waiter = self.exit_waits.get(pid)
-        if waiter is not None:
-            waiter.close()
-            self.exit_waits.pop(pid)
-        cancellation = self.cancellations.get(pid)
-        evidence_error = None
-        if cancellation is not None:
-            # Reporting cleanup may itself have received another script error.
-            # Seal this owner's inbox before forgetting it, then retain every
-            # delivered diagnostic even when an earlier one already failed.
-            for message in cancellation.finish_evidence():
-                try:
-                    self._event("bridge", (pid, self.sessions[pid], message))
-                except Exception as error:
-                    self.submit_log("FINAL PROCESS EVIDENCE ERROR", level="ERROR", error=error, pid=pid)
-                    if evidence_error is None:
-                        evidence_error = error
-        if evidence_error is not None:
-            raise evidence_error
         bridge = self.bridges.get(pid)
         journal = getattr(bridge, "journal", None)
+        errors = []
+        def finish(action):
+            try:
+                action()
+            except Exception as error:
+                errors.append(error)
+                if journal is not None:
+                    journal.retained = True
+        close_reporting = getattr(bridge, "finish_reporting", None)
+        if callable(close_reporting):
+            finish(close_reporting)
+        # Stop the remaining Frida producer before sealing its evidence inbox.
+        # Keep ownership until detach finishes, even if final reporting failed.
+        def detach():
+            if not session.is_detached:
+                try:
+                    session.detach()
+                except Exception:
+                    if not getattr(bridge, "exited", False) and not self._has_exited(pid):
+                        raise
+        finish(detach)
+        # Read the receiver's final fallback and the durable file while this
+        # exact session still owns their records, even if closing delivery failed.
+        finish(lambda: self._drain_activity(pid))
+        cancellation = self.cancellations.get(pid)
+        if cancellation is not None:
+            for message in cancellation.finish_evidence():
+                # Its source was just drained; replaying a journal wake adds no
+                # evidence. Other delivered errors must still be consumed.
+                if message.get("payload", {}).get("event") != "journal-ready":
+                    finish(lambda message=message: self._event("bridge", (pid, session, message)))
         if journal is not None:
-            journal.remove()
+            finish(journal.remove)
+        waiter = self.exit_waits.pop(pid, None)
+        if waiter is not None:
+            finish(waiter.close)
         self.replacement = replacement_decision(bridge)
         self.submit_log("GAME PROCESS ENDED; " + self.replacement[1], level="DEBUG", pid=pid)
         self.bridges.pop(pid, None)
         self.sessions.pop(pid, None)
         self.cancellations.pop(pid, None)
+        self.activity.retire(pid)
+        for error in errors:
+            self.submit_log("FINAL PROCESS EVIDENCE ERROR", level="ERROR", error=error, pid=pid)
+        if errors:
+            # A delivery/cleanup error cannot replace a complete native fatal.
+            raise next((error for error in errors if getattr(error, "launcher_native_failure", False)), errors[0])
 
     def _queue_lifecycle(self, kind, value, cancellation):
         """Callbacks only cancel that owner, queue priority work and wake the loop."""
@@ -257,9 +280,7 @@ class Controller:
 
     def _queue_bridge(self, pid, session, message, cancellation=None):
         """Keep already-delivered diagnostics ahead of session retirement."""
-        event = message.get("payload", {}).get("event")
-        if message.get("type") == "error" or event in (
-                "native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+        if is_terminal_message(message):
             if cancellation is None:
                 if self.sessions.get(pid) is not session:
                     return
@@ -340,20 +361,11 @@ class Controller:
             if journal_error is not None:
                 raise journal_error
 
-    def _discard_bridge(self, pid):
-        """Finish reporting, keeping this bridge bound until final evidence is read."""
-        bridge = self.bridges.get(pid)
-        finish = getattr(bridge, "finish_reporting", None)
-        if callable(finish):
-            finish()
-            # The receiver may have queued a final fallback while stopping.
-            # Consume it while this exact session still owns the process.
-            self._drain_activity(pid)
-
     @staticmethod
     def build_native_error(record):
         error = exception_from_record("Game operation failed: " + record.get("reason", record.get("detail", "Unknown native error")), record, LaunchError)
         error.launcher_activity = record["activity"]
+        error.launcher_native_failure = True
         return error
 
     def start(self):
@@ -426,13 +438,8 @@ class Controller:
                 if getattr(child, "origin", None) == "exec":
                     if (bridge := self.bridges.get(child.pid)) is not None:
                         bridge.exited = True
-                    self._drain_activity(child.pid)
-                    previous = self.sessions.get(child.pid)
                     self._discard_session(child.pid)
-                    self.activity.retire(child.pid)
                     self.resumed.discard(child.pid)
-                    if previous is not None and not previous.is_detached:
-                        previous.detach()
                 if matches:
                     self._attach(
                         child.pid, bootstrap=getattr(child, "origin", None) != "fork"
@@ -461,8 +468,7 @@ class Controller:
             pid, session = value[:2]
             if self.sessions.get(pid) is session:
                 if kind == "bridge" and (cancellation := self.cancellations.get(pid)) is not None and cancellation.ended.is_set():
-                    event = value[2].get("payload", {}).get("event")
-                    if value[2].get("type") != "error" and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+                    if not is_terminal_message(value[2]):
                         return
                 event = value[2].get("payload", {}).get("event") if kind == "bridge" else None
                 with self.activity.focus(pid, native=event != "pack"):
@@ -515,18 +521,19 @@ class Controller:
             if self.sessions.get(pid) is session:
                 if reason in ("process-terminated", "process-replaced") and (bridge := self.bridges.get(pid)) is not None:
                     bridge.exited = True
-                self._drain_activity(pid)
                 self.submit_log(f"DETACHED pid={pid}: {reason}")
                 if not self.stopping and reason not in (
                     "process-terminated",
                     "process-replaced",
                 ):
                     # Retain the handle for cleanup when tracking fails while the process is alive.
+                    # A complete native fatal already in its journal takes
+                    # precedence over this later transport failure.
+                    self._drain_activity(pid)
                     raise LaunchError(
                         f"Game tracking ended unexpectedly for pid={pid}: {reason}"
                     )
                 self._discard_session(pid)
-                self.activity.retire(pid)
         elif kind == "bridge":
             pid, session, message = value
             if self.sessions.get(pid) is not session:
@@ -542,7 +549,7 @@ class Controller:
                 if event in ("native-service", "mods-ready", "manager", "pack", "menu", "settings",
                              "themes", "career-preload", "readiness"):
                     return
-            if self.stopping and message.get("type") != "error" and event not in ("native-activity", "diagnostic", "journal-ready", "reporting-closed", "restart", "restart-observation"):
+            if self.stopping and not is_terminal_message(message):
                 return
             if message.get("type") == "error":
                 raise exception_from_record(
@@ -762,13 +769,9 @@ class Controller:
             bridge = self.bridges.get(pid)
             if bridge is not None:
                 # Restore Python wrappers before detaching the script/session from a live process.
-                attempt(bridge.close, session, pid)
-                attempt(lambda pid=pid: self._drain_activity(pid))
-                attempt(lambda pid=pid: self._discard_bridge(pid))
+                attempt(getattr(bridge, "close_native", bridge.close), session, pid)
             if not session.is_detached:
                 attempt(session.disable_child_gating, session, pid)
-            if not session.is_detached:
-                attempt(session.detach, session, pid)
             if self.sessions.get(pid) is session:
                 attempt(lambda pid=pid: self._discard_session(pid))
         # Reconcile notifications arriving while the sessions were being detached.

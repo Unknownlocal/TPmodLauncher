@@ -21,6 +21,36 @@ from launcher.process_lifecycle import Controller, LaunchError
 from tests.controller_device import rig
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Frozen Windows terminal handoff")
+@pytest.mark.parametrize("mode", ["accepted", "closed", "formatter"])
+def test_frozen_fatal_handoff_preserves_native_cleanup_and_requires_successful_reporting(tmp_path, mode):
+    root = Path(__file__).resolve().parents[3]
+    output = tmp_path / mode
+    output.mkdir()
+    journal = ActivityJournal(output / "activity.jsonl")
+    journal.create()
+    child = root / "tests/launcher/fixtures/fatal_handoff.py"
+    executable = getattr(sys, "_base_executable", sys.executable)
+    process = subprocess.Popen([executable, "-B", str(child), str(root), str(output), mode],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    receiver = ReportingReceiver(process.pid, "owned-final-handoff", lambda *args: None)
+    receiver.start()
+    try:
+        _, stderr = process.communicate(json.dumps(receiver.endpoint) + "\n", timeout=10)
+        assert process.returncode == 1 and "Owned fatal handoff FULL END" in stderr
+        assert (output / "native-finally").exists() and (output / "finalised").exists()
+        assert "Owned fatal handoff FULL END" in (output / "native-crash.txt").read_text(encoding="utf-8")
+        assert (output / "bootloader-returned").exists() == (mode != "accepted")
+        records = journal.read_available()
+        assert any(row.get("fatal") and "Owned fatal handoff FULL END" in row.get("traceback", "")
+                   for row in records) == (mode == "accepted")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=3)
+        receiver.close(drain=receiver.connected.is_set())
+
+
 @pytest.mark.parametrize("mode", ["normal", "abrupt", "ordinary"])
 def test_final_restart_evidence_distinguishes_ordinary_exit_and_uncertain_loss(rig, tmp_path, mode):
     root = Path(__file__).resolve().parents[3]

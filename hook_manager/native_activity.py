@@ -43,16 +43,31 @@ class NativeActivity(Manager):
         notifications = ReportingSender(reporting_endpoint) if reporting_endpoint is not None else None
         self.writer = JournalWriter(notifications.enqueue_log_record if notifications is not None else self.records.append,
                                     notifications)
+        # Only our owned frozen Windows process delegates terminal presentation
+        # to the external launcher, including under Proton. Ordinary Python and
+        # native Linux interpreters keep their existing exception exit path.
+        self._fatal_owner = (object() if sys.platform == "win32" and getattr(sys, "frozen", False)
+                             and notifications is not None else None)
+        self._fatal_pending = False
         self._exception_hook = sys.excepthook
         def unhandled(kind, error, traceback):
+            handoff = False
             try:
                 if not isinstance(error, (SystemExit, KeyboardInterrupt)):
                     self.store_exception(error, fatal=True)
-                    self.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
+                    drained = self.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
+                    handoff = (self._fatal_owner is not None
+                               and getattr(error, "_launcher_fatal_owner", None) is self._fatal_owner
+                               and drained and not self.writer.failed and notifications.error is None)
             except Exception:
                 pass  # Diagnostic formatting must not replace the native exception hook.
             finally:
                 self._exception_hook(kind, error, traceback)
+            if handoff:
+                # Native main/finally and the original hook have finished. A
+                # returning hook lets PyInstaller open its own error dialog;
+                # SystemExit uses CPython's normal nonzero finalisation instead.
+                raise SystemExit(1)
         self._unhandled = unhandled
         sys.excepthook = unhandled
         self._thread_hook = threading.excepthook
@@ -81,16 +96,19 @@ class NativeActivity(Manager):
         self.submit_log(self.error_record)
 
     def submit_log(self, record, *, error=None):
-        """Capture plain context and enqueue without encoding, storage or console I/O."""
+        """Capture and enqueue without I/O; return acceptance, not delivery proof."""
         if error is not None and "exception_snapshot" not in record:
             record = {**record, "exception_snapshot": ExceptionSnapshot(error).to_data()}
         with self._lock:
             if self.closed:
-                return
-            self.writer.enqueue_log_record(record, self.journal)
+                return False
+            return self.writer.enqueue_log_record(record, self.journal)
 
     def store_exception(self, error, *, fatal=False):
-        """Keep generic failures and frozen context; a worker failure alone is not fatal."""
+        """Keep failures and context; accepted fatal capture also arms terminal ownership.
+
+        A worker failure alone is not fatal. No storage or delivery wait occurs here.
+        """
         if error is None or isinstance(error, (SystemExit, KeyboardInterrupt)):
             return
         if fatal and getattr(error, "_launcher_fatal_logged", False):
@@ -101,8 +119,12 @@ class NativeActivity(Manager):
         record["activity"] = dict(error.launcher_activity)
         if fatal:
             record.update(reason=str(error), fatal=True)
-            error._launcher_fatal_logged = True
-        self.submit_log(record, error=error)
+        with self._lock:
+            if self.submit_log(record, error=error) and fatal:
+                error._launcher_fatal_logged = True
+                if self._fatal_owner is not None:
+                    error._launcher_fatal_owner = self._fatal_owner
+                    self._fatal_pending = True
 
     def group_intact(self, name):
         """Accept later native decorators that still call our installed observer."""
@@ -225,13 +247,13 @@ class NativeActivity(Manager):
         return self._begin(kind, owner, persistent=mode == "start")
 
     def stop(self):
-        """Restore owned methods and discard spans without retaining game objects."""
+        """Restore live hooks; keep an armed fatal handoff through native unwind."""
         super().stop()
-        if sys.excepthook is self._unhandled:
-            sys.excepthook = self._exception_hook
-        if threading.excepthook is self._worker_unhandled:
-            threading.excepthook = self._thread_hook
         with self._lock:
+            if sys.excepthook is self._unhandled and not self._fatal_pending:
+                sys.excepthook = self._exception_hook
+            if threading.excepthook is self._worker_unhandled:
+                threading.excepthook = self._thread_hook
             self._operations.clear()
             self.writer.close()
         return self.writer.finished.is_set()

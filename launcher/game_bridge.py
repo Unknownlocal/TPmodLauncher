@@ -66,6 +66,7 @@ class Bridge:
         self.lock = threading.Lock()
         self.journal = journal
         self.reporting = reporting
+        self._native_closed = self._reporting_finished = False
         if reporting is not None:
             reporting.control_ready = self._control_ready
             reporting.control_failed = self._control_failed
@@ -146,6 +147,9 @@ class Bridge:
 
     def finish_reporting(self):
         """Preserve evidence if the native sender did not confirm its final delivery."""
+        if self._reporting_finished:
+            return
+        self._reporting_finished = True
         if self.reporting is not None:
             try:
                 self.reporting.close(drain=self.reporting.connected.is_set())
@@ -370,7 +374,7 @@ class Bridge:
         """Release native observation and the independent reporting connection."""
         failure = None
         try:
-            self._close_native()
+            self.close_native()
         except BaseException as error:
             failure = error
             if self.journal is not None:
@@ -383,6 +387,18 @@ class Bridge:
                 if failure is None:
                     raise
                 failure.add_note("Native reporting cleanup also failed: " + str(error))
+
+    def close_native(self):
+        """Restore a live manager once; reporting remains owned until retirement."""
+        if self._native_closed:
+            return
+        self._native_closed = True
+        try:
+            self._close_native()
+        except BaseException:
+            if self.journal is not None:
+                self.journal.retained = True
+            raise
 
     def _close_native(self):
         """Stop the manager on its thread before unloading our native transport."""

@@ -97,17 +97,28 @@ class ConsoleShutdown:
 
     def request(self):
         """Request exit once; ordinary mod and Frida cleanup stays on the controller."""
+        first = False
         with self._lock:
             if not self.requested.is_set():
                 # Windows normally allows five seconds for CTRL_CLOSE_EVENT.
                 # Leave time for the callback to return after bounded cleanup.
                 self._deadline = time.monotonic() + 4.0
+                first = True
                 self.requested.set()
                 wake = self.wake
                 if wake is not None:
                     wake()
             if os.name == "nt":
                 self._post_close()
+        if first and os.name == "nt":
+            # A fatal controller error has no Windows console-close callback
+            # enforcing its deadline. Cleanup must not extend owned game life.
+            threading.Thread(target=self._enforce_deadline, name="owned-game-shutdown", daemon=True).start()
+
+    def _enforce_deadline(self):
+        remaining = max(0, self._deadline - time.monotonic())
+        if not self.finished.wait(remaining):
+            self._force_close()
 
     def _signal(self, event):
         if event not in (0, 1, 2):  # Ctrl+C, Ctrl+Break and console Close.
