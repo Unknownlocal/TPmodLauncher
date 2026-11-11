@@ -139,9 +139,9 @@ class NativeActivity(Manager):
         with self._lock:
             return self._visible(foreground=False)
 
-    def snapshot(self):
-        """Publish ordered foreground activity for the existing bridge pulses."""
-        if not self.closed:
+    def snapshot(self, *, poll=True):
+        """Read foreground activity without re-polling during event collection."""
+        if poll and not self.closed:
             self.poll()
         with self._lock:
             context = self._visible(foreground=True)

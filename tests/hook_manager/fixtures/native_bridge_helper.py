@@ -122,7 +122,9 @@ theme, packs = modules(Path(__file__).with_name("palette.py"), theme_path)
 sys.modules[theme.__name__], sys.modules[packs.__name__] = theme, packs
 options.COLOR_PACKS = packs.COLOR_PACKS
 host.themes.poll()  # Native post-import arm precedes background mod registration.
-host.events.imported(host.manager)  # Model completed imports for the synthetic modules above.
+# These modules were inserted directly, so no loader can announce completion.
+for completed_module in (preload_module, game, navigation, theme, packs):
+    host.events.imported(host.manager, completed_module.__name__)
 assert host.themes.placeholder is not None
 original_palette_getitem = packs.ChromePalette.__getitem__
 original_menu = hub.ORIGINAL_METHODS["_activate"]

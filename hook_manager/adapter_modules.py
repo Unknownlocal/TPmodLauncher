@@ -49,14 +49,15 @@ class AdapterModules:
         self.enqueue_log_record = submit_log or self.regulation_notices.append
         self.changed = None
 
-    def status(self):
+    def status(self, *, poll=True):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
 
         Successful publication alone supplies no hook coverage or readiness.
         Failed installation can still own hooks; failed preparation owns none.
+        Event collection passes poll=False after servicing completed imports.
         """
         result = {"state": self.state, "modules": len(self.sources) if self.state == "loaded" else 0}
-        if self.regulation_screen is not None:
+        if poll and self.regulation_screen is not None:
             self.regulation_screen.poll()
         if self.error is not None:
             result["detail"] = self.error
@@ -112,6 +113,8 @@ class AdapterModules:
                 elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
                     raise HookError("Expected prepared categories or voting protection")
             self.preload = CareerPreload(self._career_left, getattr(self.host, "readiness", None))
+            # Manager construction registers the preload with the event scope.
+            # Wire its later state changes here, once the instance is ready.
             self.preload.changed = self.changed
         except BaseException:
             self.stop_regulations()

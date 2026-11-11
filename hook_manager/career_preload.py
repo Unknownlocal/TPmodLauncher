@@ -105,7 +105,12 @@ class CareerPreload(Manager):
     def poll(self):
         """Finish normal imports on the main thread; a failed alias restores the set."""
         if not self.closed:
-            self._navigation.poll()
+            # Share navigation's check with other managers in this service pass.
+            # Standalone adapters still check that dependency themselves.
+            if self.events is not None and self._navigation.events is self.events:
+                self.events.poll_manager(self._navigation)
+            else:
+                self._navigation.poll()
             super().poll()
             if not self._navigation.navigation_intact:
                 self._store_and_submit_error("Career navigation observation became unavailable")

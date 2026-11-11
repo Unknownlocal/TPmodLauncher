@@ -164,6 +164,11 @@ def test_worker_import_only_installs_after_its_completion_event(native_events, t
     monkeypatch.syspath_prepend(str(tmp_path))
     host.readiness.configure({"career": False, "modules": ["owned_import_event"]})
     records(host)
+    unrelated = Manager()
+    def unexpected_poll():
+        raise AssertionError("An unrelated manager was serviced")
+    monkeypatch.setattr(unrelated, "poll", unexpected_poll)
+    monkeypatch.setattr(host.activity, "poll", unexpected_poll)
     worker = threading.Thread(target=lambda: importlib.import_module("owned_import_event"))
     worker.start()
     worker.join(2)
@@ -176,7 +181,161 @@ def test_worker_import_only_installs_after_its_completion_event(native_events, t
         after = records(host)
         assert any("owned_import_event" in row["status"]["modules"] for row in after if row.get("event") == "readiness")
     finally:
+        unrelated.stop()
         sys.modules.pop("owned_import_event", None)
+
+
+def test_nested_control_changes_publish_one_final_snapshot_and_status_does_not_collect(native_events, monkeypatch):
+    host, _, _, _, _ = native_events
+    records(host)
+    calls = []
+    # Count real state collection while keeping its behaviour and payloads.
+    for owner, name in ((host.discovery, "poll"), (host.readiness, "snapshot"),
+                        (host.activity, "snapshot"), (host.adapters, "status")):
+        original = getattr(owner, name)
+        def collect(*args, _original=original, _name=name, _owner=owner, **kwargs):
+            calls.append((_owner, _name))
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(owner, name, collect)
+    row = {"owner": "owned.batched", "label": "Batched Settings", "schema": 1,
+           "fields": [{"id": "accent", "label": "Accent", "type": "color", "default": "#112233", "value": "#112233"}]}
+    with host.events.batch():
+        host.settings.update([row])
+        host.events.refresh()
+        with host.events.batch():
+            host.settings.queue_save("owned.batched", {"schema": 1, "values": {"accent": "#334455"}})
+            host.menu.set_loading(dict(state="complete", loaded=1, failed=0, total=1))
+            host.events.refresh()
+        assert not calls
+        host.events.service()
+    assert len(calls) == 4 and len(set((id(owner), name) for owner, name in calls)) == 4
+    status = host.events.status()
+    assert status["menu"]["loading"]["state"] == "complete"
+    assert status["settings"]["save"]["values"] == {"accent": "#334455"}
+    assert host.events.status() == status and len(calls) == 4
+    updates = records(host)
+    assert len([record for record in updates if record.get("event") == "settings"]) == 1
+    assert len([record for record in updates if record.get("event") == "menu"]) == 1
+
+
+def test_binding_during_worker_import_keeps_completion_and_its_service_wake(native_events, tmp_path, monkeypatch):
+    host, _, _, _, _ = native_events
+    name = "owned_binding_race"
+    (tmp_path / (name + ".py")).write_text("VALUE = 17\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    entered, release, binding, bound = (threading.Event() for _ in range(4))
+    watcher, observed, created, errors = Manager(), [], [], []
+    watcher.observe(name, lambda module: observed.append(module.VALUE) or True)
+    class PendingNames(set):
+        def __contains__(self, value):
+            if value == name and threading.current_thread() is not threading.main_thread():
+                entered.set()
+                assert release.wait(2)
+            return super().__contains__(value)
+    watcher.wanted = PendingNames(watcher.wanted)
+    bind = host.events.bind
+    def bind_during_import(manager):
+        binding.set()
+        bind(manager)
+        bound.set()
+    monkeypatch.setattr(host.events, "bind", bind_during_import)
+    def importing():
+        try:
+            importlib.import_module(name)
+        except BaseException as error:
+            errors.append(error)
+    worker = threading.Thread(target=importing)
+    binder = threading.Thread(target=lambda: created.append(Manager()))
+    records(host)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        binder.start()
+        assert binding.wait(1)
+        # Permit a concurrent bind to finish if the registry uses a safe
+        # snapshot; a lock-based implementation may wait until release.
+        bound.wait(.05)
+        release.set()
+        worker.join(2)
+        binder.join(2)
+        assert not errors and not worker.is_alive() and not binder.is_alive()
+        assert any(row.get("event") == "native-service" for row in records(host))
+        host.events.service()
+        assert observed == [17]
+    finally:
+        release.set()
+        worker.join(2)
+        if binder.ident is not None:
+            binder.join(2)
+        watcher.stop()
+        for manager in created:
+            manager.stop()
+        sys.modules.pop(name, None)
+
+
+def test_worker_loading_completion_during_collection_keeps_next_service_wake(native_events, tmp_path, monkeypatch):
+    host, _, screen, _, _ = native_events
+    screen.path = tmp_path / "owned-worker-save.json"
+    screen.path.write_text('{"week": 3}')
+    screen._start_continue_loading()
+    attempt = host.readiness._loading_attempt
+    records(host)
+    collecting, completed = threading.Event(), threading.Event()
+    original = host.discovery.poll
+    def collection_in_progress():
+        collecting.set()
+        assert completed.wait(2)
+        return original()
+    monkeypatch.setattr(host.discovery, "poll", collection_in_progress)
+    def finish_loading():
+        assert collecting.wait(2)
+        host.readiness.end_loading(attempt)
+        completed.set()
+    worker = threading.Thread(target=finish_loading)
+    worker.start()
+    try:
+        host.events.refresh()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert host.events.status()["readiness"]["activity"]["kind"] == "save_loading"
+        assert any(row.get("event") == "native-service" for row in records(host))
+        host.events.service()
+        assert host.events.status()["readiness"]["activity"]["kind"] == "menu"
+    finally:
+        collecting.set()
+        worker.join(2)
+
+
+def test_cancelled_regulation_preload_publishes_departure_without_polling_on_unrelated_refresh(native_events, monkeypatch):
+    from hook_manager.manager import HookError
+
+    host, manager, screen, State, Job = native_events
+    def advance(screen, state):
+        return True
+    for name in ("ui.session_preload", "ui.screens.hub_screen", "ui.screens.load_game_screen", "ui.screens.team_select_screen"):
+        monkeypatch.setattr(sys.modules[name], "advance_session_preload", advance, raising=False)
+    host.adapters.await_regulations()
+    screen.state = State(None)
+    screen._preload_job = Job(manager, screen.state)
+    screen._preload_job.done = True
+    assert not sys.modules["ui.screens.hub_screen"].advance_session_preload(screen, screen.state)
+    preload = host.adapters.preload
+    generation = preload.generation
+    records(host)
+    calls, poll = [], preload.poll
+    def observed_poll():
+        calls.append(True)
+        return poll()
+    monkeypatch.setattr(preload, "poll", observed_poll)
+    screen._preload_job.cancel()
+    assert host.events.status()["adapters"]["career_preload"] == {"state": "left", "generation": generation}
+    with pytest.raises(HookError):
+        preload.current(generation)
+    assert len(calls) == 1
+    host.events.refresh()
+    assert len(calls) == 1
+    changes = [row for row in records(host) if row.get("event") == "career-preload"]
+    assert len(changes) == 1 and changes[0]["status"]["state"] == "left"
 
 
 @pytest.mark.parametrize("failure", ["return_false", "constructor"])
@@ -352,6 +511,7 @@ def test_native_crash_recorder_and_python_hook_keep_one_generic_fatal(native_eve
             self.saved.append(exc_info[1])
     module.RuntimeCrashReporter = RuntimeCrashReporter
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    host.events.imported(host.events.failures, module.__name__)
     host.events.service()
     career = type("CareerScreen", (), {})()
     career.state = State(None)
@@ -367,6 +527,7 @@ def test_native_crash_recorder_and_python_hook_keep_one_generic_fatal(native_eve
             info = sys.exc_info()
             recorder.record_exception(info)
             recorder.record_exception(info)
+            assert getattr(error, "_launcher_fatal_logged", False)
             sys.excepthook(*info)
             assert recorder.saved == [error, error] and delegated == [error]
     result = records(host)

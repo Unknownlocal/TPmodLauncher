@@ -89,6 +89,21 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert issubclass(personnel.RegulationPersonnelAdapter, host.CallableAdapters)
         assert channel.HookError is host.HookError
         assert host.manager.groups == {}
+        # A control reply must include a group installed during its final service,
+        # rather than foundation status collected before that pending work.
+        observed = ModuleType("owned_control_reply")
+        def value(number):
+            return number + 1
+        observed.value = value
+        target = host.CallableTarget("owned.reply", observed.__name__, (), "value", "(number)")
+        monkeypatch.setattr(host.manager, "dispatch", lambda record: None)
+        host.manager.approve(target)
+        host.manager.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
+        monkeypatch.setitem(sys.modules, observed.__name__, observed)
+        host.events.imported(host.manager, observed.__name__)
+        reply = pulse("loading", loading={"state": "complete", "loaded": 0, "failed": 0, "total": 0})
+        assert reply["groups"][target.name] == "active" and observed.value(4) == 5
+        host.manager.remove(target.name)
         assert tuple(sys.meta_path) == finders and tuple(sys.path) == paths
         assert not {key for key in set(sys.modules) - before
                     if key == "game_state" or key.startswith(("managers.", "ui."))}
@@ -156,6 +171,9 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         regulation_changes.option_neighbours = lambda spec, current_key: [row["key"] for row in spec["options"]]
         regulation_changes.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
         monkeypatch.setitem(sys.modules, regulation_changes.__name__, regulation_changes)
+        # The synthetic module insertion has no real loader to announce its
+        # completion. Supply that event before requesting main-thread service.
+        host.events.imported(host.manager, regulation_changes.__name__)
         pulse("changes")
         inactive = regulation_changes.FormulaRegulationGovernanceManager(SimpleNamespace(
             regulation_manager=SimpleNamespace(regulation_defs={})))
@@ -168,6 +186,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             "handle_event": lambda self, event: "native event", "update": lambda self: "native update",
             "switch_to": lambda self, screen: setattr(self, "current", screen)})
         monkeypatch.setitem(sys.modules, ui.__name__, ui)
+        host.events.imported(host.readiness, ui.__name__)
+        pulse("changes")
         screen_manager = ui.ScreenManager()
         screen_manager.current = SimpleNamespace(state=career)
         helper = ModuleType("ui.session_preload")
@@ -197,6 +217,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             "_draw_regulation_card": lambda self, surface, entry, rect: None})
         original_sections = catalogue.RegulationsScreen._draw_sections
         monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
+        host.events.imported(host.manager, catalogue.__name__)
         late = pulse("changes")
         assert host.activity.writer.wait_idle(2)
         delivered = client.drain_activity()

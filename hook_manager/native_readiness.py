@@ -157,11 +157,12 @@ class NativeReadiness(Manager):
     def navigation_intact(self):
         return self.group_intact("readiness.navigation")
 
-    def snapshot(self):
-        """Return plain availability/activity; module, screen and career objects stay native."""
+    def snapshot(self, *, poll=True):
+        """Read availability; event collection can reuse already-serviced imports."""
         if self.closed:
             return {"career": None, "modules": [], "watching": False, "detail": "", "activity": self.activity_snapshot()}
-        self.poll()
+        if poll:
+            self.poll()
         activity = self.activity_snapshot()
         # A module enters sys.modules before its import finishes. Remember only
         # completed imports, as milestones for this process.

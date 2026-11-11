@@ -2,6 +2,7 @@
 """Publish native changes through the shared background reporting outbox."""
 
 from copy import deepcopy
+from contextlib import contextmanager
 from itertools import count
 import threading
 import weakref
@@ -23,6 +24,8 @@ class NativeEvents:
     def __init__(self, host):
         self.host, self.cache = host, {}
         self.active = self.closed = self._refreshing = False
+        self._batch_depth, self._refresh_pending = 0, False
+        self._polled, self._preload_dirty = set(), False
         self._sequence = count(1)
         self._lock, self._pending = threading.Lock(), set()
         self._loading_done = []
@@ -40,16 +43,17 @@ class NativeEvents:
         self.restart = NativeRestart(self)
         self.workshop = WorkshopMetadata(host.activity)
         host.settings.changed = self.refresh
-        host.readiness.changed = self.refresh
+        host.readiness.changed = self.readiness_changed
         host.menu.changed = self.refresh
         host.adapters.changed = self.refresh
 
     def bind(self, manager):
-        if self.closed:
-            manager.events = None
-            return
-        manager.events = self
-        self._managers.add(manager)
+        with self._lock:
+            if self.closed:
+                manager.events = None
+                return
+            manager.events = self
+            self._managers.add(manager)
         self.handover.watch(manager.wanted)
 
     def watch_imports(self, names):
@@ -95,6 +99,10 @@ class NativeEvents:
                 return
             first = not self._pending
             self._pending.add(manager)
+            # An import-lock handover may name only the foundation manager.
+            # Wake every actual observer of that module, not every manager.
+            if name is not None:
+                self._pending.update(owner for owner in tuple(self._managers) if name in owner.wanted)
         if self.control_imports is not None and name in self.control_imports.wanted:
             self.control_ready(self.control_id, "imports")
         if first and not self.closed:
@@ -113,66 +121,137 @@ class NativeEvents:
             self._loading_done.append(attempt)
         self.imported(self.host.manager)
 
-    def service(self):
-        with self._lock:
-            self._pending.clear()
-            completed, self._loading_done = self._loading_done, []
-        for attempt in completed:
-            self.host.readiness.end_loading(attempt)
-        for manager in tuple(self._managers):
-            if not manager.closed:
-                manager.poll()
+    def readiness_changed(self):
+        """Recheck a captured preload only when navigation/loading can invalidate it."""
+        self._preload_dirty = True
         self.refresh()
+
+    def poll_manager(self, manager, *, force=False):
+        """Share dependency installation within a pass without repeated polling."""
+        with self.batch():
+            if force:
+                self._polled.discard(manager)
+            if self.closed or manager.closed or manager in self._polled:
+                return manager.status()
+            self._polled.add(manager)
+            return manager.poll()
+
+    def service(self):
+        """Service named pending owners, then collect one final state snapshot."""
+        if self.closed:
+            return
+        with self._lock:
+            pending, self._pending = self._pending, set()
+            completed, self._loading_done = self._loading_done, []
+        with self.batch():
+            # A new completion may supersede work earlier in this control.
+            self._polled.difference_update(pending)
+            for attempt in completed:
+                self.host.readiness.end_loading(attempt)
+            # Career preload depends on the shared navigation hooks. Its own
+            # poll must see navigation installation from this same completion.
+            for manager in sorted(pending, key=lambda owner: owner is not self.host.readiness):
+                if not manager.closed:
+                    self.poll_manager(manager)
+            self.refresh(force=True)
+
+    @contextmanager
+    def batch(self):
+        """Defer nested collection until a control or main-thread import settles.
+
+        Worker imports never hold this main-thread boundary while importing.
+        Their completion only queues the managers that need main-thread work.
+        """
+        main_thread = threading.current_thread() is threading.main_thread()
+        if main_thread:
+            if not self._batch_depth and not self._refreshing:
+                self._polled.clear()
+            self._batch_depth += 1
+        try:
+            yield
+        finally:
+            if main_thread:
+                self._batch_depth -= 1
+                if not self._batch_depth and self._refresh_pending:
+                    self.refresh()
+                # Dependency checks inside collection share the same pass.
+                if not self._batch_depth and not self._refreshing:
+                    self._polled.clear()
 
     def ready_ui(self, imported):
         """Run import-dependent UI work before the native consumer uses it."""
         host = self.host
-        host.menu.poll(imported)
-        host.themes.poll(imported)
-        host.settings.poll(imported)
-        self.refresh()
+        with self.batch():
+            host.menu.poll(imported)
+            host.themes.poll(imported)
+            host.settings.poll(imported)
+            self.refresh()
         return True
 
-    def refresh(self):
-        if not self.active or self.closed or self._refreshing:
+    def refresh(self, *, force=False):
+        """Request main-thread collection, deferring nested changes until batch end."""
+        if not self.active or self.closed:
             return
         if threading.current_thread() is not threading.main_thread():
             self.imported(self.host.manager)
             return
+        if self._refreshing:
+            return
+        self._refresh_pending = True
+        if self._batch_depth and not force:
+            return
+        self._refresh_pending = False
         self._refreshing = True
         try:
-            host = self.host
-            self.publish("restart-observation", self.restart.status())
-            self.publish("pack", host.discovery.poll())
-            menu = host.menu.status()
-            loading = menu.get("loading", {})
-            if (loading.get("state") in ("complete", "error") or loading.get("timed_out")
-                    or self.cache["pack"].get("state") == "unavailable"):
-                if host.themes.finish_loading():
-                    host.settings.refresh()
-            self.publish("menu", menu)
-            self.publish("themes", host.themes.status())
-            self.publish("settings", host.settings.status())
-            readiness = host.readiness.snapshot()
-            readiness["activity"] = host.activity.snapshot()
-            self.publish("readiness", readiness)
-            if host.adapters.preload is not None:
-                host.adapters.preload.poll()
-            adapters = host.adapters.status()
-            self.cache["adapters"] = deepcopy(adapters)
-            preload = host.adapters.preload
-            if preload is not None:
-                preload.changed = self.refresh
-                self.bind(preload)
-                self.publish("career-preload", adapters.get("career_preload"))
+            readiness, pack, menu = self._prepare_state()
+            self._collect_and_publish(readiness, pack, menu)
         except Exception as error:
             self.host.activity.submit_log({**build_log_record("WARNING", "Native event collection failed: " + str(error)),
                                            "event": "diagnostic"}, error=error)
         finally:
             self._refreshing = False
+            if not self._batch_depth:
+                self._polled.clear()
+
+    def _prepare_state(self):
+        """Settle loading changes before collecting theme, settings and adapter state."""
+        host = self.host
+        if self._preload_dirty:
+            self._preload_dirty = False
+            if host.adapters.preload is not None:
+                self.poll_manager(host.adapters.preload)
+        # Availability can notify preload departure. Read it before adapter
+        # status so that departure is included in this same collection.
+        readiness = host.readiness.snapshot(poll=False)
+        readiness["activity"] = host.activity.snapshot(poll=False)
+        pack, menu = host.discovery.poll(), host.menu.status()
+        loading = menu.get("loading", {})
+        if (loading.get("state") in ("complete", "error") or loading.get("timed_out")
+                or pack.get("state") == "unavailable"):
+            if host.themes.finish_loading():
+                host.settings.refresh()
+        return readiness, pack, menu
+
+    def _collect_and_publish(self, readiness, pack, menu):
+        """Publish changed values and cache adapters after state preparation."""
+        host = self.host
+        self.publish("restart-observation", self.restart.status())
+        self.publish("pack", pack)
+        self.publish("menu", menu)
+        self.publish("themes", host.themes.status())
+        self.publish("settings", host.settings.status())
+        self.publish("readiness", readiness)
+        adapters = host.adapters.status(poll=False)
+        self.cache["adapters"] = deepcopy(adapters)
+        if host.adapters.preload is not None:
+            self.publish("career-preload", adapters.get("career_preload"))
 
     def start(self):
         self.active = True
+        # Bootstrap is the one full installation pass. Later service requests
+        # use actual pending owners, including managers created by adapters.
+        with self._lock:
+            self._pending.update(self._managers)
         self.service()
 
     def status(self):

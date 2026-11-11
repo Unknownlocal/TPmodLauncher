@@ -2,6 +2,7 @@
 """Wrap approved game methods and pass plain values to callbacks."""
 
 from functools import update_wrapper
+from contextlib import nullcontext
 import importlib.util
 import inspect
 import math
@@ -125,16 +126,22 @@ class _Loader:
         return create(spec) if create is not None else None
 
     def exec_module(self, module):
-        self.original.exec_module(module)
-        # A shutdown during module execution must leave the normal import usable.
-        if self.manager.closed:
-            return
-        self.manager.completed[self.name] = module
-        # Worker imports request main-thread service; they never install hooks themselves.
-        if threading.current_thread() is threading.main_thread():
-            self.manager.poll()
-        elif self.manager.events is not None:
-            self.manager.events.imported(self.manager, self.name)
+        events = self.manager.events
+        with events.batch() if events is not None else nullcontext():
+            self.original.exec_module(module)
+            # A shutdown during module execution leaves the normal import usable.
+            if self.manager.closed:
+                return
+            self.manager.completed[self.name] = module
+            # Install before the native importer resumes, but collect state only
+            # once after nested import observers have completed their own work.
+            if threading.current_thread() is threading.main_thread():
+                if self.manager.events is None:
+                    self.manager.poll()
+                else:
+                    self.manager.events.poll_manager(self.manager, force=True)
+            elif self.manager.events is not None:
+                self.manager.events.imported(self.manager, self.name)
 
     def __getattr__(self, name):
         return getattr(self.original, name)

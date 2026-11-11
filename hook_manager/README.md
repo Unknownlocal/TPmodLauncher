@@ -50,9 +50,13 @@ the context of an already-built record.
 
 `native_events.py` publishes changed startup, navigation, loading, menu, settings
 and theme values through the shared journal outbox. Status replies read its cache;
-they do not discover changes. Normal import completion installs ready hooks on
-the main thread. Worker imports queue a `changes` request instead. If a validation
-operation is still active, its completion wakes deferred installation.
+they do not discover changes. A service pass installs work only for managers
+named by import or operation completion. Normal imports still install hooks
+before the native caller uses the imported module. Nested import observers and
+control changes share one final state collection, rather than publishing partial
+states along the way. Readiness, activity and adapter snapshots reuse that work
+without polling their managers again. If a validation operation is still active,
+its completion wakes deferred installation.
 `import_handover.py` waits on existing import locks for modules already loading
 when an observer registers, then queues the same completion event. It does no
 periodic checking and never waits on a game caller.
