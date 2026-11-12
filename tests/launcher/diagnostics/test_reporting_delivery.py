@@ -1,0 +1,333 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Exercise owned socket delivery, durable recovery and reporting failure handling."""
+
+from hook_manager.diagnostics import error_text
+
+import os
+import socket
+import threading
+from types import SimpleNamespace
+
+import pytest
+
+from tests.launcher.fixtures.log_support import read_log
+from tests.launcher.fixtures.reporting_support import delivery, error_record, writer_for
+
+from launcher.diagnostics.activity_journal import ActivityJournal
+from launcher.diagnostics.reporting_sender import ReportingSender
+from launcher.diagnostics.reporting_wire import reporting_write
+from launcher.game_bridge import BridgeError
+from launcher.process_lifecycle import LaunchError
+from hook_manager.native_reporting import NativeReporting
+from tests.controller_device import rig  # Dependency of the shared delivery fixture.
+
+
+def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
+    controller, bridge, receiver, path, reads = delivery
+    for _ in range(3):
+        controller.poll()
+    assert reads == []
+    writer = writer_for(receiver)
+    record, failure = error_record("Owned save failed FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    text = read_log(path, controller.submit_log)
+    assert "Owned save failed FULL END" in text and "Original save diagnostic note" in text
+    assert '"kind":"saving"' in text.replace(" ", "")
+    assert reads == [threading.get_ident()]
+    assert not controller.stopping and receiver.confirmed
+
+
+@pytest.mark.parametrize("replacement", ["game", "helper"])
+def test_exec_drains_old_errors_without_servicing_replaced_image(delivery, replacement, tmp_path):
+    controller, bridge, receiver, path, _ = delivery
+    previous = controller.processes[10].session
+    controller.processes[10].mods = SimpleNamespace(close=lambda: bridge.set_menu([]))
+    bridge.journal.append_record({"event": "native-service"})
+    bridge.journal.append_record({"event": "diagnostic", "level": "ERROR",
+                                  "detail": "Old native error", "traceback": "x" * 5000 + " FULL EXEC END"})
+    controller.device.processes[10] = controller.game if replacement == "game" else str(tmp_path / "helper.exe")
+    controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
+    controller.poll()
+    assert bridge.exited
+    assert previous.is_detached and receiver.finished.is_set() and not controller.cleanup_failed
+    assert (10 in controller.processes) == (replacement == "game")
+    if replacement == "game":
+        assert controller.processes[10].session is not previous
+        assert controller.processes[10].bridge is None and controller.processes[10].mods is None
+    assert "x" * 5000 + " FULL EXEC END" in read_log(path, controller.submit_log)
+
+
+def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery, tmp_path, monkeypatch):
+    controller, bridge, _, path, _ = delivery
+    owner = controller.processes[10]
+    bridge.journal.append_record({"event": "native-service"})
+    bridge.journal.append_record({"event": "diagnostic", "level": "ERROR", "detail": "Final owned error"})
+    controller._queue_bridge(owner, {"type": "send",
+        "payload": {"event": "reporting-closed", "detail": "EOF"}})
+    controller.device.exit(10)
+    controller.device.processes[10] = str(tmp_path / "foreign.exe")
+    def no_pid_lookup(**kwargs):
+        raise AssertionError("Exit recovery inspected a reused PID")
+    monkeypatch.setattr(controller.device, "enumerate_processes", no_pid_lookup)
+    controller.poll()
+    assert bridge.exited and not controller.processes and not controller.cleanup_failed
+    assert bridge.journal.retained and "Final owned error" in read_log(path, controller.submit_log)
+
+
+def test_service_and_control_completion_bypass_a_stalled_journal(delivery, monkeypatch):
+    _, bridge, receiver, _, _ = delivery
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    append = bridge.journal.append_records
+    def stalled(records):
+        entered.set()
+        assert release.wait(3)
+        append(records)
+    monkeypatch.setattr(bridge.journal, "append_records", stalled)
+    received = []
+    def control_ready(request, dependency):
+        received.append((request, dependency))
+        completed.set()
+    receiver.control_ready = control_ready
+    writer = writer_for(receiver)
+    port = NativeReporting(bridge.journal, writer=writer)
+    service = threading.Event()
+    enqueue = receiver.enqueue_event
+    def notice(event, detail):
+        enqueue(event, detail)
+        service.set()
+    receiver.enqueue_event = notice
+    try:
+        writer.enqueue_log_record({"level": "INFO", "detail": "delayed storage"}, bridge.journal)
+        assert entered.wait(2)
+        port.control_ready("a" * 32, "operations")
+        port.service_ready()
+        assert completed.wait(2) and received == [("a" * 32, "operations")]
+        assert service.wait(2)
+        assert receiver.records.take(None, block=False)[0] == [{"event": "native-service"}]
+        assert not writer.wait_idle(.01)
+    finally:
+        release.set()
+        assert writer.finish(2) and receiver.finished.wait(2)
+
+
+
+
+def test_torn_append_cannot_hide_socket_only_fatal_details(delivery, monkeypatch):
+    controller, bridge, receiver, path, _ = delivery
+    append = bridge.journal.append_records
+    def interrupted(records):
+        if any(record["level"] == "ERROR" for record in records):
+            with bridge.journal.path.open("ab") as stream:
+                stream.write(b'{"partial":')
+            raise OSError("Owned partial-write failure")
+        append(records)
+    monkeypatch.setattr(bridge.journal, "append_records", interrupted)
+    writer = writer_for(receiver)
+    first, first_failure = error_record("First durable native failure FULL END")
+    first.update(level="CRITICAL", fatal=True, reason="First durable native failure FULL END")
+    writer.enqueue_log_record(first, bridge.journal, first_failure)
+    record, failure = error_record("Original socket-only native failure FULL END")
+    record.update(fatal=True, reason="Original socket-only native failure FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    writer.enqueue_log_record({"level": "INFO", "detail": "later complete append"}, bridge.journal)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="First durable native failure FULL END"):
+        controller.poll()
+    text = read_log(path, controller.submit_log)
+    assert "Original save diagnostic note" in text and "Native activity journal failed" in text
+    assert "Original socket-only native failure FULL END" in text and "First durable native failure FULL END" in text
+    assert "NATIVE JOURNAL READ FAILED" in text and "later complete append" in text
+    assert bridge.journal.read_failed and bridge.journal.path.exists()
+
+
+def test_blocked_notification_sender_does_not_delay_journal_appends(delivery, monkeypatch):
+    from launcher.diagnostics import reporting_sender
+
+    _, bridge, receiver, _, reads = delivery
+    entered, release = threading.Event(), threading.Event()
+    write = reporting_sender.reporting_write
+    def blocked(connection, sequence, message):
+        if message.get("kind") == "journal-ready":
+            entered.set()
+            assert release.wait(3)
+        write(connection, sequence, message)
+    monkeypatch.setattr(reporting_sender, "reporting_write", blocked)
+    writer = writer_for(receiver)
+    try:
+        writer.enqueue_log_record({"level": "INFO", "detail": "first durable record"}, bridge.journal)
+        assert entered.wait(2)
+        writer.enqueue_log_record({"level": "ERROR", "detail": "second durable record"}, bridge.journal)
+        assert writer.wait_idle(2)
+        assert "second durable record" in bridge.journal.path.read_text()
+        assert reads == []
+        writer.close()
+        assert not writer.finished.is_set()
+    finally:
+        release.set()
+        assert writer.finish(2) and receiver.finished.wait(2)
+
+
+def test_foreign_peer_cannot_latch_receiver_and_cancel_wakes_partial_read(delivery):
+    _, bridge, receiver, _, _ = delivery
+    endpoint = receiver.endpoint
+    with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=2) as foreign:
+        reporting_write(foreign, 0, {"version": 1, "session": endpoint["session"],
+                                     "pid": os.getpid(), "token": "\u00e9" * 64})
+    with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=2) as owned:
+        reporting_write(owned, 0, {"version": 1, "session": endpoint["session"],
+                                   "pid": os.getpid(), "token": endpoint["token"]})
+        assert receiver.connected.wait(2)
+        owned.sendall(b"\0")  # A started but incomplete frame must be cancellable.
+        receiver.close()
+        assert receiver.finished.is_set() and not receiver.confirmed
+    bridge.finish_reporting()
+    assert bridge.journal.retained
+
+
+def test_reporting_fault_recovers_journal_and_keeps_evidence(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    record, _ = error_record("unused")
+    record["detail"] = "Last durable save error before channel failure"
+    bridge.journal.append_record(record)
+    endpoint = receiver.endpoint
+    with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=2) as owned:
+        reporting_write(owned, 0, {"version": 1, "session": endpoint["session"],
+                                   "pid": os.getpid(), "token": endpoint["token"]})
+        reporting_write(owned, 2, {"kind": "journal-ready"})  # Skip sequence one.
+        assert receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="reporting sequence"):
+        controller.poll()
+    assert "Last durable save error before channel failure" in read_log(path, controller.submit_log)
+    assert bridge.journal.retained
+
+
+def test_disappeared_live_script_retains_journal_before_reporting_connects(delivery):
+    _, bridge, receiver, _, _ = delivery
+    bridge.loaded = True
+    bridge.script.is_destroyed = True
+    bridge.journal.append_record({"level": "ERROR", "detail": "Unconfirmed native final record"})
+    assert not receiver.connected.is_set()
+    with pytest.raises(BridgeError, match="Bridge script disappeared"):
+        bridge.close()
+    bridge.journal.remove()
+    assert bridge.journal.path.exists() and bridge.journal.retained
+
+
+def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypatch):
+    controller, bridge, receiver, path, reads = delivery
+    monkeypatch.setattr(ReportingSender, "enqueue_journal_notice", lambda self: None)
+    writer = writer_for(receiver)
+    record, failure = error_record("Durable failure with lost notice FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    assert reads == [] and "FULL END" not in read_log(path, controller.submit_log)
+    owner = controller.processes[10]
+    session = owner.session
+    session.is_detached = True
+    controller.events.put(("detached", (owner, "process-terminated")))
+    controller.poll()
+    assert "Durable failure with lost notice FULL END" in read_log(path, controller.submit_log)
+    assert not bridge.journal.path.exists()
+    bridge.close()
+    controller.close()
+    assert reads == [threading.get_ident()]  # Retired resources are not drained again.
+
+
+def test_exec_retirement_preserves_native_fatal_over_delivery_failure_and_releases_owner(delivery, monkeypatch):
+    controller, bridge, _, path, _ = delivery
+    previous = controller.processes[10].session
+    bridge.journal.append_record({"event": "native-activity", "level": "CRITICAL", "fatal": True,
+        "detail": "Native terminal failure", "reason": "Original exec fatal FULL END",
+        "traceback": "Original exec traceback " + "x" * 5000 + " FULL TRACE END",
+        "activity": {"kind": "game_loading", "generation": 1, "sequence": 1}})
+    finish_reporting = bridge.finish_reporting
+    def failed_delivery():
+        finish_reporting()
+        raise RuntimeError("Secondary final delivery failure")
+    monkeypatch.setattr(bridge, "finish_reporting", failed_delivery)
+    controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
+    with pytest.raises(LaunchError, match="Original exec fatal FULL END") as failure:
+        controller.poll()
+    assert "FULL TRACE END" in error_text(failure.value)
+    assert previous.is_detached and not controller.processes
+    assert not controller.held and bridge.journal.retained and bridge.journal.path.exists()
+    text = read_log(path, controller.submit_log)
+    assert "Secondary final delivery failure" in text and "FULL TRACE END" in text
+
+
+def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "native-service"}, bridge.journal)
+    record, failure = error_record("Owned fatal before import service FULL END")
+    record.update(fatal=True, reason="Owned fatal before import service FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="Owned fatal before import service FULL END"):
+        controller.poll()
+    assert "Original save diagnostic note" in read_log(path, controller.submit_log)
+
+
+def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
+    controller, bridge, receiver, _, _ = delivery
+    accepted = []
+    controller.processes[10].mods = SimpleNamespace(settings_status=accepted.append, poll=lambda: None, close=lambda: None)
+    writer = writer_for(receiver)
+    current = {"save": None, "generation": 2}
+    writer.enqueue_log_record({"event": "settings", "event_sequence": 2, "status": current}, bridge.journal)
+    writer.enqueue_log_record({"event": "settings", "event_sequence": 1, "status": {"save": {"id": 1}, "generation": 1}},
+                              ActivityJournal(tmp_path / "missing" / "journal"))
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    assert accepted == [current]
+
+
+def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    bridge.journal.append_record({"event": []})
+    writer = writer_for(receiver)
+    writer.enqueue_log_record({"event": "unsupported-native-change", "detail": "UNKNOWN DATA END"}, bridge.journal)
+    writer.enqueue_log_record({"event": "settings", "event_sequence": "invalid", "status": {"detail": "SEQUENCE DATA END"}}, bridge.journal)
+    writer.enqueue_log_record({"event": "restart", "event_sequence": 1, "status": {"state": "RESTART DATA END"}}, bridge.journal)
+    record, failure = error_record("Original native fatal after invalid change FULL END")
+    record.update(fatal=True, reason="Original native fatal after invalid change FULL END")
+    writer.enqueue_log_record(record, bridge.journal, failure)
+    assert writer.finish(2) and receiver.finished.wait(2)
+    with pytest.raises(LaunchError, match="Original native fatal after invalid change FULL END"):
+        controller.poll()
+    text = read_log(path, controller.submit_log)
+    assert "Original save diagnostic note" in text
+    assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text and "RESTART DATA END" in text
+    controller.close()
+    assert bridge.journal.path.exists() and bridge.journal.retained
+
+
+def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delivery):
+    controller, bridge, receiver, path, _ = delivery
+    writer = writer_for(receiver)
+    def marker(sequence, attempt, state):
+        writer.enqueue_log_record({"event": "restart", "event_sequence": sequence,
+            "status": {"attempt": attempt, "state": state, "source": "settings", "series": None}}, bridge.journal)
+    marker(1, 1, "requested")
+    marker(2, 1, "committed")
+    marker(1, 1, "requested")  # A late copy must not undo the committed state.
+    assert writer.wait_idle(2)
+    controller._drain_activity(controller.processes[10])
+    assert bridge.restart_attempt["state"] == "committed"
+    marker(3, 2, "requested")
+    marker(4, 1, "cancelled")  # Completion of an older attempt cannot clear a newer one.
+    assert writer.finish(2) and receiver.finished.wait(2)
+    controller.poll()
+    assert bridge.restart_attempt["attempt"] == 2 and bridge.restart_attempt["state"] == "requested"
+    text = read_log(path, controller.submit_log)
+    assert text.count('"attempt": 1, "state": "requested"') == 1
+    # The process-owner check applies before restart handling too.
+    old = controller.processes[10].session
+    from launcher.tracked_process import TrackedProcess
+    controller._event("bridge", (TrackedProcess(10), {"type": "send", "payload": {
+        "event": "restart", "event_sequence": 5, "status": {
+            "attempt": 3, "state": "requested", "source": "mod-pack", "series": "oval"}}}))
+    assert controller.processes[10].session is old and bridge.restart_attempt["attempt"] == 2

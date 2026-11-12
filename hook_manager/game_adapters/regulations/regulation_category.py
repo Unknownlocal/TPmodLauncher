@@ -120,8 +120,7 @@ class RegulationCategoryAdapter(Manager):
                     self.store_error(error)
                     return definitions
             finally:
-                with self._lock:
-                    self._active -= 1
+                self._operation_finished()
 
         update_wrapper(wrapped, original)
         wrapped._tpm_hook_group = name

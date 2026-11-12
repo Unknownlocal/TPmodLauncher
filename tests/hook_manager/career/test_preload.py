@@ -2,6 +2,7 @@
 """Check native preload progress and loading-attempt ownership without a game."""
 
 import sys
+import threading
 from types import ModuleType, SimpleNamespace
 from contextlib import ExitStack
 
@@ -10,6 +11,7 @@ import pytest
 from hook_manager.career_preload import CareerPreload
 from hook_manager.manager import HookError
 from hook_manager.native_readiness import NativeReadiness
+from hook_manager.diagnostics import format_log_record
 
 
 @pytest.fixture
@@ -88,6 +90,61 @@ def test_native_progress_wait_once_release_and_new_job_rejects_old_permission(na
             replacement.current(preload.generation)
     finally:
         replacement.stop()
+
+
+def test_diagnostic_career_activity_covers_loading_cancel_and_entry_without_mods(native, monkeypatch):
+    helper, hub, game, manager, Screen, Job = native
+    original = helper.advance_session_preload
+    EntryScreen = type("EntryScreen", (Screen,), {})
+    monkeypatch.setattr(hub, "HubScreen", EntryScreen)
+    entry = EntryScreen()
+    entry.manager, entry._preload_job, entry.state = manager, None, None
+    manager.current = entry
+    observer = NativeReadiness()
+    try:
+        with monkeypatch.context() as startup:
+            startup.delitem(sys.modules, "ui.screen_manager")
+            observer.watch_career()  # No regulation setup or UI prerequisites.
+            assert observer.snapshot()["activity"]["kind"] == "game_loading"
+        observer.poll()
+        observer.observe_screen(entry)
+        assert observer.snapshot()["activity"]["kind"] == "menu"
+        entry._preload_job = Job()
+        pending = observer.snapshot()["activity"]
+        assert pending["kind"] == "save_loading" and observer.snapshot()["activity"] == pending
+        entry._preload_job.cancelled = True
+        cancelled = observer.snapshot()["activity"]
+        assert cancelled["kind"] == "menu" and cancelled["sequence"] > pending["sequence"]
+        entry._preload_job = Job()
+        assert observer.snapshot()["activity"]["sequence"] > cancelled["sequence"]
+        dashboard = Screen()
+        manager.switch_to(dashboard)
+        loaded = observer.snapshot()
+        assert loaded["activity"]["kind"] == "in_save" and loaded["career"] is not None
+        from hook_manager import diagnostics
+        monkeypatch.setattr(diagnostics, "activity_provider", observer.current_activity)
+        notices = []
+        with monkeypatch.context() as worker_guard:
+            def unavailable():
+                raise AssertionError("Worker diagnostics must not read live screens")
+            worker_guard.setattr(observer, "activity_snapshot", unavailable)
+            worker = threading.Thread(target=lambda: notices.append(diagnostics.build_log_record("ERROR", "Owned native failure")))
+            worker.start()
+            worker.join(2)
+            assert not worker.is_alive() and notices[0]["activity"] == loaded["activity"]
+        manager.switch_to(object())
+        assert observer.snapshot()["activity"]["kind"] == "in_save"
+        entry._preload_job = None
+        manager.switch_to(entry)
+        departed = observer.snapshot()
+        assert departed["career"] is None and departed["activity"]["kind"] == "menu"
+        assert departed["activity"]["sequence"] > loaded["activity"]["sequence"]
+        assert notices[0]["activity"] == loaded["activity"]  # Later navigation cannot rewrite the failed activity.
+        assert hub.advance_session_preload is original  # Diagnostics neither gate nor wrap loading.
+        Screen.switch_to = lambda self, screen: None
+        assert observer.snapshot()["activity"]["kind"] == "unknown"
+    finally:
+        observer.stop()
 
 
 def test_career_and_completed_modules_are_observed_without_regulation_loading(native, monkeypatch):
@@ -178,6 +235,9 @@ def test_missing_native_job_restores_completion_instead_of_raising_into_loader(n
     try:
         assert hub.advance_session_preload(screen, screen.state) is True
         assert preload.closed and preload.loading_status()["state"] == "unavailable"
+        failure = format_log_record(preload.loading_status())
+        assert "Native preloading completed without its loading job" in failure["detail"]
+        assert "in wrapped" in failure["traceback"] and "HookError:" in failure["traceback"]
         assert hub.advance_session_preload is helper.advance_session_preload
     finally:
         preload.stop()

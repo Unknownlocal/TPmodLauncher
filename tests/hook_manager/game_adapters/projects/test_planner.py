@@ -9,6 +9,7 @@ from hook_manager.manager import HookError
 from hook_manager.game_adapters.projects import planner as planner_module
 from hook_manager.game_adapters.regulations.contexts import regulation_context
 from hook_manager.game_adapters.regulations.regulation_project import RegulationProjectAdapter
+from tests.launcher.fixtures.log_support import read_log
 
 
 class NativeObject:
@@ -30,7 +31,7 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     path = tmp_path / "launch.log"
     with reporter(path) as logger:
         assert RegulationProjectAdapter.create(state, channel, None, bind_reporter(logger)) is not None
-        assert path.read_text(encoding="utf-8") == ""
+        assert read_log(path, logger) == ""
 
         def incompatible(state):
             raise HookError("Native project planning helpers changed:\naero")
@@ -40,7 +41,8 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     output = capsys.readouterr().err
     assert "REGULATIONS COMPATIBILITY FAILED" in output
     assert "helpers changed: aero" in output and "continuing native game" in output
-    assert path.read_text(encoding="utf-8") == output and len(output.splitlines()) == 1
+    assert path.read_text(encoding="utf-8") == output
+    assert output.count("WARNING modLauncher.regulations") == 1 and "in incompatible" in output
 
 
 def test_project_contexts_copy_needed_state_preserve_identity_and_reject_stale_managers(monkeypatch):

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
 
@@ -64,11 +65,15 @@ def window(output, ignore_close=False):
     while user.GetMessageW(c.byref(message), None, 0, 0) > 0:
         user.TranslateMessage(c.byref(message))
         user.DispatchMessageW(c.byref(message))
-    output.with_suffix(".exited").write_text("clean Python exit", encoding="utf-8")
+    output.with_suffix(".exited").write_text("window loop complete", encoding="utf-8")
 
 
 if sys.argv[1] == "window":
     window(Path(sys.argv[2]), len(sys.argv) > 3)
+    # This inert GUI owns no further cleanup. End the process when its window
+    # work is done, without measuring Frida/Python finalisation against the
+    # controller's normal-close allowance.
+    os._exit(0)
 else:
     root = Path(__file__).resolve().parent.parent
 
@@ -78,19 +83,57 @@ else:
         spec.loader.exec_module(module)
         return module
 
+    lifetime = None
+    if sys.argv[1] in ("host", "host-blocked"):
+        # Model an explicitly opened endpoint independently of standard stdin.
+        descriptor = os.dup(sys.stdin.fileno())
+        assert not os.get_inheritable(descriptor)
+        try:
+            lifetime = load("owned_host_lifetime", "diagnostics/host_lifetime.py").HostLifetime(
+                descriptor=descriptor, detach_stdin=True)
+        finally:
+            os.close(descriptor)
+
+    # Import the real binding and dependencies with the private lifetime read
+    # already blocked, then spawn the owned GUI through the ordinary controller.
     frida = load("test_binding", "native_test_binding.py").load(root)
     load("dependencies", "bundled_dependencies.py").load_source_packages(root)
     from launcher.process_lifecycle import Controller, run_launcher
 
-    if sys.argv[1] == "blocked":
+    if sys.argv[1] in ("blocked", "host-blocked", "fatal-blocked"):
         def blocked_cleanup(self):
             # Stand in for a controller stuck inside native bridge cleanup.
             (root / "cleanup-started").touch()
-            time.sleep(15)
+            if sys.argv[1] == "fatal-blocked":
+                deadline = time.monotonic() + 15
+                while not (root / "release-cleanup").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+            else:
+                time.sleep(15)
         Controller.close = blocked_cleanup
+
+    if sys.argv[1] in ("fatal", "host-blocked", "fatal-blocked"):
+        poll = Controller.poll
+        def failing_poll(self, *args, **kwargs):
+            if not hasattr(self, "_failure_watcher"):
+                def fail_when_requested():
+                    # Test-only file coordination wakes the production queue;
+                    # failure injection must not depend on a controller tick.
+                    deadline = time.monotonic() + 10
+                    while not (root / "fail-request").exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.events.put(("owned-failure", None))
+                self._failure_watcher = threading.Thread(target=fail_when_requested, daemon=True)
+                self._failure_watcher.start()
+            result = poll(self, *args, **kwargs)
+            if (root / "fail-request").exists():
+                (root / "failure-started").write_text(str(time.monotonic()))
+                raise RuntimeError("Owned launcher failure")
+            return result
+        Controller.poll = failing_poll
 
     kernel = c.WinDLL("kernel32")
     kernel.GetConsoleWindow.restype = w.HWND
     publish_ready(root / "console.json", {"hwnd": kernel.GetConsoleWindow()})
     raise SystemExit(run_launcher(frida, sys.argv[2:], root / ".state/controller.lock",
-                                 root / "logs/console-test.log", restart_grace=.2))
+                                 root / "logs/console-test.log", restart_grace=.2, host_lifetime=lifetime))

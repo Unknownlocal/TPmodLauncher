@@ -41,6 +41,7 @@ class CallableAdapters(Manager):
         self._local = threading.local()
         # Pin configuration for both guarded calls and whole worker scopes.
         self._active = 0
+        self._deferred_poll = False
 
     def _main(self):
         super()._main()
@@ -69,7 +70,17 @@ class CallableAdapters(Manager):
         finally:
             with self._lock:
                 self._local.operation = False
-                self._active -= 1
+            self._operation_finished()
+
+    def _operation_finished(self):
+        """Release admitted work and also request any deferred hook installation."""
+        with self._lock:
+            events = self.events if self._active == 1 and self._deferred_poll else None
+            if self._active == 1:
+                self._deferred_poll = False
+            super()._operation_finished()
+        if events is not None:
+            events.imported(self)  # Installation still belongs to the main thread.
 
     def register(self, owner, bindings):
         """Prepare an owner's complete binding group; no partial owner becomes ready."""
@@ -151,14 +162,14 @@ class CallableAdapters(Manager):
         try:
             return self._validate(original, signature, entries, args, kwargs)
         finally:
-            with self._lock:
-                self._active -= 1
+            self._operation_finished()
 
     def poll(self):
         with self._lock:
             # Bridge pulses may arrive while a scoped worker waits on a guest.
             # Report current readiness and defer mutations until the operation ends.
             if self._active:
+                self._deferred_poll = True
                 return self.status()
             super().poll()
             for owner in self.owners:
@@ -206,8 +217,8 @@ class CallableAdapters(Manager):
     def try_stop(self):
         """Defer main-thread shutdown until native operations finish, without waiting.
 
-        The bridge retries WAIT responses with its existing bounded request
-        deadline. Check and stop under one lock so a worker cannot enter between.
+        Busy work keeps its hooks until completion wakes the parked control.
+        Check and stop under one lock so a worker cannot enter between.
         """
         with self._lock:
             if self.closed:

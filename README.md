@@ -30,6 +30,13 @@ changing mods or selecting another pack. Loading results and mod messages appear
 in `modLauncher/logs/launcher.log`, replaced on each run. The main menu waits
 for mod loading before allowing season actions.
 
+Logging defaults to 2 (INFO). For startup and code-mod timing details, insert
+`--log-level 1` before `-- %command%` in the Windows launch line. The choices are
+1=DEBUG, 2=INFO, 3=WARNING, 4=ERROR and 5=CRITICAL, from most to least detail.
+Names and standard numeric levels (10, 20, 30, 40, 50) also work.
+This sets the same minimum level for the console and `launcher.log`.
+Complete fatal diagnostics always appear in both at their original level.
+
 Closing the launcher console or pressing Ctrl+C also closes the game. After
 four seconds, any remaining game processes are force-closed.
 
@@ -37,7 +44,7 @@ To update, close the game and launcher, replace the whole `modLauncher` folder,
 and update the launch line if the Python path changed. Mods stay in your data
 packs. Clear Steam's Launch Options to restore normal startup.
 
-### Linux through Proton/Wine (experimental, untested)
+### Linux through Proton/Wine (experimental)
 
 Use the Windows runtime supplied in the Linux/Proton release. Enable Proton for
 the game in Steam and enter this launch line, using your Linux game path:
@@ -54,8 +61,19 @@ bash modLauncher/SteamLaunchOptions.sh
 
 The helper displays the line and copies it if a supported clipboard tool is
 available. No Linux Python installation is needed. The wrapper uses Steam's
-Proton version, compatibility prefix and game arguments. Game injection and mod
-loading remain untested under Proton/Wine; plain Wine setup is not provided.
+Proton version, compatibility prefix and game arguments. Standalone Wine setup
+is not provided.
+To select the log level here, insert `--log-level 1` before `%command%`
+in the Linux launch line. Omitting it keeps 2 (INFO).
+
+Fatal diagnostics use the launcher's own Proton console. After game cleanup it
+shows the failed activity, stage, reason and Linux path to `launcher.log`. Press
+any key or close that console to dismiss the notice. Open the printed log path
+manually in your editor for the full details.
+
+Linux error dialogs and automatic log opening are disabled. No terminal emulator,
+dialog package or editor package is required. The wrapper uses Bash and standard
+coreutils; no native Linux Python installation is needed.
 
 macOS is unsupported and untested.
 
@@ -140,6 +158,41 @@ supplies the API and sandboxed Python runner. Additional packages need
 
 Start with the [diagnostic](examples/diagnostic_mod),
 [menu](examples/menu_mod) or [theme](examples/theme_mod) example.
+
+### Mods with prebuilt Wasm components
+
+You supply `mod.toml` and the compiled component, for example:
+
+```text
+data/<selected-data-pack>/my_mod/
+  mod.toml
+  mod.wasm
+```
+
+In `mod.toml`:
+
+```toml
+schema = 1
+id = "my.mod"
+version = "0.1.0"
+api = "0.3.0"
+runtime = "wasm"
+component = "mod.wasm"
+capabilities = ["diagnostics"]
+```
+
+Use your language's WebAssembly Component Model compiler and binding generator
+with the matching [WIT contract](hook_manager/api/README.md), such as
+`hook_manager/api/0.3.0/mod.wit`, and its `code-mod` world. Enable the WIT features
+matching your requested capabilities. Implement `activate` and `on-event`; event
+names and JSON payloads cross the contract as strings. Import only the operations
+your manifest requests. The launcher does not provide WASI filesystem, network
+or process access, so the component must work without those host services.
+
+Distribute the manifest and finished `.wasm` component together, keeping the
+manifest's relative component path. The launcher supplies the WIT definitions,
+sandbox and permitted host operations; it loads the supplied component without
+building it. Prebuilt components support API `0.1.0`, `0.2.0` and `0.3.0`.
 
 ### Choose an API
 

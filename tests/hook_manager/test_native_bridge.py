@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from textwrap import dedent
 
 import pytest
 
@@ -14,21 +15,50 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 @pytest.mark.native
 def test_real_bridge_initialises_hooks_and_restores_before_detach(
-    native_project, tmp_path
+    native_bridge_project, tmp_path
 ):
-    root, client = native_project.root, native_project.client
+    root, client = native_bridge_project.root, native_bridge_project.client
     runtime = tmp_path / "owned Python target"
     if os.name == "nt":
         shutil.copytree(client.parent, runtime)
     else:
         runtime.mkdir()
-        shutil.copy2(native_project.target, runtime / native_project.target.name)
-    target = runtime / native_project.target.name
+        shutil.copy2(native_bridge_project.target, runtime / native_bridge_project.target.name)
+    target = runtime / native_bridge_project.target.name
     helper = tmp_path / "owned_helper.py"
     (tmp_path / "owned_native_fixture.py").write_text(
         "def method(value):\n    return value + 1\n"
     )
     shutil.copyfile(FIXTURES / "native_bridge_helper.py", helper)
+    (tmp_path / "constants.py").write_text(dedent('''
+        from pathlib import Path
+        import sys, time
+        output = Path(sys.argv[1])
+        (output / "import-ready").touch()
+        deadline = time.monotonic() + 8
+        while not (output / "import-release").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+    '''))
+    native_managers = tmp_path / "managers"
+    native_managers.mkdir()
+    (native_managers / "__init__.py").touch()
+    (native_managers / "regulation_manager.py").write_text(dedent('''
+        from types import SimpleNamespace
+        class RegulationManager:
+            def _load_regulation_defs(self) -> 'Dict[str, Dict[str, Any]]':
+                return {}
+        class TyreModel:
+            @classmethod
+            def load(cls, path: 'str') -> "'TyreModel'":
+                return SimpleNamespace(mandatory_compound_count=1)
+        def regulation_for_model(model):
+            return {"key": "compound", "default": model.mandatory_compound_count}
+        ENTRY_REGULATIONS = [{"key": "entry"}]
+        CAR_PROFILE_REGULATION = {"key": "profile"}
+        CALENDAR_REGULATION = {"key": "calendar"}
+        FORMULA_FUEL_REGULATIONS = [{"key": "fuel"}]
+        BONUS_REGULATIONS = [{"key": "points"}]
+    '''))
     menu = tmp_path / "ui/screens"
     menu.mkdir(parents=True)
     (menu.parent / "__init__.py").touch()

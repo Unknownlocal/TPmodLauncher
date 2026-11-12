@@ -77,8 +77,7 @@ class AcademyCallers:
                         self.notices.pop(owner, None)
                 finally:
                     guards._local.academy_caller = previous
-                    with guards._lock:
-                        guards._active -= 1
+                    guards._operation_finished()
         if role not in ("ai_sign", "ai_renew"):
             return wrapped
 

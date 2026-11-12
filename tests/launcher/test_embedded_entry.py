@@ -18,6 +18,13 @@ def test_normal_entry_loads_source_examples_without_build_tools(embedded_project
     root = embedded_project
     probe = root / "launcher/entry_runner_probe.py"
     shutil.copyfile(FIXTURES / probe.name, probe)
+    # The probe writes real source into this target before testing link rejection.
+    target = root.parent / "data/entry-owned-pack/owned.source"
+    target.mkdir(parents=True)
+    linked = root / ".state/runner-linked"
+    linked.parent.mkdir(exist_ok=True)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(linked), str(target)],
+                   check=True, capture_output=True, timeout=10)
     try:
         result = subprocess.run(
             [str(root / "libs/python-3.13.16-embed-amd64/python.exe"), "-B", str(probe)],
@@ -26,6 +33,7 @@ def test_normal_entry_loads_source_examples_without_build_tools(embedded_project
         assert result.returncode == 0 and "Normal entry loaded source examples" in result.stdout, result.stderr
     finally:
         probe.unlink()
+        linked.rmdir()  # Only the fixture's junction, never the source directory.
 
 
 @pytest.mark.embedded
@@ -42,8 +50,12 @@ def test_embedded_entry_reports_runner_damage_without_repair(embedded_project):
             capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 1 and "Python runner verification failed" in result.stderr
-        assert "Restore the complete launcher release" in result.stderr and "Traceback" not in result.stderr
-        assert payload.read_bytes() == b"damaged runner" and set(root.iterdir()) == before
+        assert "Restore the complete launcher release" in result.stderr and "Traceback" in result.stderr
+        assert "Mod Launcher could not continue" in result.stderr and "Full details:" in result.stderr
+        assert payload.read_bytes() == b"damaged runner"
+        assert {path.name for path in set(root.iterdir()) - before} <= {"logs", ".state"}
+        log = (root / "logs/launcher.log").read_text(encoding="utf-8")
+        assert "Python runner verification failed" in log and "Traceback" in log
     finally:
         payload.write_bytes(original)
 
@@ -69,19 +81,29 @@ def test_relocated_release_imports_dependencies_without_installation(
     first = subprocess.run(
         command, cwd=tmp_path, capture_output=True, text=True, timeout=60
     )
+    log = root / "logs/launcher.log"
+    assert "DEBUG" not in log.read_text(encoding="utf-8")
+    assert first.stderr == log.read_text(encoding="utf-8")
     second = subprocess.run(
-        command, cwd=tmp_path, capture_output=True, text=True, timeout=60
+        [*command, "--log-level", "debug"], cwd=tmp_path, capture_output=True, text=True, timeout=60
     )
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert first.stdout == second.stdout and "Frida 17.23.3" in first.stdout
     assert "Wasmtime 49.0.0" in first.stdout
+    assert "DEBUG modLauncher.runtime STARTUP" in log.read_text(encoding="utf-8")
+    assert second.stderr == log.read_text(encoding="utf-8")
+    numeric = subprocess.run(
+        [*command, "--log-level", "4"], cwd=tmp_path, capture_output=True, text=True, timeout=60
+    )
+    assert numeric.returncode == 0 and numeric.stdout == first.stdout, numeric.stderr
+    assert numeric.stderr == log.read_text(encoding="utf-8") == ""
     assert before == {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
         for p in runtime.iterdir()
         if p.is_file()
     }
     assert not list((root / "libs/vendor").rglob("__pycache__"))
-    assert not (root / ".state").exists() and not (root / ".cache").exists()
+    assert (root / ".state/controller.lock").exists() and not (root / ".cache").exists()
     assert not (root / "libs/wheels").exists()
 
 
@@ -224,9 +246,11 @@ def test_entry_reports_package_damage_without_repair(embedded_project, name):
             result.returncode == 1
             and "Restore the complete launcher release" in result.stderr
         )
-        assert "Traceback" not in result.stderr
+        assert "Traceback" in result.stderr
         assert payload.read_bytes() == b"damaged package"
-        assert not (root / ".state").exists() and not (root / ".cache").exists()
+        assert not (root / ".cache").exists()
+        log = (root / "logs/launcher.log").read_text(encoding="utf-8")
+        assert "Dependency verification failed" in log and "Traceback" in log
     finally:
         payload.write_bytes(original)
 
@@ -302,12 +326,6 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
         ([], 2, "supply Steam's original"),
         (["--check-only", "--", str(executable)], 2, "cannot be combined"),
         (["--restart-grace", "nan", "--", str(executable)], 2, "finite number"),
-        # Report the sibling game path, even when launched from another working directory.
-        (
-            ["--", str(executable)],
-            1,
-            f"installed game: {root.parent / 'TeamPrincipal.exe'}",
-        ),
     ):
         result = subprocess.run(
             [str(executable), "-B", str(entry), *arguments],
@@ -316,4 +334,11 @@ def test_entry_rejects_invalid_launch_requests_before_starting_processes(
             timeout=20,
         )
         assert result.returncode == code and message in result.stderr, result.stderr
-    assert not (root / ".state").exists() and not (root / "logs").exists()
+    # A fatal CLI launch now retains its notice until dismissal. Programmatic
+    # main deliberately leaves presentation to its caller, so validate this
+    # rejected executable without opening a waiting failure session.
+    script = "import runpy,sys; entry=runpy.run_path(sys.argv[1]); raise SystemExit(entry['main'](['--',sys.executable]))"
+    result = subprocess.run([str(executable), "-B", "-c", script, str(entry)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1 and f"installed game: {root.parent / 'TeamPrincipal.exe'}" in result.stderr
+    assert "installed game:" in (root / "logs/launcher.log").read_text(encoding="utf-8")

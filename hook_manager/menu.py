@@ -100,7 +100,8 @@ def loading_record(record):
 class MenuAdapter:
     """Own native rows, readiness guards and a footer on the game's main thread."""
 
-    def __init__(self):
+    def __init__(self, observe_screen=None):
+        self.observe_screen = observe_screen
         self.buttons, self.installed = [], []
         self.owner = self.items = None
         self.originals, self.wrappers = {}, {}
@@ -108,6 +109,7 @@ class MenuAdapter:
         self.loading = None
         self.deadline = 0
         self.timed_out = False
+        self.changed = None
 
     def _main(self):
         if threading.current_thread() is not threading.main_thread():
@@ -128,8 +130,10 @@ class MenuAdapter:
         if self.loading is None:
             return False
         pending = self.loading["state"] == "loading" or self.state != "ready"
-        if pending and time.monotonic() > self.deadline:
+        if pending and not self.timed_out and time.monotonic() > self.deadline:
             self.timed_out = True
+            if self.changed is not None:
+                self.changed()
         return pending or self.timed_out
 
     def _season_blocked(self, item):
@@ -237,6 +241,8 @@ class MenuAdapter:
                 )
 
             def activate(screen, item):
+                if active() and self.observe_screen is not None:
+                    self.observe_screen(screen)
                 if active():
                     message = (
                         self._notice()
@@ -249,7 +255,10 @@ class MenuAdapter:
                             clock() + 2500,
                         )
                         return None
-                return originals["_activate"](screen, item)
+                result = originals["_activate"](screen, item)
+                if active() and self.observe_screen is not None:
+                    self.observe_screen(screen)
+                return result
 
             wrappers = {"_activate": activate}
             if self.loading is not None:
@@ -265,6 +274,8 @@ class MenuAdapter:
                     return originals["_disabled_item_message"](screen, item)
 
                 def draw(screen, surface):
+                    if active() and self.observe_screen is not None:
+                        self.observe_screen(screen)
                     result = originals["draw"](screen, surface)
                     if active() and not screen.is_loading:
                         # Reuse the native small font and scaling; leave its commercial notice intact.

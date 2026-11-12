@@ -133,7 +133,7 @@ def test_failed_category_construction_retains_busy_owner_until_cleanup(automatic
     monkeypatch.setattr(a.native, "process_week", lambda self, changed: None)
     host = ModuleType("_automatic_failed_setup_test")
     host.manager = Manager()
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     modules.regulation_changes = a.owner
     with ThreadPoolExecutor(max_workers=1) as worker:
         task = worker.submit(manager.save_state)
@@ -388,7 +388,7 @@ def test_weekly_work_waits_for_the_current_careers_activation(automatic):
     manager.work = work
     host = ModuleType("_automatic_retirement_test")
     host.manager = Manager()
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     modules.categories, modules.channel = a.categories, helper.channel
     modules.regulation_changes = a.owner
     with ThreadPoolExecutor(max_workers=1) as worker:

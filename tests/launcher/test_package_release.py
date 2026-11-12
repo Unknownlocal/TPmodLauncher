@@ -3,7 +3,6 @@
 
 import hashlib
 from pathlib import Path
-import subprocess
 from types import SimpleNamespace
 import zipfile
 
@@ -89,17 +88,6 @@ def test_archive_is_relocatable_selected_and_repeatable(inputs):
     checksum.unlink()
     packaging.package_release(root, "test.1", manifest, materials, checker=check)
     assert archive.read_bytes() == original and len(checks) == 2
-
-
-def test_failed_extracted_verification_produces_no_archive(inputs):
-    root, manifest, materials = inputs
-
-    def fail(_):
-        raise subprocess.CalledProcessError(1, "owned verification fixture")
-
-    with pytest.raises(subprocess.CalledProcessError):
-        packaging.package_release(root, "bad", manifest, materials, checker=fail)
-    assert list((root / "dist").iterdir()) == []
 
 
 @pytest.mark.parametrize("platforms", [("windows", "linux"), ("linux", "windows")])

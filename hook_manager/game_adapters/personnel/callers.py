@@ -163,8 +163,7 @@ class PersonnelCallers:
                         # just returned, including a native precheck/no refusal.
                         previous["offer_attempt"] = frame["offer_attempt"]
                     guards._local.personnel_caller = previous
-                    with guards._lock:
-                        guards._active -= 1
+                    guards._operation_finished()
         return wrapped
 
     def _submit(self, original, bound, previous):

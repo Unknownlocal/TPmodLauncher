@@ -22,6 +22,100 @@ class NativeReadiness(Manager):
         self._listeners, self._career, self._manager = set(), None, None
         self.generation = 0
         self._loaded = set()
+        self._activity_key, self._activity_sequence, self._activity_job = None, 0, None
+        self._activity_status = {"kind": "game_loading", "sequence": 0, "generation": 0}
+        self.changed = None
+        self._loading_screen, self._loading_attempt = None, 0
+
+    def begin_loading(self, screen, *, replace=True):
+        """Record entry before a worker or GameState constructor reads the save."""
+        manager = getattr(screen, "manager", None)
+        if manager is None or getattr(manager, "current", None) is not screen:
+            return None
+        owner = self._manager() if self._manager is not None else None
+        if owner is not None and owner is not manager:
+            return None
+        if replace or self._loading_screen is None or self._loading_screen() is not screen:
+            self._loading_attempt += 1
+            self._loading_screen = weakref.ref(screen)
+        self._manager = weakref.ref(manager)
+        self.activity_snapshot()
+        if self.changed is not None:
+            self.changed()
+        return self._loading_attempt
+
+    def end_loading(self, attempt):
+        """An abandoned job cannot clear a replacement attempt on the same screen."""
+        if attempt == self._loading_attempt:
+            self._loading_screen = None
+            self.activity_snapshot()
+            if self.changed is not None:
+                self.changed()
+
+    def current_activity(self):
+        """Return cached plain context safely to diagnostic builders on workers."""
+        return dict(self._activity_status)
+
+    def observe_screen(self, screen):
+        """Seed navigation from the existing menu, before any later switch occurs."""
+        if self.closed or not self.navigation_intact:
+            return
+        try:
+            manager = getattr(screen, "manager", None)
+            if manager is not None:
+                if self.events is not None and self._manager is not None and self._manager() is manager:
+                    return  # Navigation and loading boundaries now own later changes.
+                self._observe(manager, screen)
+                self.activity_snapshot()
+                if self.changed is not None:
+                    self.changed()
+        except Exception as error:
+            self._store_and_submit_error(error)  # Diagnostics must never break native drawing/input.
+
+    def loading_attempt(self):
+        """Associate only the current entry call or its recorded native worker."""
+        screen = self._loading_screen() if self._loading_screen is not None else None
+        thread = threading.current_thread()
+        if screen is not None and (thread is threading.main_thread() or
+                any(getattr(screen, name, None) is thread for name in ("_load_thread", "_season_thread"))):
+            return self._loading_attempt
+        return None
+
+    def activity_snapshot(self):
+        """Describe only confirmed native state; retain neither screen nor job."""
+        manager = self._manager() if self._manager is not None else None
+        kind, job = "game_loading", None
+        navigation_state = self.groups.get("readiness.navigation", {}).get("state", "pending")
+        # An ordinary deferred import is still startup. Lost ownership of an
+        # installed observer means the current native activity is no longer known.
+        if self.closed or self.errors or navigation_state != "pending" and not self.navigation_intact:
+            kind = "unknown"
+        elif self.navigation_intact and manager is not None:
+            screen = getattr(manager, "current", None)
+            self._observe(manager, screen)
+            entry = tuple(value for name, label in (("hub_screen", "HubScreen"),
+                ("load_game_screen", "LoadGameScreen"), ("team_select_screen", "TeamSelectScreen"))
+                if isinstance(value := getattr(sys.modules.get("ui.screens." + name), label, None), type))
+            job = getattr(screen, "_preload_job", None) if isinstance(screen, entry) else None
+            loading = self._loading_screen is not None and self._loading_screen() is screen
+            if (loading or job is not None and not getattr(job, "cancelled", False) and not getattr(job, "done", False)) and not getattr(screen, "_shutting_down", False):
+                kind = "save_loading"
+            elif self._career is not None and self._career() is not None:
+                kind = "in_save"
+            elif screen is None or isinstance(screen, entry):
+                kind = "menu"
+            else:
+                kind = "unknown"
+        key = kind, self.generation, self._loading_attempt
+        previous_job = self._activity_job() if self._activity_job is not None else None
+        if key != self._activity_key or kind == "save_loading" and job is not previous_job:
+            self._activity_key = key
+            self._activity_sequence += 1
+        # Native jobs already support weak references for career loading. Compare
+        # live identity so reuse of an abandoned job's address cannot hide a retry.
+        self._activity_job = weakref.ref(job) if kind == "save_loading" and job is not None else None
+        self._activity_status = {"kind": kind, "sequence": self._activity_sequence, "generation": self.generation}
+        return self.current_activity()
 
     def configure(self, request):
         """Accept bounded names to observe, never imports or executable callbacks."""
@@ -34,8 +128,17 @@ class NativeReadiness(Manager):
             raise HookError("Invalid native prerequisite request")
         self.modules, self.career_requested = tuple(sorted(set(request["modules"]))), request["career"]
         self._loaded.intersection_update(self.modules)
+        self.observers.clear()
+        for name in self.modules:
+            self.observe(name, lambda module, name=name: self._module_ready(name))
         if self.career_requested:
             self.watch_career()
+
+    def _module_ready(self, name):
+        self._loaded.add(name)
+        if self.changed is not None:
+            self.changed()
+        return True
 
     def watch_career(self, callback=None):
         """Use the same native transition for availability and loading cancellation."""
@@ -54,21 +157,24 @@ class NativeReadiness(Manager):
     def navigation_intact(self):
         return self.group_intact("readiness.navigation")
 
-    def snapshot(self):
-        """Return availability only; module, screen and career objects stay native."""
+    def snapshot(self, *, poll=True):
+        """Read availability; event collection can reuse already-serviced imports."""
         if self.closed:
-            return {"career": None, "modules": [], "watching": False, "detail": ""}
-        self.poll()
+            return {"career": None, "modules": [], "watching": False, "detail": "", "activity": self.activity_snapshot()}
+        if poll:
+            self.poll()
+        activity = self.activity_snapshot()
         # A module enters sys.modules before its import finishes. Remember only
         # completed imports, as milestones for this process.
         self._loaded.update(name for name in self.modules if type(module := sys.modules.get(name)) is ModuleType
-                            and not getattr(vars(module).get("__spec__"), "_initializing", False))
+                            and (not getattr(vars(module).get("__spec__"), "_initializing", False)
+                                 or self.completed.get(name) is module))
         loaded = sorted(self._loaded)
         career = self._career() if (self._career is not None and self.navigation_intact
                                    and self._manager is not None and self._manager() is not None) else None
         return {"career": self.generation if career is not None else None, "modules": loaded,
-                "watching": self.career_requested or len(loaded) != len(self.modules),
-                "detail": self.errors[-1] if self.errors else ""}
+                "watching": self.career_requested or len(loaded) != len(self.modules) or bool(self.groups) and not self.errors,
+                "detail": self.errors[-1] if self.errors else "", "activity": activity}
 
     def _observe(self, manager, screen):
         if getattr(manager, "current", None) is not screen:
@@ -78,6 +184,8 @@ class NativeReadiness(Manager):
             # Auxiliary screen managers must not replace the foreground career.
             return
         self._manager = weakref.ref(manager)
+        if self._loading_screen is not None and self._loading_screen() is not screen:
+            self._loading_screen = None
         entry_types = tuple(kind for name, label in (("hub_screen", "HubScreen"),
             ("load_game_screen", "LoadGameScreen"), ("team_select_screen", "TeamSelectScreen"))
             if isinstance(kind := getattr(sys.modules.get("ui.screens." + name), label, None), type))
@@ -101,8 +209,11 @@ class NativeReadiness(Manager):
             if threading.current_thread() is threading.main_thread() and observer.navigation_intact:
                 try:
                     observer._observe(self, screen)
+                    observer.activity_snapshot()
                     for callback in tuple(observer._listeners):
                         callback(self, screen)
+                    if observer.changed is not None:
+                        observer.changed()
                 except Exception as error:
                     observer._disable(name, error)
             return result

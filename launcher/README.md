@@ -12,6 +12,13 @@ through `bundled_dependencies.py`, registers the trusted source packages, and
 verifies the runner under `libs/mod-runners`. Its check-only path stops after
 verification. Normal startup also validates Steam's command against the installed
 `TeamPrincipal.exe` before creating the controller, bridge and mod scopes.
+Both paths claim ownership of the log before verification. Only fixed
+standard-library logging helpers load before the dependency checks, so a damaged
+dependency or runner can still leave a complete error log.
+If those first helpers cannot load, entry retains the complete traceback in a
+console-only notice using the standard library. It identifies the startup stage
+and leaves any previous log untouched. Check-only calls print without waiting;
+normal launches wait for a key, console closure or loss of the Proton owner.
 
 Dependency verification uses the expected versions and file inventory in
 `bundled_packages.toml`. The runner's sources, notices and Wasm bytes have a
@@ -20,27 +27,112 @@ normal startup does not download packages or build components.
 
 ## Process and bridge ownership
 
-`process_lifecycle.py` holds the controller lock, starts the game through Frida
+`process_lifecycle.py` shares entry's log ownership, starts the game through Frida
 and tracks children, exits, exec transitions, PID reuse and replacements. Each
 session owns one bridge and mod-loading scope. Replacement processes receive
 fresh scopes; shutdown closes them and releases the controller's resources.
 
-`diagnostics.py` configures standard Python logging for the console and
+The controller waits on its event queue when idle. `process_exit.py` pins each
+verified process with a Windows handle or a Linux pidfd, then waits for exit or
+cancellation. This also detects exits when Frida's notification is late. The
+executable is checked before and after attachment; old exit events cannot retire
+a replacement session. Process enumeration is used at ownership boundaries,
+not on a timer. A process's exit signal immediately wakes its pending bridge
+waits. Lifecycle events and already-delivered diagnostics are handled before
+routine work; cleanup still runs on the controller thread. Closing the console
+wakes the queue directly.
+
+Each bridge also retains restart-observer availability and the latest restart
+attempt for its own process. The controller reads this evidence from the shared
+journal, including during final process cleanup, and logs requested, confirmed
+or cancelled attempts. Session identity and sequence numbers reject old messages
+and duplicates. A marked restart allows a bounded gap for its replacement. An
+unmarked exit skips that wait only when both observers passed their final check,
+the reporting stream completed and the journal was read successfully. Otherwise
+the same deadline allows for a possible replacement. It never starts another
+game. An early timer wake waits out the remaining time; an expired marked restart
+logs that no replacement was observed. Missing markers alone do not establish
+an ordinary exit, and restart intent never suppresses fatal diagnostics.
+
+`process_cancellation.py` keeps a separate flag for each process. Frida sends,
+script loading and reply waits can be interrupted. It retains delivered
+diagnostics until the process's final cleanup, including errors received while
+reporting is being closed. Mod loading checks the flag
+between operations, cancels pending worker requests during cleanup and discards
+abandoned results. A guest call already running retains its existing execution
+budget; individual operating system file calls and trusted host callbacks are
+not forcibly interrupted. Final logging and error presentation remain independent.
+
+[`diagnostics/`](diagnostics/README.md) configures standard Python logging for the console and
 `logs/launcher.log`. Records name the part that produced them and, when known,
 the process, check and action. Compatibility problems use WARNING; failed operations
-use ERROR. Routine progress and mod messages use INFO; DEBUG detail is hidden
-by default. Framework reports retain their severity through reporting functions
-and the bridge.
-Error text and stack locations have length limits and contain no captured local values.
-Handlers are removed when the launch ends. Logging an error does not itself
-stop the game; the operation that failed controls its outcome.
+use ERROR. Routine progress and mod messages use INFO. Both destinations default
+to INFO; `--log-level` selects their shared minimum level, including DEBUG for
+timing details. Complete fatal diagnostics bypass that threshold in both.
+Selectors 1-5, names and standard numeric thresholds use the same parser on
+Windows and Linux/Proton; for example, 4, ERROR and 40 select the same level.
+Startup records name
+each setup step and its elapsed duration, including failed steps. Framework reports
+retain their severity through reporting functions and the bridge.
+Routine summaries have length limits. Supplied exceptions keep their complete
+messages, stack traces, causes and notes in both destinations, without captured
+local values. Game failures travel as text, so loading failures retain their
+original details even when the controller stops before another message arrives.
+Console and file records use separate queues and writer threads. A blocked
+console cannot delay the log, and blocked storage cannot delay console output.
+Routine queue overflow is reported by the affected destination; complete failure
+records are protected. Handlers are removed when the launch ends.
 
 `submit_log` callbacks attach context and route records or messages to
 `write_log()`, which uses the standard logger. Game adapters construct their
 transport records with `hook_manager.diagnostics.build_log_record()`.
+A `LaunchContext` keeps the outcome, activity, output and log lock for one launch.
+Components receive a `LogPort` that carries their process and component details.
+Public text callbacks are adapted once. Forwarding keeps severity and complete
+errors. Each launch has its own standard logger, so late messages cannot enter
+a later launch's log. Failure presentation receives the same log lock explicitly.
+`handle_error()` records failures at the controller's outer error handlers and
+requests game shutdown. Other ERROR records leave the decision to their caller.
+`handle_error()` also retains the first fatal reason and its setup/controller
+stage as plain text. File output is flushed and synchronised on fatal failure
+and again after game cleanup, with bounded acknowledgement waits. Final writer
+shutdown shares a one-second deadline; unconfirmed file output remains incomplete.
+A final log record joins the original reason to the cleanup results. The caller
+receives the final write result after closure or the deadline; the saved record
+cannot claim that its own write succeeded. No dialog is involved in logging.
 
-On Windows, `console_shutdown.py` handles closing the console, Ctrl+C and
-Ctrl+Break. It sends normal window-close requests only to game processes owned
+Activity context identifies launcher/game startup, an individual mod or shared
+loading group, save loading, and being inside a save. It follows actual host
+operations and native navigation/loading observations. Failures keep their
+original context through cleanup; old process or career updates cannot overwrite
+newer activity. Complete week progression and saving have nested native activity,
+including autosave and the game's week worker. This observation also runs for
+packs without code mods.
+
+Game callbacks enqueue journal records in memory. A separate diagnostics worker
+handles traceback formatting, encoding and file I/O without holding activity
+locks. The game does not wait for the worker during normal play or status reads.
+Final process termination has a shared one-second drain allowance.
+`hook_manager.native_events.NativeEvents` publishes actual import, navigation,
+loading, settings and compatibility changes through the same queue. The bridge's
+ordinary status replies use cached values. Worker imports and completed guarded
+operations request one main-thread entry when deferred hooks need installation.
+An independent sender notifies a waiting launcher receiver when journal data is
+available. The controller reads it on events and final process cleanup, without
+periodic file checks. Journal failures carry their complete records over the
+same authenticated local connection. Socket waits cannot hold up journal writes;
+unconfirmed delivery keeps the journal available for diagnosis.
+
+`diagnostics/log_file_handler.py` performs file operations on its own worker,
+without using Python logging's output locks during writes or shutdown. An
+unavailable log queues a console warning and produces a failed launch result.
+A late writer retains the launch lock until it stops or its process exits.
+A console failure discovered after file closure remains in the returned outcome. A duplicate launcher leaves the active log untouched and
+reports its ownership failure on the console. Argument usage errors are reported
+before a log is opened.
+
+On Windows, `diagnostics/console_shutdown.py` handles launcher failures, closing the console,
+Ctrl+C and Ctrl+Break. It sends normal window-close requests only to game processes owned
 by this controller, while the controller thread closes mods and removes hooks.
 Process handles and executable checks protect against targeting an unrelated
 process. The helper allows four seconds for normal game exit, then force-closes
@@ -50,6 +142,9 @@ even if the controller is stuck in cleanup.
 `game_bridge.py` supplies the fixed Python adapters and JavaScript transport from
 `hook_manager`. The transport waits for CPython 3.13 and main-thread readiness,
 then exchanges bounded status, pack, loading, menu, settings and palette data.
+While startup is pending, a small check reads existing thread and import state
+before the full bootstrap expression is parsed. Normal controls reuse the loaded
+manager and do not run this startup check again.
 Source digests and session tokens identify the in-game manager owner.
 
 ## Pack loading and preparation
@@ -63,7 +158,10 @@ For Python mods, `SourcePreparation` copies every source member, checks its
 previously accepted manifest and limits the combined size before reading runner
 bytes once. Prebuilt Wasm components also read on a worker during normal startup.
 The controller then requests compiled code through
-`compiled_mod.py` and polls for completion without waiting on a compiler.
+`compiled_mod.py`. Read and compilation completion callbacks queue the next
+preparation step, including when completion preceded callback registration.
+The controller creates Stores and activates mods on its own thread. It does not
+repeatedly check unfinished preparation while idle.
 
 `compilation_registry.py` keeps loaded code and pending compilations for each
 execution thread. Identical bytes and compiler settings reuse one entry before
@@ -77,7 +175,7 @@ Closing one loading scope lets compilation still needed by another scope finish.
 `bin/wasmtime-cache` after checking ownership and access. Failed cache checks fall
 back to uncached compilation. Every admission still verifies current bytes and
 creates fresh instance state. `load_timing.py` measures loading phases; the pack
-loader logs those timings and cache status.
+loader logs those timings at DEBUG and keeps loading outcomes at INFO.
 
 `pack_candidate.py` holds checked metadata. The controller creates one
 `SharedPythonRunner` for all source candidates. All sources transfer before
@@ -85,6 +183,10 @@ entry imports, so a member can import a peer immediately. Imports happen togethe
 at the first source candidate; source and prebuilt activation stays in ID order.
 Source UI declarations stay staged until pack startup finishes. A failed source
 member rejects the whole fixed group; the loader does not retry with fewer mods.
+The loader records a rejection before cleanup or progress updates. If either
+fails too, the original error keeps its causes and activity, with secondary
+details added. A fatal load failure goes straight to controller error handling
+without another progress request to the same bridge.
 
 ## Mod execution and native readiness
 
@@ -128,6 +230,11 @@ entry; work that overruns after entry closes its Store. No background job or
 parallel source execution is involved.
 
 The loader publishes progress and staged UI declarations to the native adapter.
+`ui_publication.py` remembers which buttons, settings tabs and palettes the game
+has accepted. Changed declarations travel together in one bridge request; each
+area keeps its own generation and failure result. A missing acknowledgement
+requires a clearing request. Settings saves still have explicit acknowledgements.
+
 Startup readiness waits for preparation outcomes, complete source activation and
 native acknowledgement. Immediate and deferred native rejection use the same
 cleanup. Session closure reports logical mods in reverse activation order;
@@ -143,6 +250,9 @@ retirement. The bridge sends fixed requests; `PackMods` uses runtime status to
 protect career loading and validation. Loading protection must be armed before
 career selection opens. Validation needs confirmed game hooks and published rule
 data; career readiness also waits for the game's activation reply.
+Socket arrivals wake the controller and any bridge control waiting for that
+request. Only regulation work runs inside that control's wait, on the owning
+thread. There is no periodic service callback while waiting.
 Mod menu additions, settings tabs and palettes become available after source
 activation without waiting for a career, unless their manifest declares extra
 prerequisites. Failed owners lose their UI.
@@ -163,8 +273,9 @@ schema conversion and admission; regulations is the first consumer.
 It reuses decisions until active mods, native module availability or career and
 regulation readiness change. Held declarations stay private; unrelated UI is
 published normally. The native `NativeReadiness` adapter observes completed
-imports and shares navigation ownership with career loading. Status changes use
-the existing bridge pulses, without mod callbacks or extra worker threads.
+imports and shares navigation ownership with career loading. Native changes
+arrive through journal events without mod callbacks. Imports already running
+when observation starts use a background import-lock wait for completion.
 
 `ui_settings.py` validates labelled colour fields and binds each mod to its fixed
 `settings.json`. `_settings_files.py` pins ordinary directories and uses atomic
@@ -175,8 +286,8 @@ saved files survive instance cleanup, while declarations remain session-owned.
 It validates native save requests against the owner and registry generation,
 persists values, acknowledges the result and delivers `ui-settings.changed` to
 the owning instance. Palette declarations use `hook_manager.themes.ThemeRequests`
-and are published separately from settings. The native theme adapter owns
-Color Pack choices and applies the selected palette at startup.
+and keep separate validation within the combined UI publication. The native theme
+adapter owns Color Pack choices and applies the selected palette at startup.
 
 ## Build and release boundaries
 
@@ -220,8 +331,27 @@ The Linux helper uses Bash and optional desktop clipboard tools without a native
 Python runtime. Its Steam line invokes `launch_proton.sh`, preserving Steam's
 Proton prefix and game arguments while substituting the bundled Windows Python.
 `proton_entry.py` supplies the installed Wine-mapped executable path to the normal
-entry point, retaining its target validation. This route is tested with owned
-process fixtures; actual Proton mod loading remains untested.
+entry point, retaining its target validation. A separate argument prefix carries
+launcher log options; game arguments keep their original meaning.
+
+`launch_proton.sh` stays alive as a native host supervisor. Private pipes opened
+explicitly through Python's mapped installation path carry startup and completion
+messages that identify their session. Console standard streams are separate. The
+supervisor combines Windows and outer process results; missing completion is
+failure. A separate owner pipe wakes the existing owned-game shutdown when the
+supervisor disappears, including its shared four-second allowance. The game gets
+null input so its startup cannot compete with the private reader.
+
+After cleanup, `proton_entry.py` selects `diagnostics/linux_failure_channel.py`.
+It retains entry's completed log lock and uses `FailureSession` for a console
+notice showing the activity, stage, reason and Linux log path. Windows Python
+under Proton supplies the console APIs; no native terminal or desktop helper is
+started. A keypress, console closure or native-owner loss ends the notice without
+a reading timeout. The user opens the completed log manually.
+
+Linux dialog and log-opening adapters are unimplemented stubs. Both the session
+and helper entry points guard against starting Linux desktop UI. The
+`linux_notice.sh` compatibility entry exits without starting external tools.
 
 `Package-Release.ps1` coordinates developer setup and `release_workflow.py`: pinned Frida source
 fetching and compilation, matching source export, isolated runner/dependency

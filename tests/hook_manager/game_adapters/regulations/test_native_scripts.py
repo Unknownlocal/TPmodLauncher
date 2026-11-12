@@ -145,7 +145,7 @@ def test_active_regulation_changes_defers_cleanup_and_cached_stopped_hooks_fall_
     saved = {"definition_snapshot": manager.definitions, "policy": manager.policy}
     host = ModuleType("_owned_script_loader")
     host.manager = Manager()
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     modules.categories = hook
     modules.regulation_changes = hook.regulation_changes
     if operation == "save_state":

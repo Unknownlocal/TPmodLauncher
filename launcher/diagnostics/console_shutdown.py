@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Close owned game processes when their Windows launcher console closes."""
+"""Close owned game processes when their console or native supervisor closes."""
 
-from launcher.diagnostics import bind_reporter
+from .core import bind_reporter
 
 import ctypes as c
 from ctypes import wintypes as w
@@ -17,10 +17,13 @@ class ConsoleShutdown:
     def __init__(self, executable, submit_log):
         self.executable = os.path.normcase(str(Path(executable).resolve()))
         self.submit_log = bind_reporter(submit_log, component="shutdown")
+        self._outcome = self.submit_log.owner.outcome if self.submit_log.owner is not None else None
         self.requested, self.finished = threading.Event(), threading.Event()
         self._lock, self._processes, self._posted = threading.RLock(), {}, set()
         self._handler, self._deadline = None, None
         self._forced = False
+        self.result = "not_requested"
+        self.wake = None
 
     def __enter__(self):
         if os.name != "nt":
@@ -94,14 +97,28 @@ class ConsoleShutdown:
 
     def request(self):
         """Request exit once; ordinary mod and Frida cleanup stays on the controller."""
+        first = False
         with self._lock:
             if not self.requested.is_set():
                 # Windows normally allows five seconds for CTRL_CLOSE_EVENT.
                 # Leave time for the callback to return after bounded cleanup.
                 self._deadline = time.monotonic() + 4.0
+                first = True
                 self.requested.set()
+                wake = self.wake
+                if wake is not None:
+                    wake()
             if os.name == "nt":
                 self._post_close()
+        if first and os.name == "nt":
+            # A fatal controller error has no Windows console-close callback
+            # enforcing its deadline. Cleanup must not extend owned game life.
+            threading.Thread(target=self._enforce_deadline, name="owned-game-shutdown", daemon=True).start()
+
+    def _enforce_deadline(self):
+        remaining = max(0, self._deadline - time.monotonic())
+        if not self.finished.wait(remaining):
+            self._force_close()
 
     def _signal(self, event):
         if event not in (0, 1, 2):  # Ctrl+C, Ctrl+Break and console Close.
@@ -115,6 +132,20 @@ class ConsoleShutdown:
             self._force_close()
             self.finished.wait(.4)
         return True
+
+    def request_from_host(self):
+        """Use the same owned-window deadline after a native supervisor is lost."""
+        self.request()
+        def enforce():
+            remaining = max(0, self._deadline - time.monotonic())
+            if not self.finished.wait(remaining) and os.name == "nt":
+                self._force_close()
+                if not self.finished.wait(.4):
+                    # Unlike a Windows console-close callback, native host loss
+                    # does not make Windows end a controller stuck in cleanup.
+                    # Its owned games have already been force-closed above.
+                    os._exit(1 if self._outcome and self._outcome["failure"] is not None else 130)
+        threading.Thread(target=enforce, name="host-game-shutdown", daemon=True).start()
 
     def _force_close(self):
         """Terminate surviving owned handles after the normal-close allowance."""
@@ -143,8 +174,8 @@ class ConsoleShutdown:
                     for handle in self._processes.values():
                         self._kernel.WaitForSingleObject(handle, max(0, int((deadline - time.monotonic()) * 1000)))
                     pending = self._alive()
-                self.submit_log("GAME CLOSE " + ("pending; process exit not confirmed" if pending
-                            else "forced" if self._forced else "complete"),
+                self.result = "pending" if pending else "forced" if self._forced else "complete"
+                self.submit_log("GAME CLOSE " + ("pending; process exit not confirmed" if pending else self.result),
                             level="ERROR" if pending else "WARNING" if self._forced else "INFO")
         finally:
             if self._handler is not None:

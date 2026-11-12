@@ -286,6 +286,20 @@ def embedded_project(tmp_path_factory, request):
 
 
 @pytest.fixture(scope="module")
+def native_bridge_project(request):
+    """Require the shared interpreter library that Frida must discover in a helper."""
+    if sys.platform == "linux":
+        # Py_ENABLE_SHARED also describes standalone builds that put Python in
+        # the executable. Those cannot exercise the bridge's library discovery.
+        if "libpython3.13" not in Path("/proc/self/maps").read_text():
+            reason = "Native bridge tests need a dynamically loaded libpython3.13"
+            if os.environ.get("TPM_REQUIRE_NATIVE_TESTS") == "1":
+                pytest.fail(reason)
+            pytest.skip(reason)
+    return request.getfixturevalue("native_project")
+
+
+@pytest.fixture(scope="module")
 def native_project(request, tmp_path_factory):
     """Provide a real Frida test bundle and CPython 3.13 for Windows or Linux helpers."""
     if os.name == "nt":

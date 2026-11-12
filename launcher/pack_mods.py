@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Discover and own sandboxed code mods for one process's selected Formula pack."""
 
-from launcher.diagnostics import bind_reporter
+from launcher.diagnostics import activity_scope, bind_reporter
+from hook_manager.diagnostics import error_text
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 from time import perf_counter
 import tomllib
+import weakref
 
 from launcher.bundled_dependencies import local_path, safe_name
 from launcher.load_timing import measure
@@ -19,6 +21,7 @@ from launcher.pack_candidate import PackCandidate
 from launcher.prerequisites import Prerequisites
 from launcher.shared_source_mod import SharedSourceMod
 from launcher.ui_settings import SettingsRequests
+from launcher.ui_publication import UiPublication
 from hook_manager.menu import MenuRequests
 from hook_manager.themes import ThemeRequests
 from mod_runtime.bundle import RunnerBundle
@@ -29,6 +32,12 @@ from mod_runtime.source import SourceManifest, read_manifest
 # Bound discovery and the number of mods admitted by one game process.
 MAX_PACK_ENTRIES = 4096
 MAX_MODS = 32
+
+
+def _ui_areas(capabilities):
+    """Keep an activation's immediate UI failures with its own permissions."""
+    return tuple(area for area, capability in (("menu", "main-menu"), ("settings", "ui-settings"), ("themes", "ui-settings"))
+                 if capability in capabilities)
 
 
 def _read_component(manifest, timings):
@@ -45,9 +54,7 @@ class PackMods:
         game_root,
         submit_log,
         *,
-        set_menu=None,
-        set_settings=None,
-        set_themes=None,
+        set_ui=None,
         set_loading=None,
         background=False,
         cache=None,
@@ -63,17 +70,11 @@ class PackMods:
         self.closed = False
         self.menu = MenuRequests()
         self.settings = SettingsRequests()
-        self.set_settings = set_settings
-        self.applied_settings = []
-        self.settings_generation = self.last_settings_request = 0
+        self.ui = UiPublication(set_ui)
+        self._ui_rejecting = False
+        self.last_settings_request = 0
         self.settings_result = None
         self.themes = ThemeRequests()
-        self.set_themes = set_themes
-        self.applied_themes = []
-        self.themes_generation = 0
-        self.set_menu = set_menu
-        self.applied_menu = []
-        self.menu_generation = 0
         self.set_loading = set_loading
         self.background = background
         self.cache = cache
@@ -98,6 +99,12 @@ class PackMods:
         self._regulation_error = False
         self.regulations, self._regulation_status = None, None
         self._regulation_owners, self._regulation_wake = set(), wake
+        owner = weakref.ref(self)
+        def ready(_=None):
+            scope = owner()
+            if scope is not None and not scope.closed and scope._regulation_wake is not None:
+                scope._regulation_wake()
+        self._ready = ready
         self._bridge = bridge
         self.prerequisites = Prerequisites()
 
@@ -105,6 +112,10 @@ class PackMods:
     def _regulation_failed(self):
         return (self._regulation_error or bool(self._regulation_owners and self._source_unavailable)
                 or self.regulations is not None and self.regulations.failed)
+
+    def set_wake(self, wake):
+        """Connect completion before load; callbacks only queue owner-thread work."""
+        self._regulation_wake = wake
 
     @property
     def _regulation_dispatching(self):
@@ -119,6 +130,7 @@ class PackMods:
         if (self._bridge is None or not self.finished or not self._regulation_owners
                 or self._regulations_prepared or self._regulation_failed):
             return
+        self._check_process()
         from launcher.regulations.runtime import SCOPE_COMPONENTS
 
         self.bind_regulations(scopes=set(SCOPE_COMPONENTS),
@@ -148,16 +160,19 @@ class PackMods:
             return []
         if not self.prerequisites.declarations:
             return records
-        self.prerequisites.update(
-            (owner for owner, mod in self.mods.items() if mod._active and not mod.sandbox.closed),
-            self.regulations is not None and self.regulations.ready)
         return [record for record in records if self.prerequisites.allows(
             record["owner"], "menu:" + record["id"] if area == "menu" else area)]
 
     def readiness_status(self, status):
         """Refresh dependent UI on native changes, outside a busy setup request."""
         previous = self.prerequisites.native
-        self.prerequisites.receive(status)
+        # Activity belongs to diagnostics. Keep all other fields so the strict
+        # prerequisite validator still rejects malformed availability records.
+        availability = (
+            {key: value for key, value in status.items() if key != "activity"}
+            if type(status) is dict else status
+        )
+        self.prerequisites.receive(availability)
         if status.get("detail") and status.get("detail") != previous.get("detail"):
             self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=status["detail"])
         if previous != self.prerequisites.native and not self._regulation_dispatching:
@@ -181,7 +196,7 @@ class PackMods:
             # Capability requests with no selected declaration contribute no resources.
             # Keep declared/unavailable owners required; cleanup is not disabling.
             self._regulation_owners = set(definitions.owner_ids)
-            self.regulations = RegulationRuntime(definitions, self.mods, self._regulation_wake)
+            self.regulations = RegulationRuntime(definitions, self.mods, self._ready)
             self.regulations.bind()
         except Exception as error:
             # Preparation can fail before there is a runtime, and listener startup
@@ -192,7 +207,7 @@ class PackMods:
                 self._reject_mods(self._regulation_owners, str(error)[:512])
             except Exception as cleanup_error:
                 self._log("CLEANUP ERROR", level="ERROR", detail=str(cleanup_error)[:512], error=cleanup_error)
-            self._progress("error")
+            self._progress("error", error=error)
             raise
         if self.regulations.ready:
             self._publish_ui()
@@ -225,21 +240,25 @@ class PackMods:
                 if type(mod) is SharedSourceMod:
                     mod.snapshot = None
 
-    def _flush_menu(self):
-        """Send staged declarations outside guest execution, without per-frame callbacks."""
-        # Keep desired declarations staged, but revoke published UI if a required
-        # owner fails. Startup holds must not block cleanup.
-        records = self._visible_ui("menu", self.menu.buttons)
-        if self.set_menu is None or self.applied_menu == records:
-            return
-        # An uncertain acknowledgement must still cause a later rollback/cleanup request.
-        self.applied_menu = None
-        result = self.set_menu(records)
-        if result is not None:
-            self.menu_generation = result["menu"]["generation"]
-            if result["menu"]["state"] == "failed":
-                raise ManifestError(result["menu"]["detail"])
-        self.applied_menu = [dict(item) for item in records]
+    def _flush_ui(self, areas=("menu", "settings", "themes")):
+        """Publish one changed snapshot after guest execution has returned."""
+        if self.prerequisites.declarations:
+            self.prerequisites.update(
+                (owner for owner, mod in self.mods.items() if mod._active and not mod.sandbox.closed),
+                self.regulations is not None and self.regulations.ready)
+        registries = {"menu": self.menu.buttons, "settings": self.settings.records, "themes": self.themes.records}
+        values = {area: self._visible_ui("theme" if area == "themes" else area, registries[area]) for area in areas}
+        if self._ui_waiting():
+            self.settings_result = None
+        try:
+            self.ui.publish(values, settings_result=self.settings_result)
+        finally:
+            if "settings" in values and self.ui.applied["settings"] is not None:
+                self.settings_result = None
+
+    def _flush_settings(self):
+        # Save acknowledgements are explicit commands, independent of other UI.
+        self._flush_ui(("settings",))
 
     def _remove_mod(self, owner):
         """Revoke an independent component's owned registrations."""
@@ -253,19 +272,10 @@ class PackMods:
             self.menu.remove(owner)
             self.settings.remove(owner)
             self.themes.remove(owner)
-        error = None
-        for flush in (self._flush_settings, self._flush_menu, self._flush_themes):
-            # Validation holds the native caller until its reply. A synchronous
-            # UI bridge request here would wait on that same game thread.
-            # Another owner's registration may depend on the removed mod.
-            # Each flush already skips unchanged registries.
-            if not self.closed and not self._regulation_dispatching:
-                try:
-                    flush()
-                except Exception as failure:
-                    error = error or failure
-        if error is not None:
-            raise error
+        # Native validation holds the game thread until its reply. Defer UI
+        # replacement until that request has returned to the controller.
+        if not self.closed and not self._regulation_dispatching and not self._ui_rejecting:
+            self._flush_ui()
 
     def _reject_sources(self, detail):
         """Count and identify the entire failed group once, including unactivated peers."""
@@ -275,8 +285,9 @@ class PackMods:
             return
         self._source_reported = True
         self.failed += len(self._sources)
-        detail = str(detail)[:512]
-        self._log("SOURCE GROUP FAILED", level="ERROR", owners=list(self._sources), detail=detail)
+        error, detail = detail, str(detail)[:512]
+        self._log("SOURCE GROUP FAILED", level="ERROR", owners=list(self._sources), detail=detail,
+                  error=error)
         # The group error identifies its owners; individual details use DEBUG.
         for owner, candidate in self._sources.items():
             self._log("REJECTED", level="DEBUG", id=owner, folder=candidate.root.name, detail=detail)
@@ -292,7 +303,7 @@ class PackMods:
             if self._source_runner is not None:
                 self._reject_sources(self._source_runner.sandbox.failure or "Shared source runner was closed")
         self._remove_mods(self._sources)
-        if not self.closed and not self._regulation_dispatching:
+        if not self.closed and not self._regulation_dispatching and not self._ui_rejecting:
             self._progress("complete" if self.finished else "loading")
 
     def _reject_mods(self, owners, detail):
@@ -316,64 +327,49 @@ class PackMods:
             raise failure
 
     def _publish_ui(self):
-        """Publish staged UI, treating immediate and deferred rejection alike."""
-        for area, flush, status in (("menu", self._flush_menu, self.menu_status),
-                                    ("settings", self._flush_settings, self.settings_status),
-                                    ("themes", self._flush_themes, self.themes_status)):
-            try:
-                flush()
-            except Exception as error:
-                status({"generation": getattr(self, area + "_generation"),
-                        "state": "failed", "detail": str(error)[:512]})
+        """Handle immediate and deferred native rejection with the same policy."""
+        try:
+            self._flush_ui()
+        except Exception as error:
+            if not self.ui.failed:
+                raise
+            self._log("UI PUBLICATION FAILED", level="ERROR", error=error)
+            self._ui_failures(self.ui.failed)
 
-    def _flush_settings(self):
-        """Publish copied declarations only after guest execution has returned."""
-        waiting = self._ui_waiting()
-        records = self._visible_ui("settings", self.settings.records)
-        if waiting:
-            self.settings_result = None  # A revoked registry cannot accept a stale save acknowledgement.
-        if self.set_settings is None or (self.applied_settings == records and self.settings_result is None):
-            return
-        self.applied_settings = None
-        result = self.set_settings(records, self.settings_result)
-        if result is not None:
-            self.settings_generation = result["settings"]["generation"]
-            if result["settings"]["state"] == "failed":
-                raise ManifestError(result["settings"]["detail"])
-        self.applied_settings = records
-        self.settings_result = None
+    def _ui_failure(self, area, status):
+        return self._ui_failures({area: status})
 
-    def _flush_themes(self):
-        records = self._visible_ui("theme", self.themes.records)
-        if self.set_themes is None or self.applied_themes == records:
-            return
-        self.applied_themes = None
-        result = self.set_themes(records)
-        if result is not None:
-            self.themes_generation = result["themes"]["generation"]
-            if result["themes"]["state"] == "failed":
-                raise ManifestError(result["themes"]["detail"])
-        self.applied_themes = records
+    def _ui_failures(self, failures):
+        rejected = {area: status for area, status in failures.items() if self.ui.reject(area, status)}
+        if not rejected:
+            return False
+        owners = set()
+        for area in rejected:
+            if area == "menu":
+                owners.update(owner for owner, mod in self.mods.items() if "main-menu" in mod.manifest.capabilities)
+            else:
+                registry = self.settings if area == "settings" else self.themes
+                owners.update(record["owner"] for record in registry.records)
+        # Remove every failed area's declarations before sending a replacement.
+        # Otherwise closing one owner could resend another area's known failure.
+        self._ui_rejecting = True
+        try:
+            detail = next(iter(rejected.values())).get("detail", "Native UI unavailable")
+            self._reject_mods(owners, detail)
+        finally:
+            self._ui_rejecting = False
+        self._flush_ui()
+        self._progress("complete" if self.finished else "loading")
+        return True
 
     def themes_status(self, status):
-        if status.get("generation") != self.themes_generation or status.get("state") != "failed":
-            return
-        self.applied_themes = None
-        owners = {record["owner"] for record in self.themes.records}
-        self._reject_mods(owners, status.get("detail", "Themes unavailable"))
-        self._flush_themes()
-        self._progress("complete" if self.finished else "loading")
+        self._ui_failure("themes", status)
 
     def settings_status(self, status):
         """Persist one user save, acknowledge it once, then notify its sandboxed owner."""
-        if status.get("generation") != self.settings_generation:
+        if status.get("generation") != self.ui.generations["settings"]:
             return
-        if status.get("state") == "failed":
-            self.applied_settings = None
-            owners = {record["owner"] for record in self.settings.records}
-            self._reject_mods(owners, status.get("detail", "Settings unavailable"))
-            self._flush_settings()
-            self._progress("complete" if self.finished else "loading")
+        if self._ui_failure("settings", status):
             return
         request = status.get("save")
         if request is None:
@@ -402,8 +398,7 @@ class PackMods:
         if success:
             try:
                 mod.event("ui-settings.changed", values)
-                self._flush_settings()
-                self._flush_themes()
+                self._flush_ui(("settings", "themes"))
             except Exception as error:
                 self._log("SETTINGS EVENT FAILED", level="ERROR", id=owner, detail=str(error)[:512], error=error)
                 if owner in self.mods:
@@ -438,6 +433,7 @@ class PackMods:
         candidates = []
         with os.scandir(folder) as entries:
             for count, entry in enumerate(entries, 1):
+                self._check_process()
                 if count > MAX_PACK_ENTRIES:
                     raise ManifestError("Data pack exceeds the discovery entry limit")
                 path = Path(entry.path)
@@ -451,22 +447,32 @@ class PackMods:
                         raise ManifestError("Data pack exceeds the 32-code-mod limit")
         return sorted(candidates)
 
-    def _progress(self, state="loading"):
-        """Publish host-owned counts; native readiness still waits for registry installation."""
+    def _progress(self, state="loading", *, error=None):
+        """Publish counts, preserving an already-recorded rejection if delivery fails."""
         if state in ("loading", "complete") and self._regulation_waiting():
             failed = self._regulation_failed
             # The native preload adapter protects the selected career after
             # the menu opens, without holding pack-owned UI for career activation.
             state = "error" if failed else "complete" if self.finished and self._regulation_armed else "loading"
         if self.set_loading is not None:
-            self.set_loading(
-                dict(
-                    state=state,
-                    loaded=len(self.mods),
-                    failed=self.failed,
-                    total=self.total,
+            try:
+                self.set_loading(
+                    dict(
+                        state=state,
+                        loaded=len(self.mods),
+                        failed=self.failed,
+                        total=self.total,
+                    )
                 )
-            )
+                return
+            except Exception as progress_error:
+                if error is None:
+                    raise
+                self._log("PROGRESS FAILED", level="ERROR", error=progress_error, detail=str(progress_error)[:512])
+                error.add_note("Loading progress could not be updated:\n" + error_text(progress_error))
+            # Leave the secondary exception handler before re-raising, so the
+            # primary failure keeps its original implicit context and cause.
+            raise error
 
     def _manifest(self, path):
         if self.runner_bundle is None:
@@ -490,17 +496,24 @@ class PackMods:
         return self.executor
 
     def load(self, pack):
-        """Start one immutable pack; normal launches advance preparations through poll()."""
+        """Start one immutable pack; completion events resume its preparation."""
         if self.started or self.closed:
             return
         self.started = True
         self.loading = self._load(pack)
         self.poll()
 
+    def _check_process(self):
+        """Stop at work boundaries; worker reads/compiles retain their own cleanup."""
+        cancellation = getattr(self._bridge, "cancellation", None)
+        if cancellation is not None:
+            cancellation.check()
+
     def poll(self):
         """Advance only ready work on the owning controller thread; never wait on a compiler."""
         if self.closed:
             return
+        self._check_process()
         self._start_regulations()
         if self.regulations is not None:
             # This runs on the controller/Store owner before any synchronous UI
@@ -519,44 +532,50 @@ class PackMods:
             next(self.loading)
         except StopIteration:
             self.loading = None
-        except BaseException:
-            self._progress("error")
+        except Exception as error:
+            # Retain the primary failure locally. A second progress request to
+            # the same bridge can time out again or replace the original error.
+            self._log("LOADING FAILED", level="ERROR", error=error, detail=str(error)[:512])
             raise
+        self._start_regulations()
 
     def _load_sources(self):
         """Prepare one fixed source group; only this controller creates its Store."""
-        timings = {}
-        try:
-            members = tuple((item.root, item.manifest) for item in self._sources.values())
-            with SourcePreparation(self._executor(), self.runner_bundle, members, cache=self.cache) as job:
-                result = None
-                with measure(timings, "source_prepare"):
-                    while result is None:
-                        result = job.take()
-                        if result is None:
-                            yield
-            with result:
-                timings.update(result.timings)
-                if result.compiled.cache_status is not None:
-                    self._log("CACHE", owners=list(self._sources), **result.compiled.cache_status)
-                providers = {}
-                for owner, candidate in self._sources.items():
-                    if "ui-settings" in candidate.manifest.capabilities:
-                        self.settings.bind(owner, candidate.root)
-                    operations = _host_operations(candidate.manifest, self._submit_mod_log,
-                                                  self.menu.add if self.set_menu is not None else None,
-                                                  self.settings.call, self.themes.register)
-                    providers[owner] = {name: operation.callback for name, operation in operations.items()}
-                # Every peer's files are available before the first import. Entry
-                # imports happen together; activation below keeps pack ID order.
-                with measure(timings, "source_load"):
-                    self._source_runner = SharedPythonRunner(self.runner_bundle, result.snapshots, providers,
-                                                             cleanup=self._remove_sources,
-                                                             prepared=result.compiled, timings=timings)
-                self._source_entries = {snapshot.manifest.id: SharedSourceMod(self._source_runner, snapshot)
-                                        for snapshot in result.snapshots}
-        finally:
-            self._log("SOURCE GROUP TIMING", owners=list(self._sources), phase_seconds=timings)
+        with activity_scope(self.submit_log, "mod_loading", owners=sorted(self._sources)):
+            timings = {}
+            try:
+                members = tuple((item.root, item.manifest) for item in self._sources.values())
+                with SourcePreparation(self._executor(), self.runner_bundle, members,
+                                       cache=self.cache, wake=self._ready) as job:
+                    result = None
+                    with measure(timings, "source_prepare"):
+                        while result is None:
+                            result = job.take()
+                            if result is None:
+                                yield
+                with result:
+                    self._check_process()
+                    timings.update(result.timings)
+                    if result.compiled.cache_status is not None:
+                        self._log("CACHE", owners=list(self._sources), **result.compiled.cache_status)
+                    providers = {}
+                    for owner, candidate in self._sources.items():
+                        if "ui-settings" in candidate.manifest.capabilities:
+                            self.settings.bind(owner, candidate.root)
+                        operations = _host_operations(candidate.manifest, self._submit_mod_log,
+                                                      self.menu.add if self.ui.send is not None else None,
+                                                      self.settings.call, self.themes.register)
+                        providers[owner] = {name: operation.callback for name, operation in operations.items()}
+                    # Every peer's files are available before the first import. Entry
+                    # imports happen together; activation below keeps pack ID order.
+                    with measure(timings, "source_load"):
+                        self._source_runner = SharedPythonRunner(self.runner_bundle, result.snapshots, providers,
+                                                                 cleanup=self._remove_sources,
+                                                                 prepared=result.compiled, timings=timings)
+                    self._source_entries = {snapshot.manifest.id: SharedSourceMod(self._source_runner, snapshot)
+                                            for snapshot in result.snapshots}
+            finally:
+                self._log("SOURCE GROUP TIMING", level="DEBUG", owners=list(self._sources), phase_seconds=timings)
 
     def _load(self, pack):
         """Keep guest calls serial while yielding during worker preparation."""
@@ -571,10 +590,11 @@ class PackMods:
             self._log(
                 "DISCOVERY REJECTED", level="WARNING",
                 detail=str(error)[:512],
-                phase_seconds=load_timings,
-                total_seconds=round(perf_counter() - started, 6),
+                error=error,
             )
-            self._progress("error")
+            self._log("DISCOVERY TIMING", level="DEBUG", phase_seconds=load_timings,
+                      total_seconds=round(perf_counter() - started, 6))
+            self._progress("error", error=error)
             return
         self.total = len(candidates)
         self._progress()
@@ -582,7 +602,7 @@ class PackMods:
         for path in candidates:
             timings = {}
             try:
-                with measure(timings, "manifest"):
+                with measure(timings, "manifest"), activity_scope(self.submit_log, "mod_loading", folder=path.name):
                     root, manifest = self._manifest(path)
                     # Recheck after resolution in case a parent changed during discovery.
                     if root.parent != folder:
@@ -596,8 +616,9 @@ class PackMods:
                     "REJECTED", level="WARNING",
                     folder=path.name,
                     detail=str(error)[:512],
-                    phase_seconds=timings,
+                    error=error,
                 )
+                self._log("TIMING", level="DEBUG", folder=path.name, phase_seconds=timings)
         counts = Counter(item.manifest.id for item in candidates_read)
         candidates_read.sort(key=lambda item: (item.manifest.id, item.root.name))
         self._sources = {item.manifest.id: item for item in candidates_read
@@ -620,6 +641,7 @@ class PackMods:
                 # Only registrations needing unavailable native data stay held.
                 self._log("PREREQUISITES UNAVAILABLE", level="WARNING", detail=str(error)[:512], error=error)
         for candidate in candidates_read:
+            self._check_process()
             manifest, timings = candidate.manifest, candidate.timings
             # Decide duplicate identity before initializing either copy; never pick a winner.
             if counts[manifest.id] > 1:
@@ -630,80 +652,96 @@ class PackMods:
                     id=manifest.id,
                     folder=candidate.root.name,
                     detail="Duplicate mod ID",
-                    phase_seconds=timings,
                 )
+                self._log("TIMING", level="DEBUG", id=manifest.id, folder=candidate.root.name, phase_seconds=timings)
                 continue
             if type(manifest) is SourceManifest and self._source_unavailable:
                 continue  # The fixed group's failure already counted and logged every member.
             prepared = None
+            load_error = None
             try:
-                if type(manifest) is SourceManifest:
-                    if self._source_runner is None:
-                        yield from self._load_sources()
-                    mod = self._source_entries[manifest.id]
-                elif self.background:
-                    self.pending = self._executor().submit(_read_component, manifest, timings)
-                    while not self.pending.done():
-                        yield
-                    future = self.pending
-                    self.pending = None
-                    prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
-                    while not prepared.poll():
-                        yield
-                elif self.cache is not None:
-                    prepared = CompiledMod(_read_component(manifest, timings), timings, cache=self.cache)
-                if prepared is not None and prepared.cache_status is not None:
-                    self._log("CACHE", id=manifest.id, **prepared.cache_status)
-                if type(manifest) is not SourceManifest:
-                    if "ui-settings" in manifest.capabilities:
-                        self.settings.bind(manifest.id, candidate.root)
-                    mod = Mod(manifest, submit_log=self._submit_mod_log,
-                              menu=self.menu.add if self.set_menu is not None else None,
-                              settings=self.settings.call, theme=self.themes.register,
-                              cleanup=lambda owner=manifest.id: self._remove_mod(owner),
-                              timings=timings, prepared=prepared)
-                # Retain ownership before activation so interruption can still close this instance.
-                self.mods[manifest.id] = mod
-                with measure(timings, "activate"):
-                    mod.activate()
-                if "main-menu" in manifest.capabilities:
-                    with measure(timings, "registration"):
-                        self._flush_menu()
-                if "ui-settings" in manifest.capabilities:
-                    self._flush_settings()
-                    self._flush_themes()
+                with activity_scope(self.submit_log, "mod_loading", mod=manifest.id):
+                    if type(manifest) is SourceManifest:
+                        if self._source_runner is None:
+                            yield from self._load_sources()
+                        mod = self._source_entries[manifest.id]
+                    elif self.background:
+                        self.pending = self._executor().submit(_read_component, manifest, timings)
+                        self.pending.add_done_callback(self._ready)
+                        while not self.pending.done():
+                            yield
+                        future = self.pending
+                        self.pending = None
+                        prepared = CompiledMod(future.result(), timings, cache=self.cache, executor=self._executor())
+                        prepared.when_ready(self._ready)
+                        while not prepared.poll():
+                            yield
+                    elif self.cache is not None:
+                        prepared = CompiledMod(_read_component(manifest, timings), timings, cache=self.cache)
+                    if prepared is not None and prepared.cache_status is not None:
+                        self._log("CACHE", id=manifest.id, **prepared.cache_status)
+                    if type(manifest) is not SourceManifest:
+                        if "ui-settings" in manifest.capabilities:
+                            self.settings.bind(manifest.id, candidate.root)
+                        mod = Mod(manifest, submit_log=self._submit_mod_log,
+                                  menu=self.menu.add if self.ui.send is not None else None,
+                                  settings=self.settings.call, theme=self.themes.register,
+                                  cleanup=lambda owner=manifest.id: self._remove_mod(owner),
+                                  timings=timings, prepared=prepared)
+                    # Retain ownership before activation so interruption can still close this instance.
+                    self.mods[manifest.id] = mod
+                    self._check_process()
+                    with measure(timings, "activate"):
+                        mod.activate()
+                    self._check_process()
+                    areas = _ui_areas(manifest.capabilities)
+                    if areas:
+                        with measure(timings, "registration"):
+                            self._flush_ui(areas)
+                    self._log("ACTIVE", id=manifest.id, version=manifest.version)
             except Exception as error:
+                load_error = error
                 if type(manifest) is SourceManifest:
                     self._reject_sources(error)
-                    if self._source_runner is not None:
-                        self._source_runner.close()
-                    else:
-                        self._remove_sources()
                 else:
                     self.failed += 1
-                    failed = self.mods.get(manifest.id)
-                    if failed is not None:
-                        failed.close()
-                    self._remove_mod(manifest.id)
                     self._log("REJECTED", level="WARNING" if isinstance(error, ManifestError) else "ERROR",
                               id=manifest.id, folder=candidate.root.name, detail=str(error)[:512], error=error)
-                for capability, flush in (("main-menu", self._flush_menu), ("ui-settings", self._flush_settings),
-                                          ("ui-settings", self._flush_themes)):
-                    if capability in manifest.capabilities:
-                        try:
-                            flush()
-                        except Exception as cleanup_error:
-                            self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, detail=str(cleanup_error)[:512], error=cleanup_error)
-            else:
-                self._log("ACTIVE", id=manifest.id, version=manifest.version)
+                # Record the rejection before cleanup can fail. A cleanup error
+                # makes loading fatal, but cannot become its primary reason.
+                cleanup_failed = False
+                try:
+                    if type(manifest) is SourceManifest:
+                        if self._source_runner is not None:
+                            self._source_runner.close()
+                        else:
+                            self._remove_sources()
+                    else:
+                        failed = self.mods.get(manifest.id)
+                        if failed is not None:
+                            failed.close()
+                        self._remove_mod(manifest.id)
+                except Exception as cleanup_error:
+                    self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, error=cleanup_error,
+                              detail=str(cleanup_error)[:512])
+                    error.add_note("Code mod cleanup failed:\n" + error_text(cleanup_error))
+                    cleanup_failed = True
+                if cleanup_failed:
+                    raise
+                areas = _ui_areas(manifest.capabilities)
+                if areas:
+                    try:
+                        self._flush_ui(areas)
+                    except Exception as cleanup_error:
+                        self._log("CLEANUP ERROR", level="ERROR", id=manifest.id, detail=str(cleanup_error)[:512], error=cleanup_error)
             finally:
                 if prepared is not None:
                     prepared.close()  # An adopted result has already transferred its resources.
                 # Log once per attempted mod, after execution and cleanup return.
                 self._log(
-                    "TIMING", pack=folder.name, id=manifest.id, phase_seconds=timings
+                    "TIMING", level="DEBUG", pack=folder.name, id=manifest.id, phase_seconds=timings
                 )
-            self._progress()
+            self._progress(error=load_error)
         self.finished = True
         self._source_starting = False
         self._source_entries.clear()
@@ -715,6 +753,9 @@ class PackMods:
             "BINDING REQUIRED" if self._regulation_waiting() else "READY",
             pack=pack["id"],
             active=len(self.mods),
+        )
+        self._log(
+            "PACK TIMING", level="DEBUG", pack=pack["id"],
             phase_seconds=load_timings,
             total_seconds=round(perf_counter() - started, 6),
         )
@@ -724,19 +765,11 @@ class PackMods:
         self._log("REPORT", id=mod_id, message=message)
 
     def menu_status(self, status):
-        """Revoke affected components and shared peers after deferred UI failure."""
-        # A reply queued before a later registry replacement cannot revoke the new registry.
-        if status.get("generation") != self.menu_generation:
+        """Keep menu diagnostics and use the common UI rejection policy."""
+        if status.get("generation") != self.ui.generations["menu"]:
             return
         self._log("MENU", level="ERROR" if status.get("state") == "failed" else "DEBUG", **status)
-        if status.get("state") != "failed":
-            return
-        # The failed native registry must be cleared once, after all UI owners are revoked.
-        self.applied_menu = None
-        self._reject_mods([owner for owner, mod in self.mods.items() if "main-menu" in mod.manifest.capabilities],
-                          status.get("detail", "Menu unavailable"))
-        self._flush_menu()
-        self._progress("complete" if self.finished else "loading")
+        self._ui_failure("menu", status)
 
     def close(self):
         """Close in reverse activation order, attempting every instance even if cleanup fails."""
@@ -785,11 +818,10 @@ class PackMods:
                 failed = True
                 self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
         self._source_entries.clear()
-        for flush in (self._flush_menu, self._flush_settings, self._flush_themes):
-            try:
-                flush()
-            except Exception as error:
-                failed = True
-                self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
+        try:
+            self._flush_ui()
+        except Exception as error:
+            failed = True
+            self._log("CLEANUP ERROR", level="ERROR", detail=str(error)[:512], error=error)
         if failed:
             raise RuntimeError("Code mod cleanup failed; see the launcher log")

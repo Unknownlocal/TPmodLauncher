@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise the generated private bridge expression without a native injector."""
 
+from hook_manager.diagnostics import error_text
+
 import builtins
 import json
+import os
 from pathlib import Path
 import sys
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -15,14 +19,37 @@ from launcher.game_bridge import BridgeError, factory
 ROOT = Path(__file__).resolve().parents[3]
 
 
+@pytest.fixture
 def bridge():
-    session = SimpleNamespace(create_script=lambda source, **kw: SimpleNamespace(
-        source=source, on=lambda *args: None, is_destroyed=False), is_detached=False)
-    return factory(ROOT, None)(session, 0, lambda *args: None)
+    clients = []
+    def create():
+        session = SimpleNamespace(create_script=lambda source, **kw: SimpleNamespace(
+            source=source, on=lambda *args: None, is_destroyed=False), is_detached=False)
+        client = factory(ROOT, None)(session, os.getpid(), lambda *args: None)
+        clients.append(client)
+        return client
+    yield create
+    for client in clients:
+        client.finish_reporting()
 
 
-def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path):
+def test_foreign_manager_keeps_its_original_ownership_error(monkeypatch):
+    from hook_manager.bootstrap import pulse
+
+    foreign = ModuleType("_tpm_hook_manager_host")
+    foreign.source_digest, foreign.readiness = "older sources", object()
+    monkeypatch.setitem(sys.modules, foreign.__name__, foreign)
+    monkeypatch.setattr(sys, "version_info", (3, 13))
+    result = json.loads(pulse({}, "owned sources", "owned session", "", '{"operation":"status"}'))
+    assert result["event"] == "error" and "different manager" in result["detail"]
+    assert "RuntimeError: A different manager" in result["traceback"]
+    assert result["activity"] is None and sys.modules[foreign.__name__] is foreign
+
+
+def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch, tmp_path, bridge):
     client = bridge()
+    client.journal.create()
+    client.reporting.start()
     config = json.JSONDecoder().raw_decode(client.script.source.split("const config = ", 1)[1])[0]
     # Only emulate bootstrap's supported-version check on the portable host.
     # Imports still use the real interpreter, registry and module machinery.
@@ -38,7 +65,12 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         request = json.dumps(json.dumps({"operation": operation, **data}))
         expression = (config["repeat_prefix"] + request + ")" if started
                       else config["prefix"] + request + config["suffix"])
-        result = json.loads(eval(expression, namespace))
+        value = eval(expression, namespace)
+        deadline = time.monotonic() + 2
+        while value.startswith("WAIT:") and time.monotonic() < deadline:
+            time.sleep(.001)
+            value = eval(expression, namespace)
+        result = json.loads(value)
         assert result["event"] == "manager", result
         started = True
         return result["status"]
@@ -59,6 +91,26 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert issubclass(personnel.RegulationPersonnelAdapter, host.CallableAdapters)
         assert channel.HookError is host.HookError
         assert host.manager.groups == {}
+        # A control reply must include a group installed during its final service,
+        # rather than foundation status collected before that pending work.
+        observed = ModuleType("owned_control_reply")
+        def value(number):
+            return number + 1
+        observed.value = value
+        target = host.CallableTarget("owned.reply", observed.__name__, (), "value", "(number)")
+        monkeypatch.setattr(host.manager, "dispatch", lambda record: None)
+        host.manager.approve(target)
+        host.manager.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
+        monkeypatch.setitem(sys.modules, observed.__name__, observed)
+        host.events.imported(host.manager, observed.__name__)
+        reply = pulse("loading", loading={"state": "complete", "loaded": 0, "failed": 0, "total": 0})
+        assert reply["groups"][target.name] == "active" and observed.value(4) == 5
+        host.manager.remove(target.name)
+        generations = {area: host.events.status()[area]["generation"] for area in ("settings", "themes")}
+        batch = pulse("ui", ui={"menu": [{"invalid": "owned native declaration"}],
+                                "settings": {"records": [], "result": None}, "themes": []})
+        assert batch["menu"]["state"] == "failed" and "exception_snapshot" in batch["menu"]
+        assert all(batch[area]["generation"] == generation + 1 for area, generation in generations.items())
         assert tuple(sys.meta_path) == finders and tuple(sys.path) == paths
         assert not {key for key in set(sys.modules) - before
                     if key == "game_state" or key.startswith(("managers.", "ui."))}
@@ -67,7 +119,14 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert host.adapters.modules == loaded
         closed = []
         game = ModuleType("game_state")
-        game.GameState = type("GameState", (), {})
+        class GameState:
+            def advance_week(self, off_week=False, *, persist=True):
+                return True
+            def save_season(self, *, manual=False):
+                return "owned save"
+            def finalize_and_rollover_season(self):
+                return None
+        game.GameState = GameState
         monkeypatch.setitem(sys.modules, "game_state", game)
         channel = SimpleNamespace(closed=False, bindings=lambda scope: {}, _rules=set(), _custom=set(),
             close=lambda: closed.append(prefix in sys.modules))
@@ -89,7 +148,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         host.discovery.snapshot = {"state": "ready", "series": "formula", "root": str(tmp_path)}
         native.__spec__ = SimpleNamespace(_initializing=True)
         request = json.dumps(json.dumps({"operation": "regulation-defaults"}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation definitions are loading"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "imports"}
         native.__spec__._initializing = False
         defaults = pulse("regulation-defaults")
         assert defaults["regulation_notices"] == []
@@ -119,7 +178,10 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         regulation_changes.option_neighbours = lambda spec, current_key: [row["key"] for row in spec["options"]]
         regulation_changes.normalize_policy = lambda raw, definitions: json.loads(json.dumps(raw))
         monkeypatch.setitem(sys.modules, regulation_changes.__name__, regulation_changes)
-        pulse("status")
+        # The synthetic module insertion has no real loader to announce its
+        # completion. Supply that event before requesting main-thread service.
+        host.events.imported(host.manager, regulation_changes.__name__)
+        pulse("changes")
         inactive = regulation_changes.FormulaRegulationGovernanceManager(SimpleNamespace(
             regulation_manager=SimpleNamespace(regulation_defs={})))
         progress = {"schema": 1, "categories": {}}
@@ -131,6 +193,8 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
             "handle_event": lambda self, event: "native event", "update": lambda self: "native update",
             "switch_to": lambda self, screen: setattr(self, "current", screen)})
         monkeypatch.setitem(sys.modules, ui.__name__, ui)
+        host.events.imported(host.readiness, ui.__name__)
+        pulse("changes")
         screen_manager = ui.ScreenManager()
         screen_manager.current = SimpleNamespace(state=career)
         helper = ModuleType("ui.session_preload")
@@ -153,18 +217,24 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
                 "mode": "automatic", "base_chance": 1, "announcement_week": 5}}})["adapters"]["career_preload"] == {"state": "armed"}
         loader = host.adapters.categories
         # Screen compatibility can fail much later than pack setup. It must
-        # report on the next ordinary response without blocking career loading.
+        # report through the journal without waiting for another status reply.
         catalogue = ModuleType("ui.screens.regulations_screen")
         catalogue.RegulationsScreen = type("RegulationsScreen", (), {
             "_draw_sections": lambda self, surface, left_rect, changed: 40,
             "_draw_regulation_card": lambda self, surface, entry, rect: None})
         original_sections = catalogue.RegulationsScreen._draw_sections
         monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
-        late = pulse("status")
-        assert len(late["regulation_notices"]) == 1 and "UI COMPATIBILITY FAILED" in late["regulation_notices"][0]["detail"]
+        host.events.imported(host.manager, catalogue.__name__)
+        late = pulse("changes")
+        assert host.activity.reporting.writer.wait_idle(2)
+        delivered = client.drain_activity()
+        warnings = [record for record in delivered if "UI COMPATIBILITY FAILED" in record.get("detail", "")]
+        assert len(warnings) == 1 and warnings[0]["level"] == "WARNING"
+        assert not any(record.get("level") == "ERROR" and record.get("detail") == host.adapters.regulation_screen.error_record["detail"]
+                       for record in delivered)
         assert late["adapters"]["career_preload"] == {"state": "armed"}
         assert catalogue.RegulationsScreen._draw_sections is original_sections
-        assert pulse("status")["regulation_notices"] == []
+        assert pulse("status").get("regulation_notices", []) == []
         career.regulation_manager = native.RegulationManager()
         career.regulation_manager.state = career
         career.regulation_manager.regulation_defs = career.regulation_manager._load_regulation_defs()
@@ -212,7 +282,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         # loader suite. Here check the generated bridge's WAIT/retry protocol.
         guard._active = 1
         request = json.dumps(json.dumps({"operation": "shutdown"}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "operations"}
         assert host.adapters.modules == loaded and not guard.closed and closed == []
         guard._active = 0
         # Retirement uses the same WAIT/idle boundary but retains the loading
@@ -222,7 +292,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         channel.reset = resets.append
         guard._active = 1
         request = json.dumps(json.dumps({"operation": "retire-regulations", "regulations": control}))
-        assert eval(config["repeat_prefix"] + request + ")", namespace) == "WAIT: native regulation operation is active"
+        assert json.loads(eval(config["repeat_prefix"] + request + ")", namespace)) == {"event": "waiting", "dependency": "operations"}
         assert not channel.validation_ready and not guard.closed and not resets
         guard._active = 0
         owner = host.adapters.preload
@@ -250,6 +320,13 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert pulse("stop-regulations", regulations=control)["regulation_control"] is False
         assert host.adapters.preload is replacement and not replacement.closed
         assert pulse("stop-regulations", regulations=dict(control, generation=replacement.generation))["regulation_control"] is True
+        with monkeypatch.context() as idle:
+            def unexpected_collection(*args, **kwargs):
+                raise AssertionError("A status reply collected native state")
+            for owner, method in ((host.discovery, "poll"), (host.readiness, "snapshot"),
+                                  (host.menu, "poll"), (host.themes, "poll"), (host.settings, "poll")):
+                idle.setattr(owner, method, unexpected_collection)
+            assert pulse("status")["state"] == "ready"
         assert pulse("shutdown")["adapters"] == {"state": "closed", "modules": 0}
         assert host.adapters.regulation_screen is None
         assert guard.closed and closed == [True]
@@ -259,11 +336,17 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:
+            reporting = sys.modules[name].reporting
             pulse("shutdown")
+            assert reporting.writer.finish(2)
             del sys.modules[name]
+        # Shutdown signals the writer; its final delivery finishes independently.
+        client.finish_reporting()
+        client.drain_activity()
+        client.journal.remove()
 
 
-def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypatch):
+def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypatch, bridge):
     client, sent = bridge(), []
     def post(record, timeout):
         sent.append(record)
@@ -297,11 +380,11 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
             client.request("install-regulations", regulations=dict(control, native_rules=values))
     with pytest.raises(BridgeError, match="bounded regulation setup"):
         client.request("activate-regulations", regulations=dict(control, native_rules={}))
-    with pytest.raises(BridgeError, match="no menu declarations"):
-        client.request("adapters", buttons=[])
+    with pytest.raises(BridgeError, match="no UI declarations"):
+        client.request("adapters", ui={"menu": []})
 
 
-def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch):
+def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch, bridge):
     client, sent, threads = bridge(), [], []
     def post(record, timeout):
         sent.append(record)
@@ -320,4 +403,52 @@ def test_preparation_wait_services_only_controller_transport_and_cancels_on_fail
         raise RuntimeError("Controller service failed")
     with pytest.raises(RuntimeError, match="Controller service failed"):
         client.request("prepare-regulations", regulations=control, _service=fail)
-    assert client.waiters == {} and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
+    assert client.pending is None and sent[-1] == {"type": "manager-cancel", "id": sent[-2]["id"]}
+
+
+def test_native_error_reply_received_before_cancellation_keeps_complete_details(monkeypatch, bridge):
+    client = bridge()
+    stack = "Owned native control stack " + "x" * 5000 + " FULL CONTROL END"
+    def post(record, timeout):
+        client._message({"type": "send", "payload": {"event": "reply", "id": record["id"],
+            "error": "Owned complete control failure", "traceback": stack}}, lambda *args: None)
+        client.cancellation.cancel()
+    monkeypatch.setattr(client, "_post", post)
+    with pytest.raises(BridgeError, match="Owned complete control failure") as failure:
+        client.request("status")
+    assert stack in error_text(failure.value) and client.pending is None
+
+
+def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):
+    client, sent, calls, failures = bridge(), [], [], []
+    initial = threading.Event()
+    monkeypatch.setattr(client, "_post", lambda record, timeout: sent.append(record))
+    def service():
+        calls.append(threading.get_ident())
+        if len(calls) == 1:
+            with pytest.raises(BridgeError, match="already pending"):
+                client.request("status")
+            client._message({"type": "send", "payload": {"event": "reply", "id": "stale-request",
+                            "status": {"stale": True}}}, lambda _: None)
+        initial.set()
+        if len(calls) == 2:
+            client._message({"type": "send", "payload": {"event": "reply", "id": sent[0]["id"],
+                            "status": {"prepared": True}}}, lambda _: None)
+    def native_work():
+        try:
+            assert initial.wait(2)
+            time.sleep(.04)
+            assert len(calls) == 1, "Regulation service ran without an event"
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            client.wake_service()
+    worker = threading.Thread(target=native_work)
+    worker.start()
+    try:
+        result = client.request("prepare-regulations", regulations={"generation": 1,
+            "endpoint": {"port": 1, "token": "0" * 64}}, _service=service)
+        assert result == {"prepared": True} and calls == [threading.get_ident()] * 2
+    finally:
+        worker.join(2)
+    assert not failures and not worker.is_alive(), failures

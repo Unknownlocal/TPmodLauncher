@@ -6,18 +6,22 @@ from pathlib import Path
 from types import ModuleType
 
 # No threading module exists yet: the bridge must wait rather than choose the wrong main thread.
-time.sleep(0.1)
+startup_started = time.perf_counter()
+for _ in range(600):
+    time.sleep(0)  # Real GIL boundaries while the small readiness probe must wait.
+startup_wait_seconds = time.perf_counter() - startup_started
 assert "_tpm_hook_manager_host" not in sys.modules
 import threading
 
 output = Path(sys.argv[1])
 (output / "target.pid").write_text(str(os.getpid()), encoding="ascii")
+(output / "startup-wait.json").write_text(json.dumps({"gil_releases": 600, "seconds": startup_wait_seconds}))
 deadline = time.monotonic() + 15
 while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadline:
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
-host.adapters.enqueue_log_record({"level": "ERROR", "detail": "Owned bridge validation failure"})
+host.adapters.submit_log({"level": "ERROR", "detail": "Owned bridge validation failure"})
 
 # Reproduce the bridge lock ordering with real Python threads. Evaluating the
 # loading request releases the GIL; the worker must be able to pass its native
@@ -37,9 +41,26 @@ def set_loading(record):
         loading_start.set()
         loading_thread.join(timeout=2)
         assert not loading_thread.is_alive(), "Bridge blocked a worker holding the GIL"
+    if record["total"] == 32:
+        (output / "evaluation-ready").touch()
+        time.sleep(.2)  # Allow the client to cancel while Python has released the GIL.
     return original_loading(record)
 
 host.menu.set_loading = set_loading
+
+original_control = host.adapters.control_regulations
+def control_regulations(*args, **kwargs):
+    result = original_control(*args, **kwargs)
+    if result is False and (output / "early-ready").exists() and not (output / "early-completed").exists():
+        # Force completion to reach JavaScript before this WAIT reply. The
+        # admitted worker is real; only the reply is deliberately delayed.
+        (output / "early-release").touch()
+        early_thread.join(2)
+        assert not early_thread.is_alive()
+        time.sleep(.1)
+        (output / "early-completed").touch()
+    return result
+host.adapters.control_regulations = control_regulations
 
 
 # Finish an owned Formula-like startup after the bridge has already become ready.
@@ -53,6 +74,11 @@ utils.active_data_pack = active_data_pack
 utils._ACTIVE_PACK_CACHE = {"owned-default": "owned pack"}
 sys.modules["utils"] = utils
 _CONSTANTS_LOADED = True
+# The real entry script imports the hub after setting this marker. Its import
+# completion, rather than a later status pulse, discovers the fixed startup pack.
+sys.path.insert(0, str(Path(__file__).parent))
+hub = importlib.import_module("ui.screens.hub_screen")
+HubScreen = hub.HubScreen
 while host.discovery.snapshot is None and time.monotonic() < deadline:
     time.sleep(0.02)
 assert host.discovery.snapshot is not None, "Bridge did not discover the startup pack"
@@ -61,9 +87,6 @@ utils._ACTIVE_PACK_CACHE.clear()
 
 
 # Normal import exercises the readiness observer before this first menu consumer.
-sys.path.insert(0, str(Path(__file__).parent))
-hub = importlib.import_module("ui.screens.hub_screen")
-HubScreen = hub.HubScreen
 # A disposable loading job lets the client check status-change delivery through
 # the real JavaScript bridge. It performs no actual game or asset work.
 preload_module = ModuleType("ui.session_preload")
@@ -72,7 +95,16 @@ def advance_session_preload(screen, state):
 preload_module.advance_session_preload = hub.advance_session_preload = advance_session_preload
 sys.modules[preload_module.__name__] = preload_module
 game = ModuleType("game_state")
-game.GameState = type("GameState", (), {})
+class GameState:
+    def advance_week(self, off_week=False, *, persist=True):
+        return True
+    def save_season(self, *, manual=False):
+        if getattr(self, "fail_save", False):
+            raise OSError("Owned native save failed " + "x" * 5000 + " FULL SAVE END")
+        return "owned save"
+    def finalize_and_rollover_season(self):
+        return None
+game.GameState = GameState
 sys.modules[game.__name__] = game
 loading_screen = HubScreen()
 navigation = ModuleType("ui.screen_manager")
@@ -90,6 +122,9 @@ theme, packs = modules(Path(__file__).with_name("palette.py"), theme_path)
 sys.modules[theme.__name__], sys.modules[packs.__name__] = theme, packs
 options.COLOR_PACKS = packs.COLOR_PACKS
 host.themes.poll()  # Native post-import arm precedes background mod registration.
+# These modules were inserted directly, so no loader can announce completion.
+for completed_module in (preload_module, game, navigation, theme, packs):
+    host.events.imported(host.manager, completed_module.__name__)
 assert host.themes.placeholder is not None
 original_palette_getitem = packs.ChromePalette.__getitem__
 original_menu = hub.ORIGINAL_METHODS["_activate"]
@@ -132,6 +167,68 @@ def release_when_requested(signal):
 
 paused = False
 while not manager.closed and time.monotonic() < deadline:
+    if (output / "idle-race-request").exists() and not (output / "idle-race.json").exists():
+        observed = {"operation_entries": 0, "snapshot_reads": 0}
+        begin, snapshot = host.activity._begin, host.activity.snapshot
+        def observed_begin(*args, **kwargs):
+            observed["operation_entries"] += 1
+            return begin(*args, **kwargs)
+        def observed_snapshot():
+            observed["snapshot_reads"] += 1
+            return snapshot()
+        host.activity._begin, host.activity.snapshot = observed_begin, observed_snapshot
+        started, value = time.perf_counter_ns(), 1
+        try:
+            for step in range(20000):
+                value = (value * 1664525 + 1013904223) & 0xFFFFFFFF
+                if step % 20 == 0:
+                    time.sleep(0)  # Real GIL boundaries, without reporting events.
+        finally:
+            host.activity._begin, host.activity.snapshot = begin, snapshot
+        assert observed == {"operation_entries": 0, "snapshot_reads": 0}, observed
+        (output / "idle-race.json").write_text(json.dumps({"steps": 20000,
+            "gil_releases": 1000, "elapsed_ns": time.perf_counter_ns() - started,
+            "value": value, "observers": observed}))
+    if (output / "early-request").exists() and not (output / "early-ready").exists():
+        early_guards = host.CallableAdapters()
+        host.adapters.regulations.append(early_guards)
+        def early_work():
+            with early_guards.operation():
+                (output / "early-ready").touch()
+                limit = time.monotonic() + 8
+                while not (output / "early-release").exists() and time.monotonic() < limit:
+                    time.sleep(.01)
+        early_thread = threading.Thread(target=early_work, daemon=True)
+        early_thread.start()
+        while not (output / "early-ready").exists():
+            time.sleep(.001)
+    if (output / "import-request").exists() and "constants" not in sys.modules:
+        threading.Thread(target=lambda: importlib.import_module("constants"), daemon=True).start()
+    if (output / "busy-request").exists() and not (output / "busy-ready").exists():
+        guards = host.CallableAdapters()
+        host.adapters.regulations.append(guards)
+        def admitted_work():
+            with guards.operation():
+                (output / "busy-ready").touch()
+                limit = time.monotonic() + 8
+                while not (output / "busy-release").exists() and time.monotonic() < limit:
+                    time.sleep(.01)
+        threading.Thread(target=admitted_work, daemon=True).start()
+        # Do not admit another worker while this one reaches its operation scope.
+        while not (output / "busy-ready").exists():
+            time.sleep(.001)
+    if ((output / "activity-request").exists() and not (output / "activity-done").exists()
+            and host.activity.group_intact("activity.save")):
+        loading_screen.state.fail_save = True
+        journal = host.activity.reporting.journal
+        host.activity.reporting.journal = host.ActivityJournal(output / "missing-native-journal.jsonl")
+        try:
+            loading_screen.state.save_season(manual=True)
+        except OSError as error:
+            assert error.launcher_activity["kind"] == "saving"
+            (output / "activity-done").touch()
+        finally:
+            host.activity.reporting.journal = journal
     if (output / "leave-request").exists() and loading_screen.manager.current is loading_screen:
         loading_screen.manager.switch_to(HubScreen())
     if host.adapters.preload is not None and loading_screen.manager.current is loading_screen:

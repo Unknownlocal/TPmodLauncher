@@ -231,7 +231,8 @@ guest tables.
 
 `preparation.py` reads source and verified runner bytes on a caller-owned executor.
 The controller requests ready or pending code through the launcher's compilation
-registry, then polls without blocking. Only a missing component starts compilation.
+registry. Read and compilation completion callbacks wake the controller, which
+takes the result without blocking. Only a missing component starts compilation.
 Workers create no Store or game registration. Each preparation owns its source
 snapshot and compilation request until the controller takes them once.
 Cancellation releases that request; another mod can keep the same compilation.

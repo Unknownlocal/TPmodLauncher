@@ -11,16 +11,25 @@ import time
 import uuid
 
 from .regulations.bridge_converter import convert_bridges
+from .diagnostics import exception_from_record
+from .diagnostics.activity_journal import ActivityJournal
+from .diagnostics.reporting_receiver import ReportingReceiver
+from .diagnostics.reporting_queue import build_overflow_record
+from .process_cancellation import ProcessCancellation
+from .process_ended import ProcessEnded
+from .pending_request import PendingRequest
+from hook_manager.ui_snapshot import validate_ui_snapshot
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
 # The callable files skip relative imports on that path; the package __init__
 # serves normal host imports and is deliberately absent from this execution list.
 PYTHON_SOURCES = (
-    "diagnostics", "manager", "callables/signatures", "callables/target",
+    "exception_snapshot", "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "career_preload", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "native_readiness", "native_reporting", "native_activity", "native_loading", "native_failures", "native_restart", "workshop_metadata", "import_handover", "control_locks", "native_events",
+    "career_preload", "menu", "settings", "themes", "ui_snapshot", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -47,14 +56,25 @@ class BridgeError(RuntimeError):
 class Bridge:
     """Own a Frida script carrying fixed control operations and declarative UI data."""
 
-    def __init__(self, frida, session, source, on_message):
+    def __init__(self, frida, session, source, on_message, journal=None, reporting=None):
         # session is already path-verified; source is our fixed script; callback queues diagnostic events.
         self.frida, self.session = frida, session
         self.script = session.create_script(source, name="modLauncher-hook-bridge")
         self.loaded = False
-        self.waiters = {}
+        self.exited = False
+        self.cancellation = ProcessCancellation()
+        self.pending = None
         self._on_message = on_message
         self.lock = threading.Lock()
+        self.journal = journal
+        self.reporting = reporting
+        self._native_closed = self._reporting_finished = False
+        if reporting is not None:
+            reporting.control_ready = self._control_ready
+            reporting.control_failed = self._control_failed
+        self.event_sequences = {}
+        # Evidence stays with this owner; replacement policy uses its existing grace.
+        self.restart_observation = self.restart_attempt = None
         self.script.on(
             "message", lambda message, data: self._message(message, on_message)
         )
@@ -62,43 +82,123 @@ class Bridge:
     def _message(self, message, on_message):
         # Frida callbacks only deliver data to waiting callers or the controller's event queue.
         payload = message.get("payload", {})
+        if payload.get("event") == "manager" and self.reporting is not None:
+            self.reporting.expect_connection()
         if (
             message.get("type") == "send"
             and isinstance(payload, dict)
             and payload.get("event") == "reply"
         ):
             with self.lock:
-                waiter = self.waiters.get(payload.get("id"))
-                if waiter is not None and waiter.empty():
-                    waiter.put_nowait(payload)
+                pending = self.pending
+                if pending is not None and pending.token == payload.get("id"):
+                    pending.replies.put_nowait(payload)
         else:
             on_message(message)
 
     def start(self):
         # Loading observes the interpreter; Python runs later at a main-thread GIL boundary.
-        self.script.load()
-        self.loaded = True
+        try:
+            if self.journal is not None:
+                self.journal.create()
+            if self.reporting is not None:
+                self.reporting.start()
+            self._call_native(self.script.load)
+            self.loaded = True
+        except BaseException:
+            if self.journal is not None:
+                self.journal.retained = True  # A partial load cannot certify native shutdown.
+            raise
+
+    def _control_ready(self, request, dependency):
+        """Only arm native entry; the receiver never executes Python or controller work."""
+        with self.lock:
+            live = self.pending is not None and self.pending.token == request
+        if live and not self.exited and not self.session.is_detached and not self.script.is_destroyed:
+            try:
+                self._post({"type": "manager-resume", "id": request, "dependency": dependency}, .25)
+            except ProcessEnded:
+                pass  # Completion raced process termination; the owner is retired.
+
+    def _control_failed(self, detail):
+        """Cancel parked entry promptly; cleanup may still request native shutdown."""
+        with self.lock:
+            pending = self.pending
+        if pending is not None:
+            try:
+                self._post({"type": "manager-cancel", "id": pending.token,
+                            "detail": "Native reporting connection failed: " + detail}, .25)
+            except (Exception, ProcessEnded):
+                pass  # The request deadline and final script unload still apply.
+
+    def drain_activity(self):
+        """Read records even after native Python and its script have exited."""
+        if self.reporting is not None:
+            self.reporting.acknowledge_notice()
+        records = self.journal.read_available() if self.journal is not None else []
+        return records + self.drain_fallback()
+
+    def drain_fallback(self):
+        """Consume socket-only errors even when a torn journal cannot be decoded."""
+        records = []
+        if self.reporting is not None:
+            records, dropped, _ = self.reporting.records.take(None, block=False)
+            if dropped:
+                records.insert(0, build_overflow_record(dropped, "Launcher socket queue"))
+        return records
+
+    def finish_reporting(self):
+        """Preserve evidence if the native sender did not confirm its final delivery."""
+        if self._reporting_finished:
+            return
+        self._reporting_finished = True
+        if self.reporting is not None:
+            try:
+                self.reporting.close(drain=self.reporting.connected.is_set())
+            finally:
+                if ((self.reporting.expected or self.reporting.connected.is_set())
+                        and not self.reporting.confirmed and self.journal is not None):
+                    self.journal.retained = True
 
     def wake(self):
-        """Wake the controller queue without native RPC or guest execution."""
-        self._on_message({"type": "send", "payload": {"event": "regulation-wake"}})
+        """Queue owner-thread work without native RPC or guest execution."""
+        self._on_message({"type": "send", "payload": {"event": "mods-ready"}})
+
+    def wake_service(self):
+        """Wake only the regulation service inside a synchronous control wait."""
+        with self.lock:
+            if self.pending is not None:
+                self.pending.replies.put_nowait({"wake": True})
 
     def _post(self, message, timeout):
         # Frida's native send supports cancellation; its synchronous script RPC wait does not.
-        cancellable = self.frida.Cancellable()
-        timer = threading.Timer(timeout, cancellable.cancel)
-        timer.daemon = True
-        timer.start()
-        try:
-            with cancellable:
-                self.script.post(message)
-        finally:
-            timer.cancel()
+        self._call_native(lambda: self.script.post(message), timeout)
 
-    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
+    def _call_native(self, action, timeout=None):
+        """Let owner termination interrupt an active Frida load or send."""
+        cancellable = self.frida.Cancellable()
+        self.cancellation.watch(cancellable.cancel)
+        timer = None
+        if timeout is not None:
+            timer = threading.Timer(timeout, cancellable.cancel)
+            timer.daemon = True
+            timer.start()
+        try:
+            self.cancellation.check()
+            with cancellable:
+                return action()
+        except Exception:
+            self.cancellation.check()
+            raise
+        finally:
+            if timer is not None:
+                timer.cancel()
+            self.cancellation.unwatch(cancellable.cancel)
+
+    def request(self, operation, timeout=2.0, *, ui=None, loading=None,
                 regulations=None, prerequisites=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
-        if operation not in ("status", "shutdown", "menu", "loading", "settings", "themes", "prerequisites", "adapters", "regulation-defaults",
+        if operation not in ("status", "changes", "shutdown", "ui", "loading", "prerequisites", "adapters", "regulation-defaults",
                              "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
         if operation == "prerequisites":
@@ -109,26 +209,18 @@ class Bridge:
                 raise BridgeError("Expected bounded native prerequisite names")
         elif prerequisites is not None:
             raise BridgeError("This operation accepts no prerequisites")
-        if operation == "menu":
-            if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
-                raise BridgeError("Expected bounded menu declarations")
-        elif buttons is not None:
-            raise BridgeError("This operation accepts no menu declarations")
+        if operation == "ui":
+            try:
+                validate_ui_snapshot(ui)
+            except (ValueError, TypeError) as error:
+                raise BridgeError(str(error)) from error
+        elif ui is not None:
+            raise BridgeError("This operation accepts no UI declarations")
         if operation == "loading":
             if type(loading) is not dict or len(json.dumps(loading)) > 1024:
                 raise BridgeError("Expected a bounded loading record")
         elif loading is not None:
             raise BridgeError("This operation accepts no loading record")
-        if operation == "settings":
-            if type(settings) is not dict or len(json.dumps(settings).encode("utf-8")) > 65_536:
-                raise BridgeError("Expected bounded settings declarations")
-        elif settings is not None:
-            raise BridgeError("This operation accepts no settings declarations")
-        if operation == "themes":
-            if type(themes) is not list or len(json.dumps(themes).encode("utf-8")) > 16_384:
-                raise BridgeError("Expected bounded theme declarations")
-        elif themes is not None:
-            raise BridgeError("This operation accepts no theme declarations")
         if operation == "await-regulations":
             if (regulations is not None and (type(regulations) is not dict
                     or set(regulations) - {"pack", "categories", "scripted_changes", "automatic_changes", "voting"}
@@ -167,54 +259,74 @@ class Bridge:
         if not math.isfinite(timeout) or timeout <= 0:
             raise BridgeError("Bridge timeout must be finite and greater than zero")
         token = uuid.uuid4().hex
-        waiter = queue.Queue(maxsize=1)
+        pending = PendingRequest(token)
+        waiter = pending.replies
         deadline = time.monotonic() + timeout
         answered = False
+        self.cancellation.check()
+        wake = lambda: waiter.put_nowait({"ended": True})
         with self.lock:
-            if self.waiters:
+            if self.pending is not None:
                 raise BridgeError("A bridge request is already pending")
-            self.waiters[token] = waiter
+            self.pending = pending
+        self.cancellation.watch(wake)
         try:
             message = {"type": "manager-request", "operation": operation, "id": token}
-            if operation == "menu":
-                message["buttons"] = buttons
+            if operation == "ui":
+                message["ui"] = ui
             if operation == "loading":
                 message["loading"] = loading
-            if operation == "settings":
-                message["settings"] = settings
-            if operation == "themes":
-                message["themes"] = themes
             if operation == "prerequisites":
                 message["prerequisites"] = prerequisites
             if regulations is not None:
                 message["regulations"] = regulations
             self._post(message, timeout)
+            self.cancellation.check()
+            if _service is not None:
+                # Handle work published before subscription. Later socket
+                # requests wake this waiter directly, without a timed tick.
+                _service()
             while True:
                 remaining = max(0, deadline - time.monotonic())
-                try:
-                    response = waiter.get(timeout=min(.005, remaining) if _service else remaining)
-                    break
-                except queue.Empty:
-                    if _service is None or time.monotonic() >= deadline:
-                        raise
+                if remaining == 0:
+                    raise queue.Empty
+                response = waiter.get(timeout=remaining)
+                if "error" in response:
+                    raise exception_from_record(response["error"], response, BridgeError)
+                self.cancellation.check()
+                if response.get("wake"):
                     # The game waits for policy acknowledgements before replying
                     # here. Service only regulation transport/guest work: PackMods
                     # polling could send nested UI requests to this busy bridge.
-                    _service()
+                    if _service is not None:
+                        _service()
+                    continue
+                break
             answered = True
-            if "error" in response:
-                raise BridgeError(response["error"])
             return response["status"]
+        except ProcessEnded:
+            # A native failure can have arrived just before cancellation, while
+            # post() was still returning. Retain that delivered error in full.
+            while True:
+                try:
+                    response = waiter.get_nowait()
+                except queue.Empty:
+                    break
+                if "error" in response:
+                    raise exception_from_record(response["error"], response, BridgeError)
+            raise
         except queue.Empty as error:
             raise BridgeError(
                 f"Timed out waiting for Python main-thread entry ({operation})"
             ) from error
         finally:
+            self.cancellation.unwatch(wake)
             with self.lock:
-                self.waiters.pop(token, None)
+                self.pending = None
             # Cancel any leftover target-side request, including after a timeout or send failure.
             if (
                 not answered
+                and not self.cancellation.ended.is_set()
                 and not self.session.is_detached
                 and not self.script.is_destroyed
             ):
@@ -227,30 +339,62 @@ class Bridge:
         """Accept plain defaults only for this scope's already selected pack."""
         # The game chooses the folder from startup discovery. This argument only
         # verifies the reply; it cannot request another folder or native target.
-        defaults = self.request("regulation-defaults", timeout=10).get("regulation_defaults")
+        status = self.request("regulation-defaults", timeout=10)
+        defaults = status.get("regulation_defaults")
         if (type(defaults) is not dict or set(defaults) != {"pack", "categories"}
                 or defaults["pack"] != str(pack) or type(defaults["categories"]) is not list
                 or len(defaults["categories"]) > 128
                 or len(json.dumps(defaults["categories"], ensure_ascii=False, allow_nan=False,
                                   separators=(",", ":")).encode("utf-8")) > 1024 * 1024):
-            raise BridgeError("Native regulation defaults were not confirmed for the selected pack")
+            raise exception_from_record("Native regulation defaults were not confirmed for the selected pack", status, BridgeError)
         return defaults["categories"]
 
     def set_menu(self, buttons):
-        """Apply a complete declarative registry; an exited game needs no native restoration."""
-        if self.session.is_detached:
-            return None
-        return self.request("menu", buttons=buttons)
+        return self.set_ui({"menu": buttons})
 
     def set_settings(self, records, result=None):
         """Publish owned tabs and optionally acknowledge one native save request."""
-        if self.session.is_detached:
+        return self.set_ui({"settings": {"records": records, "result": result}})
+
+    def set_ui(self, snapshot):
+        """Publish changed registries in one native batch; exited owners need no restoration."""
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
-        return self.request("settings", settings={"records": records, "result": result})
+        return self.request("ui", ui=snapshot)
 
     def close(self):
+        """Release native observation and the independent reporting connection."""
+        failure = None
+        try:
+            self.close_native()
+        except BaseException as error:
+            failure = error
+            if self.journal is not None:
+                self.journal.retained = True
+            raise
+        finally:
+            try:
+                self.finish_reporting()
+            except Exception as error:
+                if failure is None:
+                    raise
+                failure.add_note("Native reporting cleanup also failed: " + str(error))
+
+    def close_native(self):
+        """Restore a live manager once; reporting remains owned until retirement."""
+        if self._native_closed:
+            return
+        self._native_closed = True
+        try:
+            self._close_native()
+        except BaseException:
+            if self.journal is not None:
+                self.journal.retained = True
+            raise
+
+    def _close_native(self):
         """Stop the manager on its thread before unloading our native transport."""
-        if self.session.is_detached or not self.loaded:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set() or not self.loaded:
             return  # No live script remains here, or loading failed before the manager could start.
         if self.script.is_destroyed:
             raise BridgeError(
@@ -264,13 +408,11 @@ class Bridge:
                 self.script.unload()
 
     def set_themes(self, records):
-        if self.session.is_detached:
-            return None
-        return self.request("themes", themes=records)
+        return self.set_ui({"themes": records})
 
     def set_loading(self, loading):
         """Send trusted startup progress on the same serialized request channel as menu updates."""
-        if self.session.is_detached:
+        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
         result = self.request("loading", loading=loading)
         if result["menu"]["state"] == "failed":
@@ -307,13 +449,29 @@ def factory(root, frida):
     # Keep bundled source as data in the bootstrap namespace. It is imported
     # only by the trusted 'adapters' operation, after normal bootstrap is ready.
     sources["modLauncher/hook_manager/adapter_modules.py"] += "\nADAPTER_SOURCES = " + repr(adapters) + "\n"
+    readiness_source = read("hook_manager/bootstrap_readiness.py")
     bootstrap_source = read("hook_manager/bootstrap.py")
+    # Evaluate only this small, fixed probe while interpreter startup is pending.
+    # It shares the same checks as pulse; the large source literals stay out.
+    readiness_expression = (
+        "(lambda ns: (exec(compile(" + json.dumps(readiness_source)
+        + ', "modLauncher/hook_manager/bootstrap_readiness.py", "exec"), ns), '
+        + 'ns["bootstrap_readiness"]())[1])({"__builtins__": __builtins__})'
+    )
+    sources["modLauncher/launcher/diagnostics/activity_journal.py"] = read("launcher/diagnostics/activity_journal.py")
+    sources["modLauncher/launcher/diagnostics/reporting_wire.py"] = read("launcher/diagnostics/reporting_wire.py")
+    sources["modLauncher/launcher/diagnostics/reporting_queue.py"] = read("launcher/diagnostics/reporting_queue.py")
+    sources["modLauncher/launcher/diagnostics/reporting_sender.py"] = read("launcher/diagnostics/reporting_sender.py")
+    sources["modLauncher/launcher/diagnostics/journal_writer.py"] = read("launcher/diagnostics/journal_writer.py")
     script = read("hook_manager/bridge.js")
     digest = hashlib.sha256(json.dumps(sources).encode("utf-8")).hexdigest()
 
     def create(session, pid, on_message, *, bootstrap=True):
         # Each process gets a distinct owner token; only the trusted controller constructs this source.
         instance = uuid.uuid4().hex
+        journal = ActivityJournal(root / "logs" / ("activity-" + instance + ".jsonl"))
+        reporting = ReportingReceiver(pid, instance, lambda event, detail: on_message(
+            {"type": "send", "payload": {"event": event, "detail": detail}}))
         arguments = ",".join(
             json.dumps(value)
             for value in (sources, digest, instance, str(root.parent))
@@ -321,22 +479,27 @@ def factory(root, frida):
         # Build one fixed expression; the transport can append only a quoted JSON request.
         prefix = (
             "(lambda ns: (exec(compile("
+            + json.dumps(readiness_source)
+            + ', "modLauncher/hook_manager/bootstrap_readiness.py", "exec"), ns), exec(compile('
             + json.dumps(bootstrap_source)
             + ', "modLauncher/hook_manager/bootstrap.py", "exec"), ns), ns["pulse"]('
             + arguments
             + ","
         )
-        suffix = '))[1])({"__builtins__": __builtins__})'
+        suffix = "," + json.dumps(str(journal.path)) + "," + json.dumps(reporting.endpoint) + '))[2])({"__builtins__": __builtins__})'
         # Once the private owner exists, source strings are unnecessary. Keep
         # the same digest/instance checks in pulse, with an empty source argument.
         repeat_prefix = "__import__('sys').modules['_tpm_hook_manager_host'].pulse(" + ",".join(
             json.dumps(value) for value in ({}, digest, instance, str(root.parent))) + ","
         # A fork transition loads the script engine for exec gating, but must not enter inherited Python.
         config = json.dumps(
-            {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap}
+            {"prefix": prefix, "suffix": suffix, "repeat_prefix": repeat_prefix, "bootstrap": bootstrap,
+             "readiness": readiness_expression}
         )
-        return Bridge(
-            frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message
-        )
+        try:
+            return Bridge(frida, session, script.replace("__HOOK_CONFIG__", config, 1), on_message, journal, reporting)
+        except BaseException:
+            reporting.close()
+            raise
 
     return create

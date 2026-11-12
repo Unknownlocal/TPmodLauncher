@@ -4,8 +4,8 @@
 import importlib.util, json, runpy, sys, time
 import io
 import logging
+import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 root = Path(__file__).resolve().parent.parent
 
@@ -20,10 +20,11 @@ def load(name, filename):
 frida = load("test_binding", "native_test_binding.py").load(root)
 load("dependencies", "bundled_dependencies.py").load_source_packages(root)
 from launcher import process_lifecycle as lifecycle, game_bridge as bridge
+from launcher.pack_mods import PackMods
 output = Path(sys.argv[3])
 messages = io.StringIO()
 logger = logging.getLogger("owned.bridge_probe")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 logger.propagate = False
 handler = logging.StreamHandler(messages)
 handler.setFormatter(logging.Formatter("%(levelno)s %(message)s"))
@@ -31,11 +32,25 @@ logger.addHandler(handler)
 # The bridge receives the installation folder beside this isolated launcher copy.
 pack = root.parent / "data/owned pack"
 pack.mkdir(parents=True)
+# Instrument the isolated source copy, preserving the production entry logic.
+# Count actual intercepted GIL releases and Python evaluations, including workers.
+source_path = root / "hook_manager/bridge.js"
+original_source = source_path.read_text()
+instrumented = "let observedEntries = 0, observedEvaluations = 0, observedBootstrapEvaluations = 0;\n" + original_source.replace(
+    "onEnter() {", "onEnter() { observedEntries++;").replace(
+    "result = evaluate(source,", "if (!ready) observedBootstrapEvaluations++; result = evaluate(source,").replace(
+    "result = evaluate(", "observedEvaluations++; result = evaluate(")
+instrumented += "\nrpc.exports.entryState = () => ({entries: observedEntries, evaluations: observedEvaluations, bootstrapEvaluations: observedBootstrapEvaluations, armed: listener !== null, waiting: pending && pending.waiting, id: pending && pending.id});\n"
+source_path.write_text(instrumented)
+try:
+    bridge_factory = bridge.factory(root, frida)
+finally:
+    source_path.write_text(original_source)
 controller = lifecycle.Controller(
     frida.get_local_device(),
     [sys.argv[1], "-B", sys.argv[2], str(output)],
     logger,
-    bridge_factory=bridge.factory(root, frida),
+    bridge_factory=bridge_factory,
     restart_grace=0.2,
 )
 try:
@@ -46,10 +61,81 @@ try:
     controller.poll(timeout=0.02)
     assert (output / "active.json").exists(), messages
     assert any("HOOK MANAGER READY" in message for message in messages.getvalue().splitlines()), messages
-    current = next(iter(controller.bridges.values()))
+    startup_log = messages.getvalue()
+    assert "CPython library detected:" in startup_log and "First safe interpreter entry" in startup_log, startup_log
+    native_steps = [json.loads(line.partition("STARTUP ")[2].partition(" activity=")[0])
+                    for line in startup_log.splitlines() if "STARTUP {" in line]
+    native_total = [row for row in native_steps if row["phase"] == "native bootstrap total"]
+    assert len(native_total) == 1 and native_total[0]["seconds"] >= 0, native_steps
+    assert any(row["phase"].endswith("/native_events.py") and row["seconds"] >= 0 for row in native_steps), native_steps
+    current = next(iter(controller.processes.values())).bridge
+    counts = current.script.exports_sync.entry_state()
+    assert not counts["armed"] and counts["waiting"] is None, counts
+    assert counts["evaluations"] >= 601 and counts["bootstrapEvaluations"] == 1, counts
+    (output / "startup-entry-counts.json").write_text(json.dumps(counts))
+    (output / "idle-race-request").touch()
+    deadline = time.monotonic() + 4
+    while not (output / "idle-race.json").exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert (output / "idle-race.json").exists()
+    assert current.script.exports_sync.entry_state() == counts, "Inactive synthetic race entered the bridge"
+    (output / "idle-entry-counts.json").write_text(json.dumps({"before": counts,
+        "after": current.script.exports_sync.entry_state()}))
+
+    (output / "import-request").touch()
+    deadline = time.monotonic() + 4
+    while not (output / "import-ready").exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert (output / "import-ready").exists()
+    # Cancel a parked dependency, then retry it with a different owner token.
+    try:
+        current.request("regulation-defaults", timeout=.15)
+        raise AssertionError("An unfinished native import returned defaults")
+    except bridge.BridgeError as error:
+        assert "Timed out" in str(error), error
+    cancelled = current.script.exports_sync.entry_state()
+    assert not cancelled["armed"] and cancelled["waiting"] is None, cancelled
+    replies, failures = [], []
+    def defaults():
+        try:
+            replies.append(current.request("regulation-defaults"))
+        except Exception as error:
+            failures.append(error)
+    request = threading.Thread(target=defaults)
+    request.start()
+    while time.monotonic() < deadline:
+        counts = current.script.exports_sync.entry_state()
+        if counts["waiting"] == "imports":
+            break
+        time.sleep(.01)
+    assert counts["waiting"] == "imports" and not counts["armed"], counts
+    # A stale completion cannot rearm the new request.
+    current.script.post({"type": "manager-resume", "id": "0" * 32, "dependency": "imports"})
+    time.sleep(.1)
+    assert current.script.exports_sync.entry_state() == counts
+    (output / "import-release").touch()
+    request.join(3)
+    assert not request.is_alive() and not failures, failures
+    assert [row["key"] for row in replies[0]["regulation_defaults"]["categories"]] == ["entry", "profile", "calendar", "compound", "fuel", "points"]
+    assert not current.script.exports_sync.entry_state()["armed"]
+    # Activity diagnostics must cross the real bridge before regulation setup.
+    (output / "activity-request").touch()
+    while not any("FULL SAVE END" in line for line in messages.getvalue().splitlines()) and time.monotonic() < deadline:
+        controller.poll(timeout=.02)
+    activity_error = next(line for line in messages.getvalue().splitlines() if "40 " in line and "NATIVE OPERATION FAILED" in line)
+    assert json.loads(activity_error.partition(" activity=")[2])["kind"] == "saving", activity_error
+    assert "FULL SAVE END" in messages.getvalue()
     # The helper waits for a worker that crosses another SaveThread hook.
     # This must finish without locking that worker out of JavaScript with the GIL.
     assert current.set_loading(dict(state="loading", loaded=0, failed=0, total=31))["menu"]["loading"]["total"] == 31
+    try:
+        current.request("loading", loading=dict(state="loading", loaded=0, failed=0, total=32), timeout=.1)
+        raise AssertionError("An executing control did not reach its cancellation deadline")
+    except bridge.BridgeError as error:
+        assert "Timed out" in str(error) and (output / "evaluation-ready").exists(), error
+    replacement = current.set_loading(dict(state="loading", loaded=0, failed=0, total=30))
+    assert replacement["menu"]["loading"]["total"] == 30, replacement
+    assert not current.script.exports_sync.entry_state()["armed"]
     current.set_loading(dict(state="loading", loaded=0, failed=0, total=1))
     status = current.set_menu(
         [
@@ -118,9 +204,13 @@ try:
         time.sleep(0.02)
     assert (output / "settings-again-acknowledged").exists(), messages
     attempts = []
-    pid = next(iter(controller.sessions))
-    controller.pack_mods[pid] = SimpleNamespace(career_preload=attempts.append, poll=lambda: None, close=lambda: None,
-        menu_status=lambda status: None, settings_status=lambda status: None, themes_status=lambda status: None)
+    pid = next(iter(controller.processes))
+    # Exercise readiness validation while collecting preload notices below;
+    # diagnostic activity travels in the same native status record.
+    scope = PackMods(root.parent, logger)
+    scope.load({"state": "ready", "series": "formula", "id": pack.name, "root": str(pack.resolve())})
+    scope.career_preload = attempts.append
+    controller.processes[pid].mods = scope
     current.request("await-regulations")
     deadline = time.monotonic() + 3
     while not any(row["state"] == "waiting" for row in attempts) and time.monotonic() < deadline:
@@ -140,6 +230,17 @@ try:
         "endpoint": {"port": 1, "token": "0" * 64}}, _service=lambda: None)["regulation_control"] is True
     assert current.request("stop-regulations", regulations={"generation": waiting[0]["generation"],
         "endpoint": {"port": 1, "token": "0" * 64}})["regulation_control"] is True
+    (output / "early-request").touch()
+    deadline = time.monotonic() + 4
+    while not (output / "early-ready").exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert (output / "early-ready").exists()
+    before = current.script.exports_sync.entry_state()["evaluations"]
+    assert current.request("stop-regulations", regulations={"generation": 1,
+        "endpoint": {"port": 1, "token": "0" * 64}})["regulation_control"] is True
+    assert (output / "early-completed").exists()
+    after = current.script.exports_sync.entry_state()
+    assert after["evaluations"] == before + 2 and not after["armed"], after
     (output / "pause-request").touch()
     deadline = time.monotonic() + 5
     while not (output / "pause-ready").exists() and time.monotonic() < deadline:
@@ -158,6 +259,7 @@ try:
     # A cancelled wait must not leave a queued request blocking this one or shutdown.
     status = current.request("status")
     assert status["groups"] == {"owned": "active"}, status
+    assert not current.script.exports_sync.entry_state()["armed"]
     assert status["pack"] == {
         "state": "ready",
         "series": "formula",
@@ -167,17 +269,42 @@ try:
     controller.poll()
     assert sum("PACK DISCOVERY" in message for message in messages.getvalue().splitlines()) == 1, messages
     errors = [line for line in messages.getvalue().splitlines() if line.startswith("40 ")]
-    assert len(errors) == 1 and errors[0].endswith("Owned bridge validation failure"), messages.getvalue()
+    assert len(errors) == 2 and any(line.endswith("Owned bridge validation failure") for line in errors), messages.getvalue()
     try:
         current.request("execute")
         raise AssertionError("Unexpected arbitrary operation")
     except bridge.BridgeError:
         pass
+    (output / "busy-request").touch()
+    deadline = time.monotonic() + 4
+    while not (output / "busy-ready").exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert (output / "busy-ready").exists()
+    def finish_admitted_work():
+        while time.monotonic() < deadline:
+            counts = current.script.exports_sync.entry_state()
+            if counts["waiting"] == "operations":
+                assert not counts["armed"], counts
+                time.sleep(.1)
+                assert current.script.exports_sync.entry_state() == counts
+                (output / "busy-release").touch()
+                return
+            time.sleep(.01)
+        failures.append("Shutdown did not park on its admitted operation")
+    completion = threading.Thread(target=finish_admitted_work)
+    completion.start()
+    controller.close()
+    completion.join(3)
+    assert not completion.is_alive() and not failures, failures
 finally:
     # Also release on assertion failure so cleanup can reach the helper's main thread.
     (output / "release-request").touch()
+    (output / "import-release").touch()
+    (output / "busy-release").touch()
+    (output / "early-release").touch()
     controller.close()
-assert not controller.cleanup_failed, messages
+assert not controller.cleanup_failed, messages.getvalue()
+assert messages.getvalue().count('"phase":"native bootstrap total"') == 1, messages.getvalue()
 deadline = time.monotonic() + 5
 while not (output / "closed.json").exists() and time.monotonic() < deadline:
     time.sleep(0.02)

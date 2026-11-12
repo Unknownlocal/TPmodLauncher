@@ -27,7 +27,7 @@ def test_failed_import_rolls_back_package_aliases_and_temporary_finder(host):
     # The bundle cannot fall back to files for an undeclared private import.
     modules = AdapterModules(host, {
         "game_adapters": ("owned/__init__.py", "from .missing import value", True),
-    })
+    }, submit_log=lambda record: None)
     finders = tuple(sys.meta_path)
     result = modules.load()
     assert result["state"] == "failed" and "not in the trusted adapter bundle" in result["detail"]
@@ -39,7 +39,7 @@ def test_failed_import_rolls_back_package_aliases_and_temporary_finder(host):
 
 
 def test_load_rejects_a_foreign_namespace_without_removing_it(host, monkeypatch):
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     foreign = ModuleType(modules.prefix + ".foreign")
     monkeypatch.setitem(sys.modules, foreign.__name__, foreign)
     assert modules.load()["state"] == "failed"
@@ -48,7 +48,7 @@ def test_load_rejects_a_foreign_namespace_without_removing_it(host, monkeypatch)
 
 
 def test_close_preserves_replaced_modules_and_cannot_reopen(host, monkeypatch):
-    modules = AdapterModules(host, {"game_adapters": ("owned/__init__.py", "value = 3", True)})
+    modules = AdapterModules(host, {"game_adapters": ("owned/__init__.py", "value = 3", True)}, submit_log=lambda record: None)
     assert modules.load()["state"] == "loaded"
     name = modules.prefix + ".game_adapters"
     replacement = ModuleType(name)
@@ -68,7 +68,7 @@ def installation(host, monkeypatch):
     modules = AdapterModules(host, {
         "game_adapters": ("owned/__init__.py", "", True),
         "game_adapters.regulations": ("owned/regulations/__init__.py", "", True),
-    })
+    }, submit_log=lambda record: None)
     modules.load()
     game = ModuleType("game_state")
     game.GameState = type("GameState", (), {})

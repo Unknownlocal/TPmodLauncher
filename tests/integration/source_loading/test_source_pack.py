@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Selected-pack source admission, real runner execution and native readiness."""
 
+from tests.ui_support import ui_sink
+
 from contextlib import closing
 import faulthandler
 import json
@@ -18,6 +20,7 @@ from hook_manager.menu import MenuAdapter
 from hook_manager.settings import SettingsAdapter
 from hook_manager.themes import THEME_ROLES
 from launcher.pack_mods import PackMods
+from launcher.diagnostics import reporter
 from launcher.compiled_mod import CompiledMod
 from launcher.sandbox import SandboxError
 from mod_runtime import preparation
@@ -52,7 +55,28 @@ def finish(scope, messages=()):
 
 
 def records(messages, event):
-    return [json.loads(line.split(": ", 1)[1]) for line in messages if line.startswith(f"CODE MOD {event}:")]
+    # Activity context and complete trace text can follow the event's JSON data.
+    return [json.JSONDecoder().raw_decode(line.split(": ", 1)[1])[0]
+            for line in messages if line.startswith(f"CODE MOD {event}:")]
+
+
+def test_loading_outcomes_remain_info_and_all_timing_details_use_debug(pack, source_mod, code_mod, runner_bundle, capsys):
+    game, folder, record = pack
+    source_mod(folder, "owned.source")
+    code_mod(folder, "owned.prebuilt")
+    path = game / "launcher.log"
+    with reporter(path, log_level="DEBUG") as logger:
+        with closing(PackMods(game, logger, runner_bundle=runner_bundle)) as scope:
+            scope.load(record)
+            finish(scope)
+            assert len(scope.mods) == 2 and scope.finished
+    text = path.read_text()
+    for event in ("SOURCE GROUP TIMING", "TIMING", "PACK TIMING"):
+        line = next(line for line in text.splitlines() if "CODE MOD " + event + ":" in line)
+        assert "DEBUG modLauncher.mods" in line and '"phase_seconds"' in line
+    console = capsys.readouterr().err
+    assert "CODE MOD ACTIVE" in console and "CODE MOD READY" in console
+    assert console == text
 
 
 def test_sources_and_explicit_wasm_share_order_progress_and_cleanup(pack, source_mod, code_mod, runner_bundle):
@@ -308,15 +332,22 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     previous_settings = (theme / "settings.json").read_bytes()
     source_mod(folder, "owned.other")
     adapter, messages, palettes = SettingsAdapter(), [], []
+    publications = []
     native_originals = native_settings.ORIGINAL_METHODS.copy()
     with closing(adapter), closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
-        set_themes=lambda rows: palettes.append(rows),
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(
+            settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
+            themes=lambda rows: palettes.append(rows),
+            calls=publications,
+        ),
     )) as scope:
         scope.load(startup)
         finish(scope)
         assert list(scope.mods) == ["example.theme", "owned.other"]
+        assert len(publications) == 1 and set(publications[0]) == {"settings", "themes"}
         fields = scope.settings.records[0]["fields"]
         assert len(fields) == 52
         assert [field["id"] for field in fields] == [f"colour_{n}" for n in range(1, 53)]
@@ -373,8 +404,12 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     assert native_settings.OptionsScreen.draw is native_originals["draw"]
     assert native_settings.OPTION_TABS == [("game", "Game"), ("graphics", "Graphics")]
     # A new mod group reads the saved palette during registration.
-    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
-                          set_themes=lambda rows: palettes.append(rows))) as restarted:
+    with closing(PackMods(
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(themes=lambda rows: palettes.append(rows)),
+    )) as restarted:
         restarted.load(startup)
         finish(restarted)
         assert palettes[-1][0]["colours"]["BACKGROUND"] == "#010203"
@@ -404,16 +439,20 @@ class WitWorld(wit_world.WitWorld):
         return {area: {"state": "pending" if rows else "idle", "generation": len(registries[area])}}
     messages = []
     with closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_themes=lambda rows: publish("themes", rows),
-        set_settings=lambda rows, result=None: publish("settings", rows),
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(
+            themes=lambda rows: publish("themes", rows),
+            settings=lambda rows, result=None: publish("settings", rows),
+        ),
     )) as scope:
         scope.load(startup)
         finish(scope, messages)
         assert list(scope.mods) == ["owned.palette", "owned.settings"]
         assert all(mod.manifest.capabilities == frozenset({"ui-settings"}) for mod in scope.mods.values())
         handler = getattr(scope, f"{failure}_status")
-        generation = getattr(scope, f"{failure}_generation")
+        generation = scope.ui.generations[failure]
         handler({"state": "failed", "generation": generation - 1})
         assert len(scope.mods) == 2
         handler({"state": "failed", "generation": generation})
@@ -437,8 +476,11 @@ def test_source_menu_readiness_and_failure_rollback(
         monkeypatch.delitem(sys.modules, hub.__name__)
     messages = []
     with closing(MenuAdapter()) as adapter, closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_menu=lambda items: {"menu": adapter.update(items)}, set_loading=adapter.set_loading,
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(menu=lambda items: {"menu": adapter.update(items)}),
+        set_loading=adapter.set_loading,
     )) as scope:
         scope.load(record)
         finish(scope, messages)
@@ -465,7 +507,7 @@ def test_source_menu_readiness_and_failure_rollback(
     assert hub.MENU_ITEMS == native_rows and hub.HubScreen._activate is native_activate
 
 
-def test_import_time_ui_publishes_all_members_once_and_rolls_back_rejected_group(pack, source_mod, code_mod, runner_bundle):
+def test_import_time_ui_publishes_all_members_once_and_rolls_back_uncertain_group(pack, source_mod, code_mod, runner_bundle):
     game, folder, record = pack
     for owner in ("owned.a", "owned.c"):
         source_mod(folder, owner, capabilities=("main-menu",), code=f'''import wit_world
@@ -478,13 +520,52 @@ class WitWorld:
     publications, progress = [], []
     def publish(rows):
         publications.append(rows)
-        return {"menu": {"generation": len(publications), "state": "failed" if rows else "idle",
-                         "detail": "Owned native rejection"}}
-    with closing(PackMods(game, lambda _: None, runner_bundle=runner_bundle,
-                          set_menu=publish, set_loading=progress.append)) as scope:
+        if rows:
+            raise TimeoutError("Owned missing publication acknowledgement")
+        return {"menu": {"generation": len(publications), "state": "idle"}}
+    with closing(PackMods(
+        game,
+        lambda _: None,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(menu=publish),
+        set_loading=progress.append,
+    )) as scope:
         scope.load(record)
         finish(scope)
         assert [[row["owner"] for row in rows] for rows in publications] == [["owned.a", "owned.c"], []]
         assert list(scope.mods) == ["owned.b"] and scope.failed == 2
         assert scope._source_runner.closed and scope.menu.buttons == []
         assert progress[-1] == dict(state="complete", loaded=1, failed=2, total=3)
+
+
+@pytest.mark.parametrize("phase", ["manifest", "import", "activate"])
+def test_mod_failure_logs_the_actual_owner_or_shared_preparation(pack, source_mod, code_mod, runner_bundle, phase):
+    from launcher.diagnostics import reporter
+
+    game, folder, record = pack
+    code = ("raise RuntimeError('Owned import failure')\n" if phase == "import" else
+            "import wit_world\nclass WitWorld(wit_world.WitWorld):\n def activate(self): raise RuntimeError('Owned activation failure')\n")
+    failing = source_mod(folder, "a-failing", mod_id="owned.a", code=code)
+    if phase == "manifest":
+        (failing / "mod.toml").write_text("invalid = [", encoding="utf-8")
+    source_mod(folder, "b-peer", mod_id="owned.b")
+    code_mod(folder, "c-survivor", mod_id="owned.c")
+    path = game / "diagnostics.log"
+    with reporter(path) as logger, closing(PackMods(game, logger, runner_bundle=runner_bundle, background=True)) as scope:
+        scope.load(record)
+        finish(scope)
+        assert list(scope.mods) == (["owned.b", "owned.c"] if phase == "manifest" else ["owned.c"])
+        assert scope.failed == (1 if phase == "manifest" else 2)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    failed = next(line for line in lines if ("CODE MOD REJECTED:" if phase == "manifest" else "CODE MOD SOURCE GROUP FAILED:") in line)
+    context = json.loads(failed.partition(" activity=")[2])
+    assert context["kind"] == "mod_loading"
+    if phase == "manifest":
+        assert context["folder"] == "a-failing" and "mod" not in context
+        assert "Traceback (most recent call last)" in "\n".join(lines)
+    elif phase == "import":
+        assert context["owners"] == ["owned.a", "owned.b"] and "mod" not in context
+    else:
+        assert context["mod"] == "owned.a"
+    survived = next(line for line in lines if "CODE MOD ACTIVE:" in line and "owned.c" in line)
+    assert json.loads(survived.partition(" activity=")[2])["mod"] == "owned.c"

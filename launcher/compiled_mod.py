@@ -23,7 +23,7 @@ class CompiledMod:
                 raise ValueError("Expected a size-limited WebAssembly Component binary")
             self._entry, self._reused = CompilationRegistry.current().request(data, timings, cache, executor)
             # A ready hit needs no worker. Direct callers without an executor
-            # still compile synchronously; background loaders poll instead.
+            # still compile synchronously; background loaders resume on completion.
             self.poll()
         except BaseException:
             self.close()
@@ -41,6 +41,11 @@ class CompiledMod:
         self.cache_status = ({"state": "reused", "detail": "Shared ready or pending compiled code"}
                              if self._reused else compiled.cache_status)
         return True
+
+    def when_ready(self, wake):
+        """Queue owner-thread work when compilation finishes, including ready hits."""
+        self._entry.registry.check_thread()
+        self._entry.future.add_done_callback(lambda _: wake())
 
     def take(self, data):
         """Transfer this request's reference into a sandbox lease exactly once."""

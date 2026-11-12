@@ -81,7 +81,7 @@ def test_cards_fit_catalogue_and_pack_cleanup_restores_cached_draws(catalogue, n
     adapter = presentation.RegulationScreenAdapter(reports.append)
     host = ModuleType("owned_screen_adapter")
     host.manager = Manager()
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     modules.regulation_screen = adapter
     screen.native_cards = native_cards
     surface = SimpleNamespace(blit=lambda *args: None)

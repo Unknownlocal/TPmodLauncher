@@ -12,6 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  workshop-metadata:
+    if: ${{ github.run_attempt == '1' }}
+    uses: ./.github/workflows/test-workshop-metadata.yml
+    with:
+      ref: ${{ inputs.ref }}
+
   game-adapters:
     if: ${{ github.run_attempt == '1' }}
     uses: ./.github/workflows/test-game-adapters.yml

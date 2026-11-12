@@ -196,5 +196,4 @@ class StaffingCoordinator:
             if acquired:
                 guards._personnel_operation.release()
             guards._local.staffing_caller = previous
-            with guards._lock:
-                guards._active -= 1
+            guards._operation_finished()

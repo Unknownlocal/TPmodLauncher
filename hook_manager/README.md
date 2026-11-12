@@ -14,21 +14,122 @@ enters Python on its main thread with the GIL held. Requests run one at a time
 with deadlines, covering status, shutdown, native UI registration, loading
 progress, private adapter-definition loading and regulation preparation.
 
-During Python evaluation, the bridge lets other game threads pass its entry
-check. The busy guard keeps them from starting another operation. Holding the
-script lock while Python releases the GIL could otherwise deadlock a worker.
+After bootstrap, the bridge installs its entry listener only for an actual
+control request. It removes the listener before evaluating Python, so idle
+gameplay and nested worker waits have no bridge callback. Python may release
+the GIL without holding the script lock, allowing cancellation to arrive.
+
+A request waiting for an import or regulation work already running leaves no
+listener installed. Completion sends that request's token over the reporting
+connection and arms another main-thread entry. Cancellation, deadlines and
+shutdown remove the listener. No native callback address is queued in Python.
+`control_locks.py` waits outside the game thread when cleanup encounters a
+lock still held by a regulation worker. It shares one waiter per lock and wakes
+the latest request after release; closing the scope never waits for a stuck lock.
 
 `bootstrap.py` creates a private manager, readiness, pack discovery, menu, settings
 and theme adapters. A source digest and session token identify their owner and prevent
 another active controller from replacing them. Later requests reuse the stored
 bootstrap function without resending its source. Author Python runs in Wasm.
 
-`diagnostics.py` provides `build_log_record()` for short log records containing
-severity and relevant check or action details. Adapters hand them to
-`submit_log`; the bridge's `enqueue_log_record` callback holds them for delivery
-to the launcher's standard logger. `Manager.store_error()` separately retains
-recent error text for status checks. Mod `report` messages continue through their
+`diagnostics.py` provides `build_log_record()` with short summaries, severity,
+action details and a plain snapshot of each complete exception. Capture reads
+memory only. `exception_snapshot.py` stores messages, causes, notes and stack
+locations without keeping live frames or looking up source files. The journal
+worker renders snapshots for delivery; explicit status replies can carry the
+same plain data for the launcher to render. Rendering never changes the retained
+status record. Failed source lookup preserves all captured details instead.
+Launcher errors built from failed replies keep those plain records until logging
+renders them, alongside the launcher's own stack and cleanup details.
+Adapters pass records to `submit_log` for background delivery to the launcher's
+standard logger. `Manager.store_error()` retains recent summaries and the latest
+complete snapshot for status checks. Mod `report` messages continue through their
 existing host operation and use INFO severity.
+
+Diagnostic records also carry cached career activity. This plain snapshot can be
+read by workers without inspecting game objects; later navigation cannot rewrite
+the context of an already-built record.
+
+`native_events.py` publishes changed startup, navigation, loading, menu, settings
+and theme values through the shared journal outbox. Status replies read its cache;
+they do not discover changes. A service pass installs work only for managers
+named by import or operation completion. Normal imports still install hooks
+before the native caller uses the imported module. Nested import observers and
+control changes share one final state collection, rather than publishing partial
+states along the way. Readiness, activity and adapter snapshots reuse that work
+without polling their managers again. If a validation operation is still active,
+its completion wakes deferred installation.
+
+`native_reporting.py` owns the background writer and sender. State changes and
+errors keep their journal order. Import work and control completions notify the
+launcher directly through the sender, without waiting for storage.
+
+One UI request applies changed buttons, settings tabs and palettes together.
+`ui_snapshot.py` bounds the request; each native adapter checks its own entries.
+An error in one area keeps the other areas' results in the reply. State collection
+runs once after the batch, including any compatibility failures.
+
+`import_handover.py` waits on existing import locks for modules already loading
+when an observer registers, then queues the same completion event. It does no
+periodic checking and never waits on a game caller.
+
+`native_loading.py` observes entry before save reads and native worker creation,
+plus the existing preload constructor, progress and cancellation callbacks.
+Attempt numbers keep abandoned jobs from clearing a replacement. Failed native
+loads preserve their full error text and restore menu context even if no preload
+job starts. This adds no race-frame or simulation-step callback.
+
+`native_failures.py` observes the game's existing crash recorder. Unhandled
+main-thread exceptions also use the current cached activity through the Python
+exception hook, without recording the same fatal exception twice. Worker failures
+are reported without declaring the game fatal. Original hooks and crash files
+remain owned by the game.
+
+When the Windows game crashes, it still writes its crash report and runs its
+cleanup. The launcher's exception handler waits up to one second for queued
+diagnostics, then calls the game's original exception handler. If reporting
+succeeded, it exits Python with code 1 so PyInstaller does not open a second
+error window. Launcher cleanup leaves this handler installed if a crash has
+already been captured; otherwise it restores the original handler. Failed
+reporting leaves the game's normal error handling in place. This also applies
+under Proton, where the launcher shows errors in its console.
+
+`native_restart.py` observes the settings and season-pack screens' references to
+the game's shared restart helper. It queues an attempt before the call, confirms
+the helper's normal exit, and cancels the attempt if the call fails or returns.
+The game still starts its replacement and controls its own exit. Ordinary quit
+paths are untouched. Observer availability and attempt numbers travel through
+the same background journal, without a game-thread storage or network wait.
+At normal interpreter shutdown it checks that both references are still owned
+and queues a final availability record before the writer's bounded drain. This
+check performs no storage or network work. Abrupt termination can lose queued
+markers, so their absence alone cannot prove an ordinary exit.
+
+`native_activity.py` observes complete week progression, season rollover and
+career saves, including autosaves. The game's week-transition start and finish
+methods keep an activity open across its own worker and delayed exception.
+Nested saving restores week progression on return. Unrelated workers and newer
+careers do not inherit that activity. Errors keep their original context when
+the game re-raises them. Game callbacks enqueue context and captured traceback
+metadata without source-file lookup. A dedicated writer formats the traceback
+and writes the controller-owned journal; gameplay and status reads never wait
+for its file I/O. A second worker notifies the launcher through an authenticated
+local connection. The launcher reads the journal on notification and before
+retiring a process, so an immediate exit needs no further game pulse. Journal
+write failures send their warning and complete original record over that same
+connection. Socket waits cannot delay durable appends. Unhandled observed
+exceptions retain the original exception hook and
+produce a fatal launcher outcome; caught native errors remain diagnostic records.
+Observation works without regulation mods and leaves native results and files
+under the game's control. Loading and activity observers share a safety boundary:
+failed context capture, submission or cleanup cannot suppress a native call,
+change its return or replace its exception. A reporting failure is retained when
+possible, without requiring a working reporting channel for the game to continue.
+
+Shutdown signals the writer and returns to the game. The launcher waits for
+completion outside the game thread. Only final process termination can wait for
+queued records, using one shared second for storage and delivery; a blocked
+backend cannot extend it. Unconfirmed delivery retains the journal.
 
 `adapter_modules.py` handles the private `adapters` operation. It imports only
 the launcher's fixed bundle as separate modules, sharing the existing manager
@@ -37,6 +138,9 @@ bootstrap carries no second copy. It leaves the game's import path alone,
 removes its temporary importer after loading and removes owned definitions on
 shutdown. Failed imports roll back their definitions. Loading installs no game
 hooks and does not declare regulations ready.
+Late adapter errors use the reporting owner directly. Control notices use that
+same path and remain in replies so a failed request keeps its full details.
+JavaScript does not send a second copy of each reply notice.
 
 The private `prepare-regulations` request supplies a loading-attempt number and an
 authenticated local connection. It loads the fixed bundle and publishes a
@@ -79,8 +183,9 @@ unchecked actions. Only the main thread changes registrations, while no operatio
 is active. Trusted native wrappers use an `operation()` block to grant a worker
 access only while that operation runs. Direct worker calls outside such a block
 cannot run required validation.
-Existing decorators are checked and called intact. The bootstrap polls pending
-work and retries shutdown while operations finish. These registration and native
+Existing decorators are checked and called intact. Import and operation completion
+request service for pending hooks. Shutdown resumes when those operations finish.
+These registration and native
 call facilities are private; no mod permission or bridge request exposes them.
 
 [`game_adapters/`](game_adapters/README.md) separates native contract/project
@@ -103,8 +208,8 @@ unfinished until that loading job's regulation activation succeeds. Input,
 drawing and screen transitions remain native. The existing loading message shows
 when regulation preparation is pending. Each attempt gets a new setup
 number, so a cancelled job's reply cannot release a retry of the same career.
-This adapter alone tracks which screen, career and loading job belong to the
-attempt. Setup checks those captured objects without searching the game's stack.
+This adapter owns loading approval for the captured screen, career and loading
+job. Setup checks those objects without searching the game's stack.
 Cleanup restores owned helper copies. For a pack with admitted regulation
 declarations, the launcher arms this adapter before enabling career selection.
 Changes in loading status reach the controller once; it prepares and activates
@@ -115,6 +220,10 @@ locally and reports departure; cancelled
 jobs also lose approval. The controller retires the old hooks once admitted work
 finishes, clears career rule data and prepares the next captured attempt. Mod
 instances, bound validators and their connection stay loaded between careers.
+
+The navigation observer also records menu, save-loading and loaded-career
+activity for diagnostics, even with no code mods. The menu adapter supplies the
+initial screen. This observation does not hold up loading or wrap its helper.
 
 `settings.py` appends owned Options tabs and manages colour inputs, swatches and
 unsaved drafts. It queues save data for the launcher and displays the persistence

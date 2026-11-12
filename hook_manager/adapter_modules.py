@@ -4,7 +4,6 @@
 import importlib
 import importlib.util
 import sys
-from collections import deque
 from contextlib import ExitStack
 from pathlib import Path
 from types import ModuleType
@@ -27,7 +26,7 @@ class AdapterModules:
     Loading definitions installs no game hooks and grants no policy readiness.
     """
 
-    def __init__(self, host, sources):
+    def __init__(self, host, sources, submit_log):
         self.host, self.sources = host, sources
         self.prefix = host.__name__ + ".adapter_code"
         self.modules = {}
@@ -43,26 +42,25 @@ class AdapterModules:
         self.categories = None
         self.regulation_changes = None
         self.regulation_screen = None
-        # UI imports and game-worker validation can fail after setup returned.
-        # Keep a bounded pack-owned outbox for the next ordinary bridge response.
-        self.regulation_notices = deque(maxlen=16)
-        self.enqueue_log_record = self.regulation_notices.append
+        self.submit_log = submit_log
+        self.changed = None
 
-    def status(self):
+    def status(self, *, poll=True):
         """Distinguish prepared data, installed hooks and unfinished cleanup.
 
         Successful publication alone supplies no hook coverage or readiness.
         Failed installation can still own hooks; failed preparation owns none.
+        Event collection passes poll=False after servicing completed imports.
         """
         result = {"state": self.state, "modules": len(self.sources) if self.state == "loaded" else 0}
-        if self.regulation_screen is not None:
+        if poll and self.regulation_screen is not None:
             self.regulation_screen.poll()
         if self.error is not None:
             result["detail"] = self.error
         if self.preload is not None:
             result["career_preload"] = self.preload.loading_status()
             if self.categories is not None and self.categories.errors:
-                result["career_preload"] = {"state": "unavailable", "detail": self.categories.errors[-1]}
+                result["career_preload"] = {"state": "unavailable", **self.categories.error_record}
         if self.channel is not None or self.regulation_error:
             # Installing all required native hooks does not yet activate checks.
             state = ("cleanup_pending" if self.channel is not None else "unavailable") if self.regulation_error else (
@@ -107,10 +105,13 @@ class AdapterModules:
                 if definitions.get("categories"):
                     self.categories = loader.RegulationCategoryAdapter(definitions, self.regulation_changes)
                     screen = self.host.adapter_code.game_adapters.regulations.regulation_screen
-                    self.regulation_screen = screen.RegulationScreenAdapter(self.enqueue_log_record, self.categories)
+                    self.regulation_screen = screen.RegulationScreenAdapter(self.submit_log, self.categories)
                 elif not voting or set(definitions) != {"pack", "categories"} or definitions["categories"] != []:
                     raise HookError("Expected prepared categories or voting protection")
             self.preload = CareerPreload(self._career_left, getattr(self.host, "readiness", None))
+            # Manager construction registers the preload with the event scope.
+            # Wire its later state changes here, once the instance is ready.
+            self.preload.changed = self.changed
         except BaseException:
             self.stop_regulations()
             raise
@@ -125,9 +126,9 @@ class AdapterModules:
             if self.regulation_changes is None:
                 module = self.host.adapter_code.game_adapters.regulations.regulation_change
                 self.regulation_changes = module.RegulationChangeAdapter(
-                    self.enqueue_log_record, self.host.manager.completed)
+                    self.submit_log, self.host.manager.completed)
         except Exception as error:
-            self.enqueue_log_record(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED regulation changes: "
+            self.submit_log(build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED regulation changes: "
                 + str(error) + "; load/save integration skipped; continuing native game", error=error, component="regulations"))
         return True  # Finish the one-shot native import observation, including failure.
 
@@ -141,7 +142,9 @@ class AdapterModules:
         if self.state != "loaded":
             raise HookError(self.error or "Adapter modules are not loaded")
         reader = self.host.adapter_code.game_adapters.regulations.regulation_native_defaults
-        categories = reader.read_regulation_defaults(pack["root"])
+        events = getattr(self.host, "events", None)
+        categories = reader.read_regulation_defaults(pack["root"],
+            wait_for_imports=events.watch_control_imports if events is not None else None)
         return {"pack": pack["root"], "categories": categories} if categories is not None else None
 
     def _career_left(self):
@@ -337,7 +340,7 @@ class AdapterModules:
         self.channel = channel
         try:
             approach = adapters.regulation_approach.RegulationApproachAdapter.prepare(
-                state, channel, select, self.enqueue_log_record)
+                state, channel, select, self.submit_log)
             personnel = []
             # Unsubscribed packs do not trigger personnel inspection or hooks.
             if channel.bindings("personnel.contract"):
@@ -345,9 +348,9 @@ class AdapterModules:
                     # Constructors only prepare support. A late academy failure
                     # must not leave earlier driver/staff/staffing wrappers behind.
                     personnel.append(adapters.regulation_personnel.RegulationPersonnelAdapter(
-                        state, channel, select, submit_log=self.enqueue_log_record))
+                        state, channel, select, submit_log=self.submit_log))
                     personnel.append(adapters.regulation_academy.RegulationAcademyAdapter(
-                        state, channel, select, submit_log=self.enqueue_log_record))
+                        state, channel, select, submit_log=self.submit_log))
                 except Exception as error:
                     for hook in reversed(personnel):
                         hook.stop()
@@ -376,7 +379,7 @@ class AdapterModules:
                 self.regulations.append(project)
             self.coverage["development_projects"] = project is not None
             self._check_voting_preload(state, channel)
-            voting = adapters.regulation_voting.RegulationVotingAdapter.create(state, channel, self.enqueue_log_record)
+            voting = adapters.regulation_voting.RegulationVotingAdapter.create(state, channel, self.submit_log)
             if voting is not None:
                 self.regulations.append(voting)
                 self.coverage["regulation_voting"] = True
@@ -411,6 +414,22 @@ class AdapterModules:
                 raise HookError("Voting needs this pack's native loading protection")
             self.regulation_changes.check()
 
+    def _lock_idle(self, hook, locks):
+        """Reserve an idle registry or subscribe to its actual completion."""
+        lock = getattr(hook, "_lock", None)
+        if lock is None:
+            return True
+        events = getattr(self.host, "events", None)
+        if not lock.acquire(blocking=False):
+            if events is not None:
+                events.watch_control_lock(lock)
+            return False
+        locks.callback(lock.release)
+        # Counter checks and subscriptions share the registry lock. If its
+        # final owner is still releasing it, the lock observer above wakes us.
+        hook._control_waiter = events.control_id if hook._active and events is not None else None
+        return not hook._active
+
     def stop_regulations(self, *, retain=False):
         """Restore owned hooks only when no admitted operation still needs them.
 
@@ -435,13 +454,8 @@ class AdapterModules:
             for hook in [*hooks, *([self.categories] if retain and self.categories is not None
                                    and self.categories.automatic is not None else []),
                          *([self.regulation_changes] if self.regulation_changes is not None else [])]:
-                lock = getattr(hook, "_lock", None)
-                if lock is not None:
-                    if not lock.acquire(blocking=False):
-                        return False
-                    locks.callback(lock.release)
-                    if hook._active:
-                        return False
+                if not self._lock_idle(hook, locks):
+                    return False
             for hook in reversed(hooks):
                 hook.stop()
             if not retain:
@@ -538,10 +552,7 @@ class AdapterModules:
         self.host.manager._main()
         with ExitStack() as locks:
             if self.regulation_changes is not None:
-                if not self.regulation_changes._lock.acquire(blocking=False):
-                    return False
-                locks.callback(self.regulation_changes._lock.release)
-                if self.regulation_changes._active:
+                if not self._lock_idle(self.regulation_changes, locks):
                     return False
             if not self.stop_regulations():
                 return False

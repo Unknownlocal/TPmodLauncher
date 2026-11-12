@@ -1,22 +1,27 @@
 # SPDX-License-Identifier: MPL-2.0
 """Initialise the trusted manager only after Python's main thread is identifiable."""
 
+# Normal imports load the helper; the bridge supplies it in its private namespace.
+if globals().get("__package__"):
+    from .bootstrap_readiness import bootstrap_readiness
 
-def pulse(sources, digest, instance, game_root, request_json):
+
+def pulse(sources, digest, instance, game_root, request_json, journal_path=None, reporting_endpoint=None):
     # sources contains our trusted Python files; digest/instance identify their owner.
     # game_root is the installation folder; request_json contains data only.
     import sys
 
-    threads = sys.modules.get("threading")
-    if threads is None or getattr(
-        getattr(threads, "__spec__", None), "_initializing", False
-    ):
-        return "WAIT: threading is not ready"
-    if threads.current_thread() is not threads.main_thread():
-        return "WAIT: other thread"
+    # Recheck at entry: a worker can start an import after the small gate passed.
+    readiness = bootstrap_readiness()
+    if readiness != "READY":
+        return readiness
     import json
+    import time
     from types import ModuleType
 
+    # Error metadata must never read readiness from an unverified foreign owner.
+    module, activity_provider = None, None
+    startup, phase = [], "manager ownership verification"
     try:
         if (
             sys.version_info[:2] != (3, 13)
@@ -33,148 +38,192 @@ def pulse(sources, digest, instance, game_root, request_json):
                 )
             if module.instance != instance and not module.manager.closed:
                 raise RuntimeError("Another bridge owns the active manager")
+            if module.instance == instance:
+                activity_provider = module.activity_provider
         if module is None or module.instance != instance:
+            bootstrap_started = time.perf_counter()
             module = ModuleType(name)
             for filename, source in sources.items():
+                phase = "trusted source " + filename
+                started = time.perf_counter()
                 exec(compile(source, filename, "exec"), module.__dict__)
+                startup.append({"phase": phase, "seconds": round(time.perf_counter() - started, 6)})
+            phase, started = "observer and reporting setup", time.perf_counter()
             module.source_digest, module.instance = digest, instance
-            # Later pulses reuse this callable; do not resend/compile the full
-            # infrastructure and adapter source literals for every status poll.
+            # Later controls reuse this callable without resending/compiling
+            # the full infrastructure and adapter source literals.
             module.pulse = pulse
             # One trusted adapter scope owns this game process's native changes.
             module.manager = module.Manager()
             module.readiness = module.NativeReadiness()
-            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES)
+            activity_provider = module.readiness.current_activity
+            module.activity_provider = activity_provider
+            module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
+            journal = module.ActivityJournal(journal_path) if journal_path is not None else None
+            module.reporting = module.NativeReporting(journal, reporting_endpoint)
+            module.activity = module.NativeActivity(module.readiness, module.reporting)
+            module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES,
+                lambda record: module.events.submit_log(record) if hasattr(module, "events")
+                else module.reporting.submit_log({**record, "event": "diagnostic"}))
+            activity_provider = module.activity.current_activity
+            module.activity_provider = activity_provider
             module.discovery = module.PackDiscovery(game_root)
             # Save metadata must survive even when no mod requests validation.
             module.manager.observe("managers.formula_regulation_governance",
                                    lambda imported: module.adapters.start_regulation_changes())
-            module.menu = module.MenuAdapter()
+            module.menu = module.MenuAdapter(observe_screen=module.readiness.observe_screen)
             module.themes = module.ThemeAdapter()
             module.settings = module.SettingsAdapter(module.themes)
             module.menu.set_loading(dict(state="loading", loaded=0, failed=0, total=0))
+            module.events = module.NativeEvents(module)
             module.manager.observe(
                 "ui.screens.hub_screen",
-                lambda imported: module.menu.poll(imported)["state"] != "pending",
+                module.events.ready_ui,
             )
             module.manager.observe(
                 "ui.screens.options_screen",
-                lambda imported: all(status["state"] != "pending" for status in (
-                    module.themes.poll(imported), module.settings.poll(imported),
-                )),
+                module.events.ready_ui,
             )
             for target in ("ui.color_packs", "ui.theme"):
-                module.manager.observe(target, lambda imported: module.themes.poll(imported)["state"] != "pending")
+                module.manager.observe(target, module.events.ready_ui)
+            module.manager.observe("ui.screen_manager", module.events.ready_ui)
             sys.modules[name] = module
+            module.events.start()
+            startup.append({"phase": phase, "seconds": round(time.perf_counter() - started, 6)})
+            startup.append({"phase": "native bootstrap total", "seconds": round(time.perf_counter() - bootstrap_started, 6)})
         request = json.loads(request_json)
-        if type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
-            field = {"menu": "buttons", "loading": "loading", "settings": "settings", "themes": "themes"}[request["operation"]]
-            if set(request) != {"operation", field}:
-                raise ValueError("Invalid native UI request fields")
-            if field == "buttons":
-                module.menu.update(request[field])
-            elif field == "loading":
-                module.menu.set_loading(request[field])
-            elif field == "themes":
-                module.themes.update(request[field])
-                module.settings.refresh()
-            else:
-                settings = request[field]
-                if type(settings) is not dict or set(settings) != {"records", "result"}:
-                    raise ValueError("Invalid settings request fields")
-                module.settings.update(settings["records"], settings["result"])
-            response = module.manager.request({"operation": "status"})
-        elif type(request) is dict and request.get("operation") == "prerequisites":
-            if set(request) != {"operation", "prerequisites"}:
-                raise ValueError("Invalid prerequisite request fields")
-            module.readiness.configure(request["prerequisites"])
-            response = module.manager.request({"operation": "status"})
-        elif request == {"operation": "adapters"}:
-            module.adapters.load()
-            response = module.manager.request({"operation": "status"})
-        elif request == {"operation": "regulation-defaults"}:
-            notices = []
-            defaults = None
-            try:
-                defaults = module.adapters.regulation_defaults()
-                if defaults is None:
-                    # Keep this same bounded request pending while native imports
-                    # continue. No callback or worker is added to the game.
-                    return "WAIT: native regulation definitions are loading"
-            except Exception as error:
-                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED defaults: "
-                               + str(error) + "; default integration skipped", error=error, component="regulations"))
-            response = module.manager.request({"operation": "status"})
-            response["regulation_defaults"], response["regulation_notices"] = defaults, notices
-        elif type(request) is dict and request.get("operation") == "await-regulations":
-            notices = []
-            try:
-                if set(request) not in ({"operation"}, {"operation", "regulations"}):
-                    raise ValueError("Invalid regulation loading fields")
-                module.adapters.await_regulations(request.get("regulations"))
-            except Exception as error:
-                notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED career.preload: "
-                               + str(error)
-                               + "; preload integration skipped; continuing native game", error=error, component="regulations"))
-            response = module.manager.request({"operation": "status"})
-            response["regulation_notices"] = notices
-        elif type(request) is dict and request.get("operation") == "prepare-regulations":
-            if set(request) != {"operation", "regulations"}:
-                raise ValueError("Invalid regulation control fields")
-            notices = []
-            module.adapters.prepare_regulations(request["regulations"], submit_log=notices.append)
-            response = module.manager.request({"operation": "status"})
-            response["regulation_notices"] = notices
-        elif type(request) is dict and request.get("operation") in (
-                "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
-            notices = []
-            try:
+        module.events.control_id = request.pop("_control_id", None)
+        if request == {"operation": "status"}:
+            # Explicit inspection reads the cache; native events own collection.
+            response = module.manager.status()
+            response.update(module.events.status())
+            return json.dumps({"event": "manager", "status": response, "startup": startup}, allow_nan=False)
+        with module.events.batch():
+            if request == {"operation": "changes"}:
+                response = None  # The shared finalisation below services this request once.
+            elif type(request) is dict and request.get("operation") == "ui":
+                if set(request) != {"operation", "ui"}:
+                    raise ValueError("Invalid native UI request fields")
+                snapshot = module.validate_ui_snapshot(request["ui"])
+                response = {"ui_failures": {}}
+                # Theme providers settle before settings are refreshed. Each
+                # adapter keeps its own validation and failure generation.
+                for area in ("menu", "themes", "settings"):
+                    if area not in snapshot:
+                        continue
+                    try:
+                        if area == "menu":
+                            module.menu.update(snapshot[area])
+                        elif area == "themes":
+                            module.themes.update(snapshot[area])
+                            if "settings" not in snapshot:
+                                module.settings.refresh()
+                        else:
+                            settings = snapshot[area]
+                            module.settings.update(settings["records"], settings["result"])
+                    except Exception as error:
+                        response["ui_failures"][area] = module.build_log_record("ERROR", str(error), error=error)
+            elif type(request) is dict and request.get("operation") == "loading":
+                if set(request) != {"operation", "loading"}:
+                    raise ValueError("Invalid native loading request fields")
+                module.menu.set_loading(request["loading"])
+                response = {}
+            elif type(request) is dict and request.get("operation") == "prerequisites":
+                if set(request) != {"operation", "prerequisites"}:
+                    raise ValueError("Invalid prerequisite request fields")
+                module.readiness.configure(request["prerequisites"])
+                response = {}
+            elif request == {"operation": "adapters"}:
+                module.adapters.load()
+                response = {}
+            elif request == {"operation": "regulation-defaults"}:
+                notices = []
+                defaults = None
+                try:
+                    defaults = module.adapters.regulation_defaults()
+                    if defaults is None:
+                        return json.dumps({"event": "waiting", "dependency": "imports"})
+                except Exception as error:
+                    notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED defaults: "
+                                   + str(error) + "; default integration skipped", error=error, component="regulations"))
+                response = {}
+                response["regulation_defaults"], response["regulation_notices"] = defaults, notices
+            elif type(request) is dict and request.get("operation") == "await-regulations":
+                notices = []
+                try:
+                    if set(request) not in ({"operation"}, {"operation", "regulations"}):
+                        raise ValueError("Invalid regulation loading fields")
+                    module.adapters.await_regulations(request.get("regulations"))
+                except Exception as error:
+                    notices.append(module.build_log_record('WARNING', "REGULATIONS COMPATIBILITY FAILED career.preload: "
+                                   + str(error)
+                                   + "; preload integration skipped; continuing native game", error=error, component="regulations"))
+                response = {}
+                response["regulation_notices"] = notices
+            elif type(request) is dict and request.get("operation") == "prepare-regulations":
                 if set(request) != {"operation", "regulations"}:
                     raise ValueError("Invalid regulation control fields")
-                completed = module.adapters.control_regulations(request["operation"], request["regulations"],
-                                                               submit_log=notices.append)
-                if not completed:
-                    return "WAIT: native regulation operation is active"
-            except Exception as error:
-                completed = False
-                notices.append(module.build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED control: "
-                               + str(error) + "; regulation control skipped", error=error, component="regulations"))
-            response = module.manager.request({"operation": "status"})
-            response["regulation_control"] = completed
-            response["regulation_notices"] = notices
-        else:
-            if request == {"operation": "shutdown"}:
-                if not module.adapters.close():
-                    # Keep guard modules and their channel until every
-                    # admitted operation finishes; retry without blocking here.
-                    return "WAIT: native regulation operation is active"
-                module.menu.close()
-                module.themes.close()
-                module.settings.close()
-                module.readiness.stop()
-            response = module.manager.request(request)
+                notices = []
+                module.adapters.prepare_regulations(request["regulations"], submit_log=notices.append)
+                response = {}
+                response["regulation_notices"] = notices
+            elif type(request) is dict and request.get("operation") in (
+                    "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
+                notices = []
+                try:
+                    if set(request) != {"operation", "regulations"}:
+                        raise ValueError("Invalid regulation control fields")
+                    completed = module.adapters.control_regulations(request["operation"], request["regulations"],
+                                                                   submit_log=notices.append)
+                    if not completed:
+                        return json.dumps({"event": "waiting", "dependency": "operations"})
+                except Exception as error:
+                    completed = False
+                    notices.append(module.build_log_record('ERROR', "REGULATIONS COMPATIBILITY FAILED control: "
+                                   + str(error) + "; regulation control skipped", error=error, component="regulations"))
+                response = {}
+                response["regulation_control"] = completed
+                response["regulation_notices"] = notices
+            else:
+                if request == {"operation": "shutdown"}:
+                    if not module.adapters.close():
+                        # Completion wakes this request; no repeated GIL entries.
+                        return json.dumps({"event": "waiting", "dependency": "operations"})
+                    module.events.close()
+                    module.menu.close()
+                    module.themes.close()
+                    module.settings.close()
+                    module.activity.stop()
+                    # Python workers own their queues after Frida unload. The
+                    # launcher awaits final socket delivery outside the game GIL.
+                    module.readiness.stop()
+                response = module.manager.request(request)
+            if module.manager.closed:
+                module.discovery.stop()
+            if not module.manager.closed:
+                module.events.service()
+        if response is None:
+            response = {}
+        response.update(module.manager.status())
+        # Deliver each control notice through the same asynchronous path as late
+        # adapter errors. Keep it inline too: a failed caller can unwind before
+        # the launcher consumes the separately queued diagnostic.
+        for notice in response.get("regulation_notices", ()):
+            module.reporting.submit_log({**notice, "event": "diagnostic"})
+        response.update(module.events.status())
+        for area, failure in response.pop("ui_failures", {}).items():
+            response[area] = {**response[area], **failure, "state": "failed"}
         if module.manager.closed:
-            module.discovery.stop()
-        if module.adapters.preload is not None:
-            module.adapters.preload.poll()
-        response["adapters"] = module.adapters.status()
-        # UI imports and validation can fail between control requests. Drain
-        # pack-owned notices through the existing CLI/log transport once.
-        notices = response.setdefault("regulation_notices", [])
-        # Remove only notices included in this reply: a game worker can append
-        # between statements, so extending then clearing could lose a new error.
-        while module.adapters.regulation_notices:
-            notices.append(module.adapters.regulation_notices.popleft())
-        response["pack"] = module.discovery.poll()
-        response["menu"] = module.menu.poll()
-        loading = response["menu"].get("loading", {})
-        if (loading.get("state") in ("complete", "error") or loading.get("timed_out")
-                or response["pack"].get("state") == "unavailable"):
-            if module.themes.finish_loading():
-                module.settings.refresh()
-        response["themes"] = module.themes.poll()
-        response["settings"] = module.settings.poll()
-        response["readiness"] = module.readiness.snapshot()
+            response["adapters"] = module.adapters.status(poll=False)
+            response.update(pack=module.discovery.poll(), menu=module.menu.status(), themes=module.themes.status(),
+                            settings=module.settings.status(), readiness=module.readiness.snapshot())
         return json.dumps({"event": "manager", "status": response}, allow_nan=False)
     except Exception as error:
-        return json.dumps({"event": "error", "detail": str(error)[:4096]})
+        # Bootstrap may fail before the shared diagnostics source has loaded.
+        import traceback
+
+        return json.dumps({"event": "error", "detail": str(error),
+                           "startup": startup + [{"phase": phase, "state": "failed"}],
+                           "activity": getattr(error, "launcher_activity", None) or (activity_provider() if activity_provider is not None else None),
+                           "traceback": "".join(traceback.TracebackException.from_exception(
+                               error, max_group_width=float("inf"), max_group_depth=float("inf")).format())})

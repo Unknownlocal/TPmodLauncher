@@ -1,0 +1,246 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Observe complete native week/save calls without changing their execution."""
+
+from functools import update_wrapper
+from itertools import count
+import threading
+import weakref
+import sys
+
+if __package__:
+    from .callables import CallableTarget
+    from .diagnostics import build_log_record
+    from .manager import Manager
+
+
+class NativeActivity(Manager):
+    """Keep nested operations and worker failures separate from cached navigation.
+
+    The game still owns week/save execution and exceptions. Its callbacks enqueue
+    memory snapshots; a diagnostics worker handles formatting and storage without
+    a game-thread wait. No guest calls or game persistence changes are involved.
+    """
+
+    TARGETS = (
+        ("week", "game_state", "GameState", "advance_week", "(self, off_week=False, *, persist=True)"),
+        ("rollover", "game_state", "GameState", "finalize_and_rollover_season", "(self)"),
+        ("save", "game_state", "GameState", "save_season", "(self, *, manual=False)"),
+        ("start", "ui.week_advance_transition", "WeekAdvanceTransitionMixin", "_start_background_week_advance", "(self)"),
+        ("finish", "ui.week_advance_transition", "WeekAdvanceTransitionMixin", "_finish_background_week_advance", "(self, *, show_review=True)"),
+    )
+
+    error_component = 'activity'
+
+    def __init__(self, readiness, reporting):
+        super().__init__(lambda record: None, submit_log=self.submit_log)
+        self.readiness = readiness
+        self.reporting = reporting
+        self._ids, self._sequences = count(1), count(1)
+        self._lock, self._operations = threading.RLock(), {}
+        self._status, self._key = None, None
+        notifications = reporting.writer.notifications
+        # Only our owned frozen Windows process delegates terminal presentation
+        # to the external launcher, including under Proton. Ordinary Python and
+        # native Linux interpreters keep their existing exception exit path.
+        self._fatal_owner = (object() if sys.platform == "win32" and getattr(sys, "frozen", False)
+                             and notifications is not None else None)
+        self._fatal_pending = False
+        self._exception_hook = sys.excepthook
+        def unhandled(kind, error, traceback):
+            handoff = False
+            try:
+                if not isinstance(error, (SystemExit, KeyboardInterrupt)):
+                    self.store_exception(error, fatal=True)
+                    drained = self.reporting.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
+                    handoff = (self._fatal_owner is not None
+                               and getattr(error, "_launcher_fatal_owner", None) is self._fatal_owner
+                               and drained and not self.reporting.writer.failed and notifications.error is None)
+            except Exception:
+                pass  # Diagnostic formatting must not replace the native exception hook.
+            finally:
+                self._exception_hook(kind, error, traceback)
+            if handoff:
+                # Native main/finally and the original hook have finished. A
+                # returning hook lets PyInstaller open its own error dialog;
+                # SystemExit uses CPython's normal nonzero finalisation instead.
+                raise SystemExit(1)
+        self._unhandled = unhandled
+        sys.excepthook = unhandled
+        self._thread_hook = threading.excepthook
+        def worker_unhandled(args):
+            try:
+                self.store_exception(args.exc_value)
+            except Exception:
+                pass
+            finally:
+                self._thread_hook(args)
+        self._worker_unhandled = worker_unhandled
+        threading.excepthook = worker_unhandled
+        for name, module, owner, method, signature in self.TARGETS:
+            target = CallableTarget("activity." + name, module, (owner,), method, signature)
+            self.approve(target)
+            try:
+                self.install(target.name, [{"target": target.name, "callback": "internal", "phase": "before"}])
+            except Exception:
+                pass  # Manager retains the compatibility failure; native calls stay intact.
+
+    def submit_log(self, record, *, error=None):
+        """Capture and enqueue without I/O; return acceptance, not delivery proof."""
+        with self._lock:
+            if self.closed:
+                return False
+            return self.reporting.submit_log(record, error=error)
+
+    def store_exception(self, error, *, fatal=False):
+        """Keep failures and context; accepted fatal capture also arms terminal ownership.
+
+        A worker failure alone is not fatal. No storage or delivery wait occurs here.
+        """
+        if error is None or isinstance(error, (SystemExit, KeyboardInterrupt)):
+            return
+        if fatal and getattr(error, "_launcher_fatal_logged", False):
+            return
+        if not hasattr(error, "launcher_activity"):
+            error.launcher_activity = self.current_activity()
+        record = build_log_record("CRITICAL" if fatal else "ERROR", str(error), component="activity")
+        record["activity"] = dict(error.launcher_activity)
+        if fatal:
+            record.update(reason=str(error), fatal=True)
+        with self._lock:
+            if self.submit_log(record, error=error) and fatal:
+                error._launcher_fatal_logged = True
+                if self._fatal_owner is not None:
+                    error._launcher_fatal_owner = self._fatal_owner
+                    self._fatal_pending = True
+
+    def group_intact(self, name):
+        """Accept later native decorators that still call our installed observer."""
+        group = self.groups.get(name)
+        if self.closed or group is None or group["state"] != "active":
+            return False
+        for owner, attribute, _, installed, _ in group["changes"]:
+            current, seen = vars(owner).get(attribute), set()
+            while current is not installed and current is not None and id(current) not in seen:
+                seen.add(id(current))
+                current = getattr(current, "__wrapped__", None)
+            if current is not installed:
+                return False
+        return True
+
+    def _context(self, row):
+        return {key: row[key] for key in ("kind", "operation", "parent", "thread", "generation", "sequence")}
+
+    def _visible(self, *, foreground):
+        base = self.readiness.current_activity()
+        thread = threading.get_ident()
+        for operation, row in tuple(self._operations.items()):
+            if row["persistent"] and row["screen"]() is None:
+                self._operations.pop(operation, None)
+        for row in reversed(tuple(self._operations.values())):
+            if ((foreground and row["generation"] == base["generation"])
+                    or not foreground and row["thread"] == thread
+                    and (not row["persistent"] or row["generation"] == base["generation"])):
+                return self._context(row)
+        return base
+
+    def current_activity(self):
+        """Read worker-local context; unrelated workers see cached navigation only."""
+        with self._lock:
+            return self._visible(foreground=False)
+
+    def snapshot(self, *, poll=True):
+        """Read foreground activity without re-polling during event collection."""
+        if poll and not self.closed:
+            self.poll()
+        with self._lock:
+            context = self._visible(foreground=True)
+            key = tuple(sorted(context.items()))
+            if key != self._key:
+                self._key = key
+                self._status = {**context, "sequence": next(self._sequences)}
+            return dict(self._status)
+
+    def _begin(self, kind, owner, *, persistent=False):
+        with self._lock:
+            state = owner.state if persistent else owner
+            parent = None if persistent else next((row for row in reversed(tuple(self._operations.values()))
+                           if row["owner"]() is state and (row["persistent"] or row["thread"] == threading.get_ident())), None)
+            base = self.readiness.current_activity()
+            row = dict(kind=kind, operation=next(self._ids), parent=parent["operation"] if parent else None,
+                       thread=threading.get_ident(), generation=parent["generation"] if parent else base["generation"],
+                       sequence=next(self._sequences), owner=weakref.ref(state), persistent=persistent,
+                       screen=weakref.ref(owner) if persistent else None)
+            self._operations[row["operation"]] = row
+            record = {"level": "INFO", "detail": "NATIVE ACTIVITY STARTED", "component": "activity",
+                      "transition": True, "activity": self._context(row)}
+        self._observe_safely(self.submit_log, record)
+        return row
+
+    def _end(self, row):
+        with self._lock:
+            self._operations.pop(row["operation"], None)
+            context = {**self._visible(foreground=True), "sequence": next(self._sequences)}
+            record = {"level": "INFO", "detail": "NATIVE ACTIVITY ENDED", "component": "activity",
+                      "transition": True, "operation": str(row["operation"]), "activity": context}
+        self.submit_log(record)
+
+    def _store_failure(self, error, row):
+        # Keep the same exception for the game's deferred worker re-raise. Nested
+        # saving must remain saving when it unwinds through week progression.
+        if not hasattr(error, "launcher_activity"):
+            error.launcher_activity = self._context(row)
+            record = build_log_record("ERROR", "NATIVE OPERATION FAILED: " + str(error), component="activity")
+            record["activity"] = dict(error.launcher_activity)
+            self.submit_log(record, error=error)
+
+    def _wrapper(self, name, binding, target, original, signature):
+        mode = target.name.removeprefix("activity.")
+        kind = "saving" if mode == "save" else "week_progression"
+        observer = self
+
+        def wrapped(owner, *args, **kwargs):
+            if not observer._observe_safely(observer.group_intact, name):
+                return original(owner, *args, **kwargs)
+            row = observer._observe_safely(observer._operation_row, mode, kind, owner)
+            keep = False
+            try:
+                result = original(owner, *args, **kwargs)
+                keep = mode == "start"
+                return result
+            except Exception as error:
+                if row is not None:
+                    observer._observe_safely(observer._store_failure, error, row)
+                else:
+                    observer._observe_safely(observer.store_exception, error)
+                raise
+            finally:
+                # The start call creates the game's own worker. Its span ends
+                # when the native finish method joins/re-raises, not at start().
+                if row is not None and not keep:
+                    observer._observe_safely(observer._end, row)
+
+        update_wrapper(wrapped, original)
+        # This is an observational decorator, not a callable-validation owner.
+        # Existing regulation callers can wrap it; cleanup removes them first.
+        wrapped._tpm_activity_group = name
+        return wrapped
+
+    def _operation_row(self, mode, kind, owner):
+        """Associate the existing worker span, or begin a new native operation."""
+        if mode == "finish":
+            with self._lock:
+                return next((row for row in self._operations.values()
+                             if row["persistent"] and row["screen"]() is owner), None)
+        return self._begin(kind, owner, persistent=mode == "start")
+
+    def stop(self):
+        """Restore live hooks; keep an armed fatal handoff through native unwind."""
+        super().stop()
+        with self._lock:
+            if sys.excepthook is self._unhandled and not self._fatal_pending:
+                sys.excepthook = self._exception_hook
+            if threading.excepthook is self._worker_unhandled:
+                threading.excepthook = self._thread_hook
+            self._operations.clear()
+            self.reporting.writer.close()
+        return self.reporting.writer.finished.is_set()
