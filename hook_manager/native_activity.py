@@ -11,9 +11,6 @@ if __package__:
     from .callables import CallableTarget
     from .diagnostics import build_log_record
     from .manager import Manager
-    from launcher.diagnostics.journal_writer import JournalWriter
-    from .exception_snapshot import ExceptionSnapshot
-    from launcher.diagnostics.reporting_sender import ReportingSender
 
 
 class NativeActivity(Manager):
@@ -34,22 +31,14 @@ class NativeActivity(Manager):
 
     error_component = 'activity'
 
-    def __init__(self, readiness, journal=None, reporting_endpoint=None, *, writer=None):
-        # Production uses the reporting connection; observation tests can supply
-        # the same background writer with their own output collector.
-        if writer is None and reporting_endpoint is None:
-            raise ValueError("Native activity needs a reporting endpoint or an explicit writer")
+    def __init__(self, readiness, reporting):
         super().__init__(lambda record: None, submit_log=self.submit_log)
         self.readiness = readiness
-        self.journal = journal
+        self.reporting = reporting
         self._ids, self._sequences = count(1), count(1)
         self._lock, self._operations = threading.RLock(), {}
         self._status, self._key = None, None
-        if writer is None:
-            notifications = ReportingSender(reporting_endpoint)
-            writer = JournalWriter(notifications.enqueue_log_record, notifications)
-        self.writer = writer
-        notifications = writer.notifications
+        notifications = reporting.writer.notifications
         # Only our owned frozen Windows process delegates terminal presentation
         # to the external launcher, including under Proton. Ordinary Python and
         # native Linux interpreters keep their existing exception exit path.
@@ -62,10 +51,10 @@ class NativeActivity(Manager):
             try:
                 if not isinstance(error, (SystemExit, KeyboardInterrupt)):
                     self.store_exception(error, fatal=True)
-                    drained = self.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
+                    drained = self.reporting.writer.finish_on_exit()  # Gameplay has failed; termination is bounded.
                     handoff = (self._fatal_owner is not None
                                and getattr(error, "_launcher_fatal_owner", None) is self._fatal_owner
-                               and drained and not self.writer.failed and notifications.error is None)
+                               and drained and not self.reporting.writer.failed and notifications.error is None)
             except Exception:
                 pass  # Diagnostic formatting must not replace the native exception hook.
             finally:
@@ -97,12 +86,10 @@ class NativeActivity(Manager):
 
     def submit_log(self, record, *, error=None):
         """Capture and enqueue without I/O; return acceptance, not delivery proof."""
-        if error is not None and "exception_snapshot" not in record:
-            record = {**record, "exception_snapshot": ExceptionSnapshot(error).to_data()}
         with self._lock:
             if self.closed:
                 return False
-            return self.writer.enqueue_log_record(record, self.journal)
+            return self.reporting.submit_log(record, error=error)
 
     def store_exception(self, error, *, fatal=False):
         """Keep failures and context; accepted fatal capture also arms terminal ownership.
@@ -255,5 +242,5 @@ class NativeActivity(Manager):
             if threading.excepthook is self._worker_unhandled:
                 threading.excepthook = self._thread_hook
             self._operations.clear()
-            self.writer.close()
-        return self.writer.finished.is_set()
+            self.reporting.writer.close()
+        return self.reporting.writer.finished.is_set()

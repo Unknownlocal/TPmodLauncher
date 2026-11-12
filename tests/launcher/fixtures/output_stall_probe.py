@@ -21,8 +21,8 @@ if blocked == "file":
 
 path, lock = directory / "launcher.log", directory / "controller.lock"
 outcome = {}
-with core.log_ownership(lock):
-    with core.reporter(path, outcome=outcome) as logger:
+with core.log_ownership(lock) as ownership:
+    with core.reporter(path, outcome=outcome, ownership=ownership) as logger:
         # More than a pipe's capacity: the parent deliberately never reads stderr.
         logger.error("Owned complete record " + "x" * (256 * 1024) + " END")
         if blocked == "file":

@@ -65,11 +65,15 @@ def window(output, ignore_close=False):
     while user.GetMessageW(c.byref(message), None, 0, 0) > 0:
         user.TranslateMessage(c.byref(message))
         user.DispatchMessageW(c.byref(message))
-    output.with_suffix(".exited").write_text("clean Python exit", encoding="utf-8")
+    output.with_suffix(".exited").write_text("window loop complete", encoding="utf-8")
 
 
 if sys.argv[1] == "window":
     window(Path(sys.argv[2]), len(sys.argv) > 3)
+    # This inert GUI owns no further cleanup. End the process when its window
+    # work is done, without measuring Frida/Python finalisation against the
+    # controller's normal-close allowance.
+    os._exit(0)
 else:
     root = Path(__file__).resolve().parent.parent
 

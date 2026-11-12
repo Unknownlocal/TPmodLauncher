@@ -111,7 +111,9 @@ class ReportingReceiver:
                                 if self.control_ready is not None:
                                     self.control_ready(message["request"], message["dependency"])
                                 continue
-                            if kind == "fallback" and set(message) == {"kind", "record"} and type(message["record"]) is dict:
+                            if kind == "service-ready" and set(message) == {"kind"}:
+                                self.records.put({"event": "native-service"}, key="native-service")
+                            elif kind == "fallback" and set(message) == {"kind", "record"} and type(message["record"]) is dict:
                                 key, ordinary = log_delivery(message["record"])
                                 self.records.put(message["record"], key=key, ordinary=ordinary)
                             elif kind != "journal-ready" or set(message) != {"kind"}:

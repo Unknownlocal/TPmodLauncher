@@ -64,11 +64,12 @@ from typing import Optional
 sys.path.insert(0, sys.argv[1])
 from hook_manager.native_readiness import NativeReadiness
 from hook_manager.native_activity import NativeActivity
+from hook_manager.native_reporting import NativeReporting
 from hook_manager.native_restart import NativeRestart
 from hook_manager.native_events import NativeEvents
 from launcher.diagnostics.activity_journal import ActivityJournal
 journal=ActivityJournal(sys.argv[2])
-activity=NativeActivity(NativeReadiness(),journal,json.loads(sys.stdin.readline()))
+activity=NativeActivity(NativeReadiness(),NativeReporting(journal,json.loads(sys.stdin.readline())))
 def relaunch_application(*, series_mode: Optional[str] = None) -> None:
  if sys.argv[3] == 'abrupt': os._exit(0)
  raise SystemExit
@@ -78,10 +79,11 @@ for name in ('ui.screens.options_screen','ui.screens.season_pack_screen'):
  sys.modules[name]=module
 events=NativeEvents.__new__(NativeEvents)
 events.host=SimpleNamespace(activity=activity)
+events.reporting=activity.reporting
 events.active,events.closed,events.cache,events._sequence=True,False,{},count(1)
 restart=NativeRestart(events)
 events.publish('restart-observation',restart.status())
-assert activity.writer.wait_idle(2)
+assert activity.reporting.writer.wait_idle(2)
 assert sys.stdin.readline().strip() == 'go'
 if sys.argv[3] == 'abrupt':
  entered=threading.Event()
@@ -153,6 +155,7 @@ from types import ModuleType
 sys.path.insert(0, sys.argv[1])
 from hook_manager.native_readiness import NativeReadiness
 from hook_manager.native_activity import NativeActivity
+from hook_manager.native_reporting import NativeReporting
 from launcher.diagnostics.activity_journal import ActivityJournal
 class State:
  def save_season(self, *, manual=False):
@@ -164,7 +167,7 @@ module.GameState=State
 sys.modules[module.__name__]=module
 readiness=NativeReadiness()
 readiness._activity_status={'kind':'in_save','sequence':1,'generation':1}
-activity=NativeActivity(readiness,ActivityJournal(sys.argv[2]),json.loads(sys.stdin.readline()))
+activity=NativeActivity(readiness,NativeReporting(ActivityJournal(sys.argv[2]),json.loads(sys.stdin.readline())))
 State().save_season(manual=True)
 ''', encoding="utf-8")
     notices = []

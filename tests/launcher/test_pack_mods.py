@@ -12,6 +12,7 @@ import pytest
 from launcher.pack_mods import PackMods
 from launcher.diagnostics import reporter, handle_error
 from launcher.mod_contract import Mod
+from tests.ui_support import ui_sink
 
 
 @pytest.fixture
@@ -118,6 +119,37 @@ def test_only_direct_declared_mods_load_once_in_id_order(pack, code_mod):
     scope.close()
     scope.load(record)
     assert not scope.mods and messages == before
+
+
+def test_independent_activation_cannot_inherit_another_areas_ui_failure(pack, code_mod, monkeypatch):
+    game, folder, record = pack
+    for owner, capability in (("owned.a", "ui-settings"), ("owned.b", "main-menu")):
+        root = code_mod(folder, owner)
+        manifest = root / "mod.toml"
+        text = manifest.read_text().replace('api = "0.1.0"', 'api = "0.3.0"')
+        text = text.replace('["diagnostics"]', '["diagnostics", "' + capability + '"]')
+        if owner == "owned.a":
+            text += '\n[prerequisites]\nsettings = ["mod:owned.b"]\n'
+        manifest.write_text(text)
+    activate = Mod.activate
+    def register(mod):
+        activate(mod)  # Real small Wasm components avoid an author-Python build.
+        if mod.manifest.id == "owned.a":
+            scope.settings.call("owned.a", "register-settings", json.dumps({"schema": 1, "label": "Owned settings",
+                "fields": [{"id": "accent", "label": "Accent", "color": "#112233"}]}))
+        else:
+            scope.menu.add("owned.b", "open", "Owned menu", "Owned message")
+    monkeypatch.setattr(Mod, "activate", register)
+    menus, settings = [], []
+    def publish(rows, result=None):
+        settings.append(rows)
+        return {"settings": {"generation": len(settings), "state": "failed" if rows else "idle",
+                             "detail": "Owned unavailable settings integration"}}
+    with closing(PackMods(game, lambda _: None, set_ui=ui_sink(menu=menus.append, settings=publish))) as scope:
+        scope.load(record)
+        assert list(scope.mods) == ["owned.b"] and scope.failed == 1
+        assert menus[-1][0]["owner"] == "owned.b" and settings[-1] == []
+        assert scope.mods["owned.b"].event("echo", None) == {}
 
 
 def test_background_components_resume_on_read_and_compile_completion(pack, code_mod):

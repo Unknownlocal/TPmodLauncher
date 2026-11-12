@@ -2,6 +2,8 @@
 """Capture failures from memory without traceback's implicit source-file checks."""
 
 from itertools import islice
+from copy import deepcopy
+import json
 import linecache
 import traceback
 
@@ -37,6 +39,8 @@ class ExceptionSnapshot:
                                    context=id(context) if context is not None else None,
                                    suppress=value.__suppress_context__,
                                    children=[id(child) for child in children] if children is not None else None)
+            if records := getattr(value, "launcher_records", None):
+                self.nodes[key]["records"] = deepcopy(records)
             pending.extend(item for item in (cause, context) if item is not None)
             pending.extend(children or ())
 
@@ -52,6 +56,17 @@ class ExceptionSnapshot:
         snapshot.nodes = {int(key): node for key, node in data["nodes"].items()}
         return snapshot
 
+    @classmethod
+    def format_record(cls, record, *, lookup_lines=True):
+        """Render an attached diagnostic, preserving its data if it is malformed."""
+        if "exception_snapshot" not in record:
+            return record.get("traceback") or record.get("detail", "")
+        try:
+            return "".join(cls.from_data(record["exception_snapshot"]).format(lookup_lines=lookup_lines))
+        except Exception as error:
+            return ("Deferred error formatting failed: " + str(error) + "\n"
+                    + json.dumps(record, ensure_ascii=True))
+
     def format(self, *, lookup_lines=True):
         """Render full chains, optionally keeping output failures free of source I/O."""
         rendered = {}
@@ -63,7 +78,10 @@ class ExceptionSnapshot:
             value = base(node["message"])
             for name, field in (node["syntax"] or {}).items():
                 setattr(value, name, field)
-            value.__notes__ = node["notes"]
+            notes = list(node["notes"])
+            for record in node.get("records", ()):
+                notes.append(self.format_record(record, lookup_lines=lookup_lines))
+            value.__notes__ = notes
             summary = traceback.TracebackException(kind, value, None, lookup_lines=False,
                                                    max_group_width=float("inf"), max_group_depth=float("inf"))
             summary.stack = traceback.StackSummary.from_list([

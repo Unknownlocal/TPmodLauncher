@@ -60,10 +60,11 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
             module.activity_provider = activity_provider
             module.readiness.watch_career()  # Diagnostic activity also covers packs with no code mods.
             journal = module.ActivityJournal(journal_path) if journal_path is not None else None
-            module.activity = module.NativeActivity(module.readiness, journal, reporting_endpoint)
+            module.reporting = module.NativeReporting(journal, reporting_endpoint)
+            module.activity = module.NativeActivity(module.readiness, module.reporting)
             module.adapters = module.AdapterModules(module, module.ADAPTER_SOURCES,
                 lambda record: module.events.submit_log(record) if hasattr(module, "events")
-                else module.activity.submit_log({**record, "event": "diagnostic"}))
+                else module.reporting.submit_log({**record, "event": "diagnostic"}))
             activity_provider = module.activity.current_activity
             module.activity_provider = activity_provider
             module.discovery = module.PackDiscovery(game_root)
@@ -100,22 +101,32 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         with module.events.batch():
             if request == {"operation": "changes"}:
                 response = None  # The shared finalisation below services this request once.
-            elif type(request) is dict and request.get("operation") in ("menu", "loading", "settings", "themes"):
-                field = {"menu": "buttons", "loading": "loading", "settings": "settings", "themes": "themes"}[request["operation"]]
-                if set(request) != {"operation", field}:
+            elif type(request) is dict and request.get("operation") == "ui":
+                if set(request) != {"operation", "ui"}:
                     raise ValueError("Invalid native UI request fields")
-                if field == "buttons":
-                    module.menu.update(request[field])
-                elif field == "loading":
-                    module.menu.set_loading(request[field])
-                elif field == "themes":
-                    module.themes.update(request[field])
-                    module.settings.refresh()
-                else:
-                    settings = request[field]
-                    if type(settings) is not dict or set(settings) != {"records", "result"}:
-                        raise ValueError("Invalid settings request fields")
-                    module.settings.update(settings["records"], settings["result"])
+                snapshot = module.validate_ui_snapshot(request["ui"])
+                response = {"ui_failures": {}}
+                # Theme providers settle before settings are refreshed. Each
+                # adapter keeps its own validation and failure generation.
+                for area in ("menu", "themes", "settings"):
+                    if area not in snapshot:
+                        continue
+                    try:
+                        if area == "menu":
+                            module.menu.update(snapshot[area])
+                        elif area == "themes":
+                            module.themes.update(snapshot[area])
+                            if "settings" not in snapshot:
+                                module.settings.refresh()
+                        else:
+                            settings = snapshot[area]
+                            module.settings.update(settings["records"], settings["result"])
+                    except Exception as error:
+                        response["ui_failures"][area] = module.build_log_record("ERROR", str(error), error=error)
+            elif type(request) is dict and request.get("operation") == "loading":
+                if set(request) != {"operation", "loading"}:
+                    raise ValueError("Invalid native loading request fields")
+                module.menu.set_loading(request["loading"])
                 response = {}
             elif type(request) is dict and request.get("operation") == "prerequisites":
                 if set(request) != {"operation", "prerequisites"}:
@@ -194,14 +205,14 @@ def pulse(sources, digest, instance, game_root, request_json, journal_path=None,
         if response is None:
             response = {}
         response.update(module.manager.status())
-        # UI imports and validation can fail between control requests. Drain
-        # pack-owned notices through the existing CLI/log transport once.
-        notices = response.setdefault("regulation_notices", [])
-        # Remove only notices included in this reply: a game worker can append
-        # between statements, so extending then clearing could lose a new error.
-        while module.adapters.regulation_notices:
-            notices.append(module.adapters.regulation_notices.popleft())
+        # Deliver each control notice through the same asynchronous path as late
+        # adapter errors. Keep it inline too: a failed caller can unwind before
+        # the launcher consumes the separately queued diagnostic.
+        for notice in response.get("regulation_notices", ()):
+            module.reporting.submit_log({**notice, "event": "diagnostic"})
         response.update(module.events.status())
+        for area, failure in response.pop("ui_failures", {}).items():
+            response[area] = {**response[area], **failure, "state": "failed"}
         if module.manager.closed:
             response["adapters"] = module.adapters.status(poll=False)
             response.update(pack=module.discovery.poll(), menu=module.menu.status(), themes=module.themes.status(),

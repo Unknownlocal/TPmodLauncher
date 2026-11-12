@@ -198,8 +198,8 @@ def main(argv=None, *, outcome=None, presentation=None, host_lifetime=None) -> i
         log_path = _dependencies.local_path(root, "logs/launcher.log")
         # Claim the log before verification can fail, and retain ownership until
         # all controller/game cleanup and final filesystem synchronisation finish.
-        with _diagnostics.log_ownership(lock_path):
-            with _diagnostics.reporter(log_path, outcome=outcome, log_level=arguments.log_level) as logger:
+        with _diagnostics.log_ownership(lock_path) as ownership:
+            with _diagnostics.reporter(log_path, outcome=outcome, log_level=arguments.log_level, ownership=ownership) as logger:
                 try:
                     if host_lifetime is None:
                         code = _run(root, arguments, command, logger, lock_path, log_path)
@@ -216,7 +216,7 @@ def main(argv=None, *, outcome=None, presentation=None, host_lifetime=None) -> i
             # All game resources and file handlers have finished. Retain just
             # log ownership so another launch cannot replace the displayed log.
             if presentation is not None and outcome["failure"] is not None and code != 130:
-                _show_failure(presentation, outcome, owned_log=True, wait=not arguments.check_only)
+                _show_failure(presentation, outcome, owned_log=True, wait=not arguments.check_only, ownership=ownership)
     except KeyboardInterrupt:
         return 130
     except Exception as error:
@@ -243,9 +243,9 @@ def _show_failure(presentation, outcome, **options):
             pass  # Console loss must not replace the completed log or failure code.
 
 
-def _present_failure(outcome, *, owned_log, wait):
+def _present_failure(outcome, *, owned_log, wait, ownership=None):
     module = _load_helper("diagnostics/failure_session")
-    module.FailureSession(outcome, owned_log=owned_log).run(wait=wait)
+    module.FailureSession(outcome, owned_log=owned_log, ownership=ownership).run(wait=wait)
 
 
 def run(argv=None):
@@ -311,9 +311,7 @@ def _run(root, arguments, command, logger, lock_path, log_path, *, host_lifetime
         mods_factory=lambda submit_log, bridge: PackMods(
             root.parent,
             submit_log,
-            set_menu=bridge.set_menu,
-            set_settings=bridge.set_settings,
-            set_themes=bridge.set_themes,
+            set_ui=bridge.set_ui,
             set_loading=bridge.set_loading,
             background=True,
             cache=cache,

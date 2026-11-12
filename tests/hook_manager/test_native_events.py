@@ -405,13 +405,13 @@ def test_generic_worker_error_stays_diagnostic_and_original_hook_runs(monkeypatc
         worker = threading.Thread(target=fail)
         worker.start()
         worker.join(2)
-        assert activity.writer.wait_idle(2)
+        assert activity.reporting.writer.wait_idle(2)
         result = list(activity.records)
         assert len(delegated) == 1 and not any(row.get("fatal") for row in result)
         assert any(row.get("activity", {}).get("kind") == "in_save" and "FULL END" in row.get("traceback", "") for row in result)
     finally:
         activity.stop()
-        assert activity.writer.finish(2)
+        assert activity.reporting.writer.finish(2)
 
 
 def test_native_crash_recorder_and_python_hook_keep_one_generic_fatal(native_events, monkeypatch):

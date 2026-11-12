@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
 """Dedicated real-Wasm handler dispatch and controller-owned transport lifetime."""
 
+from tests.ui_support import ui_sink
+
+from hook_manager.diagnostics import error_text
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing
 import json
@@ -37,7 +41,13 @@ def prepare_scope(tmp_path, mods, *, semantic_scope="personnel.contract", inputs
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [{"key": "native", "options": [{"key": "open"}]}],
         "mod_extensions": {owner: {"schema": 1, "validators": [dict(validator(), scope=semantic_scope,
                                **({"inputs": ["employer_payroll"]} if owner in inputs else {}))]} for owner in mods}}), encoding="utf-8")
-    scope = PackMods(tmp_path, lambda _: None, wake=wake.set, set_loading=progress.append, set_menu=menus.append)
+    scope = PackMods(
+        tmp_path,
+        lambda _: None,
+        wake=wake.set,
+        set_loading=progress.append,
+        set_ui=ui_sink(menu=menus.append),
+    )
     scope.mods, scope.finished, scope._pack_root, scope.total = dict(mods), True, tmp_path, len(mods)
     for owner, mod in mods.items():
         # Model pack adoption of these already-constructed fixture Stores,
@@ -129,7 +139,13 @@ def test_voting_only_pack_requires_complete_native_coverage_and_retires_careers(
     section["voting"] = [{"rule": category["key"], "handler": "rules.vote"}]
     (tmp_path / "regulations.json").write_text(json.dumps({"categories": [category], "mod_extensions": {"owned.rules": section}}), encoding="utf-8")
     reports, progress, menus, wake = [], [], [], threading.Event()
-    with closing(PackMods(tmp_path, reports.append, wake=wake.set, set_loading=progress.append, set_menu=menus.append)) as pack:
+    with closing(PackMods(
+        tmp_path,
+        reports.append,
+        wake=wake.set,
+        set_loading=progress.append,
+        set_ui=ui_sink(menu=menus.append),
+    )) as pack:
         pack.mods, pack.finished, pack._pack_root = {"owned.rules": mod}, True, tmp_path
         mod.sandbox._resources.callback(pack._remove_mod, "owned.rules")
         pack.menu.add("owned.rules", "button", "Button", "Message")
@@ -221,10 +237,19 @@ def test_normal_startup_opens_career_menu_then_activates_one_captured_attempt(
     with ExitStack() as resources:
         worker = resources.enter_context(ThreadPoolExecutor(max_workers=1))
         settings = resources.enter_context(closing(SettingsAdapter()))
-        scope = resources.enter_context(closing(PackMods(tmp_path, reports.append, bridge=client, runner_bundle=runner_bundle,
-            wake=wake.set, set_loading=progress.append, set_menu=menus.append,
-            set_settings=lambda rows, result=None: {"settings": settings.update(rows, result)},
-            set_themes=palettes.append)))
+        scope = resources.enter_context(closing(PackMods(
+            tmp_path,
+            reports.append,
+            bridge=client,
+            runner_bundle=runner_bundle,
+            wake=wake.set,
+            set_loading=progress.append,
+            set_ui=ui_sink(
+                menu=menus.append,
+                settings=lambda rows, result=None: {"settings": settings.update(rows, result)},
+                themes=palettes.append,
+            ),
+        )))
         def post(record, timeout):
             operation = record["operation"]
             operations.append(operation)
@@ -437,8 +462,13 @@ def test_startup_needs_no_native_hooks_for_omitted_regulation_sections(make_mod,
     (tmp_path / "regulations.json").write_text('{}', encoding="utf-8")
     client = SimpleNamespace(request=lambda *args: pytest.fail("No rules need native protection"))
     progress, menus = [], []
-    with closing(PackMods(tmp_path, lambda _: None, bridge=client,
-                          set_loading=progress.append, set_menu=menus.append)) as scope:
+    with closing(PackMods(
+        tmp_path,
+        lambda _: None,
+        bridge=client,
+        set_loading=progress.append,
+        set_ui=ui_sink(menu=menus.append),
+    )) as scope:
         scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1
         scope._regulation_owners = {mod.manifest.id}
         scope.menu.add(mod.manifest.id, "owned", "Owned", "Message")
@@ -462,15 +492,20 @@ def test_startup_keeps_career_selection_blocked_without_confirmed_loading_protec
     client = SimpleNamespace(regulation_defaults=lambda pack: (),
         request=lambda *args: {"adapters": {"career_preload": {"state": "unavailable", "detail": "Preload unavailable"}},
                               "regulation_notices": [notice]})
-    with closing(PackMods(tmp_path, lambda _: None, bridge=client,
-                          set_loading=progress.append, set_menu=menus.append)) as scope:
+    with closing(PackMods(
+        tmp_path,
+        lambda _: None,
+        bridge=client,
+        set_loading=progress.append,
+        set_ui=ui_sink(menu=menus.append),
+    )) as scope:
         scope.mods, scope.finished, scope._pack_root, scope.total = {mod.manifest.id: mod}, True, tmp_path, 1
         scope._regulation_owners = {mod.manifest.id}
         scope.menu.add(mod.manifest.id, "owned", "Owned", "Message")
         scope._progress("complete")
         with pytest.raises(RuntimeError, match="loading protection was not confirmed") as rejected:
             scope.poll()
-        details = "\n".join(rejected.value.__notes__)
+        details = error_text(rejected.value)
         assert "Preload unavailable" in details and "Owner failure 17" in details
         assert "and 3 more exceptions" not in details and "max_group_depth" not in details
         assert not scope._regulation_armed and not menus and progress[-1]["state"] == "loading"
@@ -542,7 +577,7 @@ def test_native_preparation_defers_cleanup_ui_until_bridge_reply(make_mod, tmp_p
     scope._sources = {owner: SimpleNamespace(root=tmp_path)}
     scope._source_runner = mod.runner
     mod.sandbox._resources.callback(scope._remove_sources)
-    scope.applied_menu = [{"owner": owner}]
+    scope.ui.applied["menu"] = [{"owner": owner}]
     count, menu_count = len(progress), len(menus)
     def control(operation):
         assert runtime.busy
@@ -703,8 +738,14 @@ def test_shared_pack_regulations_bind_once_and_fence_whole_group(tmp_path, sourc
         messages.append(line)
         if "CODE MOD REPORT:" in line:
             threads.append(threading.get_ident())
-    with closing(PackMods(tmp_path, report, runner_bundle=runner_bundle, wake=wake.set,
-                          set_menu=publications.append, set_loading=progress.append)) as scope:
+    with closing(PackMods(
+        tmp_path,
+        report,
+        runner_bundle=runner_bundle,
+        wake=wake.set,
+        set_ui=ui_sink(menu=publications.append),
+        set_loading=progress.append,
+    )) as scope:
         scope.load(dict(state="ready", series="formula", id="owned", root=str(folder.resolve())))
         stop = time.monotonic() + 120
         while scope.loading is not None:
@@ -770,7 +811,12 @@ def test_preparation_and_transport_startup_failure_keep_error_and_ui_fences(make
         def unavailable(*args):
             raise OSError("owned listener failure")
         monkeypatch.setattr("launcher.regulations.runtime.RegulationServer", unavailable)
-    with closing(PackMods(tmp_path, lambda _: None, set_loading=progress.append, set_menu=menus.append)) as scope:
+    with closing(PackMods(
+        tmp_path,
+        lambda _: None,
+        set_loading=progress.append,
+        set_ui=ui_sink(menu=menus.append),
+    )) as scope:
         scope.mods = {"owned.rules": mod}
         mod.sandbox._resources.callback(scope._remove_mod, "owned.rules")
         scope.finished, scope._pack_root, scope._regulation_owners = True, tmp_path, {"owned.rules"}
@@ -838,12 +884,12 @@ def test_persistent_dispatch_fences_shared_peers_and_keeps_guests_on_the_control
             menus.append(records)
 
         monkeypatch.setattr(transport, "regulation_write", send_reply)
-        scope.set_menu = publish_after_reply
+        scope.ui.send = ui_sink(menu=publish_after_reply)
         future = worker.submit(channel, [context()], [selection()], {"a.rules": [[0, 0, 0]]}, time.monotonic() + .1)
         with pytest.raises(HookError, match="unavailable"):
             pump(scope, wake, future)
         assert not channel.closed and not runtime.ready and mods["a.rules"].sandbox.closed
-        assert menus[-1] == [] and scope.applied_menu == []
+        assert menus[-1] == [] and scope.ui.applied["menu"] == []
         assert scope.menu.buttons == [] and not scope.mods
         assert runtime.status["owners"] == dict.fromkeys(mods, "unavailable")
         future = worker.submit(channel, [context()], [selection()], {"b.rules": [[0, 0, 0]]}, time.monotonic() + .1)

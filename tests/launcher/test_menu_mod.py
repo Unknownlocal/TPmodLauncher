@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Run the sandboxed UI example beside a diagnostics mod through the real capability path."""
 
+from tests.ui_support import ui_sink
+
 from contextlib import closing
 from concurrent.futures import wait
 import faulthandler
@@ -49,7 +51,7 @@ def test_two_python_mods_coexist_and_ui_cleanup_restores_native_menu(
         PackMods(
             game,
             messages.append,
-            set_menu=lambda items: {"menu": adapter.update(items)},
+            set_ui=ui_sink(menu=lambda items: {"menu": adapter.update(items)}),
             set_loading=adapter.set_loading,
             background=True,
         )
@@ -106,7 +108,9 @@ def test_failed_deferred_menu_disables_only_ui_mods(
     adapter = MenuAdapter()
     with closing(
         PackMods(
-            game, lambda _: None, set_menu=lambda items: {"menu": adapter.update(items)}
+            game,
+            lambda _: None,
+            set_ui=ui_sink(menu=lambda items: {"menu": adapter.update(items)}),
         )
     ) as scope:
         scope.load(record)
@@ -126,7 +130,9 @@ def test_native_label_conflict_rejects_only_the_ui_mod(menu_pack, native_menu):
     adapter = MenuAdapter()
     with closing(
         PackMods(
-            game, lambda _: None, set_menu=lambda items: {"menu": adapter.update(items)}
+            game,
+            lambda _: None,
+            set_ui=ui_sink(menu=lambda items: {"menu": adapter.update(items)}),
         )
     ) as scope:
         scope.load(record)

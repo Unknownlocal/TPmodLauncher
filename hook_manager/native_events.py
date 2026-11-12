@@ -23,6 +23,7 @@ class NativeEvents:
 
     def __init__(self, host):
         self.host, self.cache = host, {}
+        self.reporting = host.reporting
         self.active = self.closed = self._refreshing = False
         self._batch_depth, self._refresh_pending = 0, False
         self._polled, self._preload_dirty = set(), False
@@ -61,9 +62,8 @@ class NativeEvents:
 
     def control_ready(self, request, dependency):
         """Notify only the matching control; no native callback address is retained."""
-        notifications = self.host.activity.writer.notifications
-        if request is not None and notifications is not None and not self.closed:
-            notifications.enqueue_control_ready(request, dependency)
+        if not self.closed:
+            self.reporting.control_ready(request, dependency)
 
     def watch_control_imports(self, names):
         """Observe the actual imports that can hold up native default definitions."""
@@ -79,7 +79,7 @@ class NativeEvents:
 
     def submit_log(self, record):
         """Route compatibility notices now, rather than waiting for a status reply."""
-        self.host.activity.submit_log({**record, "event": "diagnostic"})
+        self.reporting.submit_log({**record, "event": "diagnostic"})
         self.manager_changed(self.host.manager)
 
     def publish(self, topic, status):
@@ -89,7 +89,7 @@ class NativeEvents:
         self.cache[topic] = value
         if topic == "pack" and value.get("state") not in ("ready", "unavailable"):
             return
-        self.host.activity.submit_log({"event": topic, "event_sequence": next(self._sequence),
+        self.reporting.enqueue_event({"event": topic, "event_sequence": next(self._sequence),
                                        "pack" if topic == "pack" else "status": value})
 
     def imported(self, manager, name=None):
@@ -106,7 +106,7 @@ class NativeEvents:
         if self.control_imports is not None and name in self.control_imports.wanted:
             self.control_ready(self.control_id, "imports")
         if first and not self.closed:
-            self.host.activity.submit_log({"event": "native-service"})
+            self.reporting.service_ready()
 
     def manager_changed(self, manager):
         if threading.current_thread() is not threading.main_thread():
@@ -206,7 +206,7 @@ class NativeEvents:
             readiness, pack, menu = self._prepare_state()
             self._collect_and_publish(readiness, pack, menu)
         except Exception as error:
-            self.host.activity.submit_log({**build_log_record("WARNING", "Native event collection failed: " + str(error)),
+            self.reporting.submit_log({**build_log_record("WARNING", "Native event collection failed: " + str(error)),
                                            "event": "diagnostic"}, error=error)
         finally:
             self._refreshing = False

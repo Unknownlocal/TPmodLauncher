@@ -26,13 +26,8 @@ def error_text(error):
     filenames, line numbers and function names. Preserve line breaks for readable
     stacks, but remove terminal control characters from exception messages.
     """
-    import traceback
-
     if isinstance(error, BaseException):
-        # Python normally abbreviates wide/deep exception groups. Every member
-        # can explain a different failed mod, so retain them all here.
-        value = "".join(traceback.TracebackException.from_exception(
-            error, max_group_width=float("inf"), max_group_depth=float("inf")).format())
+        value = "".join(ExceptionSnapshot(error).format())
     else:
         value = str(error)
     return "".join(c if c.isprintable() or c in "\n\t" else " " for c in value)
@@ -65,13 +60,7 @@ def format_log_record(record, *, lookup_lines=True):
     """
     if "exception_snapshot" not in record:
         return record
-    import json
     value = dict(record)
-    data = value.pop("exception_snapshot")
-    try:
-        failure = ExceptionSnapshot.from_data(data)
-        value["traceback"] = error_text("".join(failure.format(lookup_lines=lookup_lines)))
-    except Exception as error:
-        value["traceback"] = ("Deferred error formatting failed: " + str(error) + "\n"
-                              + json.dumps(data, ensure_ascii=True))
+    value.pop("exception_snapshot")
+    value["traceback"] = error_text(ExceptionSnapshot.format_record(record, lookup_lines=lookup_lines))
     return value

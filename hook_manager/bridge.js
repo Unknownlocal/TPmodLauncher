@@ -44,9 +44,9 @@ function fail(error) {
     setImmediate(detachTransport);
 }
 
-function enqueue(operation, id, buttons, loading, settings, themes, regulations, prerequisites) {
+function enqueue(operation, id, ui, loading, regulations, prerequisites) {
     // The RPC thread only queues data; it must never call Python's API itself.
-    if (!['status', 'changes', 'shutdown', 'menu', 'loading', 'settings', 'themes', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
+    if (!['status', 'changes', 'shutdown', 'ui', 'loading', 'prerequisites', 'adapters', 'regulation-defaults', 'await-regulations', 'prepare-regulations', 'install-regulations', 'activate-regulations', 'stop-regulations', 'retire-regulations', 'restore-native-rules'].includes(operation)) throw new Error('Unknown bridge operation');
     if (failed) throw failed;
     if (stopped) throw new Error('Bridge is stopped');
     if (pending) throw new Error('A bridge request is already pending');
@@ -56,7 +56,7 @@ function enqueue(operation, id, buttons, loading, settings, themes, regulations,
         return { state: 'not-started' };
     }
     return new Promise((resolve, reject) => {
-        pending = { operation, id, buttons, loading, settings, themes, regulations, prerequisites,
+        pending = { operation, id, ui, loading, regulations, prerequisites,
                     resolve, reject, waiting: null, signals: new Set() };
         if (armEntry) armEntry();
     });
@@ -146,10 +146,8 @@ observer = Process.attachModuleObserver({
                             }
                             const record = { operation: request.operation };
                             if (request.id) record._control_id = request.id;
-                            if (request.operation === 'menu') record.buttons = request.buttons;
+                            if (request.operation === 'ui') record.ui = request.ui;
                             if (request.operation === 'loading') record.loading = request.loading;
-                            if (request.operation === 'settings') record.settings = request.settings;
-                            if (request.operation === 'themes') record.themes = request.themes;
                             if (request.operation === 'prerequisites') record.prerequisites = request.prerequisites;
                             if (request.regulations !== undefined) record.regulations = request.regulations;
                             const requestJson = JSON.stringify(JSON.stringify(record));
@@ -195,9 +193,6 @@ observer = Process.attachModuleObserver({
                                     + '; full bootstrap evaluations=' + bootstrapLoads);
                                 send(response);
                             }
-                            for (const notice of response.status.regulation_notices || []) {
-                                send({ ...notice, event: 'diagnostic' });
-                            }
                             if (request.operation === 'shutdown') {
                                 stopped = true;
                                 detachTransport();
@@ -239,7 +234,7 @@ function receiveRequests() {
     recv('manager-request', message => {
         // Replies are data records; the client owns the timeout and matches replies by request ID.
         try {
-            Promise.resolve(enqueue(message.operation, message.id, message.buttons, message.loading, message.settings, message.themes, message.regulations, message.prerequisites)).then(
+            Promise.resolve(enqueue(message.operation, message.id, message.ui, message.loading, message.regulations, message.prerequisites)).then(
                 status => send({ event: 'reply', id: message.id, status }),
                 error => send({ event: 'reply', id: message.id, error: String(error), traceback: error.traceback || error.stack })
             );

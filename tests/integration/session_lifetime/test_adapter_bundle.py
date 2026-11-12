@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise the generated private bridge expression without a native injector."""
 
+from hook_manager.diagnostics import error_text
+
 import builtins
 import json
 import os
@@ -104,6 +106,11 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         reply = pulse("loading", loading={"state": "complete", "loaded": 0, "failed": 0, "total": 0})
         assert reply["groups"][target.name] == "active" and observed.value(4) == 5
         host.manager.remove(target.name)
+        generations = {area: host.events.status()[area]["generation"] for area in ("settings", "themes")}
+        batch = pulse("ui", ui={"menu": [{"invalid": "owned native declaration"}],
+                                "settings": {"records": [], "result": None}, "themes": []})
+        assert batch["menu"]["state"] == "failed" and "exception_snapshot" in batch["menu"]
+        assert all(batch[area]["generation"] == generation + 1 for area, generation in generations.items())
         assert tuple(sys.meta_path) == finders and tuple(sys.path) == paths
         assert not {key for key in set(sys.modules) - before
                     if key == "game_state" or key.startswith(("managers.", "ui."))}
@@ -219,7 +226,7 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         monkeypatch.setitem(sys.modules, catalogue.__name__, catalogue)
         host.events.imported(host.manager, catalogue.__name__)
         late = pulse("changes")
-        assert host.activity.writer.wait_idle(2)
+        assert host.activity.reporting.writer.wait_idle(2)
         delivered = client.drain_activity()
         warnings = [record for record in delivered if "UI COMPATIBILITY FAILED" in record.get("detail", "")]
         assert len(warnings) == 1 and warnings[0]["level"] == "WARNING"
@@ -329,7 +336,9 @@ def test_generated_bridge_loads_private_adapters_once_and_cleans_up(monkeypatch,
         assert not any(key.startswith(prefix) for key in sys.modules)
     finally:
         if name in sys.modules:
+            reporting = sys.modules[name].reporting
             pulse("shutdown")
+            assert reporting.writer.finish(2)
             del sys.modules[name]
         # Shutdown signals the writer; its final delivery finishes independently.
         client.finish_reporting()
@@ -371,8 +380,8 @@ def test_adapter_control_operation_transfers_no_source_or_target_fields(monkeypa
             client.request("install-regulations", regulations=dict(control, native_rules=values))
     with pytest.raises(BridgeError, match="bounded regulation setup"):
         client.request("activate-regulations", regulations=dict(control, native_rules={}))
-    with pytest.raises(BridgeError, match="no menu declarations"):
-        client.request("adapters", buttons=[])
+    with pytest.raises(BridgeError, match="no UI declarations"):
+        client.request("adapters", ui={"menu": []})
 
 
 def test_preparation_wait_services_only_controller_transport_and_cancels_on_failure(monkeypatch, bridge):
@@ -407,7 +416,7 @@ def test_native_error_reply_received_before_cancellation_keeps_complete_details(
     monkeypatch.setattr(client, "_post", post)
     with pytest.raises(BridgeError, match="Owned complete control failure") as failure:
         client.request("status")
-    assert stack in "\n".join(failure.value.__notes__) and client.pending is None
+    assert stack in error_text(failure.value) and client.pending is None
 
 
 def test_bridge_services_regulations_only_when_woken(monkeypatch, bridge):

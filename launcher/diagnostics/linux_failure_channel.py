@@ -22,7 +22,7 @@ class LinuxFailureChannel:
         self.host_lifetime = host_lifetime
         self.session_factory = session_factory
 
-    def __call__(self, outcome, *, owned_log, wait):
+    def __call__(self, outcome, *, owned_log, wait, ownership=None):
         """Print the host path and wait for a key, window close or owner loss."""
         if self.host_lifetime is not None and self.host_lifetime.lost.is_set():
             return
@@ -37,6 +37,6 @@ class LinuxFailureChannel:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             factory = module.FailureSession
-        session = factory(value, owned_log=owned_log, host_platform="linux")
+        session = factory(value, owned_log=owned_log, ownership=ownership, host_platform="linux")
         with self.host_lifetime.watch(session.dismiss) if self.host_lifetime is not None else nullcontext():
             session.run(wait=wait)

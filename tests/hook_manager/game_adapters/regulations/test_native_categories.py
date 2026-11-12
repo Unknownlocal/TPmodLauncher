@@ -92,7 +92,7 @@ def test_pack_loader_survives_retirement_and_busy_loading_defers_cleanup(native)
     hook, manager, _ = native
     host = ModuleType("_owned_category_loader")
     host.manager = Manager()
-    modules = AdapterModules(host, {})
+    modules = AdapterModules(host, {}, submit_log=lambda record: None)
     modules.categories = hook
     entered, release = threading.Event(), threading.Event()
     def work():

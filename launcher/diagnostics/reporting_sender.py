@@ -29,6 +29,10 @@ class ReportingSender:
         self._queue.put({"kind": "control-ready", "request": request, "dependency": dependency},
                         key=("control-ready", request, dependency))
 
+    def enqueue_service_ready(self):
+        """Wake pending import work independently of journal progress."""
+        self._queue.put({"kind": "service-ready"}, key="service-ready")
+
     def enqueue_log_record(self, record):
         """Preserve a complete diagnostic when storage could not carry it."""
         key, ordinary = log_delivery(record)

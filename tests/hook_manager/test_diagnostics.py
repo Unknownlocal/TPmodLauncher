@@ -8,6 +8,7 @@ import threading
 from types import ModuleType
 
 from hook_manager.manager import Manager
+from hook_manager.diagnostics import error_text
 from launcher.diagnostics import exception_from_record, handle_error, reporter
 from launcher.diagnostics.activity_journal import ActivityJournal
 from launcher.diagnostics.journal_writer import JournalWriter
@@ -46,10 +47,16 @@ def test_failed_import_observer_retains_plain_error_while_source_lookup_waits_on
             manager.observe(module.__name__, failed_import)
             retained = json.dumps(manager.error_record, sort_keys=True)
             reply = json.loads(json.dumps({"status": {"failure": manager.error_record}}))
+            malformed = {"detail": "Owned malformed remote snapshot", "exception_snapshot": {}}
+            reply["status"]["formatting"] = malformed
             assert manager.status()["errors"]
             assert submitted == [{**manager.error_record, "event": "diagnostic"}]
             assert entered.wait(1)
             assert manager.status()["state"] == "ready"
+            # Wrapping a failed reply keeps its plain record even while source
+            # lookup on the writer is stalled. It must not format on this thread.
+            error = exception_from_record("Owned bridge refusal", reply)
+            assert error.launcher_records == [reply["status"]["failure"], malformed]
             release.set()
             assert writer.finish(2)
         record, = journal.read_available()
@@ -59,7 +66,7 @@ def test_failed_import_observer_retains_plain_error_while_source_lookup_waits_on
         assert "exception_snapshot" in manager.error_record and "traceback" not in manager.error_record
         assert json.dumps(manager.error_record, sort_keys=True) == retained
         # A reply can reach the launcher before the journal's rendered record.
-        error = exception_from_record("Owned bridge refusal", reply)
+        assert "Owned malformed remote snapshot" in error_text(error)
         path = tmp_path / "launcher.log"
         with reporter(path) as logger:
             handle_error(logger, error)

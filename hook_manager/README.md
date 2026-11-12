@@ -39,6 +39,8 @@ locations without keeping live frames or looking up source files. The journal
 worker renders snapshots for delivery; explicit status replies can carry the
 same plain data for the launcher to render. Rendering never changes the retained
 status record. Failed source lookup preserves all captured details instead.
+Launcher errors built from failed replies keep those plain records until logging
+renders them, alongside the launcher's own stack and cleanup details.
 Adapters pass records to `submit_log` for background delivery to the launcher's
 standard logger. `Manager.store_error()` retains recent summaries and the latest
 complete snapshot for status checks. Mod `report` messages continue through their
@@ -57,6 +59,16 @@ control changes share one final state collection, rather than publishing partial
 states along the way. Readiness, activity and adapter snapshots reuse that work
 without polling their managers again. If a validation operation is still active,
 its completion wakes deferred installation.
+
+`native_reporting.py` owns the background writer and sender. State changes and
+errors keep their journal order. Import work and control completions notify the
+launcher directly through the sender, without waiting for storage.
+
+One UI request applies changed buttons, settings tabs and palettes together.
+`ui_snapshot.py` bounds the request; each native adapter checks its own entries.
+An error in one area keeps the other areas' results in the reply. State collection
+runs once after the batch, including any compatibility failures.
+
 `import_handover.py` waits on existing import locks for modules already loading
 when an observer registers, then queues the same completion event. It does no
 periodic checking and never waits on a game caller.
@@ -126,6 +138,9 @@ bootstrap carries no second copy. It leaves the game's import path alone,
 removes its temporary importer after loading and removes owned definitions on
 shutdown. Failed imports roll back their definitions. Loading installs no game
 hooks and does not declare regulations ready.
+Late adapter errors use the reporting owner directly. Control notices use that
+same path and remain in replies so a failed request keeps its full details.
+JavaScript does not send a second copy of each reply notice.
 
 The private `prepare-regulations` request supplies a loading-attempt number and an
 authenticated local connection. It loads the fixed bundle and publishes a

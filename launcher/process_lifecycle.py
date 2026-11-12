@@ -3,7 +3,6 @@
 
 from contextlib import contextmanager, nullcontext
 import json
-from functools import partial
 import math
 import os
 from pathlib import Path
@@ -12,7 +11,8 @@ import threading
 import time
 
 from launcher.process_exit import ProcessExit
-from launcher.restart_evidence import valid_restart_evidence, replacement_decision
+from launcher.restart_evidence import replacement_decision
+from launcher.native_record import validate_native_record
 from launcher.tracked_process import TrackedProcess
 from launcher.process_ended import ProcessEnded
 
@@ -52,8 +52,8 @@ def validate_command(command, expected):
 @contextmanager
 def controller_lock(path):
     """Hold an OS file lock until this controller finishes, including error cleanup."""
-    with log_ownership(path, error_type=LaunchError):
-        yield
+    with log_ownership(path, error_type=LaunchError) as ownership:
+        yield ownership
 
 
 class Controller:
@@ -83,7 +83,7 @@ class Controller:
         self.command = list(command)
         self.game = canonical(command[0])
         self.submit_log = bind_reporter(submit_log, component="controller")
-        self.activity = getattr(submit_log, "launch_activity", None) or ActivityTracker()
+        self.activity = self.submit_log.owner.activity if self.submit_log.owner is not None else ActivityTracker()
         self.restart_grace = restart_grace
         self.clock = clock
         self.events = queue.Queue()
@@ -294,33 +294,15 @@ class Controller:
                     journal.retained = True
                 protocol_errors.append(LaunchError(detail + ": " + json.dumps(record, ensure_ascii=True)))
             for record in records:
-                if type(record) is not dict:
-                    invalid_record(record, "Expected a native journal record")
+                try:
+                    record = validate_native_record(record)
+                except ValueError as error:
+                    invalid_record(record, str(error))
                     continue
-                event = record.get("event", "native-activity")
-                if event not in ("native-activity", "diagnostic", "readiness", "pack", "menu", "settings", "themes", "career-preload", "native-service", "restart", "restart-observation"):
-                    invalid_record(record, "Unknown native journal event")
-                    continue
-                sequence = record.get("event_sequence")
-                if sequence is not None and (type(sequence) is not int or sequence <= 0):
-                    invalid_record(record, "Invalid native change sequence")
-                    continue
-                if event in ("restart", "restart-observation") and not valid_restart_evidence(event, record.get("status"), sequence):
-                    invalid_record(record, "Invalid native restart evidence")
-                    continue
-                if (event in ("readiness", "menu", "settings", "themes", "career-preload") and type(record.get("status")) is not dict
-                        or event == "pack" and type(record.get("pack")) is not dict):
-                    invalid_record(record, "Invalid native change data")
-                    continue
-                if event in ("native-activity", "diagnostic") and (
-                        type(record.get("detail")) is not str
-                        or "fatal" in record and type(record["fatal"]) is not bool
-                        or "reason" in record and type(record["reason"]) is not str):
-                    invalid_record(record, "Invalid native diagnostic data")
-                    continue
-                message = {"type": "send", "payload": {**record, "event": event}}
+                event = record["event"]
+                message = {"type": "send", "payload": record}
                 if event in ("native-activity", "diagnostic"):
-                    self._event("bridge", (owner, message))
+                    self._event("bridge", (owner, message), validated=True)
                 elif event in ("restart", "restart-observation"):
                     restart_evidence.append(message)
                 else:
@@ -336,12 +318,12 @@ class Controller:
                 raise protocol_errors[0]
             for message in restart_evidence:
                 # Unlike UI changes, final restart evidence is useful after exit.
-                self._event("bridge", (owner, message))
+                self._event("bridge", (owner, message), validated=True)
             # Preserve complete errors before a change triggers mod preparation
             # or a main-thread request, either of which may itself fail or wait.
             for message in changes:
                 if not session.is_detached and not getattr(bridge, "exited", False):
-                    self._event("bridge", (owner, message))
+                    self._event("bridge", (owner, message), validated=True)
             if journal_error is not None:
                 raise journal_error
 
@@ -435,20 +417,21 @@ class Controller:
             # Always release a gated child, including on verification/attach failure or shutdown.
             self._resume(child.pid)
 
-    def _event(self, kind, value):
+    def _event(self, kind, value, *, validated=False):
+        """Dispatch owned work; journal batches already passed shared shape checks."""
         if kind == "bridge-evidence":
             owner, message = value
             if not owner.cancellation.consume(message):
                 return  # Final retirement already consumed this exact delivery.
             kind = "bridge"
         try:
-            return self._owned_event(kind, value)
+            return self._owned_event(kind, value, validated=validated)
         except ProcessEnded:
             # Only our cancellation checks raise this control signal. Do not
             # turn an interrupted bridge/preparation wait into a fatal mod error.
             return
 
-    def _owned_event(self, kind, value):
+    def _owned_event(self, kind, value, *, validated=False):
         if kind in ("bridge", "detached", "exit", "mods-ready"):
             owner, detail = value
             if self.processes.get(owner.pid) is not owner:
@@ -456,6 +439,16 @@ class Controller:
             if kind == "bridge" and owner.cancellation.ended.is_set() and not is_terminal_message(detail):
                 return
             event = detail.get("payload", {}).get("event") if kind == "bridge" else None
+            if kind == "bridge":
+                payload = detail.get("payload", {})
+                if not validated and detail.get("type") == "send":
+                    try:
+                        validate_native_record(payload, strict=False)
+                    except ValueError as error:
+                        journal = getattr(owner.bridge, "journal", None)
+                        if journal is not None:
+                            journal.retained = True
+                        raise LaunchError(str(error) + ": " + json.dumps(payload, ensure_ascii=True)) from error
             with self.activity.focus(owner.pid, native=kind != "mods-ready" and event != "pack"):
                 return self._process_event(kind, value)
         return self._process_event(kind, value)
@@ -532,18 +525,7 @@ class Controller:
                     f"Hook bridge failed for pid={pid}: {message.get('description', 'script error')}",
                     {"traceback": message.get("stack")}, LaunchError)
             sequence = payload.get("event_sequence")
-            if event in ("restart", "restart-observation"):
-                if not valid_restart_evidence(event, payload.get("status"), sequence):
-                    journal = getattr(bridge, "journal", None)
-                    if journal is not None:
-                        journal.retained = True
-                    raise LaunchError("Invalid native restart evidence: " + json.dumps(payload, ensure_ascii=True))
             if sequence is not None:
-                if type(sequence) is not int or sequence <= 0:
-                    journal = getattr(bridge, "journal", None)
-                    if journal is not None:
-                        journal.retained = True
-                    raise LaunchError("Invalid native change sequence: " + json.dumps(payload, ensure_ascii=True))
                 previous = bridge.event_sequences.get(event, 0)
                 if sequence <= previous:
                     return
@@ -609,7 +591,7 @@ class Controller:
                 if self.mods_factory is not None:
                     if owner.mods is None:
                         owner.mods = self.mods_factory(
-                            partial(self.submit_log, pid=pid, component="mods"),
+                            self.submit_log.bind_log(pid=pid, component="mods"),
                             bridge,
                         )
                         scope = owner.mods
@@ -786,13 +768,13 @@ def run_launcher(
         # Entry already holds ownership while checking dependencies and supplies
         # its logger, so it must not acquire the lock or truncate the log again.
         outcome = {}
-        with controller_lock(lock_path), reporter(log_path, outcome=outcome) as logger:
+        with controller_lock(lock_path) as ownership, reporter(log_path, outcome=outcome, ownership=ownership) as logger:
             code = run_launcher(frida, command, lock_path, log_path, restart_grace=restart_grace,
                                 bridge_factory=bridge_factory, mods_factory=mods_factory, logger=logger,
                                 host_lifetime=host_lifetime)
         return 1 if outcome["log_error"] is not None else code
 
-    outcome = logger.launch_outcome
+    outcome = logger.outcome
     controller, shutdown, code, stage = None, None, 0, "controller_setup"
     try:
         with ConsoleShutdown(command[0], logger) as shutdown, \

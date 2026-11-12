@@ -48,10 +48,20 @@ def test_startup_phases_retain_elapsed_wait_and_original_failure(tmp_path, capsy
     assert "Ordinary startup summary" in console and console == path.read_text()
 
 
-def test_nested_logging_preserves_levels_context_and_full_remote_details(tmp_path, capsys):
+def test_nested_logging_preserves_levels_context_and_full_remote_details(tmp_path, capsys, monkeypatch):
     from launcher.diagnostics import core as diagnostics
 
     path = tmp_path / "launcher.log"
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    format_record = diagnostics.format_log_record
+    def format_slow(record):
+        if record["detail"] == "In-flight old launch":
+            entered.set()
+            assert release.wait(3)
+        return format_record(record)
+    monkeypatch.setattr(diagnostics, "format_log_record", format_slow)
     activity = {"kind": "saving", "description": "while saving"}
     with diagnostics.reporter(path, log_level="DEBUG") as logger:
         bound = diagnostics.bind_reporter(logger, component="controller", pid=41)
@@ -62,6 +72,9 @@ def test_nested_logging_preserves_levels_context_and_full_remote_details(tmp_pat
         defaults = diagnostics.bind_reporter(bound, level="WARNING", error=ValueError("Bound default cause"))
         diagnostics.write_log(defaults, "Inherited warning")
         diagnostics.write_log(defaults, "Explicit info", level="INFO", error=None)
+        worker = threading.Thread(target=lambda: bound("In-flight old launch"), daemon=True)
+        worker.start()
+        assert entered.wait(2)
     text = path.read_text()
     assert "DEBUG modLauncher.controller pid=41 scope=startup Owned debug detail" in text
     warning = next(line for line in text.splitlines() if "Owned warning" in line)
@@ -74,6 +87,21 @@ def test_nested_logging_preserves_levels_context_and_full_remote_details(tmp_pat
     assert text.count("Bound default cause") == 1
     console = capsys.readouterr().err
     assert console == text
+    # Finished callbacks may outlive cleanup, but must never enter a new launch.
+    next_path = tmp_path / "next-launch.log"
+    with diagnostics.reporter(next_path) as next_logger:
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+        bound("Stale callback")
+        logger.error("Stale standard logging call")
+        with diagnostics.activity_scope(bound, "saving"):
+            pass
+        next_logger.info("Next launch only")
+    assert "Next launch only" in next_path.read_text()
+    assert "Stale" not in next_path.read_text() and "ACTIVITY" not in next_path.read_text()
+    assert "In-flight old launch" not in next_path.read_text()
+    assert path.read_text() == text
 
 
 @pytest.mark.parametrize("level,visible", [
@@ -156,8 +184,8 @@ def test_log_close_failure_alone_keeps_its_activity(tmp_path, monkeypatch):
     monkeypatch.setattr(diagnostics.LogOutput.file_type, "close", failed_close)
     outcome = {}
     with diagnostics.reporter(tmp_path / "launcher.log", outcome=outcome) as logger:
-        logger.launch_activity.attach(41)
-        logger.launch_activity.observe(41, {"kind": "in_save", "sequence": 1, "generation": 1})
+        logger.activity.attach(41)
+        logger.activity.observe(41, {"kind": "in_save", "sequence": 1, "generation": 1})
     assert not outcome["log_written"] and "Log close failed" in outcome["log_error"]
     assert outcome["failure"]["stage"] == "logging"
     assert outcome["failure"]["activity"]["kind"] == "in_save"

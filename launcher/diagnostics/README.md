@@ -25,9 +25,12 @@ Startup waits therefore avoid repeatedly parsing all the adapter sources.
 The completion record counts readiness checks and full bootstrap evaluations
 separately. Bound controller logging keeps the original DEBUG level and process
 context, so the selected threshold works consistently in both destinations.
-`write_log()` also recognises bound logging callbacks before rendering text,
-so nested forwarding preserves record levels, context and full errors. Only
-plain text observers receive the final formatted text.
+`LaunchContext` carries one launch's outcome, activity, output and log lock.
+Components receive a `LogPort` that carries their process and component details.
+Public text callbacks are adapted once; forwarding keeps record levels, context
+and complete errors. Each launch has its own standard logger, so late messages
+cannot enter a later launch's log. Failure presentation receives the same lock
+explicitly, including the file writer's right to retain it while finishing.
 
 `core.py` claims log ownership, configures the logger and keeps the original fatal
 reason through cleanup. `log_output.py` sends each accepted record to separate

@@ -70,7 +70,7 @@ def observed(monkeypatch, tmp_path):
         yield State, Transition, activity, readiness
     finally:
         activity.stop()
-        assert activity.writer.finish(2)
+        assert activity.reporting.writer.finish(2)
     assert (State.advance_week, State.save_season, Transition._start_background_week_advance) == originals
 
 
@@ -84,7 +84,7 @@ def test_manual_save_and_nested_autosave_preserve_results_and_restore_week(obser
     assert state.advance_week() is True
     assert json.loads(state.saved.read_text()) == {"week": 1, "manual": False}
     nested = stages[-1]
-    assert activity.writer.wait_idle(2)
+    assert activity.reporting.writer.wait_idle(2)
     parent = next(record["activity"] for record in activity.records
                   if record["detail"] == "NATIVE ACTIVITY STARTED" and record["activity"]["operation"] == nested["parent"])
     assert parent["kind"] == "week_progression"
@@ -110,7 +110,7 @@ def test_observer_fault_cannot_change_native_return_or_exception(observed, monke
         assert raised.value is original
     else:
         assert state.advance_week(persist=False) is True and state.week == 1
-    assert activity.writer.wait_idle(2)
+    assert activity.reporting.writer.wait_idle(2)
     if fault == "submit_log":
         assert activity.errors and activity.current_activity()["kind"] == "in_save"
     else:
@@ -137,7 +137,7 @@ def test_rollover_observation_coexists_with_later_native_caller_decorators(obser
     try:
         assert state.finalize_and_rollover_season() == str(state.saved)
         assert stages == ["caller", "saving"]
-        assert activity.writer.wait_idle(2)
+        assert activity.reporting.writer.wait_idle(2)
         assert any(row["activity"]["kind"] == "week_progression" for row in activity.records)
     finally:
         State.finalize_and_rollover_season = installed
@@ -158,7 +158,7 @@ def test_worker_failure_keeps_original_scope_through_main_thread_reraise_and_log
     assert record["activity"]["kind"] == kind
     record = json.loads(json.dumps(record))  # A status reply carries plain data.
     assert "FULL END" in json.dumps(record["exception_snapshot"])
-    assert activity.writer.wait_idle(2)
+    assert activity.reporting.writer.wait_idle(2)
     failures = [row for row in activity.records if row["level"] == "ERROR"]
     assert len(failures) == 1 and failures[0]["activity"]["kind"] == kind
     path = tmp_path / "launcher.log"
@@ -223,9 +223,9 @@ def test_failed_save_crosses_socket_fallback_with_full_error_and_original_activi
 
     State, _, activity, _ = observed
     controller, bridge, receiver, path, _ = delivery
-    assert activity.writer.finish(2)
-    activity.writer = writer_for(receiver)
-    activity.journal = ActivityJournal(tmp_path / "unavailable.jsonl")
+    assert activity.reporting.writer.finish(2)
+    activity.reporting.writer = writer_for(receiver)
+    activity.reporting.journal = ActivityJournal(tmp_path / "unavailable.jsonl")
     reason = "Owned journal fallback failure " + "x" * 180_000 + " FULL SOCKET END"
     state, error = State(), OSError(reason)
     error.add_note("Original save diagnostic note")
@@ -233,15 +233,15 @@ def test_failed_save_crosses_socket_fallback_with_full_error_and_original_activi
     with pytest.raises(OSError) as raised:
         state.save_season()
     assert raised.value is error
-    assert activity.writer.wait_idle(2)
+    assert activity.reporting.writer.wait_idle(2)
     caught = threading.Event()
     receiver.control_ready = lambda request, dependency: caught.set()
     # This ordered marker acknowledges the preceding fallback records without
     # closing the connection needed by the later unhandled failure.
-    activity.writer.notifications.enqueue_control_ready("a" * 32, "operations")
+    activity.reporting.writer.notifications.enqueue_control_ready("a" * 32, "operations")
     assert caught.wait(2)
     controller.poll()
-    assert reason in read_log(path) and not controller.stopping
+    assert reason in read_log(path, controller.submit_log) and not controller.stopping
     assert bridge.journal.path.exists()
     activity._unhandled(type(error), error, error.__traceback__)
     assert reason in capsys.readouterr().err and receiver.finished.wait(2)
@@ -253,7 +253,7 @@ def test_failed_save_crosses_socket_fallback_with_full_error_and_original_activi
     # Secondary cleanup errors remain visible after the original save failed.
     controller.events.put(("bridge", (owner, {"type": "error", "description": "Late script unload"})))
     controller.close()
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert reason in text and "Original save diagnostic note" in text
     assert "Native activity journal failed" in text and "Late script unload" in text
     assert controller.cleanup_failed
@@ -265,7 +265,7 @@ def test_blocked_journal_does_not_delay_gameplay_status_or_stop(observed, tmp_pa
     State, _, activity, _ = observed
     journal = ActivityJournal(tmp_path / "shutdown.jsonl")
     journal.create()
-    activity.journal = journal
+    activity.reporting.journal = journal
     entered, release = threading.Event(), threading.Event()
     append = journal.append_records
     def delayed_error(records):
@@ -293,11 +293,11 @@ def test_blocked_journal_does_not_delay_gameplay_status_or_stop(observed, tmp_pa
         assert state.advance_week(persist=False) is True
         assert activity.snapshot()["kind"] == "in_save"
         assert activity.stop() is False
-        assert not activity.writer.finished.is_set()
+        assert not activity.reporting.writer.finished.is_set()
     finally:
         release.set()
         worker.join(2)
-    assert activity.writer.finish(2)
+    assert activity.reporting.writer.finish(2)
     assert activity.stop() is True
     records = journal.read_available()
     assert any(record["level"] == "ERROR" and "Owned save failure during stop" in record["traceback"] for record in records)
@@ -329,8 +329,8 @@ def test_slow_traceback_source_lookup_runs_on_writer_not_game_thread(observed, m
         assert activity.current_activity()["kind"] == "in_save"
     finally:
         release.set()
-    assert activity.writer.wait_idle(2)
-    assert readers and all(reader == activity.writer._thread.ident for reader in readers)
+    assert activity.reporting.writer.wait_idle(2)
+    assert readers and all(reader == activity.reporting.writer._thread.ident for reader in readers)
     failure = next(record for record in activity.records if record["level"] == "ERROR")
     assert "FULL END" in failure["traceback"] and "save_season" in failure["traceback"]
 
@@ -347,7 +347,7 @@ def test_deferred_error_format_keeps_causes_notes_group_members_and_syntax(obser
     state.fail_save = error
     with pytest.raises(ExceptionGroup) as raised:
         state.save_season()
-    assert raised.value is error and activity.writer.wait_idle(2)
+    assert raised.value is error and activity.reporting.writer.wait_idle(2)
     text = next(record["traceback"] for record in activity.records if record["level"] == "ERROR")
     assert "Owned original cause" in text and "direct cause" in text
     assert text.count("CHILD END") == 2 and "Owned child note" in text

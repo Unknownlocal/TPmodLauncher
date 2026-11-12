@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Check launcher tracking, command arguments, file locks and logging."""
 
+from hook_manager.diagnostics import error_text
+
 import os
 import json
 from contextlib import nullcontext
@@ -54,7 +56,7 @@ def test_queued_script_failure_keeps_full_stack_after_owner_cancellation(rig, so
     try:
         with pytest.raises(lifecycle.LaunchError, match="Owned script failure END") as failure:
             controller.poll()
-        assert stack in "\n".join(failure.value.__notes__)
+        assert stack in error_text(failure.value)
     finally:
         controller.close()
 
@@ -159,8 +161,8 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
     bad = pack / "broken"
     bad.mkdir(parents=True)
     (bad / "mod.toml").write_text("invalid TOML")
-    logger = logging.getLogger("modLauncher")
-    before = list(logger.handlers), logger.level, logger.propagate
+    global_logger = logging.getLogger("modLauncher")
+    before = list(global_logger.handlers), global_logger.level, global_logger.propagate
     first = tmp_path / "first.log"
     with lifecycle.reporter(first, log_level="DEBUG") as logger:
         controller.submit_log = lifecycle.bind_reporter(logger, component="controller")
@@ -189,12 +191,14 @@ def test_pack_logging_retains_severity_and_repeated_sessions_release_handlers(ri
         assert "WARNING" in invalid and "\x1b" not in invalid and len(invalid) < 4400
     assert "DEBUG modLauncher.bridge pid=10 hidden readiness detail" in first_text
     assert console == first_text
-    assert (list(logger.handlers), logger.level, logger.propagate) == before
+    assert not logger.handlers
+    assert (list(global_logger.handlers), global_logger.level, global_logger.propagate) == before
     second = tmp_path / "second.log"
     with lifecycle.reporter(second) as logger:
         lifecycle.write_log(logger, "second session")
     assert second.read_text().count("second session") == 1 and first.read_text() == first_text
-    assert (list(logger.handlers), logger.level, logger.propagate) == before
+    assert not logger.handlers
+    assert (list(global_logger.handlers), global_logger.level, global_logger.propagate) == before
 
 
 def test_large_pack_error_keeps_cause_when_owner_list_is_truncated(tmp_path, capsys):
@@ -459,7 +463,9 @@ def test_idle_controller_blocks_until_owned_exit_and_restart_deadline(rig, monke
         worker.start()
         assert not controller.poll(timeout=None)
         assert released.is_set() and not controller.processes
-        assert controller.poll(timeout=None)
+        # An early timer wake may rearm the deadline; use the launcher's loop.
+        while not controller.poll(timeout=None):
+            pass
         assert waits[-1] is None
     finally:
         worker.join(2)

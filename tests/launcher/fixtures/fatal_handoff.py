@@ -10,6 +10,7 @@ from types import ModuleType
 
 sys.path.insert(0, sys.argv[1])
 from hook_manager.native_activity import NativeActivity
+from hook_manager.native_reporting import NativeReporting
 from hook_manager.native_failures import NativeFailures
 from hook_manager.native_readiness import NativeReadiness
 from launcher.diagnostics.activity_journal import ActivityJournal
@@ -17,10 +18,10 @@ from launcher.diagnostics import journal_writer
 
 output, mode = Path(sys.argv[2]), sys.argv[3]
 sys.frozen = True  # Model only the frozen Windows gate; no game code is loaded.
-activity = NativeActivity(NativeReadiness(), ActivityJournal(output / "activity.jsonl"), json.loads(sys.stdin.readline()))
+activity = NativeActivity(NativeReadiness(), NativeReporting(ActivityJournal(output / "activity.jsonl"), json.loads(sys.stdin.readline())))
 atexit.register(lambda: (output / "finalised").touch())
 if mode == "closed":
-    activity.writer.close()
+    activity.reporting.writer.close()
 elif mode == "formatter":
     def failed_format(record):
         raise RuntimeError("Owned formatter failure")

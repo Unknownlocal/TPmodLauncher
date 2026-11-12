@@ -17,7 +17,7 @@ class ConsoleShutdown:
     def __init__(self, executable, submit_log):
         self.executable = os.path.normcase(str(Path(executable).resolve()))
         self.submit_log = bind_reporter(submit_log, component="shutdown")
-        self._outcome = getattr(submit_log, "launch_outcome", None)
+        self._outcome = self.submit_log.owner.outcome if self.submit_log.owner is not None else None
         self.requested, self.finished = threading.Event(), threading.Event()
         self._lock, self._processes, self._posted = threading.RLock(), {}, set()
         self._handler, self._deadline = None, None

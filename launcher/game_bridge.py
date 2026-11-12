@@ -18,6 +18,7 @@ from .diagnostics.reporting_queue import build_overflow_record
 from .process_cancellation import ProcessCancellation
 from .process_ended import ProcessEnded
 from .pending_request import PendingRequest
+from hook_manager.ui_snapshot import validate_ui_snapshot
 
 # Dependency order is also the execution order in the game's private namespace.
 # Keep this list fixed: packs and source mods cannot contribute host modules.
@@ -27,8 +28,8 @@ PYTHON_SOURCES = (
     "exception_snapshot", "diagnostics", "manager", "callables/signatures", "callables/target",
     "callables/refusals", "callables/binding", "callables/adapters",
     # Complete adapters and their transport load once as private modules.
-    "pack_discovery", "native_readiness", "native_activity", "native_loading", "native_failures", "native_restart", "workshop_metadata", "import_handover", "control_locks", "native_events",
-    "career_preload", "menu", "settings", "themes", "adapter_modules",
+    "pack_discovery", "native_readiness", "native_reporting", "native_activity", "native_loading", "native_failures", "native_restart", "workshop_metadata", "import_handover", "control_locks", "native_events",
+    "career_preload", "menu", "settings", "themes", "ui_snapshot", "adapter_modules",
 )
 
 # Closed source groups, not a filesystem scan: adding a file to a pack or even
@@ -194,10 +195,10 @@ class Bridge:
                 timer.cancel()
             self.cancellation.unwatch(cancellable.cancel)
 
-    def request(self, operation, timeout=2.0, *, buttons=None, loading=None, settings=None, themes=None,
+    def request(self, operation, timeout=2.0, *, ui=None, loading=None,
                 regulations=None, prerequisites=None, _service=None):
         """Await a fixed operation; preparation also services its bounded publication."""
-        if operation not in ("status", "changes", "shutdown", "menu", "loading", "settings", "themes", "prerequisites", "adapters", "regulation-defaults",
+        if operation not in ("status", "changes", "shutdown", "ui", "loading", "prerequisites", "adapters", "regulation-defaults",
                              "await-regulations", "prepare-regulations", "install-regulations", "activate-regulations", "stop-regulations", "retire-regulations", "restore-native-rules"):
             raise BridgeError("Unknown bridge operation")
         if operation == "prerequisites":
@@ -208,26 +209,18 @@ class Bridge:
                 raise BridgeError("Expected bounded native prerequisite names")
         elif prerequisites is not None:
             raise BridgeError("This operation accepts no prerequisites")
-        if operation == "menu":
-            if type(buttons) is not list or len(json.dumps(buttons)) > 16_384:
-                raise BridgeError("Expected bounded menu declarations")
-        elif buttons is not None:
-            raise BridgeError("This operation accepts no menu declarations")
+        if operation == "ui":
+            try:
+                validate_ui_snapshot(ui)
+            except (ValueError, TypeError) as error:
+                raise BridgeError(str(error)) from error
+        elif ui is not None:
+            raise BridgeError("This operation accepts no UI declarations")
         if operation == "loading":
             if type(loading) is not dict or len(json.dumps(loading)) > 1024:
                 raise BridgeError("Expected a bounded loading record")
         elif loading is not None:
             raise BridgeError("This operation accepts no loading record")
-        if operation == "settings":
-            if type(settings) is not dict or len(json.dumps(settings).encode("utf-8")) > 65_536:
-                raise BridgeError("Expected bounded settings declarations")
-        elif settings is not None:
-            raise BridgeError("This operation accepts no settings declarations")
-        if operation == "themes":
-            if type(themes) is not list or len(json.dumps(themes).encode("utf-8")) > 16_384:
-                raise BridgeError("Expected bounded theme declarations")
-        elif themes is not None:
-            raise BridgeError("This operation accepts no theme declarations")
         if operation == "await-regulations":
             if (regulations is not None and (type(regulations) is not dict
                     or set(regulations) - {"pack", "categories", "scripted_changes", "automatic_changes", "voting"}
@@ -279,14 +272,10 @@ class Bridge:
         self.cancellation.watch(wake)
         try:
             message = {"type": "manager-request", "operation": operation, "id": token}
-            if operation == "menu":
-                message["buttons"] = buttons
+            if operation == "ui":
+                message["ui"] = ui
             if operation == "loading":
                 message["loading"] = loading
-            if operation == "settings":
-                message["settings"] = settings
-            if operation == "themes":
-                message["themes"] = themes
             if operation == "prerequisites":
                 message["prerequisites"] = prerequisites
             if regulations is not None:
@@ -361,16 +350,17 @@ class Bridge:
         return defaults["categories"]
 
     def set_menu(self, buttons):
-        """Apply a complete declarative registry; an exited game needs no native restoration."""
-        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
-            return None
-        return self.request("menu", buttons=buttons)
+        return self.set_ui({"menu": buttons})
 
     def set_settings(self, records, result=None):
         """Publish owned tabs and optionally acknowledge one native save request."""
+        return self.set_ui({"settings": {"records": records, "result": result}})
+
+    def set_ui(self, snapshot):
+        """Publish changed registries in one native batch; exited owners need no restoration."""
         if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
             return None
-        return self.request("settings", settings={"records": records, "result": result})
+        return self.request("ui", ui=snapshot)
 
     def close(self):
         """Release native observation and the independent reporting connection."""
@@ -418,9 +408,7 @@ class Bridge:
                 self.script.unload()
 
     def set_themes(self, records):
-        if self.exited or self.session.is_detached or self.cancellation.ended.is_set():
-            return None
-        return self.request("themes", themes=records)
+        return self.set_ui({"themes": records})
 
     def set_loading(self, loading):
         """Send trusted startup progress on the same serialized request channel as menu updates."""

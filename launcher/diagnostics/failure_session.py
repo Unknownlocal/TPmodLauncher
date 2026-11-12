@@ -3,7 +3,6 @@
 
 from copy import deepcopy
 import importlib.util
-import logging
 import os
 from pathlib import Path
 import queue
@@ -24,9 +23,10 @@ def _load_module(name):
 class FailureSession:
     """Print first, then run input and presentation independently of the game."""
 
-    def __init__(self, outcome, *, owned_log=True, input_stream=None, output=None, child_factory=None, host_platform=None):
+    def __init__(self, outcome, *, owned_log=True, ownership=None, input_stream=None, output=None, child_factory=None, host_platform=None):
         self.outcome = deepcopy(outcome)
         self.owned_log = owned_log
+        self.ownership = ownership
         self.input_stream = sys.stdin if input_stream is None else input_stream
         self.output = sys.stderr if output is None else output
         self.child_factory = child_factory
@@ -81,10 +81,9 @@ class FailureSession:
             except Exception:
                 self._write_presentation_error("Could not show the launcher console:\n" + traceback.format_exc())
         output_type = _load_module("log_output").LogOutput
-        logger = logging.getLogger("modLauncher")
         path = Path(self.outcome["log_path"]) if self.owned_log and self.outcome["log_written"] else None
         self._output = output_type(path, self.outcome, console=self.output, mode="a",
-                                   ownership=getattr(logger, "launch_ownership", None) if self.owned_log else None)
+                                   ownership=self.ownership if self.owned_log else None)
         for detail in self._presentation_errors:
             self._output.presentation_error(detail)
         self._presentation_errors.clear()

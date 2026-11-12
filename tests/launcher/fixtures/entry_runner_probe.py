@@ -45,8 +45,9 @@ class WitWorld(wit_world.WitWorld):
         return payload
 ''' + "#" + "a" * 65536, encoding="utf-8")
 reports, progress, menus = [], [], []
-bridge = SimpleNamespace(set_loading=progress.append, set_menu=lambda items: menus.append(items),
-                         set_settings=lambda records, result=None: None, set_themes=lambda records: None, wake=lambda: None)
+bridge = SimpleNamespace(set_loading=progress.append,
+                         set_ui=lambda snapshot: menus.append(snapshot["menu"]) if "menu" in snapshot else None,
+                         wake=lambda: None)
 setup = entry._dependencies.load_source_packages
 
 

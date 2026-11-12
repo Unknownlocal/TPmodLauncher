@@ -86,9 +86,11 @@ records are protected. Handlers are removed when the launch ends.
 `submit_log` callbacks attach context and route records or messages to
 `write_log()`, which uses the standard logger. Game adapters construct their
 transport records with `hook_manager.diagnostics.build_log_record()`.
-When one logging callback forwards through another bound callback, it passes the
-record and its level onward before formatting. This retains severity, process
-context and complete error details without adding duplicate context text.
+A `LaunchContext` keeps the outcome, activity, output and log lock for one launch.
+Components receive a `LogPort` that carries their process and component details.
+Public text callbacks are adapted once. Forwarding keeps severity and complete
+errors. Each launch has its own standard logger, so late messages cannot enter
+a later launch's log. Failure presentation receives the same log lock explicitly.
 `handle_error()` records failures at the controller's outer error handlers and
 requests game shutdown. Other ERROR records leave the decision to their caller.
 `handle_error()` also retains the first fatal reason and its setup/controller
@@ -228,6 +230,11 @@ entry; work that overruns after entry closes its Store. No background job or
 parallel source execution is involved.
 
 The loader publishes progress and staged UI declarations to the native adapter.
+`ui_publication.py` remembers which buttons, settings tabs and palettes the game
+has accepted. Changed declarations travel together in one bridge request; each
+area keeps its own generation and failure result. A missing acknowledgement
+requires a clearing request. Settings saves still have explicit acknowledgements.
+
 Startup readiness waits for preparation outcomes, complete source activation and
 native acknowledgement. Immediate and deferred native rejection use the same
 cleanup. Session closure reports logical mods in reverse activation order;
@@ -279,8 +286,8 @@ saved files survive instance cleanup, while declarations remain session-owned.
 It validates native save requests against the owner and registry generation,
 persists values, acknowledges the result and delivers `ui-settings.changed` to
 the owning instance. Palette declarations use `hook_manager.themes.ThemeRequests`
-and are published separately from settings. The native theme adapter owns
-Color Pack choices and applies the selected palette at startup.
+and keep separate validation within the combined UI publication. The native theme
+adapter owns Color Pack choices and applies the selected palette at startup.
 
 ## Build and release boundaries
 

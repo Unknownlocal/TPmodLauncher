@@ -73,6 +73,7 @@ def native_events(native_menu, monkeypatch, tmp_path):
     host = SimpleNamespace(__name__="owned_event_scope", manager=Manager(), readiness=NativeReadiness())
     host.readiness.watch_career()
     host.activity = CollectedActivity(host.readiness)
+    host.reporting = host.activity.reporting
     host.discovery = PackDiscovery(tmp_path)
     host.menu, host.themes = MenuAdapter(host.readiness.observe_screen), ThemeAdapter()
     host.settings = SettingsAdapter(host.themes)
@@ -89,11 +90,11 @@ def native_events(native_menu, monkeypatch, tmp_path):
         host.readiness.stop()
         host.manager.stop()
         host.activity.stop()
-        assert host.activity.writer.finish(2)
+        assert host.activity.reporting.writer.finish(2)
 
 
 def records(host):
-    assert host.activity.writer.wait_idle(2)
+    assert host.activity.reporting.writer.wait_idle(2)
     result = list(host.activity.records)
     host.activity.records.clear()
     return result

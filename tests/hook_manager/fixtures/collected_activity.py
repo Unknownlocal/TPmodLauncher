@@ -4,6 +4,7 @@
 from collections import deque
 
 from hook_manager.native_activity import NativeActivity
+from hook_manager.native_reporting import NativeReporting
 from launcher.diagnostics.journal_writer import JournalWriter
 
 
@@ -12,4 +13,4 @@ class CollectedActivity(NativeActivity):
 
     def __init__(self, readiness, journal=None):
         self.records = deque()
-        super().__init__(readiness, journal, writer=JournalWriter(self.records.append))
+        super().__init__(readiness, NativeReporting(journal, writer=JournalWriter(self.records.append)))

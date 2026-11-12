@@ -123,9 +123,9 @@ def test_duplicate_notice_does_not_append_to_or_claim_the_active_log(tmp_path, m
     log.parent.mkdir(parents=True)
     log.write_text("Evidence belonging to the active launch", encoding="utf-8")
     monkeypatch.setattr(entry, "__file__", str(root / "launcher/entry.py"))
-    def present(outcome, *, owned_log, wait):
+    def present(outcome, *, owned_log, wait, ownership=None):
         assert not owned_log and not wait
-        FailureSession(outcome, owned_log=owned_log).run(wait=wait)
+        FailureSession(outcome, owned_log=owned_log, ownership=ownership).run(wait=wait)
     with entry._diagnostics.log_ownership(root / ".state/controller.lock"):
         assert entry.main(["--check-only"], presentation=present) == 1
     assert log.read_text(encoding="utf-8") == "Evidence belonging to the active launch"

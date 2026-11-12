@@ -21,7 +21,7 @@ while "_tpm_hook_manager_host" not in sys.modules and time.monotonic() < deadlin
     time.sleep(0.02)
 host = sys.modules["_tpm_hook_manager_host"]
 manager = host.manager
-host.adapters.enqueue_log_record({"level": "ERROR", "detail": "Owned bridge validation failure"})
+host.adapters.submit_log({"level": "ERROR", "detail": "Owned bridge validation failure"})
 
 # Reproduce the bridge lock ordering with real Python threads. Evaluating the
 # loading request releases the GIL; the worker must be able to pass its native
@@ -220,15 +220,15 @@ while not manager.closed and time.monotonic() < deadline:
     if ((output / "activity-request").exists() and not (output / "activity-done").exists()
             and host.activity.group_intact("activity.save")):
         loading_screen.state.fail_save = True
-        journal = host.activity.journal
-        host.activity.journal = host.ActivityJournal(output / "missing-native-journal.jsonl")
+        journal = host.activity.reporting.journal
+        host.activity.reporting.journal = host.ActivityJournal(output / "missing-native-journal.jsonl")
         try:
             loading_screen.state.save_season(manual=True)
         except OSError as error:
             assert error.launcher_activity["kind"] == "saving"
             (output / "activity-done").touch()
         finally:
-            host.activity.journal = journal
+            host.activity.reporting.journal = journal
     if (output / "leave-request").exists() and loading_screen.manager.current is loading_screen:
         loading_screen.manager.switch_to(HubScreen())
     if host.adapters.preload is not None and loading_screen.manager.current is loading_screen:

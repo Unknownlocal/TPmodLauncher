@@ -71,7 +71,7 @@ def test_stalled_journal_does_not_hold_restart_and_pressure_keeps_markers(restar
         entered.set()
         assert release.wait(5)
         written.extend(rows)
-    host.activity.journal = SimpleNamespace(append_records=append_records)
+    host.activity.reporting.journal = SimpleNamespace(append_records=append_records)
     host.activity.submit_log({"level": "INFO", "detail": "Owned blocked append"})
     worker = None
     try:
@@ -93,7 +93,7 @@ def test_stalled_journal_does_not_hold_restart_and_pressure_keeps_markers(restar
         release.set()
         if worker is not None:
             worker.join(2)
-        assert host.activity.writer.wait_idle(2)
+        assert host.activity.reporting.writer.wait_idle(2)
     assert [row["status"]["state"] for row in written if row.get("event") == "restart"] == ["requested", "committed"]
     assert any(row.get("dropped_records", 0) > 0 for row in written)
 

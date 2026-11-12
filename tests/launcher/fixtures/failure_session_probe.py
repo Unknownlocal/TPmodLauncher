@@ -92,7 +92,7 @@ else:
         os.kill(os.getpid(), signal.SIGINT)
 
 
-def present(value, *, owned_log, wait):
+def present(value, *, owned_log, wait, ownership=None):
     assert value["cleanup"] == "complete" and value["game_close"] == "complete"
     assert "Owned cleanup complete" in Path(value["log_path"]).read_text(encoding="utf-8")
     try:
@@ -129,7 +129,7 @@ def present(value, *, owned_log, wait):
 
     if mode.startswith("linux-"):
         value["host_log_path"] = "/home/player/Game's $literal/modLauncher/logs/launcher.log"
-    session = session_module.FailureSession(value, owned_log=owned_log, input_stream=None if mode in ("windows-console", "windows-console-allocate", "linux-console-allocate") else terminal,
+    session = session_module.FailureSession(value, owned_log=owned_log, ownership=ownership, input_stream=None if mode in ("windows-console", "windows-console-allocate", "linux-console-allocate") else terminal,
                                             child_factory=None if mode == "default" else child_factory,
                                             host_platform="linux" if mode.startswith("linux-") else "fixture-unavailable" if mode == "default" else "win32" if mode.startswith("windows-") else "fixture")
     def control():

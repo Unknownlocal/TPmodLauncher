@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise owned socket delivery, durable recovery and reporting failure handling."""
 
+from hook_manager.diagnostics import error_text
+
 import os
 import socket
 import threading
@@ -16,6 +18,7 @@ from launcher.diagnostics.reporting_sender import ReportingSender
 from launcher.diagnostics.reporting_wire import reporting_write
 from launcher.game_bridge import BridgeError
 from launcher.process_lifecycle import LaunchError
+from hook_manager.native_reporting import NativeReporting
 from tests.controller_device import rig  # Dependency of the shared delivery fixture.
 
 
@@ -29,7 +32,7 @@ def test_notifications_log_errors_without_idle_reads_or_game_pulses(delivery):
     writer.enqueue_log_record(record, bridge.journal, failure)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert "Owned save failed FULL END" in text and "Original save diagnostic note" in text
     assert '"kind":"saving"' in text.replace(" ", "")
     assert reads == [threading.get_ident()]
@@ -53,7 +56,7 @@ def test_exec_drains_old_errors_without_servicing_replaced_image(delivery, repla
     if replacement == "game":
         assert controller.processes[10].session is not previous
         assert controller.processes[10].bridge is None and controller.processes[10].mods is None
-    assert "x" * 5000 + " FULL EXEC END" in read_log(path)
+    assert "x" * 5000 + " FULL EXEC END" in read_log(path, controller.submit_log)
 
 
 def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery, tmp_path, monkeypatch):
@@ -70,10 +73,10 @@ def test_reporting_eof_before_exit_callback_cannot_describe_reused_pid(delivery,
     monkeypatch.setattr(controller.device, "enumerate_processes", no_pid_lookup)
     controller.poll()
     assert bridge.exited and not controller.processes and not controller.cleanup_failed
-    assert bridge.journal.retained and "Final owned error" in read_log(path)
+    assert bridge.journal.retained and "Final owned error" in read_log(path, controller.submit_log)
 
 
-def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
+def test_service_and_control_completion_bypass_a_stalled_journal(delivery, monkeypatch):
     _, bridge, receiver, _, _ = delivery
     entered, release, completed = threading.Event(), threading.Event(), threading.Event()
     append = bridge.journal.append_records
@@ -88,11 +91,21 @@ def test_control_completion_bypasses_a_stalled_journal(delivery, monkeypatch):
         completed.set()
     receiver.control_ready = control_ready
     writer = writer_for(receiver)
+    port = NativeReporting(bridge.journal, writer=writer)
+    service = threading.Event()
+    enqueue = receiver.enqueue_event
+    def notice(event, detail):
+        enqueue(event, detail)
+        service.set()
+    receiver.enqueue_event = notice
     try:
         writer.enqueue_log_record({"level": "INFO", "detail": "delayed storage"}, bridge.journal)
         assert entered.wait(2)
-        writer.notifications.enqueue_control_ready("a" * 32, "operations")
+        port.control_ready("a" * 32, "operations")
+        port.service_ready()
         assert completed.wait(2) and received == [("a" * 32, "operations")]
+        assert service.wait(2)
+        assert receiver.records.take(None, block=False)[0] == [{"event": "native-service"}]
         assert not writer.wait_idle(.01)
     finally:
         release.set()
@@ -122,7 +135,7 @@ def test_torn_append_cannot_hide_socket_only_fatal_details(delivery, monkeypatch
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="First durable native failure FULL END"):
         controller.poll()
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert "Original save diagnostic note" in text and "Native activity journal failed" in text
     assert "Original socket-only native failure FULL END" in text and "First durable native failure FULL END" in text
     assert "NATIVE JOURNAL READ FAILED" in text and "later complete append" in text
@@ -186,7 +199,7 @@ def test_reporting_fault_recovers_journal_and_keeps_evidence(delivery):
         assert receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="reporting sequence"):
         controller.poll()
-    assert "Last durable save error before channel failure" in read_log(path)
+    assert "Last durable save error before channel failure" in read_log(path, controller.submit_log)
     assert bridge.journal.retained
 
 
@@ -210,13 +223,13 @@ def test_final_exit_recovers_a_record_without_a_notification(delivery, monkeypat
     writer.enqueue_log_record(record, bridge.journal, failure)
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
-    assert reads == [] and "FULL END" not in read_log(path)
+    assert reads == [] and "FULL END" not in read_log(path, controller.submit_log)
     owner = controller.processes[10]
     session = owner.session
     session.is_detached = True
     controller.events.put(("detached", (owner, "process-terminated")))
     controller.poll()
-    assert "Durable failure with lost notice FULL END" in read_log(path)
+    assert "Durable failure with lost notice FULL END" in read_log(path, controller.submit_log)
     assert not bridge.journal.path.exists()
     bridge.close()
     controller.close()
@@ -238,10 +251,10 @@ def test_exec_retirement_preserves_native_fatal_over_delivery_failure_and_releas
     controller.events.put(("child", SimpleNamespace(pid=10, parent_pid=10, origin="exec")))
     with pytest.raises(LaunchError, match="Original exec fatal FULL END") as failure:
         controller.poll()
-    assert "FULL TRACE END" in "\n".join(failure.value.__notes__)
+    assert "FULL TRACE END" in error_text(failure.value)
     assert previous.is_detached and not controller.processes
     assert not controller.held and bridge.journal.retained and bridge.journal.path.exists()
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert "Secondary final delivery failure" in text and "FULL TRACE END" in text
 
 
@@ -255,7 +268,7 @@ def test_pending_import_service_cannot_hide_fatal_in_same_journal_batch(delivery
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="Owned fatal before import service FULL END"):
         controller.poll()
-    assert "Original save diagnostic note" in read_log(path)
+    assert "Original save diagnostic note" in read_log(path, controller.submit_log)
 
 
 def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
@@ -274,6 +287,7 @@ def test_late_fallback_status_cannot_replace_newer_settings(delivery, tmp_path):
 
 def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(delivery):
     controller, bridge, receiver, path, _ = delivery
+    bridge.journal.append_record({"event": []})
     writer = writer_for(receiver)
     writer.enqueue_log_record({"event": "unsupported-native-change", "detail": "UNKNOWN DATA END"}, bridge.journal)
     writer.enqueue_log_record({"event": "settings", "event_sequence": "invalid", "status": {"detail": "SEQUENCE DATA END"}}, bridge.journal)
@@ -284,7 +298,7 @@ def test_semantic_journal_faults_preserve_later_complete_fatal_and_raw_evidence(
     assert writer.finish(2) and receiver.finished.wait(2)
     with pytest.raises(LaunchError, match="Original native fatal after invalid change FULL END"):
         controller.poll()
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert "Original save diagnostic note" in text
     assert "UNKNOWN DATA END" in text and "SEQUENCE DATA END" in text and "RESTART DATA END" in text
     controller.close()
@@ -308,7 +322,7 @@ def test_restart_evidence_rejects_duplicates_and_old_attempt_cancellation(delive
     assert writer.finish(2) and receiver.finished.wait(2)
     controller.poll()
     assert bridge.restart_attempt["attempt"] == 2 and bridge.restart_attempt["state"] == "requested"
-    text = read_log(path)
+    text = read_log(path, controller.submit_log)
     assert text.count('"attempt": 1, "state": "requested"') == 1
     # The process-owner check applies before restart handling too.
     old = controller.processes[10].session

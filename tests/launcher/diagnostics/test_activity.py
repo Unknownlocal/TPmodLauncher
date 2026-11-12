@@ -16,7 +16,7 @@ def test_nested_work_freezes_failure_and_does_not_leak_to_another_thread(tmp_pat
     outcome = {}
     path = tmp_path / "launcher.log"
     with diagnostics.reporter(path, outcome=outcome) as logger:
-        tracker = logger.launch_activity
+        tracker = logger.activity
         with tracker.scope("game_loading") as outer:
             try:
                 with tracker.scope("mod_loading", mod="owned.first") as inner:

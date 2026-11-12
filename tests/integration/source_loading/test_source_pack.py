@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 """Selected-pack source admission, real runner execution and native readiness."""
 
+from tests.ui_support import ui_sink
+
 from contextlib import closing
 import faulthandler
 import json
@@ -330,15 +332,22 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     previous_settings = (theme / "settings.json").read_bytes()
     source_mod(folder, "owned.other")
     adapter, messages, palettes = SettingsAdapter(), [], []
+    publications = []
     native_originals = native_settings.ORIGINAL_METHODS.copy()
     with closing(adapter), closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
-        set_themes=lambda rows: palettes.append(rows),
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(
+            settings=lambda rows, result=None: {"settings": adapter.update(rows, result)},
+            themes=lambda rows: palettes.append(rows),
+            calls=publications,
+        ),
     )) as scope:
         scope.load(startup)
         finish(scope)
         assert list(scope.mods) == ["example.theme", "owned.other"]
+        assert len(publications) == 1 and set(publications[0]) == {"settings", "themes"}
         fields = scope.settings.records[0]["fields"]
         assert len(fields) == 52
         assert [field["id"] for field in fields] == [f"colour_{n}" for n in range(1, 53)]
@@ -395,8 +404,12 @@ def test_theme_example_native_save_ack_retry_notification_and_cleanup(
     assert native_settings.OptionsScreen.draw is native_originals["draw"]
     assert native_settings.OPTION_TABS == [("game", "Game"), ("graphics", "Graphics")]
     # A new mod group reads the saved palette during registration.
-    with closing(PackMods(game, messages.append, runner_bundle=runner_bundle,
-                          set_themes=lambda rows: palettes.append(rows))) as restarted:
+    with closing(PackMods(
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(themes=lambda rows: palettes.append(rows)),
+    )) as restarted:
         restarted.load(startup)
         finish(restarted)
         assert palettes[-1][0]["colours"]["BACKGROUND"] == "#010203"
@@ -426,16 +439,20 @@ class WitWorld(wit_world.WitWorld):
         return {area: {"state": "pending" if rows else "idle", "generation": len(registries[area])}}
     messages = []
     with closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_themes=lambda rows: publish("themes", rows),
-        set_settings=lambda rows, result=None: publish("settings", rows),
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(
+            themes=lambda rows: publish("themes", rows),
+            settings=lambda rows, result=None: publish("settings", rows),
+        ),
     )) as scope:
         scope.load(startup)
         finish(scope, messages)
         assert list(scope.mods) == ["owned.palette", "owned.settings"]
         assert all(mod.manifest.capabilities == frozenset({"ui-settings"}) for mod in scope.mods.values())
         handler = getattr(scope, f"{failure}_status")
-        generation = getattr(scope, f"{failure}_generation")
+        generation = scope.ui.generations[failure]
         handler({"state": "failed", "generation": generation - 1})
         assert len(scope.mods) == 2
         handler({"state": "failed", "generation": generation})
@@ -459,8 +476,11 @@ def test_source_menu_readiness_and_failure_rollback(
         monkeypatch.delitem(sys.modules, hub.__name__)
     messages = []
     with closing(MenuAdapter()) as adapter, closing(PackMods(
-        game, messages.append, runner_bundle=runner_bundle,
-        set_menu=lambda items: {"menu": adapter.update(items)}, set_loading=adapter.set_loading,
+        game,
+        messages.append,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(menu=lambda items: {"menu": adapter.update(items)}),
+        set_loading=adapter.set_loading,
     )) as scope:
         scope.load(record)
         finish(scope, messages)
@@ -487,7 +507,7 @@ def test_source_menu_readiness_and_failure_rollback(
     assert hub.MENU_ITEMS == native_rows and hub.HubScreen._activate is native_activate
 
 
-def test_import_time_ui_publishes_all_members_once_and_rolls_back_rejected_group(pack, source_mod, code_mod, runner_bundle):
+def test_import_time_ui_publishes_all_members_once_and_rolls_back_uncertain_group(pack, source_mod, code_mod, runner_bundle):
     game, folder, record = pack
     for owner in ("owned.a", "owned.c"):
         source_mod(folder, owner, capabilities=("main-menu",), code=f'''import wit_world
@@ -500,10 +520,16 @@ class WitWorld:
     publications, progress = [], []
     def publish(rows):
         publications.append(rows)
-        return {"menu": {"generation": len(publications), "state": "failed" if rows else "idle",
-                         "detail": "Owned native rejection"}}
-    with closing(PackMods(game, lambda _: None, runner_bundle=runner_bundle,
-                          set_menu=publish, set_loading=progress.append)) as scope:
+        if rows:
+            raise TimeoutError("Owned missing publication acknowledgement")
+        return {"menu": {"generation": len(publications), "state": "idle"}}
+    with closing(PackMods(
+        game,
+        lambda _: None,
+        runner_bundle=runner_bundle,
+        set_ui=ui_sink(menu=publish),
+        set_loading=progress.append,
+    )) as scope:
         scope.load(record)
         finish(scope)
         assert [[row["owner"] for row in rows] for rows in publications] == [["owned.a", "owned.c"], []]

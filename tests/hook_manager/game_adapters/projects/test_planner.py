@@ -31,7 +31,7 @@ def test_incompatible_planning_reports_to_cli_and_log_without_stopping_game(monk
     path = tmp_path / "launch.log"
     with reporter(path) as logger:
         assert RegulationProjectAdapter.create(state, channel, None, bind_reporter(logger)) is not None
-        assert read_log(path) == ""
+        assert read_log(path, logger) == ""
 
         def incompatible(state):
             raise HookError("Native project planning helpers changed:\naero")
