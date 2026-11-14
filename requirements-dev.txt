@@ -9,7 +9,7 @@ colorama==0.4.6
 componentize-py==0.25.1
 coverage==7.16.2
 cryptography==50.0.2
-dnspython==2.9.0
+dnspython==2.9.2
 email-validator==2.3.0
 id==1.6.1
 idna==3.20
